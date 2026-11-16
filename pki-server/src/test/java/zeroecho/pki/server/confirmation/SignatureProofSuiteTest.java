@@ -77,7 +77,9 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofPresentation;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofVerification;
 
-/** Deterministic transcript, cryptographic profile, mutation, and bounds vectors. */
+/**
+ * Deterministic transcript, cryptographic profile, mutation, and bounds vectors.
+ */
 class SignatureProofSuiteTest {
 
     private static final HexFormat HEX = HexFormat.of();
@@ -103,6 +105,11 @@ class SignatureProofSuiteTest {
     private static final String EXPECTED_ED25519_SIGNATURE = "ac022c376cfe85c5a44c1a493ed9842a"
             + "9ff148333bbb52d518f5038b5bb5e5aa173f9617ae56180e20cabfe2b5e3c0c72fc0688ebf838e3c8de7cd456bb9f400";
 
+    /**
+     * Checks the complete configuration commitment, canonical transcript and real Ed25519 signature against frozen byte vectors.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void deterministicTranscriptAndEd25519ProofMatchFrozenVectors() throws Exception {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -123,6 +130,9 @@ class SignatureProofSuiteTest {
                         new ProofResponseEnvelope(signature, suite.descriptor().maximumResponseBytes())));
     }
 
+    /**
+     * Checks response-byte bounds at supported RSA sizes and that the exact modulus limit changes the configuration commitment.
+     */
     @Test
     void publicProviderDescriptorsAreExactDeterministicAndConfigurationBound() {
         SignatureKeyPossessionProofProvider provider = new SignatureKeyPossessionProofProvider();
@@ -146,6 +156,11 @@ class SignatureProofSuiteTest {
         assertThrows(IllegalArgumentException.class, () -> provider.descriptor(16_385));
     }
 
+    /**
+     * Checks the public challenge byte vector and rejects mismatched configuration commitments or RSA profile bounds.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void publicProviderPreservesFrozenPresentationAndRejectsBindingMismatch() throws Exception {
         SignatureKeyPossessionProofProvider provider = new SignatureKeyPossessionProofProvider();
@@ -172,6 +187,11 @@ class SignatureProofSuiteTest {
                 () -> provider.createChallenge(context(changedMaximum, challenge())));
     }
 
+    /**
+     * Checks real proof acceptance, tampered signatures, wrong keys/credentials, oversized responses and changed audience rejection.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void publicProviderRejectsWrongProofCoordinatesAndSuiteSpecificOversize() throws Exception {
         SignatureKeyPossessionProofProvider provider = new SignatureKeyPossessionProofProvider();
@@ -206,6 +226,11 @@ class SignatureProofSuiteTest {
                 new KeyPossessionProofResponse(sign("Ed25519", null, privateKey, presentation))));
     }
 
+    /**
+     * Checks that eight concurrent public challenge constructions produce equal immutable presentations.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void publicProviderConcurrentPresentationsAreDeterministic() throws Exception {
         SignatureKeyPossessionProofProvider provider = new SignatureKeyPossessionProofProvider();
@@ -225,6 +250,9 @@ class SignatureProofSuiteTest {
         }
     }
 
+    /**
+     * Checks that all four confirmation-enabled built-in certificate profiles select the installed default proof descriptor.
+     */
     @Test
     void everyConfirmationEnabledBuiltInUsesInstalledDefaultDescriptor() {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -245,6 +273,11 @@ class SignatureProofSuiteTest {
         assertEquals(4, confirmationEnabled);
     }
 
+    /**
+     * Signs independently mutated transcript coordinates and checks that none verifies against the original issued challenge.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void everyBoundFieldMutationRejectsTheOriginalChallenge() throws Exception {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -287,6 +320,11 @@ class SignatureProofSuiteTest {
         }
     }
 
+    /**
+     * Exercises real RSA-PSS, supported ECDSA and EdDSA proofs and rejects unsupported key profiles.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void standardSignatureProfilesVerifyAndUnsupportedKeysFailClosed() throws Exception {
         verifyGenerated("RSA", 2_048, null, "RSASSA-PSS",
@@ -311,6 +349,9 @@ class SignatureProofSuiteTest {
                         suite.descriptor().configurationCommitment().bytes()), challenge())));
     }
 
+    /**
+     * Checks RSA response limits and distinct configuration commitments, then rejects exponent three and a modulus one bit above the limit.
+     */
     @Test
     void rsaConfigurationBindsCommitmentBoundsAndPublicExponent() {
         SignatureProofSuite rsa2048 = new SignatureProofSuite(2_048);
@@ -337,6 +378,11 @@ class SignatureProofSuiteTest {
                 () -> rsa8192.validatePublicKey(rsaKey(8_193, BigInteger.valueOf(65_537L))));
     }
 
+    /**
+     * Checks that matching suite IDs and commitment bytes cannot hide altered challenge or response bounds.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void fullDescriptorIdentityRejectsAlteredNumericBounds() throws Exception {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -365,6 +411,11 @@ class SignatureProofSuiteTest {
                 publicKey, response));
     }
 
+    /**
+     * Mutates constructor inputs and accessor copies, then verifies the same valid proof twice to check defensive copying and stateless verification.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void envelopesAreBoundedImmutableAndVerificationRetainsNoRequestState() throws Exception {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -400,6 +451,9 @@ class SignatureProofSuiteTest {
         assertEquals(VerificationResult.VERIFIED, suite.verify(issued, publicKey, validResponse));
     }
 
+    /**
+     * Exercises suite naming, digest length, byte bounds, credential identity, audience and whole-second expiry rejection cases.
+     */
     @Test
     void malformedAndOversizedFoundationInputsAreRejected() {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -429,6 +483,11 @@ class SignatureProofSuiteTest {
                 "pki.example.test", new PkiId(CREDENTIAL_ID), suite.descriptor(), challenge(), Instant.EPOCH.minusSeconds(1)));
     }
 
+    /**
+     * Mutates transcript framing, tags, lengths, encodings, profile coordinates and trailing bytes around a valid canonical round-trip.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void decoderRejectsEveryNoncanonicalOrOutOfBoundTranscriptShape() throws Exception {
         SignatureProofSuite suite = new SignatureProofSuite();
@@ -595,10 +654,25 @@ class SignatureProofSuiteTest {
             this.publicExponent = publicExponent;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public BigInteger getModulus() { return modulus; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public BigInteger getPublicExponent() { return publicExponent; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String getAlgorithm() { return "RSA"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String getFormat() { return "X.509"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public byte[] getEncoded() { return new byte[0]; }
     }
 }

@@ -54,7 +54,9 @@ public record CredentialConfirmationInitialization(PkiId credentialId,
         boolean confirmationRequired, Instant confirmationReviewAt,
         ConfirmationProofSuiteRef proofSuite) {
 
-    /** Maximum strict UTF-8 byte length of a credential identifier in the confirmation model. */
+    /**
+     * Maximum strict UTF-8 byte length of a credential identifier in the confirmation model.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final int MAXIMUM_CREDENTIAL_ID_UTF8_BYTES = 256;
 
@@ -63,6 +65,12 @@ public record CredentialConfirmationInitialization(PkiId credentialId,
      *
      * @throws NullPointerException if a component is {@code null}
      * @throws IllegalArgumentException if a commitment, instant, or required-policy relationship is invalid
+     * @param credentialId exact issued credential encoded as 1 through {@link #MAXIMUM_CREDENTIAL_ID_UTF8_BYTES} strict UTF-8 bytes
+     * @param initialPolicy disclosure policy frozen at initialization
+     * @param initialPolicyCommitment lowercase hexadecimal SHA-256 commitment of the exact policy configuration
+     * @param confirmationRequired {@code false} exactly for {@link ConfirmationDisclosurePolicy#PUBLIC}; otherwise {@code true}
+     * @param confirmationReviewAt authoritative timeliness review boundary in the UTC range from the epoch through year 9999
+     * @param proofSuite exact proof-suite profile frozen at initialization
      */
     public CredentialConfirmationInitialization {
         credentialId = ConfirmationModelSupport.requireCredentialId(credentialId);

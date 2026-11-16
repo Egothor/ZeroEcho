@@ -45,10 +45,15 @@ import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Round-trip, classification, and strict-decode coverage for issuance execution evidence. */
+/**
+ * Round-trip, classification, and strict-decode coverage for issuance execution evidence.
+ */
 class IssuanceExecutionEvidenceTest {
     private static final String COMMITMENT = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    /**
+     * Administrative evidence round trips.
+     */
     @Test
     void administrativeEvidenceRoundTrips() {
         IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.administrative("operator-a", "production",
@@ -62,6 +67,9 @@ class IssuanceExecutionEvidenceTest {
         assertEquals("leaf", decoded.profileId());
     }
 
+    /**
+     * Round-trips ACME issuance execution evidence without changing its identity.
+     */
     @Test
     void acmeEvidenceRoundTrips() {
         IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.acme("acct-1", "production", "correlation-2",
@@ -73,6 +81,9 @@ class IssuanceExecutionEvidenceTest {
         assertTrue(decoded.authorizationPath().isEmpty());
     }
 
+    /**
+     * Protocol evidence retains real requester and exact approval path.
+     */
     @Test
     void protocolEvidenceRetainsRealRequesterAndExactApprovalPath() {
         java.util.Map<IssuanceExecutionEvidence.ActorType, IssuanceExecutionEvidence.Authentication> mechanisms = java.util.Map.of(
@@ -101,11 +112,17 @@ class IssuanceExecutionEvidenceTest {
                 IssuanceExecutionEvidence.Authentication.CMP_SIGNATURE, true, COMMITMENT, "ca", "profile"));
     }
 
+    /**
+     * Decode returns empty when no evidence present.
+     */
     @Test
     void decodeReturnsEmptyWhenNoEvidencePresent() {
         assertTrue(IssuanceExecutionEvidence.decode(SimpleAttributeSet.builder().build()).isEmpty());
     }
 
+    /**
+     * Rejects inconsistent admin classification.
+     */
     @Test
     void rejectsInconsistentAdminClassification() {
         // ADMIN actor with ACME authorization is not a valid combination.
@@ -116,6 +133,9 @@ class IssuanceExecutionEvidenceTest {
                 "ca-a", "leaf", IssuanceExecutionEvidence.Outcome.ISSUED));
     }
 
+    /**
+     * Rejects partial evidence vocabulary.
+     */
     @Test
     void rejectsPartialEvidenceVocabulary() {
         // A single evidence-namespaced attribute without the rest of the closed set is rejected.

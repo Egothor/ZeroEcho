@@ -45,10 +45,14 @@ package zeroecho.pki.server.ct;
  */
 public final class CtSubmissionException extends Exception {
 
-    /** Serialization identity for this exception type. */
+    /**
+     * Serialization identity for this exception type.
+     */
     private static final long serialVersionUID = 1L;
 
-    /** Identifier of the log whose submission failed. */
+    /**
+     * Identifier of the log whose submission failed.
+     */
     private final String logId;
 
     /**

@@ -63,6 +63,11 @@ public record CredentialConfirmationProofChallenge(CredentialConfirmationProofCa
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if an expiry or byte bound is invalid
+     * @param proofCas exact pending lifecycle and issued challenge correlation coordinates
+     * @param proofSuiteBinding exact suite binding used to construct the presentation
+     * @param expiresAt authoritative whole-second challenge expiry
+     * @param maximumResponseBytes inclusive response bound from 1 through 16384 bytes
+     * @param presentation non-empty suite-defined presentation, at most 2048 bytes
      */
     public CredentialConfirmationProofChallenge {
         Objects.requireNonNull(proofCas, "proofCas");
@@ -93,7 +98,11 @@ public record CredentialConfirmationProofChallenge(CredentialConfirmationProofCa
         return presentation.clone();
     }
 
-    /** Compares presentation bytes by content. */
+    /**
+     * Compares presentation bytes by content.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -109,14 +118,20 @@ public record CredentialConfirmationProofChallenge(CredentialConfirmationProofCa
                 && Arrays.equals(presentation, candidate.presentation);
     }
 
-    /** Returns a content-based hash code for every component. */
+    /**
+     * Returns a content-based hash code for every component.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return 31 * Objects.hash(proofCas, proofSuiteBinding, expiresAt, maximumResponseBytes)
                 + Arrays.hashCode(presentation);
     }
 
-    /** Returns a structural description without presentation bytes. */
+    /**
+     * Returns a structural description without presentation bytes.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CredentialConfirmationProofChallenge[proofCas=" + proofCas

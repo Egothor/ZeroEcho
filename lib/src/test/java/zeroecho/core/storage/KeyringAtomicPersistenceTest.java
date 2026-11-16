@@ -64,6 +64,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.storage.KeyringFileOperations.Target;
 
+/**
+ * Contract and regression tests for keyring atomic persistence.
+ */
 class KeyringAtomicPersistenceTest {
     private static final char[] PASSWORD = { 'a', 't', 'o', 'm', 'i', 'c' };
     private static final byte[] ENTRY_A = material((byte) 0x31);
@@ -71,9 +74,17 @@ class KeyringAtomicPersistenceTest {
     private static final Set<PosixFilePermission> FILE_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Main image pre commit failures preserve authoritative state.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void mainImagePreCommitFailuresPreserveAuthoritativeState() throws Exception {
         start("mainImagePreCommitFailuresPreserveAuthoritativeState");
@@ -104,6 +115,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Main image directory force failure poisons until reopen.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void mainImageDirectoryForceFailurePoisonsUntilReopen() throws Exception {
         start("mainImageDirectoryForceFailurePoisonsUntilReopen");
@@ -129,6 +145,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Sidecar pre commit failures issue no uncommitted nonce.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sidecarPreCommitFailuresIssueNoUncommittedNonce() throws Exception {
         start("sidecarPreCommitFailuresIssueNoUncommittedNonce");
@@ -160,6 +181,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Sidecar directory force failure issues nothing until reopen.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sidecarDirectoryForceFailureIssuesNothingUntilReopen() throws Exception {
         start("sidecarDirectoryForceFailureIssuesNothingUntilReopen");
@@ -195,6 +221,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Windows atomic move transient access denied is retried successfully.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void windowsAtomicMoveTransientAccessDeniedIsRetriedSuccessfully() throws Exception {
         start("windowsAtomicMoveTransientAccessDeniedIsRetriedSuccessfully");
@@ -214,6 +245,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Windows atomic move budget exhausted throws keyring I/O failed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void windowsAtomicMoveBudgetExhaustedThrowsKeyringIoFailed() throws Exception {
         start("windowsAtomicMoveBudgetExhaustedThrowsKeyringIoFailed");
@@ -234,6 +270,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Cleanup failures preserve primary and encrypted residuals.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cleanupFailuresPreservePrimaryAndEncryptedResiduals() throws Exception {
         start("cleanupFailuresPreservePrimaryAndEncryptedResiduals");
@@ -242,6 +283,11 @@ class KeyringAtomicPersistenceTest {
         ok();
     }
 
+    /**
+     * Retry policy is deterministic for both destinations and all failure categories.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void retryPolicyIsDeterministicForBothDestinationsAndAllFailureCategories() throws Exception {
         for (Target target : List.of(Target.MAIN_IMAGE, Target.NONCE_RESERVATION)) {

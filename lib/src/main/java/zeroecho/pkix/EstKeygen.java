@@ -99,9 +99,13 @@ public final class EstKeygen { // NOPMD CyclomaticComplexity - One closed EST ne
     private static final int ATTRIBUTE_FIELD_COUNT = 2;
     private static final int ATTRIBUTE_VALUE_COUNT = 1;
     private static final int ECDH_CAPABILITY_FIELD_COUNT = 2;
-    /** PKCS#9 client key-encipherment capabilities attribute. */
+    /**
+     * PKCS#9 client key-encipherment capabilities attribute.
+     */
     public static final String CAPABILITIES_OID = "1.2.840.113549.1.9.15";
-    /** RFC 7030 authenticated asymmetric recipient identifier attribute. */
+    /**
+     * RFC 7030 authenticated asymmetric recipient identifier attribute.
+     */
     public static final String RECIPIENT_KEY_ID_OID = "1.2.840.113549.1.9.16.2.54";
     private static final String RSA = "1.2.840.113549.1.1.1";
     private static final String EC = "1.2.840.10045.2.1";
@@ -113,6 +117,7 @@ public final class EstKeygen { // NOPMD CyclomaticComplexity - One closed EST ne
      * Validates the two required encryption attributes and the enclosing DER
      * request structure without evaluating its public key or signature.
      * This does not authorize requested subject names or negotiate a recipient.
+     *
      * @param templateDer exact original PKCS#10 template DER
      * @throws IllegalArgumentException for malformed, duplicate or missing attributes
      */
@@ -131,9 +136,11 @@ public final class EstKeygen { // NOPMD CyclomaticComplexity - One closed EST ne
      * ECDH-SHA256 with an AES-256-wrap AlgorithmIdentifier. No implicit recipient,
      * algorithm fallback or trust establishment is performed. Callers must check
      * certificate authentication and validity before invoking this method.</p>
+     *
      * @param templateDer exact original PKCS#10 template DER
      * @param authenticatedRecipient actual authenticated TLS end-client certificate
      * @throws IllegalArgumentException if structure, key identifier, usage or negotiation fails
+     * @throws NullPointerException if {@code authenticatedRecipient} is null
      */
     public static void requireRecipient(byte[] templateDer, X509Certificate authenticatedRecipient) {
         Objects.requireNonNull(authenticatedRecipient, "authenticatedRecipient");
@@ -172,6 +179,7 @@ public final class EstKeygen { // NOPMD CyclomaticComplexity - One closed EST ne
      * that chain. Caller-owned input is neither retained nor cleared. Owned
      * plaintext encoding buffers are cleared; the caller must clear its PKCS#8
      * buffer after the call. Output is bounded at 16 MiB.</p>
+     *
      * @param templateDer exact original template, revalidated before cryptographic use
      * @param privateKeyDer generated PKCS#8 DER, at most one MiB
      * @param recipient authenticated TLS recipient certificate
@@ -179,6 +187,7 @@ public final class EstKeygen { // NOPMD CyclomaticComplexity - One closed EST ne
      * @param generatorSigner one-use signer bound to the generator certificate
      * @return caller-owned encrypted CMS DER
      * @throws IllegalArgumentException if negotiation, encoding, signature or encryption fails
+     * @throws NullPointerException if any of {@code privateKeyDer}, {@code generatorSigner} is null
      */
     public static byte[] signedEncryptedPackage(byte[] templateDer, byte[] privateKeyDer,
             X509Certificate recipient, List<X509Certificate> generatorChain, ContentSigner generatorSigner) {

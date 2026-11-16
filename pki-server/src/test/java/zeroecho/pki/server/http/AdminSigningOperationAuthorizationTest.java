@@ -82,7 +82,9 @@ import zeroecho.pki.server.ServerRealmConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
-/** Private polling authorizes the same immutable semantic observation it projects. */
+/**
+ * Private polling authorizes the same immutable semantic observation it projects.
+ */
 class AdminSigningOperationAuthorizationTest {
     private static final RealmId REALM = new RealmId("current");
     private static final PkiId OPERATION = new PkiId("signing:private");
@@ -90,6 +92,9 @@ class AdminSigningOperationAuthorizationTest {
     private static final PkiId SUBJECT = new PkiId("ca:subject");
     private static final String REQUEST = "request-authorization";
 
+    /**
+     * Checks that independently authorized requester/admin polling yields sensitive HTTP 202 projections without bearer-capability metadata.
+     */
     @Test
     void authorizedRequesterAndAnotherAuthorizedAdministratorCanRead() {
         Fixture fixture = fixture(issuance());
@@ -105,6 +110,9 @@ class AdminSigningOperationAuthorizationTest {
         verify(fixture.signing(), times(2)).find(OPERATION);
     }
 
+    /**
+     * Checks identical HTTP 404 bodies for leaked, cross-realm and absent operation identities to avoid observation-based disclosure.
+     */
     @Test
     void leakedIdentifierUnauthorizedAndCrossRealmAuthorityAreIndistinguishableFromAbsent() {
         Fixture fixture = fixture(issuance());
@@ -122,6 +130,9 @@ class AdminSigningOperationAuthorizationTest {
         verify(fixture.signing(), times(3)).find(OPERATION);
     }
 
+    /**
+     * Checks CA creation, intermediate issuance, credential issuance and CRL projections against their distinct permission/resource coordinates.
+     */
     @Test
     void everyDomainProjectionMapsToItsExactRbacActionAndResource() {
         assertMapping(scope(SemanticSigningKind.CA, "CREATE_ROOT", "ca.create"),
@@ -140,6 +151,9 @@ class AdminSigningOperationAuthorizationTest {
                 Optional.of(PARENT), Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Checks that rollover/rotation observations require subject-authority read scope rather than inheriting their mutation-purpose action.
+     */
     @Test
     void rolloverAndRotationUseSubjectAuthorityReadIndependentOfMutationPurpose() {
         for (String purpose : java.util.List.of("ca.rollover", "ca.rotate")) {
@@ -152,6 +166,9 @@ class AdminSigningOperationAuthorizationTest {
         }
     }
 
+    /**
+     * Checks that authority-read access permits polling while a rotation-only permission remains insufficient.
+     */
     @Test
     void readPermissionAllowsPollingAndMutationPermissionAloneDoesNot() {
         Fixture fixture = fixture(scope(SemanticSigningKind.CA, "ROLLOVER_INTERMEDIATE", "ca.rotate"));
@@ -162,6 +179,9 @@ class AdminSigningOperationAuthorizationTest {
         assertEquals(404, fixture.handler().signingOperation(REQUEST, "rotation-only", OPERATION.value()).statusCode());
     }
 
+    /**
+     * Checks completed credential/result-digest projection from the same snapshot that passed authorization.
+     */
     @Test
     void completedProjectionUsesOnlyTheAuthorizedSnapshot() {
         Fixture fixture = fixture(issuance());
@@ -187,6 +207,9 @@ class AdminSigningOperationAuthorizationTest {
         order.verifyNoMoreInteractions();
     }
 
+    /**
+     * Checks an unauthorized completed result returns the canonical not-found body without invoking its result projection.
+     */
     @Test
     void deniedCompletedResultIsHiddenWithoutProjection() {
         Fixture fixture = fixture(issuance());

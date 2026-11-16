@@ -62,6 +62,9 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for signing ledger maintenance.
+ */
 final class SigningLedgerMaintenanceTest {
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("0123456789abcdef0123456789abcdef");
@@ -69,6 +72,11 @@ final class SigningLedgerMaintenanceTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Rotate copies cold segment and publishes manifest last.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rotateCopiesColdSegmentAndPublishesManifestLast() throws Exception {
         Fixture fixture = fixture("rotate");
@@ -86,6 +94,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Rotation preserves exact active WAL configuration.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rotationPreservesExactActiveWalConfiguration() throws Exception {
         AtomicInteger copies = new AtomicInteger();
@@ -108,6 +121,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Compaction is self contained relocates current and reclaims only after pins release.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void compactionIsSelfContainedRelocatesCurrentAndReclaimsOnlyAfterPinsRelease()
             throws Exception {
@@ -132,6 +150,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Online compaction reopens admission then drains and publishes exact candidate.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void onlineCompactionReopensAdmissionThenDrainsAndPublishesExactCandidate()
             throws Exception {
@@ -170,6 +193,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Transient capacity preflight defers before rotation or candidate artifacts.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void transientCapacityPreflightDefersBeforeRotationOrCandidateArtifacts()
             throws Exception {
@@ -198,6 +226,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Steady capacity preflight defers before rotation or candidate artifacts.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @SuppressWarnings({ "PMD.UnitTestContainsTooManyAsserts",
             "PMD.UnitTestAssertionsShouldIncludeMessage" })
@@ -227,6 +260,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Protected progress probe defers without recovery or topology change.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void protectedProgressProbeDefersWithoutRecoveryOrTopologyChange() throws Exception {
         Fixture fixture = fixture("online-protected-progress");
@@ -258,6 +296,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Catch up capacity deferral removes candidate artifacts without requiring recovery.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void catchUpCapacityDeferralRemovesCandidateArtifactsWithoutRequiringRecovery()
             throws Exception {
@@ -297,6 +340,12 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Online compaction restart uses only the forced manifest boundary.
+     *
+     * @param faultStage maintenance phase at which the fixture injects failure
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "online compaction durable authority: {0}")
     @MethodSource("onlineCompactionCrashBoundaries")
     void onlineCompactionRestartUsesOnlyTheForcedManifestBoundary(
@@ -327,6 +376,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Failure before manifest leaves old topology recoverable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failureBeforeManifestLeavesOldTopologyRecoverable() throws Exception {
         Fixture fixture = fixture("old-topology");
@@ -346,6 +400,13 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Every rotation crash boundary recovers exactly one topology.
+     *
+     * @param faultStage maintenance phase at which the fixture injects failure
+     * @param newTopology whether the post-operation manifest topology is expected to become authoritative
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @MethodSource("rotationCrashBoundaries")
     void everyRotationCrashBoundaryRecoversExactlyOneTopology(
@@ -380,6 +441,12 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Maintenance crash restart matrix.
+     *
+     * @param faultStage maintenance phase at which the fixture injects failure
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "maintenance restart/retry boundary: {0}")
     @MethodSource("maintenanceCrashBoundaries")
     void maintenanceCrashRestartMatrix(SigningLedgerMaintenance.Stage faultStage) throws Exception {
@@ -392,6 +459,12 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Direct reclamation restart matrix.
+     *
+     * @param faultStage maintenance phase at which the fixture injects failure
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "direct reclamation restart boundary: {0}")
     @MethodSource("directReclamationRestartBoundaries")
     void directReclamationRestartMatrix(SigningLedgerMaintenance.Stage faultStage) throws Exception {
@@ -457,6 +530,11 @@ final class SigningLedgerMaintenanceTest {
         assertEquals(1, firstRecords.records().size());
     }
 
+    /**
+     * Invalid and colliding identities do not mutate the active topology.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidAndCollidingIdentitiesDoNotMutateTheActiveTopology() throws Exception {
         Fixture fixture = fixture("identity-prevalidation");
@@ -478,6 +556,11 @@ final class SigningLedgerMaintenanceTest {
                 SigningManifestCodec.activeName(1L))));
     }
 
+    /**
+     * Active segment maximum is enforced at the exact closed length.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void activeSegmentMaximumIsEnforcedAtTheExactClosedLength() throws Exception {
         Fixture allowed = fixture("segment-boundary-allowed");
@@ -500,6 +583,11 @@ final class SigningLedgerMaintenanceTest {
                 rejected.root().resolve(SigningLedgerRecovery.MANIFEST_FILE))));
     }
 
+    /**
+     * Compaction relocation preserves post boundary update and delete.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void compactionRelocationPreservesPostBoundaryUpdateAndDelete() throws Exception {
         Fixture fixture = fixture("post-boundary-mutations");
@@ -533,6 +621,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Checkpoint sources open once per live generation across compaction.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void checkpointSourcesOpenOncePerLiveGenerationAcrossCompaction() throws Exception {
         Fixture fixture = fixture("source-generations");
@@ -550,6 +643,11 @@ final class SigningLedgerMaintenanceTest {
         }
     }
 
+    /**
+     * Committed delete is absent but no delete leaves the live record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedDeleteIsAbsentButNoDeleteLeavesTheLiveRecord() throws Exception {
         Fixture deleted = fixture("retention-delete");

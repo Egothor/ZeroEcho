@@ -56,12 +56,25 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 public record IssuanceIntent(String issuanceId, String commandCommitment,
         CertificateProfileRef expectedProfile, PkiId expectedIssuerId,
         PkiId expectedChainPathId, String expectedChainPathCommitment) {
-    /** Stable internal metadata attribute carrying the non-secret issuance identity. */
+    /**
+     * Stable internal metadata attribute carrying the non-secret issuance identity.
+     */
     public static final AttributeId ID_ATTRIBUTE = new AttributeId("urn:zeroecho:pki:issuance-id:v1");
-    /** Stable internal metadata attribute carrying the canonical command commitment. */
+    /**
+     * Stable internal metadata attribute carrying the canonical command commitment.
+     */
     public static final AttributeId COMMITMENT_ATTRIBUTE =
             new AttributeId("urn:zeroecho:pki:issuance-command-commitment:v1");
-    /** Validates the transport-neutral frozen issuance authority. */
+    /**
+     * Validates the transport-neutral frozen issuance authority.
+     * @param issuanceId stable caller correlation identity
+     * @param commandCommitment SHA-256 commitment of canonical safe issuance input
+     * @param expectedProfile exact activated profile reference
+     * @param expectedIssuerId exact issuer generation
+     * @param expectedChainPathId exact issuance chain path
+     * @param expectedChainPathCommitment frozen chain-path commitment
+     * @throws NullPointerException if expectedProfile, expectedIssuerId or expectedChainPathId is null
+     */
     public IssuanceIntent {
         requireIssuanceId(issuanceId);
         requireDigest(commandCommitment);
@@ -71,12 +84,24 @@ public record IssuanceIntent(String issuanceId, String commandCommitment,
         requireDigest(expectedChainPathCommitment);
     }
 
+    /**
+     * Checks the bounded lowercase caller correlation identifier syntax.
+     *
+     * @param issuanceId one to 128 lowercase letters, digits or permitted separators; the first character must be alphanumeric
+     * @throws IllegalArgumentException if the identity is null or violates the canonical syntax
+     */
     /* default */ static void requireIssuanceId(String issuanceId) {
         if (issuanceId == null || !issuanceId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
             throw new IllegalArgumentException("Issuance identity is invalid");
         }
     }
 
+    /**
+     * Checks the canonical lowercase SHA-256 commitment representation.
+     *
+     * @param value exactly 64 lowercase hexadecimal characters
+     * @throws IllegalArgumentException if the value is null or violates the commitment syntax
+     */
     /* default */ static void requireDigest(String value) {
         if (value == null || !value.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("Issuance commitment is invalid");

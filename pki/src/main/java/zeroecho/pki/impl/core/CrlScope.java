@@ -62,9 +62,13 @@ import zeroecho.pkix.Pkix;
  * arrays and is thread-safe.</p>
  */
 public final class CrlScope {
-    /** Maximum encoded issuer name and canonical UTF-8 name size. */
+    /**
+     * Maximum encoded issuer name and canonical UTF-8 name size.
+     */
     public static final int MAXIMUM_NAME_BYTES = 65_536;
-    /** Maximum canonical SPKI size, matching certificate preparation. */
+    /**
+     * Maximum canonical SPKI size, matching certificate preparation.
+     */
     public static final int MAXIMUM_SPKI_BYTES = 1_048_576;
 
     private final String canonicalIssuerName;
@@ -133,21 +137,33 @@ public final class CrlScope {
         return scope;
     }
 
-    /** {@return canonical X.500 name under JDK principal equality} */
+    /**
+     * {@return canonical X.500 name under JDK principal equality}
+     */
     public String canonicalIssuerName() { return canonicalIssuerName; }
 
-    /** {@return defensive copy of the canonical DER SPKI} */
+    /**
+     * {@return defensive copy of the canonical DER SPKI}
+     */
     public byte[] subjectPublicKeyInfoDer() { return subjectPublicKeyInfoDer.clone(); }
 
-    /** {@return lowercase SHA-256 index locator, never an ownership proof} */
+    /**
+     * {@return lowercase SHA-256 index locator, never an ownership proof}
+     */
     public String digest() { return digest; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof CrlScope scope && canonicalIssuerName.equals(scope.canonicalIssuerName)
                 && Arrays.equals(subjectPublicKeyInfoDer, scope.subjectPublicKeyInfoDer);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() { return digest.hashCode(); }
 

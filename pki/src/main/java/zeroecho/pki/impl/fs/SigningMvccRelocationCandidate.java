@@ -61,6 +61,16 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
     private State state = State.AVAILABLE;
     private PreparedRootSwap preparedSwap;
 
+    /**
+     * Creates an owned detached candidate whose logical endpoint agrees with its accepted prefix.
+     *
+     * @param owner live index permitted to claim this candidate; must not be null
+     * @param detached owned detached MVCC index; must not be null
+     * @param acceptedPrefix exact accepted-prefix descriptor; must not be null
+     * @param checkpointEndOffset exclusive checkpoint byte boundary
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if the detached revision or sequence differs from the accepted endpoint
+     */
     /* default */ SigningMvccRelocationCandidate(SigningMvccIndex owner,
             SigningMvccIndex detached, CommittedPrefixDescriptor acceptedPrefix,
             long checkpointEndOffset) {
@@ -75,7 +85,17 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         this.checkpointEndOffset = checkpointEndOffset;
     }
 
-    /** Applies one newly accepted committed prefix only to the detached index. */
+    /**
+     * Applies one newly accepted committed prefix only to the detached index.
+     * @param channel borrowed seekable WAL channel; must not be null
+     * @param descriptor newly accepted committed-prefix descriptor; must not be null
+     * @param publishedMvccRevision upper authoritative MVCC revision permitted during catch-up
+     * @param decoder bounded committed-frame mutation decoder; must not be null
+     * @return validated accepted-prefix result after detached group application
+     * @throws IOException if WAL reading, validation, or mutation decoding fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalStateException if candidate state or the resulting logical endpoint differs
+     */
     /* default */ SigningCommittedPrefixReader.Result catchUp(
             SeekableByteChannel channel, CommittedPrefixDescriptor descriptor,
             long publishedMvccRevision, FrameMutationDecoder decoder) throws IOException {
@@ -105,7 +125,13 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
-    /** Returns one candidate-only current record for deterministic verification. */
+    /**
+     * Returns one candidate-only current record for deterministic verification.
+     * @param key exact logical metadata key; must not be null
+     * @return candidate-only record pointer, or empty when absent
+     * @throws NullPointerException if key is null
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ Optional<SigningMvccIndex.SnapshotRecord> lookup(MetadataKey key) {
         lifecycleLock.lock();
         try {
@@ -116,6 +142,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the candidate-only authoritative revision.
+     *
+     * @return detached candidate revision
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ long revision() {
         lifecycleLock.lock();
         try {
@@ -126,6 +158,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the candidate-only committed sequence.
+     *
+     * @return detached candidate sequence
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ long lastSequence() {
         lifecycleLock.lock();
         try {
@@ -136,6 +174,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns a defensive copy of the accepted-prefix endpoint commitment.
+     *
+     * @return new 32-byte endpoint commitment
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ byte[] commitment() {
         lifecycleLock.lock();
         try {
@@ -146,11 +190,20 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the exclusive byte boundary of the accepted checkpoint prefix.
+     *
+     * @return exclusive byte boundary of the accepted checkpoint prefix
+     */
     /* default */ long checkpointEndOffset() {
         return checkpointEndOffset;
     }
 
-    /** Returns the immutable authoritative accepted-prefix cursor. */
+    /**
+     * Returns the immutable authoritative accepted-prefix cursor.
+     * @return immutable exact accepted-prefix descriptor
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ CommittedPrefixDescriptor acceptedPrefix() {
         lifecycleLock.lock();
         try {
@@ -163,11 +216,28 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
 
     // Owner instances are capability identities; value equality would permit a
     // different live index to claim this candidate.
+    /**
+     * Tests candidate ownership using the exact live-index identity token.
+     *
+     * @param expectedOwner expected live index identity
+     * @return true only for the identical owning index
+     */
     @SuppressWarnings("PMD.CompareObjectsWithEquals")
     /* default */ boolean ownedBy(SigningMvccIndex expectedOwner) {
         return owner == expectedOwner;
     }
 
+    /**
+     * Transfers the detached candidate into a prevalidated root-swap token for the exact endpoint.
+     *
+     * @param expectedRevision exact required candidate revision
+     * @param expectedSequence exact required candidate committed sequence
+     * @param expectedCommitment 32-byte required candidate endpoint commitment
+     * @return owned root-swap token; publish it or close it to release candidate resources
+     * @throws NullPointerException if expectedCommitment is null
+     * @throws IllegalArgumentException if the commitment is not 32 bytes
+     * @throws IllegalStateException if candidate state or endpoint differs
+     */
     /* default */ PreparedRootSwap prepare(long expectedRevision,
             long expectedSequence, byte[] expectedCommitment) {
         byte[] checked = checkedCommitment(expectedCommitment);
@@ -192,6 +262,14 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
 
     // The prepared token is a unique capability, so only the exact instance may
     // publish this candidate.
+    /**
+     * Requires the exact active prepared token and frozen candidate endpoint.
+     *
+     * @param expected exact prepared swap token retaining this candidate
+     * @param expectedRevision exact required candidate revision
+     * @param expectedSequence exact required candidate committed sequence
+     * @throws IllegalStateException if token identity, ownership state, or endpoint differs
+     */
     @SuppressWarnings("PMD.CompareObjectsWithEquals")
     /* default */ void requirePrepared(PreparedRootSwap expected,
             long expectedRevision, long expectedSequence) {
@@ -214,6 +292,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
 
     // Publication consumes the same unique prepared capability that owns the
     // detached root; value equality is intentionally invalid.
+    /**
+     * Marks this candidate consumed after its exact prepared token publishes the live root.
+     *
+     * @param expected exact active swap token
+     * @throws IllegalStateException if token identity or candidate ownership state differs
+     */
     @SuppressWarnings("PMD.CompareObjectsWithEquals")
     /* default */ void transferred(PreparedRootSwap expected) {
         lifecycleLock.lock();
@@ -288,6 +372,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         advanceAccepted(acceptedGroup);
     }
 
+    /**
+     * Observes validated committed groups applied during candidate catch-up.
+     *
+     * @return detached WAL-group application count
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ long appliedGroups() {
         lifecycleLock.lock();
         try {
@@ -298,6 +388,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes generation reference-map copies made by candidate group application.
+     *
+     * @return reference-map copy count
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ long generationReferenceCopies() {
         lifecycleLock.lock();
         try {
@@ -308,6 +404,12 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Measures the candidate root's tracked steady-state workspace.
+     *
+     * @return candidate resident reservation estimate in bytes
+     * @throws IllegalStateException if the candidate is no longer usable
+     */
     /* default */ long steadyReservedBytes() {
         lifecycleLock.lock();
         try {
@@ -373,6 +475,14 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
+    /**
+     * Closes an available detached candidate without affecting a transferred live root.
+     *
+     * <p>Already closed or transferred candidates are no-ops. An update or prepared swap
+     * must finish its ownership transition before this candidate can be closed.</p>
+     *
+     * @throws IllegalStateException if this candidate is currently in use
+     */
     @Override
     public void close() {
         lifecycleLock.lock();
@@ -398,15 +508,25 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         return value.clone();
     }
 
-    /** Decodes one validated committed frame into its bounded MVCC mutations. */
+    /**
+     * Decodes one validated committed frame into its bounded MVCC mutations.
+     */
     /* default */ @FunctionalInterface
     interface FrameMutationDecoder {
-        /** Returns the semantic mutations represented by one committed frame. */
+        /**
+         * Returns the semantic mutations represented by one committed frame.
+         * @param frame validated committed WAL frame
+         * @param pointer exact physical pointer for the frame
+         * @return bounded semantic mutation list for the committed frame
+         * @throws IOException if frame mutation semantics cannot be decoded
+         */
         List<SigningMvccIndex.Mutation> decode(SigningWalFrameCodec.ScannedFrame frame,
                 SigningMvccIndex.RecordPointer pointer) throws IOException;
     }
 
-    /** Short-lived rollback token owning one detached root until publication. */
+    /**
+     * Short-lived rollback token owning one detached root until publication.
+     */
     /* default */ static final class PreparedRootSwap implements AutoCloseable {
         private final SigningMvccIndex owner;
         private final SigningMvccRelocationCandidate candidate;
@@ -432,7 +552,10 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
             this.expectedCommitment = expectedCommitment;
         }
 
-        /** Publishes the already prepared candidate root without allocation or I/O. */
+        /**
+         * Publishes the already prepared candidate root without allocation or I/O.
+         * @throws IllegalStateException if the prepared swap is inactive or has already been published
+         */
         /* default */ void publish() {
             lifecycleLock.lock();
             try {
@@ -445,6 +568,11 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the prepared detached multiversion root state.
+         *
+         * @return prepared detached multiversion root state
+         */
         /* default */ SigningMvccIndex.RelocationRootState relocationRoot() {
             return rootState;
         }
@@ -453,11 +581,23 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
             rootState = Objects.requireNonNull(value, "rootState");
         }
 
+        /**
+         * Attaches an already acquired cutover capacity permit to the prepared swap.
+         *
+         * @param value owned cutover capacity permit; must not be null
+         * @throws NullPointerException if value is null
+         */
         /* default */ void attachCapacityPermit(
                 SigningIndexCapacityBudget.CutoverPermit value) {
             capacityPermit = Objects.requireNonNull(value, "capacityPermit");
         }
 
+        /**
+         * Returns the cutover capacity permit retained by this swap.
+         *
+         * @return borrowed attached capacity permit
+         * @throws IllegalStateException if no permit was attached
+         */
         /* default */ SigningIndexCapacityBudget.CutoverPermit capacityPermit() {
             if (capacityPermit == null) {
                 throw new IllegalStateException("signing relocation capacity permit is absent");
@@ -465,22 +605,49 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
             return capacityPermit;
         }
 
+        /**
+         * Returns the exact relocation candidate whose ownership is reserved by this swap.
+         *
+         * @return exact relocation candidate whose ownership is reserved by this swap
+         */
         /* default */ SigningMvccRelocationCandidate candidate() {
             return candidate;
         }
 
+        /**
+         * Returns the authoritative revision expected before publishing the swap.
+         *
+         * @return authoritative revision expected before publishing the swap
+         */
         /* default */ long expectedRevision() {
             return expectedRevision;
         }
 
+        /**
+         * Returns the last committed sequence expected before publishing the swap.
+         *
+         * @return last committed sequence expected before publishing the swap
+         */
         /* default */ long expectedSequence() {
             return expectedSequence;
         }
 
+        /**
+         * Reports whether this prepared swap still holds active ownership.
+         *
+         * @return true while the prepared root swap remains active
+         */
         /* default */ boolean active() {
             return active;
         }
 
+        /**
+         * Retains displaced-root cleanup ownership after successful live publication.
+         *
+         * @param displacedReferences physical-generation reference counts held by the old root
+         * @param displacedReservedBytes old root resident reservation, in bytes
+         * @param releaseReservation whether close must also release the displaced resident reservation
+         */
         /* default */ void published(Map<Long, Integer> displacedReferences,
                 long displacedReservedBytes, boolean releaseReservation) {
             previousReferences = displacedReferences;
@@ -489,6 +656,16 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
             published = true;
         }
 
+        /**
+         * Releases this swap's owned resources after rollback or successful publication.
+         *
+         * <p>Before publication, rolls back candidate/root custody. After publication, releases
+         * the displaced root's generation references and any retained resident reservation.
+         * Both paths close the attached cutover permit. This token becomes inactive before
+         * cleanup; subsequent close calls are no-ops even if cleanup failed.</p>
+         *
+         * @throws IllegalStateException if the required cutover permit is absent or ownership cleanup is inconsistent
+         */
         @Override
         // The permit is acquired before manifest I/O and therefore cannot be
         // represented by a lexical try-with-resources scope in this close path.
@@ -547,7 +724,9 @@ final class SigningMvccRelocationCandidate implements AutoCloseable {
         }
     }
 
-    /** Candidate lifecycle states owned exclusively by {@link #lifecycleLock}. */
+    /**
+     * Candidate lifecycle states owned exclusively by {@link #lifecycleLock}.
+     */
     private enum State {
         AVAILABLE,
         UPDATING,

@@ -48,17 +48,34 @@ import java.util.function.Function;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Closed bounded JSON projection for the separately versioned runtime companion. */
+/**
+ * Closed bounded JSON projection for the separately versioned runtime companion.
+ */
 final class EnrollmentRuntimeConfigurationCodec {
     private static final int MAXIMUM_BYTES = 1_048_576;
     private EnrollmentRuntimeConfigurationCodec() { }
 
+    /**
+     * Reads and decodes a separately versioned enrollment runtime companion configuration.
+     *
+     * @param path runtime configuration file
+     * @return validated immutable companion configuration
+     * @throws IOException if the file cannot be read
+     * @throws IllegalArgumentException if the document is oversized, malformed or unsupported
+     */
     /* default */ static EnrollmentRuntimeConfiguration read(Path path) throws IOException {
         try (InputStream input = Files.newInputStream(path)) {
             return decode(input.readNBytes(MAXIMUM_BYTES + 1));
         }
     }
 
+    /**
+     * Decodes the exact closed runtime-companion JSON schema under a one-megabyte bound.
+     *
+     * @param bytes complete UTF-8 JSON document
+     * @return validated immutable runtime companion configuration
+     * @throws IllegalArgumentException if fields, types, version, counts or configuration values are invalid
+     */
     /* default */ static EnrollmentRuntimeConfiguration decode(byte[] bytes) {
         Map<String, PkiOperationValue> fields = object(StrictJson.parse(bytes, MAXIMUM_BYTES),
                 Set.of("version", "budgets", "keyrings", "credentialSets", "activeCredentials"), Set.of("keygenArtifacts"));

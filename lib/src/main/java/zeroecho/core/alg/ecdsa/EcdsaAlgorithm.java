@@ -147,6 +147,9 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

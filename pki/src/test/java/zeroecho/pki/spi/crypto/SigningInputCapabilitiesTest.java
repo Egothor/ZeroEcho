@@ -47,10 +47,16 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 
+/**
+ * Contract and regression tests for signing input capabilities.
+ */
 final class SigningInputCapabilitiesTest {
     private static final String RSA = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm();
     private static final String EC = BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm();
 
+    /**
+     * Exact prehash wins and raw limit is inclusive.
+     */
     @Test
     void exactPrehashWinsAndRawLimitIsInclusive() {
         SigningInputCapabilities capabilities = new SigningInputCapabilities(10,
@@ -64,6 +70,9 @@ final class SigningInputCapabilitiesTest {
         assertThrows(IllegalArgumentException.class, () -> new SigningInputCapabilities(0, Map.of()));
     }
 
+    /**
+     * Rejects digest substitution pure ed private families and unknown digests.
+     */
     @Test
     void rejectsDigestSubstitutionPureEdPrivateFamiliesAndUnknownDigests() {
         assertThrows(IllegalArgumentException.class, () -> new SigningInputCapabilities(1,
@@ -77,6 +86,9 @@ final class SigningInputCapabilitiesTest {
         assertThrows(IllegalArgumentException.class, () -> SigningInputCapabilities.requiredDigest(privateSignature));
     }
 
+    /**
+     * Exact pss parameters and map order are committed.
+     */
     @Test
     void exactPssParametersAndMapOrderAreCommitted() {
         AlgorithmIdentity pss = BootstrapAlgorithmIdentities.rsaPss(BootstrapAlgorithmIdentities.SHA256,
@@ -104,6 +116,9 @@ final class SigningInputCapabilitiesTest {
         assertThrows(IllegalArgumentException.class, () -> left.commitment(backend, Set.of(RSA)));
     }
 
+    /**
+     * Rejects recursive signature parameters before general identity parsing.
+     */
     @Test
     void rejectsRecursiveSignatureParametersBeforeGeneralIdentityParsing() {
         String nested = "digest=zeroecho.sha2-256.".repeat(8) + "none";

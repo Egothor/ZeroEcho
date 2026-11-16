@@ -71,11 +71,22 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
     private final ServerControlStore control;
     private final EnrollmentProfileService profiles;
     private EnrollmentRuntime runtime;
-    /** Closed protocols sharing the durable enrollment endpoint authority. */
+    /**
+     * Closed protocols sharing the durable enrollment endpoint authority.
+     */
     public enum Protocol {
-        /** Enrollment over Secure Transport. */ EST,
-        /** Simple Certificate Enrollment Protocol. */ SCEP,
-        /** Certificate Management Protocol. */ CMP
+        /**
+         * Enrollment over Secure Transport.
+         */
+        EST,
+        /**
+         * Simple Certificate Enrollment Protocol.
+         */
+        SCEP,
+        /**
+         * Certificate Management Protocol.
+         */
+        CMP
     }
 
     /**
@@ -86,7 +97,16 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * @param commitment SHA-256 commitment of the exact persisted snapshot
      */
     public record Snapshot(EnrollmentEndpoint endpoint, long revision, boolean active, String commitment) {
-        /** Validates snapshot metadata. */
+        /**
+         * Validates snapshot metadata.
+         * @param endpoint immutable complete configuration
+         * @param revision positive monotonic record revision
+         * @param active false for a removed endpoint
+         * @param commitment SHA-256 commitment of the exact persisted snapshot
+         * @throws NullPointerException if {@code endpoint} is null
+         * @throws IllegalArgumentException if endpoint identity, revision or retained commitments are
+         *         inconsistent
+         */
         public Snapshot {
             Objects.requireNonNull(endpoint, "endpoint");
             if (revision < 1 || commitment == null || !commitment.matches("[0-9a-f]{64}")) {
@@ -101,6 +121,8 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * failure writes no pin; uncertain persistence is never rolled back.
      * Validation uses immutable provisioned metadata, never key-provider calls.
      * @param capability fully validated runtime owner
+     * @throws NullPointerException if {@code capability} is null
+     * @throws IllegalStateException if an enrollment runtime is already installed
      */
     public void installRuntime(EnrollmentRuntime capability) {
         Objects.requireNonNull(capability, "capability");
@@ -124,6 +146,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * @param control realm-owned open persistence authority
      * @param profiles realm-owned enrollment profile registry
      * @throws IllegalStateException if persisted records or active references are invalid
+     * @throws NullPointerException if any of {@code control}, {@code profiles} is null
      */
     public EnrollmentEndpointRegistry(ServerControlStore control, EnrollmentProfileService profiles) {
         this.control = Objects.requireNonNull(control, "control");
@@ -147,6 +170,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * @param endpoint complete immutable endpoint with an explicit enrollment policy
      * @return exact committed snapshot
      * @throws IllegalStateException if binding validation, CAS, or persistence fails
+     * @throws NullPointerException if {@code endpoint} is null
      */
     public Snapshot register(EnrollmentEndpoint endpoint) {
         Objects.requireNonNull(endpoint, "endpoint");
@@ -162,6 +186,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * Validates current endpoint bindings and runtime capabilities without publishing metadata.
      * @param endpoint exact proposed endpoint
      * @throws IllegalStateException if an active policy or runtime capability is unavailable
+     * @throws NullPointerException if {@code endpoint} is null
      */
     public void validateRegistration(EnrollmentEndpoint endpoint) {
         Objects.requireNonNull(endpoint,"endpoint");
@@ -209,6 +234,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * Concurrent writes across pages do not form one atomic snapshot.
      * @param protocol exact protocol family
      * @return immutable configurations; O(N) retained output memory
+     * @throws NullPointerException if {@code protocol} is null
      */
     public List<EnrollmentEndpoint> list(Protocol protocol) {
         Objects.requireNonNull(protocol, "protocol");
@@ -234,6 +260,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * @param endpoint configuration resolved for the incoming protocol request
      * @return exact current active endpoint snapshot
      * @throws IllegalStateException if removed, replaced, unbound, suspended, or unauthorized
+     * @throws NullPointerException if {@code endpoint} is null
      */
     public Snapshot requireCurrent(EnrollmentEndpoint endpoint) {
         Objects.requireNonNull(endpoint, "endpoint");
@@ -253,6 +280,15 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
 
     // The caller holds the same control-store monitor used by endpoint registration.
     // This prevents a validated reverse-reference scan from racing with a new binding.
+    /**
+     * Rejects profile replacement that would invalidate active enrollment or ACME endpoint bindings.
+     *
+     * <p>The caller holds the control-store monitor used for endpoint registration.</p>
+     *
+     * @param control exact durable realm control authority
+     * @param replacement proposed enrollment profile
+     * @throws IllegalStateException if an active endpoint would become incompatible
+     */
     /* default */ static void requireCompatibleProfile(ServerControlStore control, EnrollmentProfile replacement) {
         new zeroecho.pki.server.acme.AcmeControlStore(control).requireCompatibleEnrollmentProfile(replacement);
         int offset = 0;
@@ -277,6 +313,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
      * Commits all endpoint fields independently of the storage revision.
      * @param endpoint complete proposed configuration
      * @return lowercase SHA-256 content commitment
+     * @throws NullPointerException if {@code endpoint} is null
      */
     public static String commitment(EnrollmentEndpoint endpoint) {
         return sha256(encode(Objects.requireNonNull(endpoint, "endpoint"), 1, true));

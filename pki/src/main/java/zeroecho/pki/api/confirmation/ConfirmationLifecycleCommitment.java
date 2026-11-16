@@ -42,13 +42,34 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 
-/** Canonical domain-separated SHA-256 commitment encoder for lifecycle record version 2. */
+/**
+ * Canonical domain-separated SHA-256 commitment encoder for lifecycle record version 2.
+ */
 final class ConfirmationLifecycleCommitment {
     private static final byte[] DOMAIN =
             "zeroecho:credential-confirmation-lifecycle:v2".getBytes(StandardCharsets.UTF_8);
 
     private ConfirmationLifecycleCommitment() { }
 
+    /**
+     * Commits to lifecycle coordinates using the version 2 domain and canonical field order.
+     *
+     * <p>Inputs must already satisfy the immutable lifecycle model's validation rules.
+     * This method hashes the supplied state without querying or changing lifecycle storage.</p>
+     *
+     * @param credentialId exact credential identity
+     * @param revision expected lifecycle revision
+     * @param initialPolicy initial disclosure classification
+     * @param initialPolicyCommitment canonical initial policy commitment
+     * @param confirmationRequired whether confirmation is required
+     * @param confirmationReviewAt instant at which confirmation must be reviewed
+     * @param proofSuite exact suite identifier and configuration commitment
+     * @param consumedChallengeCommitment consumed challenge commitment, or an empty optional
+     * @param confirmedAt confirmation instant, or an empty optional
+     * @return 64 lowercase hexadecimal characters encoding the SHA-256 commitment
+     * @throws NullPointerException if a required reference is null
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static String calculate(PkiId credentialId, long revision,
             ConfirmationDisclosurePolicy initialPolicy,
             String initialPolicyCommitment, boolean confirmationRequired, Instant confirmationReviewAt,

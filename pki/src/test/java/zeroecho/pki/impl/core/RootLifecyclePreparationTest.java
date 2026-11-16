@@ -101,7 +101,16 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for root lifecycle preparation.
+ */
 final class RootLifecyclePreparationTest {
+    /**
+     * Rollover uses current key active profile and trusted principal beyond old expiry.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rolloverUsesCurrentKeyActiveProfileAndTrustedPrincipalBeyondOldExpiry(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
         try (FilesystemPkiStore actual = open(root, clock)) {
@@ -148,6 +157,12 @@ final class RootLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Rotation selects supplied key and permits same reference.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rotationSelectsSuppliedKeyAndPermitsSameReference(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root, RootCreationFixture.CLOCK)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -182,6 +197,13 @@ final class RootLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Retained rotation signature recovers and wrong key cannot advance authority.
+     *
+     * @param wrongKey whether the fixture intentionally signs with an unrelated key
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void retainedRotationSignatureRecoversAndWrongKeyCannotAdvanceAuthority(boolean wrongKey, @TempDir Path root) throws Exception {
@@ -237,6 +259,12 @@ final class RootLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Authority profile attributes and requested validity fail before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void authorityProfileAttributesAndRequestedValidityFailBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root, RootCreationFixture.CLOCK)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -296,6 +324,12 @@ final class RootLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Root typed cancellation retires only its single staged candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rootTypedCancellationRetiresOnlyItsSingleStagedCandidate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root, RootCreationFixture.CLOCK)) {
             RootCreationFixture fixture = new RootCreationFixture();

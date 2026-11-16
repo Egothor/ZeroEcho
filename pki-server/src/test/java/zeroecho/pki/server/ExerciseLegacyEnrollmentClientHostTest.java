@@ -63,9 +63,18 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
 
-/** Host-only protocol message preparation with client credentials and public certificates. */
+/**
+ * Host-only protocol message preparation with client credentials and public certificates.
+ */
 class ExerciseLegacyEnrollmentClientHostTest {
     private static final String ENVIRONMENT="a".repeat(32), RUN="b".repeat(32);
+    /**
+     * Checks protected SCEP and CMP client messages and signatures without creating server configuration or private key stores.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void preparesProtectedScepAndCmpWithoutServerConfigurationOrKeys(@TempDir Path root)throws Exception {
         Files.setPosixFilePermissions(root,PosixFilePermissions.fromString("rwx------"));
         if(Security.getProvider("BC")==null)Security.addProvider(new BouncyCastleProvider());

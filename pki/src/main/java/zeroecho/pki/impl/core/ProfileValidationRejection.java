@@ -46,11 +46,22 @@ final class ProfileValidationRejection extends PkiException {
 
     private final String rejectionCode;
 
+    /**
+     * Captures a stable profile rejection code without parsing or exposing provider diagnostics.
+     *
+     * @param rejectionCode nonblank sanitized rejection code
+     * @throws IllegalArgumentException if the code is null or blank
+     */
     /* default */ ProfileValidationRejection(String rejectionCode) {
         super("End-entity profile validation rejected: code=" + requireCode(rejectionCode));
         this.rejectionCode = rejectionCode;
     }
 
+    /**
+     * Returns the structured rejection code retained by this failure.
+     *
+     * @return nonblank sanitized profile rejection code
+     */
     /* default */ String rejectionCode() {
         return rejectionCode;
     }

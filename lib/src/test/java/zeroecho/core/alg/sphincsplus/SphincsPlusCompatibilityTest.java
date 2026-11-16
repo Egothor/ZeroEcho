@@ -51,12 +51,21 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for sphincs plus compatibility.
+ */
 class SphincsPlusCompatibilityTest {
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void provider() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Unsupported modes cannot be hidden by an override.
+     */
     @Test
     void unsupportedModesCannotBeHiddenByAnOverride() {
         SphincsPlusKeyGenBuilder builder = new SphincsPlusKeyGenBuilder();
@@ -83,6 +92,11 @@ class SphincsPlusCompatibilityTest {
                 SphincsPlusKeyGenSpec.Variant.FAST, SphincsPlusKeyGenSpec.Mode.SIMPLE)));
     }
 
+    /**
+     * Preserves explicit pure parameter override.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void preservesExplicitPureParameterOverride() throws Exception {
         KeyPair pair = new SphincsPlusKeyGenBuilder().generateKeyPair(
@@ -93,6 +107,11 @@ class SphincsPlusCompatibilityTest {
         assertEquals("SLH-DSA-SHAKE-128F", key.getParameterSpec().getName().toUpperCase(java.util.Locale.ROOT));
     }
 
+    /**
+     * New and missing provider payloads import but legacy provider is rejected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void newAndMissingProviderPayloadsImportButLegacyProviderIsRejected() throws Exception {
         KeyPair pair = new SphincsPlusKeyGenBuilder().generateKeyPair(

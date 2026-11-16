@@ -57,8 +57,16 @@ import zeroecho.pki.impl.audit.InMemoryAuditSink;
  * commitment, bounded on retrieval, and free of decision payload.
  */
 class AuditEvidenceReconstructionTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks request, two distinct approvals and execution reconstruct one commitment-bound attributable audit chain without private operation payload.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void thresholdApprovedOperationReconstructsCompleteAttributableChainWithoutPayload() throws Exception {
         System.out.println("thresholdApprovedOperationReconstructsCompleteAttributableChainWithoutPayload");

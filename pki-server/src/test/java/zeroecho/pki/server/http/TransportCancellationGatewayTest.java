@@ -48,7 +48,13 @@ import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.server.ServerOperationGateway;
 import zeroecho.pki.server.acme.AcmeService;
 
+/**
+ * Checks that transport adapters preserve the exact runtime cancellation token across signing boundaries.
+ */
 final class TransportCancellationGatewayTest {
+    /**
+     * Checks administrative, ACME and OCSP adapters forward the exact same cancellation instance and preserve delegated outcomes.
+     */
     @Test
     void preservesOneRuntimeTokenAcrossEverySigningTransportBoundary() {
         ServerRuntime.CancellationToken cancellation = new ServerRuntime.CancellationToken();

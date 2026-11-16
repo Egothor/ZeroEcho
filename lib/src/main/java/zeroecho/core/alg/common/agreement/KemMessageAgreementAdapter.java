@@ -79,9 +79,13 @@ public final class KemMessageAgreementAdapter implements MessageAgreementContext
      * Role of the adapter: initiator or responder.
      */
     public enum Role {
-        /** Initiator: produces a peer message via encapsulation. */
+        /**
+         * Initiator: produces a peer message via encapsulation.
+         */
         INITIATOR,
-        /** Responder: consumes a peer message via decapsulation. */
+        /**
+         * Responder: consumes a peer message via decapsulation.
+         */
         RESPONDER
     }
 
@@ -212,6 +216,7 @@ public final class KemMessageAgreementAdapter implements MessageAgreementContext
      *
      * @return defensive copy of the derived secret
      * @throws UncheckedIOException if encapsulation/decapsulation fails
+     * @throws IllegalStateException if the responder has not received the peer encapsulation message
      */
     @Override
     public byte[] deriveSecret() {

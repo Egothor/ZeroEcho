@@ -55,10 +55,16 @@ import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Checks durable schedule traversal, bounded generation and scheduling observations across execution states.
+ */
 class StatusScheduleExecutorTest {
     private static final Instant NOW = Instant.parse("2026-10-05T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
+    /**
+     * Checks traversal of 205 schedules in 200-row pages continues past one failure and includes disabled unfinished work.
+     */
     @Test void traversesAllPagesAndDisabledUnfinishedWorkDespiteOneFailure() {
         List<StatusScheduleState> rows = new ArrayList<>();
         for (int index = 0; index < 205; index++) rows.add(state(index, index != 204));
@@ -84,6 +90,9 @@ class StatusScheduleExecutorTest {
         assertEquals(Optional.of(NOW.plusSeconds(60)), hints.nextEligible());
     }
 
+    /**
+     * Checks a transition to failed state emits one failure classification while repeated observation does not inflate the counter.
+     */
     @Test void reportsFailedTransitionOnceButDoesNotCountRepeatedObservationAsFailure() {
         StatusScheduleState observed = state(1, true);
         StatusScheduleState.Execution execution = new StatusScheduleState.Execution("a".repeat(64),
@@ -103,6 +112,9 @@ class StatusScheduleExecutorTest {
         assertEquals(List.of("STATUS_SCHEDULE_FAILED"), failures);
     }
 
+    /**
+     * Checks cancellation propagates without schedule-failure telemetry and already-cancelled work returns idle hints.
+     */
     @Test void cancellationDoesNotBecomeAnExecutionFailure() {
         List<String> failures = new ArrayList<>();
         StatusScheduleCoordinator service = new StatusScheduleCoordinator() {

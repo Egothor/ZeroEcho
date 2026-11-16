@@ -57,10 +57,16 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationValue;
 
+/**
+ * Protocol contract tests using scripted exchanges for submission, receipts, and observation.
+ */
 class PkiRemoteTransportTest {
     private static final CancellationSignal ACTIVE = () -> false;
     private static final String DIGEST = "a".repeat(64);
 
+    /**
+     * Checks that the submitted envelope retains authority, approval, deadline, and typed arguments.
+     */
     @Test
     void encodesRequestScopeAndTypedArguments() {
         byte[] body = PkiRemoteEnvelope.encodeRequest(Optional.of("authority"), Optional.of("approval"),
@@ -71,6 +77,11 @@ class PkiRemoteTransportTest {
         assertEquals(new PkiOperationValue.Text("approval"), parsed.fields().get("approvalId"));
     }
 
+    /**
+     * Checks successful and denied server envelopes without inventing values for absent optional fields.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void realSuccessAndFailureNullSlotsAndServerDenialArePreserved() throws Exception {
         PkiRemoteResult success = submit(new Script(request -> success("ca.list", "{}")), Duration.ZERO, ACTIVE);
@@ -82,6 +93,11 @@ class PkiRemoteTransportTest {
         assertTrue(((PkiRemoteResult.Failed) failure).reconciliationRequired());
     }
 
+    /**
+     * Checks stable CLI exit codes for each supported remote failure classification.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void failureClassificationsRetainStableExitCodes() throws Exception {
         Map<String, Integer> cases = Map.ofEntries(Map.entry("VALIDATION_FAILURE", 4), Map.entry("POLICY_REJECTION", 4),
@@ -96,6 +112,9 @@ class PkiRemoteTransportTest {
         }
     }
 
+    /**
+     * Rejects malformed envelopes and contradictions between HTTP and protocol status.
+     */
     @Test
     void invalidVersionTypesNullsDuplicatesAndHttpConflictsNeverSucceed() {
         String valid = json("ca.list", "SUCCEEDED", "{}", "null");
@@ -119,6 +138,11 @@ class PkiRemoteTransportTest {
         assertProtocol(new Script(request -> response(404, badFlag)));
     }
 
+    /**
+     * Accepts an approval requirement only with its explicit protocol status and validated commitment.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void approvalRequiresExplicitTypedStatusAndCommitment() throws Exception {
         Script exchange = new Script(request -> response(409, json("ca.list", "APPROVAL_REQUIRED",
@@ -129,6 +153,11 @@ class PkiRemoteTransportTest {
         assertEquals(1, exchange.requests.size());
     }
 
+    /**
+     * Uses the response-body receipt and performs no observation when the wait budget is zero.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void receiptComesOnlyFromBodyAndZeroWaitNeverPolls() throws Exception {
         Script exchange = new Script(request -> pending("ca.list", "sign-1"));
@@ -144,6 +173,11 @@ class PkiRemoteTransportTest {
         }
     }
 
+    /**
+     * Checks single submission followed by observation of the same receipt until completion.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signsOnceAndPollsOnlySameReceiptThroughCompletion() throws Exception {
         Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
@@ -162,6 +196,11 @@ class PkiRemoteTransportTest {
         }
     }
 
+    /**
+     * Retains the accepted receipt when later observations change its identity or contain invalid completion data.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void changedReceiptOrMalformedCompletionRetainsPendingReceipt() throws Exception {
         for (String body : List.of(completion("changed"), "{\"operationId\":\"sign-1\"}",
@@ -180,6 +219,11 @@ class PkiRemoteTransportTest {
         assertPending(submit(wrongOperation, Duration.ofSeconds(1), ACTIVE), 9);
     }
 
+    /**
+     * Preserves receipt identity and server recovery requirements after an accepted operation fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void postAcceptanceFailureRetainsReceiptAndServerRecoveryFlags() throws Exception {
         Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
@@ -194,6 +238,11 @@ class PkiRemoteTransportTest {
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"sign-1\""));
     }
 
+    /**
+     * Retains pending work on observation failures without retrying the original submission.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void pollingNetworkAndProtocolFailuresRetainReceiptWithoutRetry() throws Exception {
         for (boolean protocol : List.of(true, false)) {
@@ -212,6 +261,9 @@ class PkiRemoteTransportTest {
         }
     }
 
+    /**
+     * Checks one read-only inspection using the encoded receipt path rather than a Location redirect.
+     */
     @Test
     void inspectionUsesOneGetAndEncodesDotSegmentsWithoutRoutingFromLocation() {
         for (String id : List.of("sign-1", ".", "..", "a?b#c")) {
@@ -225,6 +277,11 @@ class PkiRemoteTransportTest {
         }
     }
 
+    /**
+     * Checks that local wait expiry and cancellation neither resubmit nor cancel server work.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void waitBudgetExpiryAndCancellationNeverResubmitOrCancelBackend() throws Exception {
         Script exchange = new Script(request -> pending("ca.list", "sign-1"));
@@ -243,6 +300,11 @@ class PkiRemoteTransportTest {
         assertPending(submit(budgetExchange, Duration.ofMillis(100), ACTIVE), 7);
     }
 
+    /**
+     * Checks interruption during polling while retaining the receipt and restoring thread interruption.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void pollingInterruptionRestoresFlagAndKeepsReceipt() throws Exception {
         Script exchange = new Script(request -> {
@@ -256,6 +318,11 @@ class PkiRemoteTransportTest {
         } finally { Thread.interrupted(); }
     }
 
+    /**
+     * Distinguishes unknown submission acceptance from TLS configuration failure without inventing a receipt.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void unknownSubmissionAcceptanceHasNoInventedReceiptWhileHandshakeIsConfigurationFailure() throws Exception {
         for (IOException error : List.of(new IOException("connection lost"), new SSLException("after handshake"))) {
@@ -272,6 +339,11 @@ class PkiRemoteTransportTest {
                 () -> submit(new Script(request -> response(401, "")), Duration.ZERO, ACTIVE)).exitCode());
     }
 
+    /**
+     * Checks cancellation before any request and rejects unsupported synchronous signing completion.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cancellationBeforeSubmitSendsNothingAndSigningSubmissionCannotSucceedSynchronously() throws Exception {
         Script exchange = new Script(request -> success("ca.create", completion("sign-1")));
@@ -281,6 +353,9 @@ class PkiRemoteTransportTest {
                 .submit("ca.create", empty(), Optional.empty(), Optional.empty(), Optional.empty(), ACTIVE)).exitCode());
     }
 
+    /**
+     * Accepts supported large protocol results while retaining the separate configuration-input bounds.
+     */
     @Test
     void responseLimitsAcceptRealLargeResultsWithoutRelaxingConfiguration() {
         String longString = "x".repeat(5000);

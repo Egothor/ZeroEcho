@@ -69,75 +69,149 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
         Authentication authentication, Authorization authorization, Optional<AuthorizationPath> authorizationPath,
         Optional<String> operationCommitment, String issuerCaId, String profileId, Outcome outcome) {
 
-    /** Stable evidence actor classifications. */
+    /**
+     * Stable evidence actor classifications.
+     */
     public enum ActorType {
-        /** Authenticated administrative principal. */
+        /**
+         * Authenticated administrative principal.
+         */
         ADMIN_PRINCIPAL,
-        /** Protocol-native ACME account. */
+        /**
+         * Protocol-native ACME account.
+         */
         ACME_ACCOUNT,
-        /** Authenticated EST certificate holder. */ EST_CLIENT,
-        /** Verified SCEP CMS signer. */ SCEP_SIGNER,
-        /** Trusted CMP message signature identity. */ CMP_SIGNER,
-        /** Explicitly provisioned CMP PBM requester identity. */ CMP_PBM
+        /**
+         * Authenticated EST certificate holder.
+         */ EST_CLIENT,
+        /**
+         * Verified SCEP CMS signer.
+         */ SCEP_SIGNER,
+        /**
+         * Trusted CMP message signature identity.
+         */ CMP_SIGNER,
+        /**
+         * Explicitly provisioned CMP PBM requester identity.
+         */ CMP_PBM
     }
-    /** Stable evidence authentication classifications. */
+    /**
+     * Stable evidence authentication classifications.
+     */
     public enum Authentication {
-        /** Direct mutual-TLS client authentication. */
+        /**
+         * Direct mutual-TLS client authentication.
+         */
         DIRECT_MTLS,
-        /** Identity asserted by a trusted reverse proxy. */
+        /**
+         * Identity asserted by a trusted reverse proxy.
+         */
         TRUSTED_REVERSE_PROXY,
-        /** ACME account JSON Web Signature authentication. */
+        /**
+         * ACME account JSON Web Signature authentication.
+         */
         ACME_ACCOUNT_JWS,
-        /** EST protocol client certificate authentication. */ EST_MTLS,
-        /** Verified SCEP CMS message signature. */ SCEP_CMS,
-        /** Verified authority-scoped CMP signature protection. */ CMP_SIGNATURE,
-        /** Verified authority-scoped CMP password-based MAC. */ CMP_PBM
+        /**
+         * EST protocol client certificate authentication.
+         */ EST_MTLS,
+        /**
+         * Verified SCEP CMS message signature.
+         */ SCEP_CMS,
+        /**
+         * Verified authority-scoped CMP signature protection.
+         */ CMP_SIGNATURE,
+        /**
+         * Verified authority-scoped CMP password-based MAC.
+         */ CMP_PBM
     }
-    /** Stable evidence authorization classifications. */
+    /**
+     * Stable evidence authorization classifications.
+     */
     public enum Authorization {
-        /** Administrative policy allowed issuance. */
+        /**
+         * Administrative policy allowed issuance.
+         */
         ALLOWED,
-        /** ACME account ownership authorized issuance. */
+        /**
+         * ACME account ownership authorized issuance.
+         */
         ACME_OWNERSHIP,
-        /** Exact durable enrollment policy admitted this protocol request. */ ENROLLMENT_POLICY
+        /**
+         * Exact durable enrollment policy admitted this protocol request.
+         */ ENROLLMENT_POLICY
     }
-    /** Exact administrative or enrollment authorization path; administrative break-glass takes precedence. */
+    /**
+     * Exact administrative or enrollment authorization path; administrative break-glass takes precedence.
+     */
     public enum AuthorizationPath {
-        /** Ordinary administrative grant. */
+        /**
+         * Ordinary administrative grant.
+         */
         ORDINARY_GRANT,
-        /** Explicit approval workflow. */
+        /**
+         * Explicit approval workflow.
+         */
         APPROVAL,
-        /** Audited emergency break-glass path. */
+        /**
+         * Audited emergency break-glass path.
+         */
         BREAK_GLASS,
-        /** Enrollment policy explicitly permits issuance without administrative approval. */ ENROLLMENT_POLICY
+        /**
+         * Enrollment policy explicitly permits issuance without administrative approval.
+         */ ENROLLMENT_POLICY
     }
-    /** Outcome committed atomically with the credential. */
+    /**
+     * Outcome committed atomically with the credential.
+     */
     public enum Outcome {
-        /** Credential and evidence committed atomically. */
+        /**
+         * Credential and evidence committed atomically.
+         */
         ISSUED
     }
 
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ACTOR_TYPE = id("actor-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ACTOR_ID = id("actor-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId REALM_ID = id("realm-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId REQUEST_ID = id("request-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHENTICATION = id("authentication");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHORIZATION = id("authorization");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHORIZATION_PATH = id("authorization-path");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OPERATION_COMMITMENT = id("operation-commitment");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ISSUER_CA_ID = id("issuer-ca-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId PROFILE_ID = id("profile-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OUTCOME = id("outcome");
 
     private static final String EVIDENCE_PREFIX = "urn:zeroecho:pki:issuance-evidence:";
@@ -146,7 +220,22 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
             AUTHENTICATION, AUTHORIZATION, AUTHORIZATION_PATH, OPERATION_COMMITMENT, ISSUER_CA_ID, PROFILE_ID,
             OUTCOME);
 
-    /** Validates the closed evidence model. */
+    /**
+     * Validates the closed evidence model.
+     * @param actorType authenticated actor classification
+     * @param actorId authenticated administrative or protocol requester identifier
+     * @param realmId realm identity
+     * @param requestId trusted originating invocation correlation identifier
+     * @param authentication authentication classification
+     * @param authorization authorization classification
+     * @param authorizationPath exact administrative or enrollment path (absent for legacy ACME ownership evidence)
+     * @param operationCommitment exact durable operation commitment (absent for legacy ACME ownership evidence)
+     * @param issuerCaId issuing authority identity
+     * @param profileId frozen certificate-profile identity governing issuance
+     * @param outcome outcome committed atomically with the credential
+     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath, operationCommitment, outcome is null
+     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment classifications do not form a supported issuance-evidence combination
+     */
     public IssuanceExecutionEvidence {
         Objects.requireNonNull(actorType, "actorType");
         requireBounded(actorId, "actor ID");
@@ -197,6 +286,7 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      * @param issuerCaId issuing authority identifier
      * @param profileId frozen certificate-profile identifier
      * @return validated immutable administrative evidence
+     * @throws NullPointerException if path is null
      */
     @SuppressWarnings("PMD.UseObjectForClearerAPI")
     public static IssuanceExecutionEvidence administrative(String principalId, String realmId, String requestId,
@@ -273,6 +363,7 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      * @return empty only when no version-one evidence attribute is present
      * @throws IllegalArgumentException if evidence is unknown, partial, duplicated, mistyped, or
      *         semantically inconsistent
+     * @throws NullPointerException if attributes is null
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // untrusted evidence values must not escape through causes
     public static Optional<IssuanceExecutionEvidence> decode(AttributeSet attributes) {

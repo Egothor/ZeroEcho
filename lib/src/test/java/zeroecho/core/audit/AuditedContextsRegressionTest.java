@@ -69,8 +69,16 @@ import zeroecho.core.context.DigestContext;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.MessageAgreementContext;
 
+/**
+ * Contract and regression tests for audited contexts regression.
+ */
 class AuditedContextsRegressionTest {
 
+    /**
+     * Checks that a proxy unrelated to audit wrapping still receives an audit wrapper.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void unrelatedProxyGetsWrapped() throws Exception {
         System.out.println("unrelatedProxyGetsWrapped");
@@ -97,6 +105,11 @@ class AuditedContextsRegressionTest {
         System.out.println("unrelatedProxyGetsWrapped...ok");
     }
 
+    /**
+     * Checks body-byte accounting when verification is finalized at end of input.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void verifyEofKeepsBodyAccounting() throws Exception {
         System.out.println("verifyEofKeepsBodyAccounting");
@@ -118,6 +131,11 @@ class AuditedContextsRegressionTest {
         System.out.println("verifyEofKeepsBodyAccounting...ok");
     }
 
+    /**
+     * Checks that failed verification emits exactly one failure event.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void verifyFailureSingleEvent() throws Exception {
         System.out.println("verifyFailureSingleEvent");
@@ -147,6 +165,9 @@ class AuditedContextsRegressionTest {
         System.out.println("verifyFailureSingleEvent...ok");
     }
 
+    /**
+     * Checks that audit fingerprints do not expose secret-key encoding.
+     */
     @Test
     void fingerprintsAvoidSecretBytes() {
         System.out.println("fingerprintsAvoidSecretBytes");
@@ -184,6 +205,9 @@ class AuditedContextsRegressionTest {
         System.out.println("fingerprintsAvoidSecretBytes...ok");
     }
 
+    /**
+     * Checks that audited proxy diagnostics do not invoke the wrapped object's diagnostics.
+     */
     @Test
     void proxyStringRepresentationDoesNotDelegate() {
         System.out.println("proxyStringRepresentationDoesNotDelegate");
@@ -199,6 +223,9 @@ class AuditedContextsRegressionTest {
         System.out.println("proxyStringRepresentationDoesNotDelegate...ok");
     }
 
+    /**
+     * Checks that a failed agreement operation emits exactly one failure event.
+     */
     @Test
     void agreementFailuresSingleEvent() {
         System.out.println("agreementFailuresSingleEvent");

@@ -33,10 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.api.publication;
 
-/** Identifies how an exact attempt outcome was established. */
+/**
+ * Identifies how an exact attempt outcome was established.
+ */
 public enum PublicationEvidence {
-    /** The publisher returned a definitive result from direct dispatch. */
+    /**
+     * The publisher returned a definitive result from direct dispatch.
+     */
     DIRECT_RESPONSE,
-    /** The publisher resolved the existing attempt through reconciliation. */
+    /**
+     * The publisher resolved the existing attempt through reconciliation.
+     */
     RECONCILIATION_RESPONSE
 }

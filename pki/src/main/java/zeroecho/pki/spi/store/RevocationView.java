@@ -39,7 +39,9 @@ import java.util.Optional;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.revocation.RevocationRecord;
 
-/** Stable direct-lookup view of one authoritative revocation log revision. */
+/**
+ * Stable direct-lookup view of one authoritative revocation log revision.
+ */
 public interface RevocationView extends AutoCloseable {
     /**
      * Returns the captured global revision.
@@ -61,6 +63,9 @@ public interface RevocationView extends AutoCloseable {
      * @throws IOException if the captured view cannot be read
      */
     Optional<RevocationRecord> get(PkiId credentialId) throws IOException;
-    /** Releases the stable view. */
+    /**
+     * Releases the stable view.
+     * @throws IOException if the captured view resources cannot be released
+     */
     @Override void close() throws IOException;
 }

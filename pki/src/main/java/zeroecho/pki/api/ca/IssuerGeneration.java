@@ -55,7 +55,20 @@ import zeroecho.pki.api.PkiId;
 public record IssuerGeneration(PkiId issuerId, PkiId authorityId, PkiId credentialId, KeyRef signingKeyRef,
         IssuerGenerationState state, String profilePolicyCommitment, String x509BindingCommitment) {
 
-    /** Creates a validated issuer generation. */
+    /**
+     * Creates a validated issuer generation.
+     * @param issuerId deterministic generation identifier
+     * @param authorityId owning logical authority
+     * @param credentialId exact CA credential for this generation
+     * @param signingKeyRef managed signing-key reference
+     * @param state immutable generation lifecycle state
+     * @param profilePolicyCommitment lowercase SHA-256 profile-policy commitment
+     * @param x509BindingCommitment lowercase SHA-256 X.509-binding commitment
+     * @throws NullPointerException if issuerId, authorityId, credentialId, signingKeyRef or state is null
+     * @throws IllegalArgumentException if issuerId differs from the authority/credential-derived identity or a
+     *     policy commitment is not a canonical SHA-256 digest
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     public IssuerGeneration {
         Objects.requireNonNull(issuerId, "issuerId");
         Objects.requireNonNull(authorityId, "authorityId");
@@ -74,6 +87,8 @@ public record IssuerGeneration(PkiId issuerId, PkiId authorityId, PkiId credenti
      * @param authorityId owning logical authority
      * @param credentialId exact CA credential
      * @return deterministic issuer-generation identifier
+     * @throws NullPointerException if authorityId or credentialId is null
+     * @throws IllegalStateException if SHA-256 is unavailable
      */
     public static PkiId idFor(PkiId authorityId, PkiId credentialId) {
         Objects.requireNonNull(authorityId, "authorityId");

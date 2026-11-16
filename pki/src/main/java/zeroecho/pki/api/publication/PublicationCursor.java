@@ -53,7 +53,9 @@ public interface PublicationCursor extends AutoCloseable {
      */
     Optional<PublicationRecord> next(CancellationSignal cancellation) throws IOException;
 
-    /** Closes the underlying stable metadata view idempotently. */
+    /**
+     * Closes the underlying stable metadata view idempotently.
+     */
     @Override
     void close();
 }

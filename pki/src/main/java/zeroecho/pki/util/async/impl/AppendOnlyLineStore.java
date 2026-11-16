@@ -69,6 +69,7 @@ public final class AppendOnlyLineStore {
      * Creates a store backed by the provided file path.
      *
      * @param file store file (never {@code null})
+     * @throws NullPointerException if {@code file} is null
      */
     public AppendOnlyLineStore(Path file) {
         Objects.requireNonNull(file, "file");
@@ -80,6 +81,8 @@ public final class AppendOnlyLineStore {
      * Appends a single line (with trailing '\n') to the store.
      *
      * @param line line (never {@code null}, may be empty but not null)
+     * @throws NullPointerException if {@code line} is null
+     * @throws IllegalStateException if opening, writing, or closing the append file fails
      */
     public void appendLine(String line) {
         Objects.requireNonNull(line, "line");
@@ -101,6 +104,8 @@ public final class AppendOnlyLineStore {
      * Reads all lines from the store.
      *
      * @return list of lines (never {@code null})
+     * @throws IllegalStateException if the backing file cannot be opened or its reader cannot be closed
+     * @throws java.io.UncheckedIOException if lazy UTF-8 line reading fails
      */
     public List<String> readAllLines() {
         if (!Files.exists(file)) {

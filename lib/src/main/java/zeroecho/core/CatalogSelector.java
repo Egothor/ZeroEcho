@@ -98,6 +98,7 @@ public final class CatalogSelector {
      *
      * @param requireAllRoles set of roles to be present
      * @return list of matching algorithm ids in discovery order
+     * @throws NullPointerException if {@code requireAllRoles} is null
      */
     public static List<String> selectByRoles(Collection<KeyUsage> requireAllRoles) {
         Objects.requireNonNull(requireAllRoles, "requireAllRoles");

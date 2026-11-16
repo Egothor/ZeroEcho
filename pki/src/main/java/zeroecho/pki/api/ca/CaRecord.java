@@ -67,9 +67,16 @@ public record CaRecord(PkiId caId, CaKind kind, CaState state, KeyRef issuerKeyR
     /**
      * Creates a CA record.
      *
-     * @throws IllegalArgumentException if a mandatory input or credential
-     *                                  identifier is {@code null}, or if a
-     *                                  credential identifier is duplicated
+     * @throws IllegalArgumentException if a mandatory input or issuer identifier is null, issuerIds is empty
+     *     or contains duplicates, or currentIssuanceIssuerId does not identify an owned generation
+     * @param caId CA identifier
+     * @param kind CA kind (root or intermediate)
+     * @param state operational state
+     * @param issuerKeyRef key reference used for issuing operations (private key reference)
+     * @param subjectRef normalized subject reference
+     * @param issuerIds canonical issuer-generation identifiers owned by the authority
+     * @param currentIssuanceIssuerId exact generation selected for new issuance
+     * @param issuanceChainPathId exact chain path selected for issuance bundles
      */
     public CaRecord {
         if (caId == null) {

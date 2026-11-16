@@ -54,7 +54,10 @@ interface PkiHttpExchange extends AutoCloseable {
      *
      * @param request method, path, and optional JSON body
      * @return decoded status, optional {@code Location} header, and body bytes
-     * @throws IOException on connection, timeout, or TLS failure
+     * @throws IOException on connection, timeout, TLS failure or invalid bounded response
+     * @implSpec A transport failure does not prove that a submitted operation was
+     *     rejected or rolled back. Callers interpret remote uncertainty using their
+     *     retained operation identity and protocol, rather than blindly resubmitting.
      */
     Response send(Request request) throws IOException;
 
@@ -67,29 +70,57 @@ interface PkiHttpExchange extends AutoCloseable {
         // No resource by default.
     }
 
-    /** A bounded response violated the protocol before decoding. */
+    /**
+     * A bounded response violated the protocol before decoding.
+     */
     final class InvalidResponseException extends IOException {
         private static final long serialVersionUID = 1L;
+        /**
+         * Creates a protocol failure with the caller's diagnostic message.
+         *
+         * @param message diagnostic description, possibly null
+         */
         /* default */ InvalidResponseException(String message) { super(message); }
     }
 
-    /** Supported request methods. */
+    /**
+     * Supported request methods.
+     */
     enum Method {
-        /** Retrieve a resource. */
+        /**
+         * Retrieve a resource.
+         */
         GET,
-        /** Submit an operation envelope. */
+        /**
+         * Submit an operation envelope.
+         */
         POST
     }
 
     /**
      * One admin-API request.
      *
+     * <p>Direct construction retains the optional array reference and the generated
+     * body accessor exposes it; callers must keep it stable during transport use.
+     * The post factory makes its own initial copy. Construction does not enforce
+     * absolute/same-origin paths, JSON syntax or method/body pairing.</p>
+     *
      * @param method request method
      * @param path absolute request path, resolved against the base URL
      * @param body JSON request body for {@code POST}, empty for {@code GET}
+     * @param timeout positive per-request timeout
      */
     record Request(Method method, String path, Optional<byte[]> body, Duration timeout) {
-        /** Validates the request. */
+        /**
+         * Checks required method/body container, nonblank path and positive timeout.
+         *
+         * @param method request method
+         * @param path request target retained without URI validation
+         * @param body optional bytes retained without a defensive copy
+         * @param timeout positive per-request duration
+         * @throws NullPointerException if method, timeout or body container is null
+         * @throws IllegalArgumentException if the path is null/blank or the timeout is not positive
+         */
         public Request {
             Objects.requireNonNull(method, "method");
             Objects.requireNonNull(timeout, "timeout");
@@ -104,7 +135,8 @@ interface PkiHttpExchange extends AutoCloseable {
          * Creates a body-less {@code GET} request.
          *
          * @param path absolute request path
-         * @return the request
+         * @return bodyless GET with a 60-second timeout
+         * @throws IllegalArgumentException if the path is null or blank
          */
         public static Request get(String path) {
             return new Request(Method.GET, path, Optional.empty(), Duration.ofSeconds(60));
@@ -115,7 +147,9 @@ interface PkiHttpExchange extends AutoCloseable {
          *
          * @param path absolute request path
          * @param body JSON body bytes
-         * @return the request
+         * @return POST with an initial defensive body copy and a 60-second timeout
+         * @throws NullPointerException if the body is null
+         * @throws IllegalArgumentException if the path is null or blank
          */
         public static Request post(String path, byte[] body) {
             return new Request(Method.POST, path, Optional.of(body.clone()), Duration.ofSeconds(60));
@@ -130,12 +164,24 @@ interface PkiHttpExchange extends AutoCloseable {
      * @param body response body bytes (possibly empty, never {@code null})
      */
     record Response(int statusCode, Optional<String> location, byte[] body) {
-        /** Validates the response. */
+        /**
+         * Copies response bytes without validating HTTP status, location syntax or JSON content.
+         *
+         * @param statusCode reported HTTP status, retained without a range check
+         * @param location optional reported Location text
+         * @param body response bytes copied on entry
+         * @throws NullPointerException if the location container or body is null
+         */
         public Response {
             Objects.requireNonNull(location, "location");
             body = Objects.requireNonNull(body, "body").clone();
         }
 
+        /**
+         * Returns a new copy of the retained response bytes.
+         *
+         * @return independently owned body array
+         */
         @Override
         public byte[] body() {
             return body.clone();

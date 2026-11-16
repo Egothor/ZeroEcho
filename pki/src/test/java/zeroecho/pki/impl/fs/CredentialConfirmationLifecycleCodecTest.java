@@ -48,7 +48,15 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
 import zeroecho.pki.api.confirmation.CredentialConfirmationProofCas;
 
+/**
+ * Contract and regression tests for credential confirmation lifecycle codec.
+ */
 class CredentialConfirmationLifecycleCodecTest {
+    /**
+     * Round trips both closed persistent revisions exactly.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundTripsBothClosedPersistentRevisionsExactly() throws Exception {
         CredentialConfirmationLifecycle pending = CredentialConfirmationLifecycle.initialize(initialization());
@@ -65,6 +73,9 @@ class CredentialConfirmationLifecycleCodecTest {
         assertArrayEquals(confirmedBytes, CredentialConfirmationLifecycleCodec.encode(decoded));
     }
 
+    /**
+     * Rejects malformed version truncation and trailing data.
+     */
     @Test
     void rejectsMalformedVersionTruncationAndTrailingData() {
         byte[] encoded = CredentialConfirmationLifecycleCodec.encode(

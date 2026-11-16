@@ -56,10 +56,13 @@ import zeroecho.pki.server.http.StrictJson;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Strict current-version server configuration decoder with closed field sets. */
-@SuppressWarnings("PMD")
+/**
+ * Strict current-version server configuration decoder with closed field sets.
+ */
 public final class PkiServerConfigurationCodec {
-    /** Maximum server configuration document size. */
+    /**
+     * Maximum server configuration document size.
+     */
     public static final int MAXIMUM_CONFIGURATION_BYTES = 1_048_576;
     private static final long DEFAULT_CONFIRMATION_CHALLENGE_TTL_MILLIS = 300_000L;
     private static final int DEFAULT_CONFIRMATION_RSA_MAXIMUM_MODULUS_BITS = 8_192;
@@ -519,7 +522,9 @@ public final class PkiServerConfigurationCodec {
         return Set.copyOf(result);
     }
 
-    /** Strict consumed-field view over one JSON object. */
+    /**
+     * Strict consumed-field view over one JSON object.
+     */
     private static final class Fields {
         private final Map<String, PkiOperationValue> fields;
         private final Set<String> consumed = new LinkedHashSet<>();

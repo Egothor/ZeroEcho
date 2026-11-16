@@ -61,6 +61,9 @@ import zeroecho.sdk.ZeroEchoSession;
  */
 class TargetArchitectureTest {
 
+    /**
+     * Exact registered key operation matrix.
+     */
     @Test
     void exactRegisteredKeyOperationMatrix() {
         String name = start("exactRegisteredKeyOperationMatrix");
@@ -86,6 +89,9 @@ class TargetArchitectureTest {
         ok(name);
     }
 
+    /**
+     * Obsolete architecture types are absent.
+     */
     @Test
     void obsoleteArchitectureTypesAreAbsent() {
         String name = start("obsoleteArchitectureTypesAreAbsent");
@@ -111,6 +117,9 @@ class TargetArchitectureTest {
         ok(name);
     }
 
+    /**
+     * Agreement implementation is final.
+     */
     @Test
     void agreementImplementationIsFinal() {
         String name = start("agreementImplementationIsFinal");
@@ -119,6 +128,11 @@ class TargetArchitectureTest {
         ok(name);
     }
 
+    /**
+     * Audit listener failure cannot change operation outcome.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void auditListenerFailureCannotChangeOperationOutcome() throws Exception {
         String name = start("auditListenerFailureCannotChangeOperationOutcome");

@@ -64,13 +64,24 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for durable metadata store engine.
+ */
 final class DurableMetadataStoreEngineTest {
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("00112233445566778899aabbccddeeff");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Create replace delete and empty commits use contiguous revisions.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createReplaceDeleteAndEmptyCommitsUseContiguousRevisions() throws IOException {
         System.out.print("createReplaceDeleteAndEmptyCommitsUseContiguousRevisions ");
@@ -99,6 +110,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Multi key commit is atomic and conflict writes only forced rejection.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void multiKeyCommitIsAtomicAndConflictWritesOnlyForcedRejection() throws IOException {
         System.out.print("multiKeyCommitIsAtomicAndConflictWritesOnlyForcedRejection ");
@@ -129,6 +145,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Durable value offsets read exact committed bytes after reopen.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void durableValueOffsetsReadExactCommittedBytesAfterReopen() throws IOException {
         System.out.print("durableValueOffsetsReadExactCommittedBytesAfterReopen ");
@@ -159,6 +180,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Post force publication failure requires recovery without live publication.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void postForcePublicationFailureRequiresRecoveryWithoutLivePublication() throws IOException {
         System.out.print("postForcePublicationFailureRequiresRecoveryWithoutLivePublication ");
@@ -182,6 +208,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Incomplete tail is repaired and prior committed state is preserved.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void incompleteTailIsRepairedAndPriorCommittedStateIsPreserved() throws IOException {
         System.out.print("incompleteTailIsRepairedAndPriorCommittedStateIsPreserved ");
@@ -206,6 +237,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Repeated writable recovery preserves state revision and transaction authority.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void repeatedWritableRecoveryPreservesStateRevisionAndTransactionAuthority() throws IOException {
         System.out.print("repeatedWritableRecoveryPreservesStateRevisionAndTransactionAuthority ");
@@ -236,6 +272,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Terminal force uncertainty replays authoritative bytes.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalForceUncertaintyReplaysAuthoritativeBytes() throws IOException {
         System.out.print("terminalForceUncertaintyReplaysAuthoritativeBytes ");
@@ -261,6 +302,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Prepared content is closed exactly once across terminal paths.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preparedContentIsClosedExactlyOnceAcrossTerminalPaths() throws IOException {
         System.out.print("preparedContentIsClosedExactlyOnceAcrossTerminalPaths ");
@@ -300,6 +346,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Restart abandons orphan batch without changing recovered state.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartAbandonsOrphanBatchWithoutChangingRecoveredState() throws IOException {
         System.out.print("restartAbandonsOrphanBatchWithoutChangingRecoveredState ");
@@ -349,6 +400,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Committed outcome survives owned content cleanup failure.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedOutcomeSurvivesOwnedContentCleanupFailure() throws IOException {
         System.out.print("committedOutcomeSurvivesOwnedContentCleanupFailure ");
@@ -377,6 +433,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejected outcome survives owned content cleanup failure.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectedOutcomeSurvivesOwnedContentCleanupFailure() throws IOException {
         System.out.print("rejectedOutcomeSurvivesOwnedContentCleanupFailure ");
@@ -410,6 +471,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Committed outcome survives runtime cleanup and closes remaining resources.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedOutcomeSurvivesRuntimeCleanupAndClosesRemainingResources() throws IOException {
         System.out.print("committedOutcomeSurvivesRuntimeCleanupAndClosesRemainingResources ");
@@ -444,6 +510,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejected outcome survives runtime cleanup and closes remaining resources.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectedOutcomeSurvivesRuntimeCleanupAndClosesRemainingResources() throws IOException {
         System.out.print("rejectedOutcomeSurvivesRuntimeCleanupAndClosesRemainingResources ");
@@ -479,6 +550,11 @@ final class DurableMetadataStoreEngineTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Throwing warning handler cannot replace authoritative outcome.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void throwingWarningHandlerCannotReplaceAuthoritativeOutcome() throws IOException {
         System.out.print("throwingWarningHandlerCannotReplaceAuthoritativeOutcome ");

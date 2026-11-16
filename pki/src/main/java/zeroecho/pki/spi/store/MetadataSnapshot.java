@@ -93,6 +93,8 @@ public interface MetadataSnapshot extends AutoCloseable {
          *
          * @param algorithm canonical integrity algorithm identity
          * @param value canonical integrity value
+         * @throws NullPointerException if algorithm, value is null
+         * @throws IllegalArgumentException if algorithm or value is blank
          */
         public Integrity {
             Objects.requireNonNull(algorithm, "algorithm");
@@ -120,6 +122,8 @@ public interface MetadataSnapshot extends AutoCloseable {
          * @param namespace canonical extension namespace
          * @param lowerInclusive optional inclusive lower bound
          * @param upperExclusive optional exclusive upper bound
+         * @throws NullPointerException if lowerInclusive, upperExclusive is null
+         * @throws IllegalArgumentException if both bounds are present and the lower bound does not precede the upper bound
          */
         public KeyRange {
             MetadataKey.validateNamespace(namespace);
@@ -152,6 +156,7 @@ public interface MetadataSnapshot extends AutoCloseable {
          * @param namespace canonical extension namespace
          * @param prefix canonical key prefix, possibly empty
          * @return prefix range with an unbounded upper limit when no successor exists
+         * @throws NullPointerException if prefix is null
          */
         public static KeyRange prefix(String namespace, String prefix) {
             MetadataKey.validateNamespace(namespace);
@@ -171,6 +176,7 @@ public interface MetadataSnapshot extends AutoCloseable {
          *
          * @param candidate key to test
          * @return {@code true} when the candidate belongs to this range
+         * @throws NullPointerException if candidate is null
          */
         public boolean contains(MetadataKey candidate) {
             Objects.requireNonNull(candidate, "candidate");

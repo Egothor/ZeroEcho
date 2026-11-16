@@ -50,18 +50,62 @@ import zeroecho.pki.impl.fs.*;
 import zeroecho.pki.spi.store.*;
 import zeroecho.pki.testkit.*;
 
-/** Actual-store pure validation for administrative state, profile, revocation and OCSP inputs. */
+/**
+ * Actual-store pure validation for administrative state, profile, revocation and OCSP inputs.
+ */
 class PkiOperationValidationTest {
+    /**
+     * Checks current state without mutations or audit.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void checksCurrentStateWithoutMutationsOrAudit(@TempDir Path root) throws Exception { exercise(root); }
-    interface Action { void run() throws Exception; }
+    /**
+     * Checked test operation used to assert input rejection without mutation.
+     */
+    interface Action {
+        /**
+         * Executes the checked test action supplied by an input-validation case.
+         *
+         * @throws Exception if fixture construction, execution, or cleanup fails
+         */
+        void run() throws Exception; }
+    /**
+     * Requires a fixture invariant without relying on enabled JVM assertions.
+     *
+     * @param condition condition that must hold for the fixture assertion to succeed
+     * @param message diagnostic attached to a failed fixture assertion
+     * @throws AssertionError if the required condition is false
+     */
     static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
+    /**
+     * Requires the supplied invalid-input action to throw a runtime exception.
+     *
+     * @param action checked operation that must reject the supplied invalid input
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     * @throws AssertionError if the action returns normally instead of rejecting input
+     */
     static void rejected(Action action) throws Exception {
         try { action.run(); throw new AssertionError("Invalid input accepted"); } catch (RuntimeException expected) { }
     }
+    /**
+     * Creates a collaborator proxy that fails any attempted method invocation.
+     *
+     * @param <T> collaborator interface implemented by the deliberately failing proxy
+     * @param type collaborator interface whose methods must not be called
+     * @return proxy whose methods raise AssertionError when reached
+     */
     static <T> T unreachable(Class<T> type) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type},
                 (proxy, method, args) -> { throw new AssertionError("Unexpected collaborator mutation: " + method.getName()); }));
     }
+    /**
+     * Wraps a test store with mutation-rejecting proxies while preserving delegated read access.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return borrowed-store view that raises AssertionError on a forbidden mutation
+     */
     static PkiStore readOnly(PkiStore store) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[]{PkiStore.class}, (proxy, method, args) -> {
             if (method.getName().equals("stagedContent")) {
@@ -76,6 +120,12 @@ class PkiOperationValidationTest {
             try { return method.invoke(store, args); } catch (InvocationTargetException failure) { throw failure.getCause(); }
         });
     }
+    /**
+     * Runs the complete actual-store scenario and its persisted-state assertions in the supplied root.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void exercise(Path root) throws Exception {
         try (var store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             var fixture = new IntermediateCreationFixture(); fixture.initialize(store, 2);
@@ -134,5 +184,11 @@ class PkiOperationValidationTest {
         }
         System.out.println("PASS pure profile/CA/path/revoke/hold/unhold/pending revocation and OCSP metadata; missing/state-conflict inputs rejected; no mutation/audit/signature");
     }
+    /**
+     * Runs the standalone fixture scenario using a newly created temporary directory.
+     *
+     * @param args unused console arguments; the fixture creates its own temporary root
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static void main(String[] args) throws Exception { exercise(Files.createTempDirectory("zeroecho-pure-operations-")); }
 }

@@ -54,43 +54,74 @@ public final class KeyringException extends IOException {
     // Stable diagnostic codes are externally inspected and must retain their exact names.
     @SuppressWarnings("PMD.LongVariable")
     public enum Code {
-        /** Stateful signing authority is missing, pending, mismatched or uncertain. */
+        /**
+         * Stateful signing authority is missing, pending, mismatched or uncertain.
+         */
         KEYRING_STATEFUL_RECOVERY_REQUIRED,
-        /** No unused signature leaves remain. */
+        /**
+         * No unused signature leaves remain.
+         */
         KEYRING_STATEFUL_EXHAUSTED,
-        /** Another process or session already owns the keyring lock. */
+        /**
+         * Another process or session already owns the keyring lock.
+         */
         KEYRING_ALREADY_OPEN,
-        /** Filesystem ownership, permissions, links, or atomicity do not meet the security policy. */
+        /**
+         * Filesystem ownership, permissions, links, or atomicity do not meet the security policy.
+         */
         KEYRING_FILESYSTEM_UNSUPPORTED,
-        /** Persisted keyring framing or authenticated metadata is invalid. */
+        /**
+         * Persisted keyring framing or authenticated metadata is invalid.
+         */
         KEYRING_FORMAT_INVALID,
-        /** A configured size, count, or derivation bound was exceeded. */
+        /**
+         * A configured size, count, or derivation bound was exceeded.
+         */
         KEYRING_LIMIT_EXCEEDED,
-        /** Supplied unlock material could not authenticate the keyring. */
+        /**
+         * Supplied unlock material could not authenticate the keyring.
+         */
         KEYRING_UNLOCK_FAILED,
-        /** Keyring storage I/O failed. */
+        /**
+         * Keyring storage I/O failed.
+         */
         KEYRING_IO_FAILED,
-        /** An update completed without confirmed durable publication. */
+        /**
+         * An update completed without confirmed durable publication.
+         */
         KEYRING_DURABILITY_UNCONFIRMED,
-        /** The requested operation used a closed keyring. */
+        /**
+         * The requested operation used a closed keyring.
+         */
         KEYRING_CLOSED,
-        /** The requested key is intentionally non-exportable. */
+        /**
+         * The requested key is intentionally non-exportable.
+         */
         KEYRING_NON_EXPORTABLE_KEY,
-        /** Imported key metadata cannot be mapped to an exact supported algorithm. */
+        /**
+         * Imported key metadata cannot be mapped to an exact supported algorithm.
+         */
         KEYRING_IMPORT_MAPPING_INVALID,
-        /** Imported key metadata is missing, inconsistent, or malformed. */
+        /**
+         * Imported key metadata is missing, inconsistent, or malformed.
+         */
         KEYRING_IMPORT_METADATA_INVALID,
-        /** Imported key material cannot be converted to its canonical representation. */
+        /**
+         * Imported key material cannot be converted to its canonical representation.
+         */
         KEYRING_KEY_NOT_CANONICALIZABLE
     }
 
-    /** Stable redacted category returned to callers. */
+    /**
+     * Stable redacted category returned to callers.
+     */
     private final Code code;
 
     /**
      * Creates a redacted keyring exception.
      *
      * @param code stable error code
+     * @throws NullPointerException if {@code code} is null
      */
     public KeyringException(Code code) {
         super(Objects.requireNonNull(code, "code must not be null").name());

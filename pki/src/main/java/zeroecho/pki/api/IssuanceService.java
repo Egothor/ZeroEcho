@@ -77,6 +77,7 @@ public interface IssuanceService {
      * @param command validated issuance command
      * @param cancellation originating cooperative cancellation signal
      * @return issued credential bundle
+     * @throws NullPointerException if cancellation is null
      */
     default CredentialBundle issueEndEntity(IssueEndEntityCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");
@@ -95,6 +96,7 @@ public interface IssuanceService {
      * @param evidence closed issuance-evidence attribute set (may be empty but not null)
      * @param cancellation originating cancellation
      * @return credential bundle
+     * @throws NullPointerException if evidence is null
      */
     default CredentialBundle issueEndEntity(IssueEndEntityCommand command,
             zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
@@ -118,6 +120,7 @@ public interface IssuanceService {
      * @param command validated renewal command
      * @param cancellation originating cooperative cancellation signal
      * @return renewed credential bundle
+     * @throws NullPointerException if cancellation is null
      */
     default CredentialBundle renew(RenewCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");
@@ -140,6 +143,7 @@ public interface IssuanceService {
      * @param command validated replacement command
      * @param cancellation originating cooperative cancellation signal
      * @return replacement credential bundle
+     * @throws NullPointerException if cancellation is null
      */
     default CredentialBundle replace(ReplaceCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");
@@ -161,6 +165,7 @@ public interface IssuanceService {
      * @param command validated reissue command
      * @param cancellation originating cooperative cancellation signal
      * @return reissued credential bundle
+     * @throws NullPointerException if cancellation is null
      */
     default CredentialBundle reissue(ReissueCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");

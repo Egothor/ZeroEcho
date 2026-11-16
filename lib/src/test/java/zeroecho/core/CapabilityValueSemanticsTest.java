@@ -55,6 +55,9 @@ import zeroecho.core.spec.ContextSpec;
  */
 class CapabilityValueSemanticsTest {
 
+    /**
+     * Semantically equal capabilities have equal hashes.
+     */
     @Test
     void semanticallyEqualCapabilitiesHaveEqualHashes() {
         System.out.println("semanticallyEqualCapabilitiesHaveEqualHashes");
@@ -68,6 +71,9 @@ class CapabilityValueSemanticsTest {
         System.out.println("semanticallyEqualCapabilitiesHaveEqualHashes...ok");
     }
 
+    /**
+     * Default supplier is resolved once and repeated access is stable.
+     */
     @Test
     void defaultSupplierIsResolvedOnceAndRepeatedAccessIsStable() {
         System.out.println("defaultSupplierIsResolvedOnceAndRepeatedAccessIsStable");
@@ -86,6 +92,9 @@ class CapabilityValueSemanticsTest {
         System.out.println("defaultSupplierIsResolvedOnceAndRepeatedAccessIsStable...ok");
     }
 
+    /**
+     * Semantically different capabilities are not equal.
+     */
     @Test
     void semanticallyDifferentCapabilitiesAreNotEqual() {
         System.out.println("semanticallyDifferentCapabilitiesAreNotEqual");
@@ -99,6 +108,9 @@ class CapabilityValueSemanticsTest {
         System.out.println("semanticallyDifferentCapabilitiesAreNotEqual...ok");
     }
 
+    /**
+     * Null and incompatible defaults are rejected at construction.
+     */
     @Test
     void nullAndIncompatibleDefaultsAreRejectedAtConstruction() {
         System.out.println("nullAndIncompatibleDefaultsAreRejectedAtConstruction");
@@ -110,6 +122,11 @@ class CapabilityValueSemanticsTest {
         System.out.println("nullAndIncompatibleDefaultsAreRejectedAtConstruction...ok");
     }
 
+    /**
+     * Metadata memoization does not change runtime supplier lifecycle.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void metadataMemoizationDoesNotChangeRuntimeSupplierLifecycle() throws IOException {
         System.out.println("metadataMemoizationDoesNotChangeRuntimeSupplierLifecycle");

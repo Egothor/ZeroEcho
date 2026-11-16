@@ -76,7 +76,9 @@ public final class SigningStepExecutor {
     private final OuterTerminalDriver outerDriver;
     private final SigningProviderExecutor executor;
 
-    /** Idempotently verifies a claimed CA proof or advances terminal outer publication. */
+    /**
+     * Idempotently verifies a claimed CA proof or advances terminal outer publication.
+     */
     @FunctionalInterface
     public interface OuterTerminalDriver {
         /**

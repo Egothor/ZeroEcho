@@ -60,6 +60,7 @@ public class Pack7LStreamWriter {
      *
      * @param out the {@link OutputStream} where the payload will be written after
      *            decoding the length
+     * @throws IllegalArgumentException if the destination stream is null
      */
     public Pack7LStreamWriter(OutputStream out) {
         if (out == null) {

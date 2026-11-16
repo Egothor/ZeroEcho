@@ -76,7 +76,9 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Reconstructs, validates, and idempotently publishes one durable domain result. */
+/**
+ * Reconstructs, validates, and idempotently publishes one durable domain result.
+ */
 final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
     private static final int MAXIMUM_SIGNATURE_BYTES = 1_048_576;
     private static final ThreadLocal<PublicationFaultInjector> PUBLICATION_FAULTS = new ThreadLocal<>();
@@ -85,6 +87,12 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
     private final StatusContinuationPublisher statusPublisher;
     private final DomainContentAccess contentAccess;
 
+    /**
+     * Creates publication adapters borrowing the same authoritative store.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @throws NullPointerException if store is null
+     */
     /* default */ DomainContinuationPublisher(PkiStore store) {
         this.store = Objects.requireNonNull(store, "store");
         this.contentAccess = new DomainContentAccess(store);
@@ -92,6 +100,14 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         this.statusPublisher = new StatusContinuationPublisher(store, this);
     }
 
+    /**
+     * Validates and publishes one frozen CA, issuance, or status result idempotently.
+     *
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param result completed encoded certificate or status result; must not be null
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     * @throws zeroecho.pki.api.PkiException if durable publication or content storage fails
+     */
     /* default */ void publish(DomainContinuationStore.Record domain, EncodedObject result) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
         switch (domain.kind()) {
@@ -103,6 +119,17 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Assembles a certificate, CRL, or OCSP artifact from exact frozen signing content.
+     *
+     * <p>Temporary signature and TBS buffers are cleared after reconstruction. Key-proof
+     * workflows cannot publish artifacts through this path.</p>
+     *
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param signature completed bounded binary signature result; must not be null
+     * @return assembled result in its required encoding
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ EncodedObject reconstruct(DomainContinuationStore.Record domain, EncodedObject signature) {
         if (domain.kind() == DomainContinuationStore.Kind.KEY_PROOF) {
             throw new PostconditionFailure("KEY_PROOF_ARTIFACT_PUBLICATION_FORBIDDEN");
@@ -372,6 +399,15 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
                 CredentialStatus.ISSUED, content, attributes.build());
     }
 
+    /**
+     * Decodes an exact profile reference from three consecutive command fields.
+     *
+     * @param command canonical decoded domain command; must not be null
+     * @param index zero-based field position of the profile identity, followed by version and digest
+     * @return decoded profile identity, positive version, and commitment
+     * @throws IllegalArgumentException if profile fields are malformed
+     * @throws IndexOutOfBoundsException if three fields are unavailable
+     */
     /* default */ static CertificateProfileRef profile(DomainCommandEncoding.Decoded command, int index) {
         return new CertificateProfileRef(command.field(index), Long.parseLong(command.field(index + 1)),
                 HexFormat.of().parseHex(command.field(index + 2)));
@@ -390,7 +426,9 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
                 new AttributeValue.StringValue(intent.commandCommitment()));
     }
 
-    /** Exact immutable issuance fields needed for deterministic publication. */
+    /**
+     * Exact immutable issuance fields needed for deterministic publication.
+     */
     private record IssuancePublication(PkiId authorityId, PkiId issuerId, PkiId pathId,
             String pathCommitment, CertificateProfileRef profile, SubjectRef subject,
             Instant notBefore, Instant notAfter, BigInteger serial, String publicKeyFingerprint,
@@ -413,6 +451,16 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Requires generation and chain path metadata to match the frozen issuer selection.
+     *
+     * @param generation current issuer generation selected for publication
+     * @param path current issuer chain path
+     * @param authorityId frozen logical authority identity
+     * @param issuerId exact selected issuer-generation identity; must not be null
+     * @param pathCommitment frozen chain-path commitment
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ static void requireFrozenIssuer(IssuerGeneration generation, IssuerChainPath path,
             PkiId authorityId, PkiId issuerId, String pathCommitment) {
         if (!generation.authorityId().equals(authorityId) || !path.authorityId().equals(authorityId)
@@ -421,6 +469,16 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Requires exact certificate serial, validity, and public-key fingerprint agreement.
+     *
+     * @param certificate certificate whose exact signed metadata is checked; must not be null
+     * @param serial positive serial number encoded in at most 20 signed integer bytes
+     * @param notBefore exact frozen certificate validity start
+     * @param notAfter exact frozen certificate validity end
+     * @param publicKeyFingerprint expected lowercase SHA-256 SubjectPublicKeyInfo fingerprint
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ static void requireIssuedMetadata(X509Certificate certificate, BigInteger serial,
             Instant notBefore, Instant notAfter, String publicKeyFingerprint) {
         if (!certificate.getSerialNumber().equals(serial)
@@ -431,6 +489,13 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Verifies native and, when present, alternative certificate signatures against the issuer.
+     *
+     * @param certificate certificate whose exact signed metadata is checked; must not be null
+     * @param issuerContent durable issuer certificate content reference
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ void verifyIssuerSignature(X509Certificate certificate,
             DurableContentReference issuerContent) {
         byte[] issuerDer = contentAccess.materialize(issuerContent, "CONTENT_UNAVAILABLE");
@@ -456,6 +521,14 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Parses the native signature AlgorithmIdentifier directly from bounded certificate TBS DER.
+     *
+     * @param certificate certificate whose exact signed metadata is checked; must not be null
+     * @return exact native TBS signature identifier
+     * @throws java.security.cert.CertificateEncodingException if the certificate cannot supply its TBS encoding
+     * @throws java.io.IOException if the TBS DER or algorithm identifier is invalid
+     */
     /* default */ static zeroecho.pkix.AlgorithmIdentifier nativeSignatureAlgorithm(X509Certificate certificate)
             throws java.security.cert.CertificateEncodingException, java.io.IOException {
         byte[] tbs = certificate.getTBSCertificate();
@@ -465,6 +538,13 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
                 layout.algorithmOffset() + layout.algorithmLength()));
     }
 
+    /**
+     * Parses a completed result as an X.509 DER certificate with safe failure classification.
+     *
+     * @param encoded bounded DER certificate bytes or DER encoded object; must not be null
+     * @return parsed X.509 certificate
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ static X509Certificate certificate(EncodedObject encoded) {
         if (encoded.encoding() != Encoding.DER) {
             throw new PostconditionFailure("CERTIFICATE_ENCODING_INVALID");
@@ -472,6 +552,13 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         return certificate(encoded.bytes());
     }
 
+    /**
+     * Parses a completed result as an X.509 DER certificate with safe failure classification.
+     *
+     * @param encoded bounded DER certificate bytes or DER encoded object; must not be null
+     * @return parsed X.509 certificate
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ static X509Certificate certificate(byte[] encoded) {
         try {
             return Pkix.parseCertificate(encoded);
@@ -481,14 +568,36 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
     }
 
 
+    /**
+     * Stages complete DER bytes as persisted publication content.
+     *
+     * @param bytes encoded content bytes borrowed for this call; must not be null
+     * @return completed durable content reference
+     * @throws zeroecho.pki.api.PkiException if staging or completion fails
+     */
     /* default */ DurableContentReference persist(byte[] bytes) {
         return contentAccess.persist(bytes);
     }
 
+    /**
+     * Retires staged content only when publication has not transferred ownership.
+     *
+     * @param content durable content reference selected for publication
+     * @param published whether a durable published object already owns the content
+     * @throws zeroecho.pki.api.PkiException if retirement fails
+     */
     /* default */ void releaseUnlessPublished(DurableContentReference content, boolean published) {
         contentAccess.releaseUnlessPublished(content, published);
     }
 
+    /**
+     * Requires both stored credential metadata and stored DER to equal the expected result.
+     *
+     * @param actual stored credential found by its deterministic identity
+     * @param expected credential reconstructed from the frozen command
+     * @param der exact completed certificate DER
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ void requireCredential(Credential actual, Credential expected, byte[] der) {
         if (!actual.equals(expected)) {
             throw new PostconditionFailure("PUBLISHED_CREDENTIAL_DIFFERS");
@@ -496,6 +605,13 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         contentAccess.requireExact(actual.content(), der, "PUBLISHED_CREDENTIAL_CONTENT_DIFFERS");
     }
 
+    /**
+     * Invokes the current thread's optional deterministic publication fault callback.
+     *
+     * <p>Callback failures propagate after the indicated durable boundary.</p>
+     *
+     * @param point deterministic durable-publication fault boundary
+     */
     /* default */ static void afterDurablePublication(PublicationFaultPoint point) {
         PublicationFaultInjector faults = PUBLICATION_FAULTS.get();
         if (faults != null) {
@@ -503,14 +619,31 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Installs a deterministic fault callback for the current thread until explicitly cleared.
+     *
+     * @param faults thread-confined test callback; must not be null
+     * @throws NullPointerException if faults is null
+     */
     /* default */ static void installPublicationFault(PublicationFaultInjector faults) {
         PUBLICATION_FAULTS.set(Objects.requireNonNull(faults, "faults"));
     }
 
+    /**
+     * Removes the current thread's publication fault callback and releases its reference.
+     */
     /* default */ static void clearPublicationFault() {
         PUBLICATION_FAULTS.remove();
     }
 
+    /**
+     * Computes the SHA-256 content commitment without retaining the input array.
+     *
+     * @param bytes encoded content bytes borrowed for this call; must not be null
+     * @return lowercase 64-character hexadecimal digest
+     * @throws IllegalStateException if the required SHA-256 implementation is unavailable
+     * @throws NullPointerException if bytes is null
+     */
     /* default */ static String sha256(byte[] bytes) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -520,6 +653,13 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
     }
 
     // Certificate providers may surface encoding failures through provider-specific runtime exceptions.
+    /**
+     * Computes the SHA-256 commitment of exact certificate SubjectPublicKeyInfo DER.
+     *
+     * @param certificate certificate whose exact signed metadata is checked; must not be null
+     * @return lowercase 64-character hexadecimal public-key digest
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     /* default */ static String sha256SubjectPublicKey(X509Certificate certificate) {
         try {
@@ -529,34 +669,72 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         }
     }
 
-    /** Typed frozen-postcondition failure; persistence failures are deliberately not this type. */
+    /**
+     * Typed frozen-postcondition failure; persistence failures are deliberately not this type.
+     */
     /* default */ static final class PostconditionFailure extends RuntimeException {
         private static final long serialVersionUID = 5811300261127019403L;
 
+        /**
+         * Creates a frozen-postcondition failure retaining its stable code and optional cause.
+         *
+         * @param detailCode stable nonsecret postcondition failure code
+         */
         /* default */ PostconditionFailure(String detailCode) {
             super(detailCode);
         }
 
+        /**
+         * Creates a frozen-postcondition failure retaining its stable code and optional cause.
+         *
+         * @param detailCode stable nonsecret postcondition failure code
+         * @param cause underlying validation failure, possibly null
+         */
         /* default */ PostconditionFailure(String detailCode, Throwable cause) {
             super(detailCode, cause);
         }
     }
 
-    /** Deterministic durable domain-publication crash boundaries. */
+    /**
+     * Deterministic durable domain-publication crash boundaries.
+     */
     /* default */ enum PublicationFaultPoint {
+        /**
+         * Credential publication has become durable.
+         */
         AFTER_CREDENTIAL,
+        /**
+         * Status-object publication has become durable.
+         */
         AFTER_STATUS,
+        /**
+         * Issuer-generation publication has become durable.
+         */
         AFTER_ISSUER_GENERATION,
+        /**
+         * Issuer chain-path publication has become durable.
+         */
         AFTER_CHAIN_PATH,
+        /**
+         * CA record publication has become durable.
+         */
         AFTER_CA,
+        /**
+         * Domain publication is durable but continuation completion has not yet been recorded.
+         */
         BEFORE_CONTINUATION_DONE
     }
 
-    /** Package-local deterministic publication failure seam. */
+    /**
+     * Package-local deterministic publication failure seam.
+     */
     /* default */
     @FunctionalInterface
     interface PublicationFaultInjector {
-        /** Invoked at one deterministic durable-publication boundary. */
+        /**
+         * Invoked at one deterministic durable-publication boundary.
+         * @param point durable boundary at which an injected failure may be raised
+         */
         void fail(PublicationFaultPoint point);
     }
 }

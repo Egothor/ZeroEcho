@@ -80,6 +80,7 @@ public final class PkiIds {
      * @param id identifier to validate
      * @return the same identifier for fluent usage
      * @throws IllegalArgumentException if {@code id} is {@code null}
+     * @throws NullPointerException if {@code id} is null
      */
     public static PkiId require(PkiId id) {
         return Objects.requireNonNull(id, "id");

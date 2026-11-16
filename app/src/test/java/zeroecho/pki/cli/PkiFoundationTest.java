@@ -63,6 +63,9 @@ import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSigningOperation;
 
+/**
+ * Contract tests for local configuration, operation catalogue parity, and typed command bindings.
+ */
 class PkiFoundationTest {
     private static final String CONFIGURATION = """
             {"version":1,"mode":"local","operatorId":"local-admin",
@@ -76,8 +79,16 @@ class PkiFoundationTest {
             "claimLeaseMillis":5000,"providerCallTimeoutMillis":1000,
             "unlockEnvironmentVariable":"PKI_UNLOCK","pureEdDsaMaximumTbsBytes":65536}
             """;
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks operator identity and finite signing limits in parsed local session configuration.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void localConfigurationCarriesIdentityAndExactFiniteSigningBounds() throws IOException {
         LocalPkiSessionConfiguration unsigned = read(CONFIGURATION.formatted(""));
@@ -93,6 +104,11 @@ class PkiFoundationTest {
         assertEquals(65536, signing.pureEdDsaMaximumTbsBytes().orElseThrow());
     }
 
+    /**
+     * Rejects unknown, duplicated, missing, and invalid local configuration fields.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void localConfigurationRejectsUnknownDuplicateMissingAndInvalidFields() throws IOException {
         String valid = CONFIGURATION.formatted(SIGNING);
@@ -127,6 +143,11 @@ class PkiFoundationTest {
         }
     }
 
+    /**
+     * Checks catalogue parity with every supported core and shared signing operation.
+     *
+     * @throws ReflectiveOperationException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void catalogMatchesEveryCurrentCoreAndSharedSigningOperation() throws ReflectiveOperationException {
         Set<String> expected = new HashSet<>(Set.of(PkiLocalCommand.INSPECT, PkiLocalCommand.COMPLETE));
@@ -146,6 +167,11 @@ class PkiFoundationTest {
         assertTrue(rejected.getMessage().contains("authenticated remote server provisioning and approval"));
     }
 
+    /**
+     * Checks that the ten signing operation bindings produce the shared validated command types.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void allTenSigningBindingsUseSharedValidatedCommands() throws IOException {
         Map<String, String> cases = Map.of(
@@ -168,6 +194,11 @@ class PkiFoundationTest {
         }
     }
 
+    /**
+     * Preserves explicit signature selection and supported omission when binding authority creation commands.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void authorityCreationBindingsPreserveExplicitSignatureSelectionAndLegacyOmission() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -193,6 +224,11 @@ class PkiFoundationTest {
         }
     }
 
+    /**
+     * Checks typed authority selectors, page limits, and exclusive cursors for credential inventory.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void mandatoryCredentialInventoryBindsTypedAuthorityLimitsAndExclusiveCursor() throws IOException {
         PkiOperationRegistry registry=new PkiOperationRegistry();
@@ -211,6 +247,11 @@ class PkiFoundationTest {
         }
     }
 
+    /**
+     * Checks typed core operation fields and confirmation compare-and-set inputs.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void currentCoreFieldsAndConfirmationCasRemainTyped() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -252,6 +293,11 @@ class PkiFoundationTest {
 
     }
 
+    /**
+     * Checks exact identity selection and capability requirements for local signing control commands.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void controlsAcceptExactlyOneIdentityAndRequireSigningCapability() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -272,6 +318,11 @@ class PkiFoundationTest {
         }
     }
 
+    /**
+     * Checks that receipt rendering does not claim completion of unfinished domain work.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void receiptOutputDoesNotInventDomainCompletion() throws IOException {
         PkiPlanExecution.StepResult step = PkiPlanExecution.StepResult.failure("command", "ca.create",
@@ -286,6 +337,11 @@ class PkiFoundationTest {
         assertEquals(6, PkiExitCodes.from(new PkiPlanExecution(List.of(step))));
     }
 
+    /**
+     * Checks that an ordinary pending local command is submitted once.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ordinaryLocalPendingTransportIsCalledExactlyOnce() throws IOException {
         PkiPlan plan = new PkiPlan(1, PkiPlan.FailurePolicy.FAIL_FAST,

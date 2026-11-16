@@ -53,6 +53,9 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for keyring signing configuration tag.
+ */
 final class KeyringSigningConfigurationTagTest {
     private static final Duration HORIZON = Duration.ofDays(90);
     private static final String WORKFLOW_ID = "zeroecho-lib";
@@ -67,9 +70,17 @@ final class KeyringSigningConfigurationTagTest {
     private static final int WRAPPED_MASTER_LENGTH_OFFSET = WRAP_NONCE_OFFSET + KeyringStore.NONCE_BYTES;
     private static final int WRAPPED_MASTER_OFFSET = WRAPPED_MASTER_LENGTH_OFFSET + Integer.BYTES;
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Tag binds resolved configuration store and encrypted entries.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tagBindsResolvedConfigurationStoreAndEncryptedEntries() throws Exception {
         Path firstPath = temporaryDirectory.resolve("first.zek");
@@ -128,6 +139,11 @@ final class KeyringSigningConfigurationTagTest {
         }
     }
 
+    /**
+     * Transcript binds every entry identity and metadata field independently.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void transcriptBindsEveryEntryIdentityAndMetadataFieldIndependently() throws Exception {
         byte[] masterKey = new byte[KeyringStore.MASTER_KEY_BYTES];

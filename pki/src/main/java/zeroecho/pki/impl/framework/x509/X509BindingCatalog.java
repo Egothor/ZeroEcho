@@ -57,7 +57,9 @@ import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
  */
 public final class X509BindingCatalog {
 
-    /** Prefix reserved for built-in binding identifiers. */
+    /**
+     * Prefix reserved for built-in binding identifiers.
+     */
     public static final String BUILTIN_PREFIX = "zeroecho.";
     private static final Set<String> FORBIDDEN_SIGNATURE_OIDS = Set.of("1.2.840.113549.1.1.5",
             "1.2.840.10045.4.1");
@@ -116,18 +118,44 @@ public final class X509BindingCatalog {
 
     private record IdentityKey(X509AlgorithmRole role, AlgorithmIdentity identity) { }
 
-    /** Retains the provider's immutable metadata once without memoizing its encoding domain. */
+    /**
+     * Retains the provider's immutable metadata once without memoizing its encoding domain.
+     */
     private record SnapshotRule(X509BindingRule delegate, List<X509AlgorithmBinding> bindings)
             implements X509BindingRule {
+        /**
+         * {@inheritDoc}
+         */
         @Override public String id() { return delegate.id(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public X509AlgorithmRole role() { return delegate.role(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String oid() { return delegate.oid(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String semanticFingerprint() { return delegate.semanticFingerprint(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public SignatureEncoding signatureEncoding() { return delegate.signatureEncoding(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PublicKeyEncoding publicKeyEncoding() { return delegate.publicKeyEncoding(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
             return delegate.encode(identity);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
             return delegate.decode(identifier);
         }
@@ -160,6 +188,7 @@ public final class X509BindingCatalog {
      * @return merged catalog
      * @throws IllegalArgumentException if a rule identifier or role/OID domain
      *                                  collides
+     * @throws NullPointerException if {@code extensions} or an extension entry is null
      */
     public X509BindingCatalog merge(List<X509BindingCatalog> extensions) {
         Objects.requireNonNull(extensions, "extensions");
@@ -182,6 +211,7 @@ public final class X509BindingCatalog {
      * are proportional to identity size; fallback work is proportional to the
      * number and encoding cost of those rules. No descriptor graph is rebuilt.
      * @throws IllegalArgumentException if no rule or more than one rule resolves
+     * @throws NullPointerException if {@code identity} or {@code role} is null
      */
     public X509AlgorithmIdentifier resolve(AlgorithmIdentity identity, X509AlgorithmRole role) {
         Objects.requireNonNull(identity, "identity");
@@ -218,6 +248,7 @@ public final class X509BindingCatalog {
      * @return canonical identifier
      * @throws IllegalArgumentException if the binding is absent, has the wrong
      *         role, or cannot encode the identity
+     * @throws NullPointerException if {@code bindingId}, {@code identity} or {@code role} is null
      */
     public X509AlgorithmIdentifier resolve(String bindingId, AlgorithmIdentity identity, X509AlgorithmRole role) {
         Objects.requireNonNull(bindingId, "bindingId");
@@ -240,6 +271,7 @@ public final class X509BindingCatalog {
      * @param role       X.509 role
      * @return exact identity
      * @throws IllegalArgumentException if the representation is unknown or invalid
+     * @throws NullPointerException if {@code identifier} or {@code role} is null
      */
     public AlgorithmIdentity reverse(X509AlgorithmIdentifier identifier, X509AlgorithmRole role) {
         Objects.requireNonNull(identifier, "identifier");
@@ -262,6 +294,8 @@ public final class X509BindingCatalog {
      * @param identifier canonical representation
      * @param role structural role
      * @return stable binding identifier
+     * @throws NullPointerException if {@code identifier} or {@code role} is null
+     * @throws IllegalArgumentException if the identifier cannot be decoded by the registered rule for that role
      */
     public String bindingId(X509AlgorithmIdentifier identifier, X509AlgorithmRole role) {
         Objects.requireNonNull(identifier, "identifier");

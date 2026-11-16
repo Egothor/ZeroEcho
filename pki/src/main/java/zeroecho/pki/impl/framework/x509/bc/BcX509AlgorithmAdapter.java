@@ -59,6 +59,7 @@ public final class BcX509AlgorithmAdapter {
      * Creates an adapter for one immutable catalog snapshot.
      *
      * @param catalog authoritative provider-neutral binding catalog
+     * @throws NullPointerException if {@code catalog} is null
      */
     public BcX509AlgorithmAdapter(X509BindingCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -92,6 +93,7 @@ public final class BcX509AlgorithmAdapter {
      *
      * @param identifier provider-neutral value
      * @return PKIX library value
+     * @throws NullPointerException if {@code identifier} is null
      */
     public static zeroecho.pkix.AlgorithmIdentifier toLib(X509AlgorithmIdentifier identifier) {
         Objects.requireNonNull(identifier, "identifier");
@@ -107,6 +109,7 @@ public final class BcX509AlgorithmAdapter {
      *
      * @param identifier PKIX library value
      * @return provider-neutral value
+     * @throws NullPointerException if {@code identifier} is null
      */
     public static X509AlgorithmIdentifier fromLib(zeroecho.pkix.AlgorithmIdentifier identifier) {
         Objects.requireNonNull(identifier, "identifier");

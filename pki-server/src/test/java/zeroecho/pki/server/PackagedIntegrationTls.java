@@ -64,11 +64,22 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
-/** Ephemeral deployment identities; no test provider or host trust-store changes. */
+/**
+ * Ephemeral deployment identities; no test provider or host trust-store changes.
+ */
 final class PackagedIntegrationTls {
+    /**
+     * Test-only password used by the disposable packaged-deployment PKCS #12 stores.
+     */
     static final String PASSWORD = "packaged-integration-only-password";
     private final Map<String, X509Certificate> certificates = new LinkedHashMap<>();
 
+    /**
+     * Creates disposable CA/server/edge/proxy/user identities without changing host trust stores.
+     *
+     * @param directory isolated output directory for PEM and PKCS #12 fixture files
+     * @throws Exception if directory creation, key/certificate generation or store writing fails
+     */
     PackagedIntegrationTls(Path directory) throws Exception {
         Files.createDirectories(directory);
         KeyPair authorityKey = keyPair();
@@ -97,16 +108,36 @@ final class PackagedIntegrationTls {
         }
     }
 
+    /**
+     * Hashes the exact DER certificate for a generated deployment identity.
+     *
+     * @param identity fixture identity name selected during construction
+     * @return lowercase hexadecimal certificate SHA-256
+     * @throws NullPointerException if identity is unknown
+     * @throws Exception if certificate encoding or SHA-256 initialization fails
+     */
     String fingerprint(String identity) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(certificates.get(identity).getEncoded()));
     }
 
+    /**
+     * Computes the edge proxy public-key pin used by packaged TLS fixtures.
+     *
+     * @return standard-base64 SHA-256 of the edge SubjectPublicKeyInfo
+     * @throws Exception if SHA-256 initialization fails
+     */
     String edgeSpkiPin() throws Exception {
         return Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256")
                 .digest(certificates.get("edge").getPublicKey().getEncoded()));
     }
 
+    /**
+     * Creates a fresh 2,048-bit RSA key pair for a disposable deployment identity.
+     *
+     * @return newly generated RSA key pair
+     * @throws Exception if RSA key generation cannot initialize
+     */
     static KeyPair keyPair() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);

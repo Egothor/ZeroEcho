@@ -33,10 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
-/** Explicit mutually exclusive administrative authentication deployment mode. */
+/**
+ * Explicit mutually exclusive administrative authentication deployment mode.
+ */
 public enum AdministrativeAuthenticationMode {
-    /** ZeroEcho validates and maps the TLS peer as the administrative client. */
+    /**
+     * ZeroEcho validates and maps the TLS peer as the administrative client.
+     */
     DIRECT_MTLS,
-    /** A separately authenticated proxy forwards a validated external client certificate. */
+    /**
+     * A separately authenticated proxy forwards a validated external client certificate.
+     */
     TRUSTED_REVERSE_PROXY
 }

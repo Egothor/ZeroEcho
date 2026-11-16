@@ -50,12 +50,26 @@ import java.util.Optional;
  */
 public record SecurityPrincipal(String principalId, Type type, String displayName,
         Optional<String> organization, Map<String, String> attributes, boolean enabled) {
-    /** Closed principal types. */
+    /**
+     * Closed principal types.
+     */
     public enum Type {
-        /** Human administrative or requesting identity. */ USER(1),
-        /** Non-human authenticated service identity. */ SERVICE(2),
-        /** Protocol-specific account identity. */ ACCOUNT(3),
-        /** Unauthenticated public identity. */ PUBLIC(4);
+        /**
+         * Human administrative or requesting identity.
+         */
+        USER(1),
+        /**
+         * Non-human authenticated service identity.
+         */
+        SERVICE(2),
+        /**
+         * Protocol-specific account identity.
+         */
+        ACCOUNT(3),
+        /**
+         * Unauthenticated public identity.
+         */
+        PUBLIC(4);
 
         private final int code;
 
@@ -90,7 +104,19 @@ public record SecurityPrincipal(String principalId, Type type, String displayNam
         }
     }
 
-    /** Validates and snapshots finite safe principal metadata. */
+    /**
+     * Validates and snapshots finite safe principal metadata.
+     * @param principalId canonical stable principal identity
+     * @param type closed principal type
+     * @param displayName safe administrative display label
+     * @param organization optional canonical owner/organization relationship
+     * @param attributes finite safe relationship attributes
+     * @param enabled whether authorization assignments may be considered
+     * @throws NullPointerException if any of {@code type}, {@code organization}, {@code attributes} is null
+     * @throws IllegalArgumentException if the display name is blank or outside its length bound or principal
+     *         attributes violate canonical metadata names, values or count bounds or the fixed public principal
+     *         is assigned incompatible ownership or identity data
+     */
     public SecurityPrincipal {
         requireId(principalId);
         Objects.requireNonNull(type, "type");

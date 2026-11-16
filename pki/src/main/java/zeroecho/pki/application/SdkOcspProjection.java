@@ -47,7 +47,14 @@ import org.bouncycastle.cert.ocsp.UnknownStatus;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkValue;
 import zeroecho.pkix.Pkix;
 
-/** Strict, stateless native-DER projection for the separate SDK OCSP profile. */
+/**
+ * Bounded native-DER projection used by the separate SDK F4/F5 OCSP profile.
+ *
+ * <p>The parser derives status and native-nonce values from the exact original
+ * request and response, not caller-supplied status assertions. It does not verify
+ * responder signatures or discover trust and does not implement standard
+ * AltSignature OCSP.</p>
+ */
 public final class SdkOcspProjection {
     /**
      * SDK-only complete-response ceiling derived from native DER component bounds.
@@ -73,6 +80,19 @@ public final class SdkOcspProjection {
      * Parses exact native bytes and verifies ordered CertID/nonce and shared time correspondence.
      * This pure operation verifies structure, not signer authorization or signatures.
      * Work and memory are bounded by one MiB/request, the derived SDK response ceiling and 819 entries.
+     *
+     * <p>Inputs are borrowed for parsing and must not be mutated concurrently. Checks
+     * include canonical native encoding, a successful BasicOCSPResponse, the fixed
+     * primary signature algorithm and bounded syntax, ordered nonduplicate matching
+     * CertIDs, common mandatory nextUpdate and matching optional native nonces of
+     * 1 through 4096 bytes. The native nonce is distinct from the SDK challenge.
+     * SHA-1 and SHA-256 are the permitted CertID hash identities.</p>
+     *
+     * <p>Times must be supported whole-second values with thisUpdate no later than
+     * producedAt and nextUpdate after thisUpdate. No clock is consulted, so these
+     * relationships do not establish freshness at the caller's evaluation time.
+     * GOOD is a parsed status value, not certificate-path validity.</p>
+     *
      * @param requestDer original complete native request
      * @param responseDer complete successful native response
      * @return canonical parsed projection; no caller status values are accepted
@@ -173,7 +193,13 @@ public final class SdkOcspProjection {
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("SDK OCSP projection invalid"); }
 
     /**
-     * Exact immutable native projection; native signature verification remains separate.
+     * Native public projection with defensively owned algorithm bytes.
+     *
+     * <p>{@link SdkOcspProjection#parse(byte[], byte[])} returns structurally checked values. Direct record
+     * construction only clones the algorithm bytes; it does not enforce non-null
+     * time/typed values, time order or the native projection schema. Consumers must
+     * not treat arbitrary constructed instances as verified native responses.
+     * Native signature verification remains separate.</p>
      * @param producedAt whole-second native production time
      * @param thisUpdate common whole-second status time
      * @param nextUpdate common mandatory whole-second expiry
@@ -183,9 +209,23 @@ public final class SdkOcspProjection {
      */
     public record Projection(Instant producedAt, Instant thisUpdate, Instant nextUpdate, HybridSdkValue nonce,
             HybridSdkValue statuses, byte[] algorithmIdentifier) {
-        /** Owns the public algorithm bytes defensively. */
+        /**
+         * Copies the algorithm bytes while retaining the other supplied value references.
+         *
+         * @param producedAt supplied production time; not validated here
+         * @param thisUpdate supplied common status time; not validated here
+         * @param nextUpdate supplied common expiry; not validated here
+         * @param nonce supplied immutable typed nonce value; not validated here
+         * @param statuses supplied immutable typed status list; not validated here
+         * @param algorithmIdentifier supplied signature algorithm DER bytes; copied without parsing
+         * @throws NullPointerException if the algorithm array is null
+         */
         public Projection { algorithmIdentifier = algorithmIdentifier.clone(); }
-        /** @return independent native AlgorithmIdentifier bytes */
+        /**
+         * Returns a new copy of the retained signature algorithm representation.
+         *
+         * @return independently owned algorithm bytes
+         */
         @Override public byte[] algorithmIdentifier() { return algorithmIdentifier.clone(); }
     }
 }

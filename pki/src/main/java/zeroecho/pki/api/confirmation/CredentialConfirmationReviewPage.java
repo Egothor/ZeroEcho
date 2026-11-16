@@ -47,7 +47,12 @@ import java.util.Optional;
 public record CredentialConfirmationReviewPage(List<CredentialConfirmationReview> reviews,
         Optional<CredentialConfirmationReviewCursor> nextCursor) {
 
-    /** Copies and validates the page. */
+    /**
+     * Copies and validates the page.
+     * @param reviews pending lifecycles ordered by review time and then unsigned strict UTF-8 credential ID
+     * @param nextCursor exclusive cursor for the next page, empty at the captured end; callers must continue when present even if {@code reviews} is empty
+     * @throws NullPointerException if reviews or nextCursor is null, or a reviews entry is null
+     */
     public CredentialConfirmationReviewPage {
         reviews = List.copyOf(Objects.requireNonNull(reviews, "reviews"));
         Objects.requireNonNull(nextCursor, "nextCursor");

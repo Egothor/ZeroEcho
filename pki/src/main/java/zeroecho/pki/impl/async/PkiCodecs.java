@@ -50,6 +50,9 @@ public final class PkiCodecs {
      * Codec for {@link PkiId}.
      */
     public static final IdCodec<PkiId> PKI_ID = new IdCodec<>() {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String encode(PkiId value) {
             if (value == null) {
@@ -58,6 +61,9 @@ public final class PkiCodecs {
             return value.value();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PkiId decode(String token) {
             return new PkiId(token);
@@ -73,6 +79,9 @@ public final class PkiCodecs {
      * </p>
      */
     public static final IdCodec<Principal> PRINCIPAL = new IdCodec<>() {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String encode(Principal value) {
             if (value == null) {
@@ -81,6 +90,9 @@ public final class PkiCodecs {
             return value.type() + ":" + value.name();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Principal decode(String token) {
             int idx = token.indexOf(':');
@@ -97,6 +109,9 @@ public final class PkiCodecs {
      * Codec for endpoint ids represented as strings.
      */
     public static final IdCodec<String> STRING = new IdCodec<>() {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String encode(String value) {
             if (value == null || value.isBlank()) {
@@ -105,6 +120,9 @@ public final class PkiCodecs {
             return value;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String decode(String token) {
             if (token == null || token.isBlank()) {

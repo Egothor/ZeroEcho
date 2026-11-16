@@ -56,11 +56,17 @@ public final class X509AlgorithmIdentifier {
      * Exact parameter representation.
      */
     public enum ParameterForm {
-        /** Parameters are omitted. */
+        /**
+         * Parameters are omitted.
+         */
         ABSENT,
-        /** Parameters are canonical DER NULL. */
+        /**
+         * Parameters are canonical DER NULL.
+         */
         DER_NULL,
-        /** Parameters are exact canonical structured DER. */
+        /**
+         * Parameters are exact canonical structured DER.
+         */
         EXACT_DER
     }
 
@@ -154,12 +160,18 @@ public final class X509AlgorithmIdentifier {
         return oid + "|" + parameterForm + "|" + HexFormat.of().formatHex(parameters);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof X509AlgorithmIdentifier identifier && oid.equals(identifier.oid)
                 && parameterForm == identifier.parameterForm && Arrays.equals(parameters, identifier.parameters);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return 31 * (31 * oid.hashCode() + parameterForm.hashCode()) + Arrays.hashCode(parameters);

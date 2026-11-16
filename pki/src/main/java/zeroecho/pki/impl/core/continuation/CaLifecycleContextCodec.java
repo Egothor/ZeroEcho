@@ -44,7 +44,9 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaHeadSnapshot;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
-/** Bounded canonical version-one lifecycle context; never consults mutable state. */
+/**
+ * Bounded canonical version-one lifecycle context; never consults mutable state.
+ */
 public final class CaLifecycleContextCodec {
     private static final String DOMAIN = "CA_LIFECYCLE_CONTEXT_V1";
     private static final int MAXIMUM_TEXT = 131_072;
@@ -93,6 +95,7 @@ public final class CaLifecycleContextCodec {
      * Commits to all context fields with the codec's explicit domain separator.
      * @param context exact expected-head evidence
      * @return lowercase canonical SHA-256
+     * @throws IllegalStateException if the runtime does not provide SHA-256
      */
     public static String commitment(CaLifecycleContext context) {
         try {

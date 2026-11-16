@@ -50,6 +50,9 @@ public record ImportPolicy(boolean allowOverwrite, boolean validateBeforeImport,
      * Creates an import policy.
      *
      * @throws IllegalArgumentException if {@code attributes} is null
+     * @param allowOverwrite whether existing records may be overwritten
+     * @param validateBeforeImport whether to validate payload and metadata before persisting
+     * @param attributes additional policy hints (non-sensitive; may be empty but not null)
      */
     public ImportPolicy {
         if (attributes == null) {

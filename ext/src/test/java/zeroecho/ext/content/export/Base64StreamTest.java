@@ -44,8 +44,16 @@ import java.util.Base64;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Stream contract tests comparing Base64 output with a reference encoding.
+ */
 class Base64StreamTest {
 
+    /**
+     * Checks Base64 stream output for a 4 KiB input against the reference encoding.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testEncodedOutputFrom4KBInput() throws Exception {
         System.out.println("testEncodedOutputFrom4KBInput");

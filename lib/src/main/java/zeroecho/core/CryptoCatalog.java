@@ -106,6 +106,11 @@ public final class CryptoCatalog {
         return new CryptoCatalog(CryptoAlgorithms.registry());
     }
 
+    /**
+     * Returns the authoritative immutable algorithm map retained by this catalog.
+     *
+     * @return algorithm identifiers mapped to their shared algorithm instances
+     */
     /* default */ Map<String, CryptoAlgorithm> algorithms() {
         return algos;
     }

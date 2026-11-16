@@ -44,42 +44,68 @@ package zeroecho.pki.api;
  */
 public enum PkiFailureClassification {
 
-    /** Caller-controlled input is malformed, incomplete, or otherwise invalid. */
+    /**
+     * Caller-controlled input is malformed, incomplete, or otherwise invalid.
+     */
     VALIDATION_FAILURE,
 
-    /** The caller's identity or presented authentication evidence could not be established. */
+    /**
+     * The caller's identity or presented authentication evidence could not be established.
+     */
     AUTHENTICATION_FAILURE,
 
-    /** The authenticated caller is not authorized to perform the requested operation. */
+    /**
+     * The authenticated caller is not authorized to perform the requested operation.
+     */
     AUTHORIZATION_DENIED,
 
-    /** Valid input was rejected by an applicable PKI policy. */
+    /**
+     * Valid input was rejected by an applicable PKI policy.
+     */
     POLICY_REJECTION,
 
-    /** The requested PKI entity or operation does not exist in the authoritative state. */
+    /**
+     * The requested PKI entity or operation does not exist in the authoritative state.
+     */
     NOT_FOUND,
 
-    /** The request conflicts with the current authoritative state or another committed operation. */
+    /**
+     * The request conflicts with the current authoritative state or another committed operation.
+     */
     CONFLICT,
 
-    /** Processing cannot safely continue until authoritative state recovery is completed. */
+    /**
+     * Processing cannot safely continue until authoritative state recovery is completed.
+     */
     RECOVERY_REQUIRED,
 
-    /** An external operation may have completed, but its authoritative outcome is not known. */
+    /**
+     * An external operation may have completed, but its authoritative outcome is not known.
+     */
     EXTERNAL_OUTCOME_UNKNOWN,
 
-    /** A required storage, memory, file, or other finite resource was unavailable. */
+    /**
+     * A required storage, memory, file, or other finite resource was unavailable.
+     */
     RESOURCE_FAILURE,
 
-    /** Processing was cancelled before a successful outcome was established. */
+    /**
+     * Processing was cancelled before a successful outcome was established.
+     */
     CANCELLED,
 
-    /** The operation did not establish a successful outcome before its deadline. */
+    /**
+     * The operation did not establish a successful outcome before its deadline.
+     */
     DEADLINE_EXCEEDED,
 
-    /** The system temporarily lacks admission or processing capacity for the request. */
+    /**
+     * The system temporarily lacks admission or processing capacity for the request.
+     */
     OVERLOADED,
 
-    /** An internal defect or otherwise unclassified internal failure prevented completion. */
+    /**
+     * An internal defect or otherwise unclassified internal failure prevented completion.
+     */
     INTERNAL_FAILURE
 }

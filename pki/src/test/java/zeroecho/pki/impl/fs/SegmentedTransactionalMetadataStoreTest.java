@@ -84,6 +84,9 @@ import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for segmented transactional metadata store.
+ */
 final class SegmentedTransactionalMetadataStoreTest {
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("0123456789abcdef0123456789abcdef");
@@ -91,6 +94,11 @@ final class SegmentedTransactionalMetadataStoreTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Create and reopen use exact configured active WAL.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createAndReopenUseExactConfiguredActiveWal() throws Exception {
         Path root = Files.createDirectory(temporaryDirectory.resolve("configured-active-wal"));
@@ -137,6 +145,11 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Recovery fails closed when configured resident index budget is too small.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryFailsClosedWhenConfiguredResidentIndexBudgetIsTooSmall() throws Exception {
         Path root = Files.createDirectory(temporaryDirectory.resolve("recovery-index-budget"));
@@ -154,6 +167,12 @@ final class SegmentedTransactionalMetadataStoreTest {
                         FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES));
     }
 
+    /**
+     * Signing projection fails closed without envelope.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signingProjectionFailsClosedWithoutEnvelope(@TempDir Path temporary)
             throws Exception {
@@ -173,6 +192,12 @@ final class SegmentedTransactionalMetadataStoreTest {
     }
 
 
+    /**
+     * Ephemeral direct context does not alter durable transaction payload.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ephemeralDirectContextDoesNotAlterDurableTransactionPayload(@TempDir Path temporary)
             throws Exception {
@@ -197,6 +222,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         assertArrayEquals(committedPayload(unreservedRoot), committedPayload(admittedRoot));
     }
 
+    /**
+     * Direct commit survives WAL recovery and checkpoint export.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void directCommitSurvivesWalRecoveryAndCheckpointExport(@TempDir Path temporary) throws Exception {
         Path sourceRoot = Files.createDirectory(temporary.resolve("direct-source"));
@@ -223,6 +254,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Direct cohort preserves independent input ordered results.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void directCohortPreservesIndependentInputOrderedResults(@TempDir Path temporary)
             throws Exception {
@@ -257,6 +294,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Conditional direct commit recovers only fallback without revision gap.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conditionalDirectCommitRecoversOnlyFallbackWithoutRevisionGap(@TempDir Path temporary)
             throws Exception {
@@ -304,6 +347,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Direct commit force failure never reports success.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void directCommitForceFailureNeverReportsSuccess(@TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("direct-uncertain"));
@@ -335,6 +384,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         assertSame(firstRecoveryFailure, store.firstRecoveryFailure());
     }
 
+    /**
+     * Admission release invariant publishes its cause with recovery state.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void admissionReleaseInvariantPublishesItsCauseWithRecoveryState(@TempDir Path temporary)
             throws Exception {
@@ -355,6 +410,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Active WAL close failure is retained and readable after engine close.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void activeWalCloseFailureIsRetainedAndReadableAfterEngineClose(@TempDir Path temporary)
             throws Exception {
@@ -375,6 +436,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         assertEquals("injected WAL close failure", channelFailure.getMessage());
     }
 
+    /**
+     * Overlapping direct creates validate against prepared admission order.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void overlappingDirectCreatesValidateAgainstPreparedAdmissionOrder(@TempDir Path temporary)
             throws Exception {
@@ -403,6 +470,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Malformed integrity valid direct commits fail recovery without mutation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedIntegrityValidDirectCommitsFailRecoveryWithoutMutation(@TempDir Path temporary)
             throws Exception {
@@ -440,6 +513,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Exports pinned revision as direct checkpoint ledger.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exportsPinnedRevisionAsDirectCheckpointLedger(@TempDir Path temporary) throws Exception {
         Path sourceRoot = Files.createDirectory(temporary.resolve("source"));
@@ -461,6 +540,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Commits multi key atomically retains outcome and restarts.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void commitsMultiKeyAtomicallyRetainsOutcomeAndRestarts(@TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("metadata"));
@@ -500,6 +585,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Conflict changes no caller key and is retained.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictChangesNoCallerKeyAndIsRetained(@TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("metadata"));
@@ -526,6 +617,13 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Transaction restart matrix resolves unknown and never loses committed business state.
+     *
+     * @param boundary transaction or persistence boundary selected for this failure case
+     * @param boundaryDurable whether the selected transaction boundary crossed its durability barrier
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @MethodSource("transactionRestartBoundaries")
     void transactionRestartMatrixResolvesUnknownAndNeverLosesCommittedBusinessState(
@@ -617,6 +715,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Rejects legacy or unknown root before mutation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsLegacyOrUnknownRootBeforeMutation(@TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("metadata"));
@@ -628,6 +732,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         assertEquals(1L, Files.size(legacy));
     }
 
+    /**
+     * Snapshot copies pinned values retained outcomes and watermark.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotCopiesPinnedValuesRetainedOutcomesAndWatermark(@TempDir Path temporary)
             throws Exception {
@@ -675,6 +785,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Interrupt after admission does not report cancelled.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void interruptAfterAdmissionDoesNotReportCancelled(@TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("interrupt"));
@@ -695,6 +811,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Acknowledged ordinary outcomes remain bounded across restart.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acknowledgedOrdinaryOutcomesRemainBoundedAcrossRestart(@TempDir Path temporary)
             throws Exception {
@@ -722,6 +844,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         }
     }
 
+    /**
+     * Unknown and symlink entries fail closed without mutation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void unknownAndSymlinkEntriesFailClosedWithoutMutation(@TempDir Path temporary)

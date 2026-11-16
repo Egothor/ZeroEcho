@@ -130,8 +130,9 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
 
-/** Complete wire-level ACME account-to-revocation integration. */
-@SuppressWarnings("PMD")
+/**
+ * Complete wire-level ACME account-to-revocation integration.
+ */
 class AcmeEndToEndTest {
     // The installed signing provider and the subprocess use the real UTC clock.
     private static final Clock CLOCK = Clock.systemUTC();
@@ -142,10 +143,18 @@ class AcmeEndToEndTest {
     private static final byte[] EAB_SECRET = "zeroecho-test-eab-secret-32-bytes"
             .getBytes(StandardCharsets.US_ASCII);
 
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
 
 
+    /**
+     * Exercises real protected CMP enrollment, durable approval/restart, certificate confirmation, replacement and revocation through published loopback interfaces.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cmpProtectedApprovalRestartConfirmationReplacementAndRevocationUseRealDomain() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -474,6 +483,11 @@ class AcmeEndToEndTest {
                 .build(zeroecho.pkix.Pkix.signer(issuer.getPrivate(), zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
     }
 
+    /**
+     * Checks real SCEP messages use the advertised RA, retain one pending approval and continue with the original credential binding after rollover.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void scepDurableApprovalUsesAdvertisedRaAndRetainedCredentialAfterRollover() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -745,6 +759,11 @@ class AcmeEndToEndTest {
                         sets.getLast().authorityId(), sets.getLast().credentialId())), Optional.empty());
     }
 
+    /**
+     * Exercises encrypted EST server-key generation through real HTTPS across approval, restart, rollover, one-time delivery and expiry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void estGeneratedKeyApprovalRestartRolloverDeliveryAndExpiryUseRealHttps() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -899,6 +918,11 @@ class AcmeEndToEndTest {
         assertFalse(java.util.Arrays.equals(recipient.getPublic().getEncoded(), leaf.getPublicKey().getEncoded()));
     }
 
+    /**
+     * Checks real EST TLS admission/body bounds and durable pending enrollment/retry/renewal after server restart.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void estApprovalRetriesAndRenewalSurviveHttpsRestart() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -1016,6 +1040,11 @@ class AcmeEndToEndTest {
         return result;
     }
 
+    /**
+     * Checks ACME approval survives restart/account-key rollover before authenticated order polling dispatches the retained operation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void approvalSurvivesRestartAndAccountRolloverBeforeAuthenticatedPollDispatch() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -1123,6 +1152,11 @@ class AcmeEndToEndTest {
         return order;
     }
 
+    /**
+     * Exercises account registration, challenge validation, certificate issuance, key rollover, restart and revocation through real loopback HTTPS.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void completesRealHttpsAccountIssuanceRolloverRestartAndRevocation() throws Exception {
         System.out.println("completesRealHttpsAccountIssuanceRolloverRestartAndRevocation");
@@ -1421,6 +1455,11 @@ class AcmeEndToEndTest {
         }));
     }
 
+    /**
+     * Exercises the installed server distribution from ACME account creation through independently checked issuance, OCSP and revocation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void completesInstalledDistributionAccountToRevocationWorkflow() throws Exception {
         System.out.println("completesInstalledDistributionAccountToRevocationWorkflow");
@@ -1543,6 +1582,11 @@ class AcmeEndToEndTest {
         }
     }
 
+    /**
+     * Checks explicit ACME SDK JWS/nonce binding, dual-key proof rejection/acceptance, approval and retained replay across account rollover.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void explicitSdkAcmeUsesRealJwsDualProofApprovalAndRolloverReplay() throws Exception {
         var tls = HttpServerTestSupport.tls(); int port = reservePort(), challengePort = reservePort();
@@ -1595,6 +1639,11 @@ class AcmeEndToEndTest {
         }
     }
 
+    /**
+     * Checks explicit EST SDK enrollment/reenrollment over real TLS with dual proofs and native polling, including independently verified alternative certificate signatures.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void explicitSdkEstEnrollAndReenrollUseRealTlsDualProofAndNativePolling() throws Exception {
         var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); int port = reservePort();
         var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
@@ -1677,6 +1726,11 @@ class AcmeEndToEndTest {
         }
     }
 
+    /**
+     * Checks explicit SCEP SDK admission binds original CMS bytes and challenge policy before dual-proof approval and native protected polling.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void explicitSdkScepUsesOriginalCmsDualProofApprovalAndNativeProtectedPoll() throws Exception {
         var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); int port = reservePort();
         var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
@@ -1779,6 +1833,11 @@ class AcmeEndToEndTest {
         }
     }
 
+    /**
+     * Checks CMP SDK enrollment binds the PBM credential/original-wire hash and preserves native polling/confirmation across signature-based replacement.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void explicitSdkCmpPbmEnrollmentAndSignatureReplacementKeepNativePollAndConfirmation() throws Exception {
         var tls = HttpServerTestSupport.tls(); var root = sdkMaterial(); var subject = sdkMaterial(); var replacement = sdkMaterial(); int port = reservePort();
         var base = fixture(tls, reservePort(), reservePort(), reservePort(), root.primary(), Optional.of(root.alternative())); seedSdk(base);
@@ -2896,6 +2955,9 @@ class AcmeEndToEndTest {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws java.io.IOException {
             listener.close();
             if (thread != null) {

@@ -84,17 +84,29 @@ public final class FrodoKeyGenSpec implements AlgorithmKeySpec, Describable {
      * </p>
      */
     public enum Variant {
-        /** 128-bit security, AES-based pseudorandomness. */
+        /**
+         * 128-bit security, AES-based pseudorandomness.
+         */
         FRODO_640_AES,
-        /** 128-bit security, SHAKE-based pseudorandomness. */
+        /**
+         * 128-bit security, SHAKE-based pseudorandomness.
+         */
         FRODO_640_SHAKE,
-        /** ~192-bit security, AES-based pseudorandomness. */
+        /**
+         * ~192-bit security, AES-based pseudorandomness.
+         */
         FRODO_976_AES,
-        /** ~192-bit security, SHAKE-based pseudorandomness. */
+        /**
+         * ~192-bit security, SHAKE-based pseudorandomness.
+         */
         FRODO_976_SHAKE,
-        /** ~256-bit security, AES-based pseudorandomness. */
+        /**
+         * ~256-bit security, AES-based pseudorandomness.
+         */
         FRODO_1344_AES,
-        /** ~256-bit security, SHAKE-based pseudorandomness. */
+        /**
+         * ~256-bit security, SHAKE-based pseudorandomness.
+         */
         FRODO_1344_SHAKE
     }
 

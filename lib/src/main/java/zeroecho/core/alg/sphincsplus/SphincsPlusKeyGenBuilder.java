@@ -78,7 +78,9 @@ public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerato
 
     private static final String ALG = "SLH-DSA";
 
-    /** Creates a stateless SPHINCS+ key-pair generator. */
+    /**
+     * Creates a stateless SPHINCS+ key-pair generator.
+     */
     public SphincsPlusKeyGenBuilder() {
         // Stateless generator.
     }

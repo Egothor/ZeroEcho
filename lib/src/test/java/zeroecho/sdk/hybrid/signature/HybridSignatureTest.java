@@ -84,6 +84,9 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 public class HybridSignatureTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,
@@ -230,6 +233,11 @@ public class HybridSignatureTest {
     // 1) DIRECT streaming tests (SignatureContext.wrap + transferTo)
     // ======================================================================
 
+    /**
+     * Hybrid Ed25519 SPHINCS+ direct and or negative.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_ed25519_sphincsplus_direct_and_or_negative() throws Exception {
         final int size = 64 * 1024 + 13;
@@ -352,6 +360,11 @@ public class HybridSignatureTest {
         logEnd();
     }
 
+    /**
+     * Hybrid RSA SPHINCS+ direct and round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_rsa_sphincsplus_direct_and_roundtrip() throws Exception {
         final int size = 96 * 1024 + 3;
@@ -413,6 +426,11 @@ public class HybridSignatureTest {
     // 2) TagTrailer integration tests (DataContentChainBuilder + TagTrailer)
     // ======================================================================
 
+    /**
+     * Hybrid Ed25519 SPHINCS+ via tag trailer and round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_ed25519_sphincsplus_via_tagtrailer_and_roundtrip() throws Exception {
         final int size = 32 * 1024 + 7;
@@ -466,6 +484,11 @@ public class HybridSignatureTest {
         logEnd();
     }
 
+    /**
+     * Hybrid Ed25519 SPHINCS+ via tag trailer or negative.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_ed25519_sphincsplus_via_tagtrailer_or_negative() throws Exception {
         final int size = 24 * 1024 + 9;
@@ -565,6 +588,11 @@ public class HybridSignatureTest {
         logEnd();
     }
 
+    /**
+     * Hybrid RSA SPHINCS+ via tag trailer and round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_rsa_sphincsplus_via_tagtrailer_and_roundtrip() throws Exception {
         final int size = 40 * 1024 + 1;

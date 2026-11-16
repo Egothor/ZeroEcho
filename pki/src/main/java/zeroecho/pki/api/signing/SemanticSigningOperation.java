@@ -65,7 +65,23 @@ public record SemanticSigningOperation(SigningSubmissionId submissionId,
         SemanticSigningState state, long signingRevision, long revision,
         Instant createdAt, Instant deadline, Optional<String> detailCode,
         Optional<EncodedObject> result) {
-    /** Validates and defensively snapshots the observed domain result. */
+    /**
+     * Validates and defensively snapshots the observed domain result.
+     * @param submissionId retained operation identity
+     * @param scope persisted coordinates requiring caller authorization
+     * @param signingState current signature lifecycle, without internal RETIRED
+     * @param state outer domain lifecycle
+     * @param signingRevision observed signature revision
+     * @param revision observed outer revision
+     * @param createdAt authoritative creation time
+     * @param deadline authoritative signing deadline
+     * @param detailCode optional safe outer terminal detail
+     * @param result completed domain result, never a raw signature
+     * @throws NullPointerException if submissionId, scope, signingState, state, createdAt, deadline,
+     *     detailCode, result is null
+     * @throws IllegalArgumentException if a revision is negative, deadline precedes creation, completed state
+     *     and result presence disagree, or detailCode is blank
+     */
     public SemanticSigningOperation {
         Objects.requireNonNull(submissionId, "submissionId");
         Objects.requireNonNull(scope, "scope");
@@ -90,6 +106,7 @@ public record SemanticSigningOperation(SigningSubmissionId submissionId,
      * O(D) time and O(D) transient memory for the existing defensive DER snapshot;
      * no identity or payload is cached in this observation.
      * @return the exact {@code x509:} SHA-256 identity, when applicable
+     * @throws IllegalStateException if SHA-256 is unavailable
      */
     public Optional<PkiId> completedCredentialId() {
         if ((scope.kind() != SemanticSigningKind.CA && scope.kind() != SemanticSigningKind.ISSUANCE)
@@ -105,6 +122,9 @@ public record SemanticSigningOperation(SigningSubmissionId submissionId,
         }
     }
 
-    /** Returns a representation that omits privileged operation data. */
+    /**
+     * Returns a representation that omits privileged operation data.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "SemanticSigningOperation[redacted]"; }
 }

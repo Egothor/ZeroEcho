@@ -66,7 +66,9 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * @since 1.0
  */
 public final class EcdsaKeyGenBuilder implements AsymmetricKeyPairGenerator<EcdsaCurveSpec> {
-    /** Creates a stateless ECDSA key-pair generator. */
+    /**
+     * Creates a stateless ECDSA key-pair generator.
+     */
     public EcdsaKeyGenBuilder() {
         // Stateless generator.
     }

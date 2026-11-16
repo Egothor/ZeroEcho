@@ -192,6 +192,9 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -205,6 +208,9 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

@@ -36,7 +36,9 @@ package zeroecho.pki.spi.store;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.ca.IssuerKeyBinding;
 
-/** Immutable configured public algorithm validation; never reads managed private keys or selects defaults. */
+/**
+ * Immutable configured public algorithm validation; never reads managed private keys or selects defaults.
+ */
 @FunctionalInterface
 public interface IssuerAlgorithmEvidenceVerifier {
     /**

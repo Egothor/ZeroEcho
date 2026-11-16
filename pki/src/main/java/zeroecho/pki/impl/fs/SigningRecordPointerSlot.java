@@ -33,7 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
-/** One-way physical record location resolved before its pointer is published. */
+/**
+ * One-way physical record location resolved before its pointer is published.
+ */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidSynchronizedAtMethodLevel" })
 final class SigningRecordPointerSlot {
     private static final long MINIMUM_RECORD_OFFSET = Math.min(
@@ -42,12 +44,27 @@ final class SigningRecordPointerSlot {
     private long offset = -1L;
     private int length;
 
+    /**
+     * Creates a physical locator slot already resolved to one bounded encoded signing frame.
+     *
+     * @param frameOffset absolute byte offset at or beyond the smaller checkpoint or WAL container header length
+     * @param frameLength positive complete encoded length no greater than the maximum WAL frame length
+     * @return new resolved locator slot
+     * @throws IllegalStateException if bounds are invalid or the exclusive frame end overflows
+     */
     /* default */ static SigningRecordPointerSlot resolved(long frameOffset, int frameLength) {
         SigningRecordPointerSlot result = new SigningRecordPointerSlot();
         result.resolve(frameOffset, frameLength);
         return result;
     }
 
+    /**
+     * Resolves an unpublished locator slot exactly once to a bounded physical signing frame.
+     *
+     * @param frameOffset absolute byte offset at or beyond the smaller checkpoint or WAL container header length
+     * @param frameLength positive complete encoded length no greater than the maximum WAL frame length
+     * @throws IllegalStateException if the slot is already resolved, bounds are invalid or the exclusive frame end overflows
+     */
     /* default */ synchronized void resolve(long frameOffset, int frameLength) {
         if (offset >= 0L || frameOffset < MINIMUM_RECORD_OFFSET
                 || frameLength <= 0 || frameLength > SigningWalFrameCodec.MAX_FRAME_BYTES) {
@@ -62,16 +79,33 @@ final class SigningRecordPointerSlot {
         length = frameLength;
     }
 
+    /**
+     * Returns the resolved frame's absolute byte offset.
+     *
+     * @return nonnegative absolute frame offset in bytes
+     * @throws IllegalStateException if the slot has not been resolved
+     */
     /* default */ synchronized long offset() {
         requireResolved();
         return offset;
     }
 
+    /**
+     * Returns the resolved frame's complete encoded length.
+     *
+     * @return positive complete encoded frame length in bytes
+     * @throws IllegalStateException if the slot has not been resolved
+     */
     /* default */ synchronized int length() {
         requireResolved();
         return length;
     }
 
+    /**
+     * Reports whether exact physical coordinates were installed in this locator slot.
+     *
+     * @return true after successful one-time resolution
+     */
     /* default */ synchronized boolean resolved() { return offset >= 0L; }
 
     private void requireResolved() {

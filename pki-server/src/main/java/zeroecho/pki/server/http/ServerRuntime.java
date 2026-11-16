@@ -57,22 +57,65 @@ import java.util.concurrent.atomic.AtomicInteger;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.PkiServerConfiguration;
 
-/** Centralized owner of all bounded server-created threads, queues and permits. */
-@SuppressWarnings("PMD")
+/**
+ * Centralized owner of all bounded server-created threads, queues and permits.
+ */
 public final class ServerRuntime implements AutoCloseable {
+    /**
+     * Name prefix for administrative HTTPS dispatch threads.
+     */
     static final String TRANSPORT_PREFIX = "zeroecho-pki-https-";
+    /**
+     * Name prefix for bounded administrative operation workers.
+     */
     static final String OPERATION_PREFIX = "zeroecho-pki-operation-";
+    /**
+     * Name prefix for public repository HTTPS dispatch threads.
+     */
     static final String PUBLIC_TRANSPORT_PREFIX = "zeroecho-pki-public-https-";
+    /**
+     * Name prefix for bounded public repository streaming workers.
+     */
     static final String PUBLIC_STREAM_PREFIX = "zeroecho-pki-public-stream-";
+    /**
+     * Name prefix for ACME HTTPS dispatch threads.
+     */
     static final String ACME_TRANSPORT_PREFIX = "zeroecho-pki-acme-https-";
+    /**
+     * Name prefix for bounded ACME protocol workers.
+     */
     static final String ACME_PROTOCOL_PREFIX = "zeroecho-pki-acme-protocol-";
+    /**
+     * Name prefix for separately admitted ACME challenge-validation workers.
+     */
     static final String ACME_VALIDATION_PREFIX = "zeroecho-pki-acme-validation-";
+    /**
+     * Name prefix for OCSP HTTPS dispatch threads.
+     */
     static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
+    /**
+     * Name prefix for bounded OCSP response workers.
+     */
     static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
+    /**
+     * Name prefix for SCEP HTTPS dispatch threads.
+     */
     static final String SCEP_TRANSPORT_PREFIX = "zeroecho-pki-scep-https-";
+    /**
+     * Name prefix for bounded SCEP operation workers.
+     */
     static final String SCEP_OPERATION_PREFIX = "zeroecho-pki-scep-operation-";
+    /**
+     * Name prefix for CMP HTTPS dispatch threads.
+     */
     static final String CMP_TRANSPORT_PREFIX = "zeroecho-pki-cmp-https-";
+    /**
+     * Name prefix for bounded CMP operation workers.
+     */
     static final String CMP_OPERATION_PREFIX = "zeroecho-pki-cmp-operation-";
+    /**
+     * Name assigned to the server lifecycle shutdown-hook thread.
+     */
     static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
     private static final ThreadLocal<WorkerType> WORKER_MARKER = new ThreadLocal<>();
 
@@ -85,14 +128,34 @@ public final class ServerRuntime implements AutoCloseable {
     private final PkiServerConfiguration.Execution configuration;
     private final AtomicBoolean accepting = new AtomicBoolean(true);
 
+    /**
+     * Creates the administrative transport and bounded operation execution owners.
+     *
+     * @param configuration admission, worker, queue, deadline and shutdown limits
+     * @throws NullPointerException if the configuration is null
+     */
     ServerRuntime(PkiServerConfiguration.Execution configuration) {
         this(configuration, Lane.ADMIN);
     }
 
+    /**
+     * Creates administrative or public-repository execution owners.
+     *
+     * @param configuration admission, worker, queue, deadline and shutdown limits
+     * @param publicLane whether to use public repository thread names
+     * @throws NullPointerException if the configuration is null
+     */
     ServerRuntime(PkiServerConfiguration.Execution configuration, boolean publicLane) {
         this(configuration, publicLane ? Lane.PUBLIC : Lane.ADMIN);
     }
 
+    /**
+     * Starts execution owners with thread names identifying their protocol lane.
+     *
+     * @param configuration admission, worker, queue, deadline and shutdown limits
+     * @param lane protocol lane used for transport and operation thread naming
+     * @throws NullPointerException if the configuration is null
+     */
     ServerRuntime(PkiServerConfiguration.Execution configuration, Lane lane) {
         this.configuration = configuration;
         String transportPrefix = lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
@@ -117,6 +180,11 @@ public final class ServerRuntime implements AutoCloseable {
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
+    /**
+     * Returns the transport executor borrowed by the HTTP listener.
+     *
+     * @return runtime-owned executor; callers must not shut it down independently
+     */
     ExecutorService transportExecutor() {
         return transport;
     }
@@ -160,6 +228,7 @@ public final class ServerRuntime implements AutoCloseable {
      * @throws TimeoutException if the deadline expires
      * @throws InterruptedException if the waiting caller is interrupted
      * @throws ExecutionException if operation execution fails
+     * @throws NullPointerException if any of {@code deadline}, {@code operation} is null
      */
     public <T> T execute(Duration deadline, CancellableOperation<T> operation)
             throws TimeoutException, InterruptedException, ExecutionException {
@@ -193,6 +262,14 @@ public final class ServerRuntime implements AutoCloseable {
         T call(CancellationSignal cancellation) throws Exception;
     }
 
+    /**
+     * Queues an operation with tracked future and cooperative cancellation ownership.
+     *
+     * @param <T> operation result type
+     * @param task operation invoked with its runtime-owned cancellation token
+     * @return tracked submission; callers invoke its finish hook after observing the result
+     * @throws RejectedExecutionException if the runtime is quiescing or its bounded queue is full
+     */
     <T> Submitted<T> submit(CancellableCallable<T> task) {
         if (!accepting.get()) throw new RejectedExecutionException("Server is not accepting operations");
         CancellationToken cancellation = new CancellationToken();
@@ -211,38 +288,93 @@ public final class ServerRuntime implements AutoCloseable {
         return new Submitted<>(future, cancellation, future::cleanupIfComplete);
     }
 
+    /**
+     * Stops accepting new operation submissions and request-admission attempts.
+     *
+     * <p>Already admitted requests and running operations are not cancelled.</p>
+     */
     void quiesce() {
         accepting.set(false);
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return whether new work is currently accepted
+     */
     boolean accepting() {
         return accepting.get();
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return current number of queued operation tasks
+     */
     int operationQueueSize() {
         return operations.getQueue().size();
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return approximate number of operation workers executing tasks
+     */
     int activeOperations() {
         return operations.getActiveCount();
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return number of operation futures still tracked for lifecycle cleanup
+     */
     int trackedOperationFutures() {
         return futures.size();
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return number of cancellation tokens still tracked for executing or queued work
+     */
     int trackedCancellationTokens() {
         return cancellations.size();
     }
 
+    /**
+     * Returns a snapshot of the runtime execution state.
+     *
+     * @return whether the current thread carries a server-runtime worker marker
+     */
     static boolean isWorkerThread() {
         return WORKER_MARKER.get() != null;
     }
 
+    /**
+     * Creates an unstarted platform thread for server shutdown handling.
+     *
+     * @param task shutdown action executed when the returned thread starts
+     * @return unstarted thread with the stable server shutdown name
+     */
     static Thread shutdownHook(Runnable task) {
         return new Thread(task, SHUTDOWN_NAME);
     }
 
+    /**
+     * Stops new admission and shuts down the owned operation and transport executors.
+     *
+     * <p>External callers wait for configured graceful bounds before requesting
+     * cooperative cancellation, interrupting work and waiting for forced-shutdown bounds.
+     * An owned worker avoids waiting for its own execution lane; it may therefore report
+     * incomplete shutdown while its task is still running. Cancellation does not roll back
+     * already committed side effects. Interrupted waiters retain their interrupt status.</p>
+     *
+     * <p>If termination is incomplete, the runtime stays quiescent and an external owner
+     * can retry closure after outstanding work exits.</p>
+     *
+     * @throws IllegalStateException if either executor remains live after the applicable shutdown attempts
+     */
     @Override
     public void close() {
         quiesce();
@@ -273,9 +405,43 @@ public final class ServerRuntime implements AutoCloseable {
         }
     }
 
-    enum Lane { ADMIN, PUBLIC, ACME, OCSP, EST, SCEP, CMP }
+    /**
+     * Protocol identity used to name and isolate runtime execution owners.
+     */
+    enum Lane {
+        /**
+         * Administrative API dispatch and operation execution.
+         */
+        ADMIN,
+        /**
+         * Public repository dispatch and streaming.
+         */
+        PUBLIC,
+        /**
+         * ACME protocol dispatch and operation execution.
+         */
+        ACME,
+        /**
+         * OCSP responder dispatch and response execution.
+         */
+        OCSP,
+        /**
+         * EST enrollment dispatch and operation execution.
+         */
+        EST,
+        /**
+         * SCEP enrollment dispatch and operation execution.
+         */
+        SCEP,
+        /**
+         * CMP enrollment dispatch and operation execution.
+         */
+        CMP
+    }
 
-    /** One separately admitted bounded challenge-validation execution lane. */
+    /**
+     * One separately admitted bounded challenge-validation execution lane.
+     */
     static final class ChallengeRuntime implements AutoCloseable {
         private final ThreadPoolExecutor executor;
         private final Semaphore admitted;
@@ -284,6 +450,12 @@ public final class ServerRuntime implements AutoCloseable {
         private final AtomicBoolean accepting = new AtomicBoolean(true);
         private final Set<Future<?>> futures = ConcurrentHashMap.newKeySet();
 
+        /**
+         * Starts a bounded worker lane dedicated to ACME challenge validation.
+         *
+         * @param configuration admission, queue, worker and shutdown bounds
+         * @throws NullPointerException if configuration is null
+         */
         ChallengeRuntime(PkiServerConfiguration.Execution configuration) {
             executor = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
                     new NamedThreadFactory(ACME_VALIDATION_PREFIX, WorkerType.VALIDATION));
@@ -291,8 +463,24 @@ public final class ServerRuntime implements AutoCloseable {
             graceful = configuration.gracefulShutdown(); forced = configuration.forcedShutdown();
         }
 
+        /**
+         * Tries to reserve a validation-admission permit without waiting.
+         *
+         * @return whether a permit was acquired; a successful caller must invoke {@link #release()}
+         */
         boolean tryAdmit() { return accepting.get() && admitted.tryAcquire(); }
+        /**
+         * Returns exactly one validation permit previously acquired by {@link #tryAdmit()}.
+         */
         void release() { admitted.release(); }
+        /**
+         * Queues tracked challenge-validation work on the bounded validation lane.
+         *
+         * @param <T> validation result type
+         * @param work validation operation
+         * @return future supporting result observation and interruption-based cancellation
+         * @throws RejectedExecutionException if the lane is quiescing or its queue is full
+         */
         <T> Future<T> submit(java.util.concurrent.Callable<T> work) {
             if (!accepting.get()) throw new RejectedExecutionException("ACME validation is not accepting work");
             TrackedFutureTask<T> future = new TrackedFutureTask<>(executor, work, futures, () -> { });
@@ -305,8 +493,26 @@ public final class ServerRuntime implements AutoCloseable {
                 throw failure;
             }
         }
+        /**
+         * Returns the number of validation futures retained for lifecycle cleanup.
+         *
+         * @return current tracking count
+         */
         int trackedFutures() { return futures.size(); }
+        /**
+         * Stops accepting new validation work and admission attempts.
+         */
         void quiesce() { accepting.set(false); }
+        /**
+         * Stops validation admission and shuts down the bounded challenge-validation executor.
+         *
+         * <p>An external caller waits for graceful termination, then cancels tracked futures,
+         * interrupts queued/running work and waits for the configured forced bound. A validation
+         * worker avoids waiting for itself. Interrupted callers retain their interrupt status.</p>
+         *
+         * @throws IllegalStateException if validation execution remains live after the applicable shutdown
+         *         attempts
+         */
         @Override public void close() {
             quiesce(); executor.shutdown();
             boolean worker = WORKER_MARKER.get() == WorkerType.VALIDATION;
@@ -352,16 +558,39 @@ public final class ServerRuntime implements AutoCloseable {
                 "Server execution shutdown timed out: code=SERVER_EXECUTION_SHUTDOWN_TIMEOUT");
     }
 
+    /**
+     * Tracked operation handle with cooperative cancellation and completion cleanup.
+     *
+     * @param <T> operation result type
+     * @param future queued or executing operation result
+     * @param cancellation runtime-owned cancellation token
+     * @param completed idempotent tracking-retirement callback
+     */
     record Submitted<T>(Future<T> future, CancellationToken cancellation, Runnable completed) {
+        /**
+         * Requires all submission ownership components.
+         *
+         * @param future operation result handle; must not be null
+         * @param cancellation cooperative cancellation token; must not be null
+         * @param completed tracking-retirement callback; must not be null
+         * @throws NullPointerException if any ownership component is null
+         */
         Submitted {
             if (future == null || cancellation == null || completed == null) {
                 throw new NullPointerException("Submitted operation fields must not be null");
             }
         }
+        /**
+         * Runs tracking retirement once the future has completed execution.
+         *
+         * <p>The supplied callback leaves a cancelled but still executing operation tracked.</p>
+         */
         void finish() { completed.run(); }
     }
 
-    /** Future whose exact task and optional companion state retire at execution completion. */
+    /**
+     * Future whose exact task and optional companion state retire at execution completion.
+     */
     private static final class TrackedFutureTask<T> extends FutureTask<T> {
         private final ThreadPoolExecutor executor;
         private final Set<Future<?>> futures;
@@ -378,6 +607,9 @@ public final class ServerRuntime implements AutoCloseable {
             this.additionalCleanup = additionalCleanup;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void run() {
             started.set(true);
             try {
@@ -388,6 +620,9 @@ public final class ServerRuntime implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override protected void done() {
             if (!started.get()) {
                 executor.remove(this);
@@ -409,14 +644,37 @@ public final class ServerRuntime implements AutoCloseable {
         }
     }
 
+    /**
+     * Internal worker operation receiving the mutable runtime cancellation token.
+     *
+     * @param <T> independently owned operation result type
+     */
     @FunctionalInterface
     interface CancellableCallable<T> {
+        /**
+         * Executes the operation while observing lifecycle cancellation.
+         *
+         * @param cancellation runtime-owned token; must not be retained beyond execution
+         * @return independently owned result
+         * @throws Exception if execution fails or cancellation is propagated
+         */
         T call(CancellationToken cancellation) throws Exception;
     }
 
+    /**
+     * Thread-safe cooperative cancellation signal combined with the current thread's interrupt status.
+     */
     static final class CancellationToken implements CancellationSignal {
         private final AtomicBoolean cancelled = new AtomicBoolean();
+        /**
+         * Returns whether cancellation was requested or the observing thread is interrupted.
+         *
+         * @return whether this operation should stop cooperatively
+         */
         @Override public boolean isCancelled() { return cancelled.get() || Thread.currentThread().isInterrupted(); }
+        /**
+         * Permanently requests cooperative cancellation for this operation.
+         */
         void cancel() { cancelled.set(true); }
     }
 
@@ -433,6 +691,9 @@ public final class ServerRuntime implements AutoCloseable {
             this.workerType = workerType;
             this.virtual = virtual;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Thread newThread(Runnable task) {
             Runnable marked = () -> {
                 WORKER_MARKER.set(workerType);

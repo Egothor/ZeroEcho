@@ -104,6 +104,13 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 final class TwinCertificateIssuanceTest {
 
+    /**
+     * Independent classical and PQC hierarchies complete and reopen.
+     *
+     * @param pqc whether the test selects the post-quantum algorithm variant
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void independentClassicalAndPqcHierarchiesCompleteAndReopen(boolean pqc, @TempDir Path root) throws Exception {
@@ -171,6 +178,9 @@ final class TwinCertificateIssuanceTest {
     private static final Clock CLOCK =
             Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Registers the cryptographic providers required by the test cases.
+     */
     @BeforeAll
     static void registerBouncyCastle() {
         BouncyCastleActivator.init();
@@ -179,6 +189,9 @@ final class TwinCertificateIssuanceTest {
     /**
      * Verifies that a PQC root CA creation using ML-DSA-65 and the
      * {@code TwinCertificate} hybrid mode is accepted by the full PKI session.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @throws Exception if fixture setup, execution, or cleanup fails
      */
     @Test
     void pqcRootCaWithTwinCertificateModeIsAccepted(@TempDir Path root) throws Exception {
@@ -255,7 +268,9 @@ final class TwinCertificateIssuanceTest {
                 HybridCertificateMode.TwinCertificate.INSTANCE);
     }
 
-    /** Minimal bootstrap that installs the PQC profile on first store open. */
+    /**
+     * Minimal bootstrap that installs the PQC profile on first store open.
+     */
     private static final class TwinBootstrap implements DefaultPkiSession.Bootstrap {
         private final Path root;
 

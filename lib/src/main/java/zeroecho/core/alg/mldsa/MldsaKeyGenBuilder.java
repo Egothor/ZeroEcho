@@ -59,7 +59,9 @@ public final class MldsaKeyGenBuilder implements AsymmetricKeyPairGenerator<Mlds
     private static final String ALG_PURE = "MLDSA";
     private static final String ALG_SHA512 = "SHA512withMLDSA";
 
-    /** Creates a stateless ML-DSA key-pair generator. */
+    /**
+     * Creates a stateless ML-DSA key-pair generator.
+     */
     public MldsaKeyGenBuilder() {
         // Stateless generator.
     }
@@ -71,6 +73,7 @@ public final class MldsaKeyGenBuilder implements AsymmetricKeyPairGenerator<Mlds
      * @return generated key pair
      * @throws GeneralSecurityException if the JCA engine cannot be initialized or
      *                                  the parameter set is unknown
+     * @throws NullPointerException if {@code spec} is null
      */
     @Override
     public KeyPair generateKeyPair(MldsaKeyGenSpec spec) throws GeneralSecurityException {

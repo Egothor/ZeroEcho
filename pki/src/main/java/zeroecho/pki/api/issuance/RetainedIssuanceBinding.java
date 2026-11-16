@@ -61,6 +61,13 @@ public record RetainedIssuanceBinding(PkiId authorityId, String issuanceId, Cert
      * @throws NullPointerException if a required identifier or profile is null
      * @throws IllegalArgumentException if an identity or digest is invalid, or an identifier
      *         exceeds 4,096 UTF-8 bytes or contains an unpaired surrogate
+     * @param authorityId exact issuing authority
+     * @param issuanceId stable external issuance identity
+     * @param expectedProfile frozen profile identity, version and digest
+     * @param expectedIssuerId frozen issuer generation
+     * @param expectedChainPathId frozen issuance chain path
+     * @param expectedChainPathCommitment lowercase SHA-256 chain-path commitment
+     * @param effectiveCommitment lowercase SHA-256 effective issuance commitment, including CSR and validity
      */
     public RetainedIssuanceBinding {
         Objects.requireNonNull(authorityId, "authorityId");
@@ -76,6 +83,9 @@ public record RetainedIssuanceBinding(PkiId authorityId, String issuanceId, Cert
         CorrelatedEndEntityIssuanceRequest.requireBoundedIdentifier(expectedChainPathId.value());
     }
 
-    /** Returns a representation without privileged correlation or issuance coordinates. */
+    /**
+     * Returns a representation without privileged correlation or issuance coordinates.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "RetainedIssuanceBinding[redacted]"; }
 }

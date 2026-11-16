@@ -84,6 +84,7 @@ public final class BcX509SignedObjectValidator {
      * Creates a validator owned by one immutable authority snapshot.
      *
      * @param authority runtime binding and security authority
+     * @throws NullPointerException if {@code authority} is null
      */
     public BcX509SignedObjectValidator(X509AuthoritySnapshot authority) {
         this.authority = Objects.requireNonNull(authority, "authority");
@@ -99,6 +100,7 @@ public final class BcX509SignedObjectValidator {
      * @param cancellation operation cancellation signal
      * @return exact signature and subject-key identities
      * @throws IOException if DER, structure, binding, or compatibility is invalid
+     * @throws NullPointerException if {@code content}, {@code expectedSignature} or {@code cancellation} is null
      */
     public CertificateBindings validateCertificate(RepeatableContent content,
             Optional<AlgorithmIdentity> expectedSignature, CancellationSignal cancellation) throws IOException {
@@ -140,6 +142,7 @@ public final class BcX509SignedObjectValidator {
      * @return exact signature and subject-key identities
      * @throws IOException if DER or binding postconditions fail
      * @throws IllegalArgumentException if the plan belongs to another runtime
+     * @throws NullPointerException if {@code plan} is null
      */
     public CertificateBindings validateGeneratedCertificate(RepeatableContent content,
             X509ExecutionPlan<SigningProvider> plan, CancellationSignal cancellation) throws IOException {
@@ -164,6 +167,7 @@ public final class BcX509SignedObjectValidator {
      * @throws IOException if canonical DER, binding, suite, or signature
      *                     validation fails
      * @throws IllegalArgumentException if the plan belongs to another runtime
+     * @throws NullPointerException if {@code content}, {@code plan}, {@code issuerCertificate}, {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
      */
     public void validateGeneratedCrl(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
             X509Certificate issuerCertificate, Instant expectedThisUpdate,
@@ -239,6 +243,7 @@ public final class BcX509SignedObjectValidator {
      * @param expectedNextUpdate   exact single-response nextUpdate metadata
      * @param cancellation         operation cancellation signal
      * @throws IOException if parsing, binding, or signature validation fails
+     * @throws NullPointerException if {@code content}, {@code plan}, {@code responderCertificate}, {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
      */
     public void validateGeneratedOcsp(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
             X509Certificate responderCertificate, Instant expectedThisUpdate,
@@ -376,6 +381,9 @@ public final class BcX509SignedObjectValidator {
          * Creates immutable binding results.
          *
          * @throws NullPointerException if a value is {@code null}
+         * @param signature exact certificate signature identity
+         * @param subjectPublicKey exact subject SPKI identity
+         * @param layout immutable original-content offsets
          */
         public CertificateBindings {
             Objects.requireNonNull(signature, "signature");

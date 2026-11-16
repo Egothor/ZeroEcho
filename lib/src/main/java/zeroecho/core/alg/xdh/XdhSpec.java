@@ -73,14 +73,24 @@ import zeroecho.core.spec.ContextSpec;
  * @since 1.0
  */
 public enum XdhSpec implements ContextSpec, AlgorithmKeySpec, Describable {
-    /** X25519 Diffie-Hellman over Curve25519. */
+    /**
+     * X25519 Diffie-Hellman over Curve25519.
+     */
     X25519("X25519", "XDH"), // JCA: KeyAgreement "XDH"
-    /** X448 Diffie-Hellman over Curve448. */
+    /**
+     * X448 Diffie-Hellman over Curve448.
+     */
     X448("X448", "XDH");
 
     private final String kpgName; // KeyPairGenerator/KeyFactory name
     private final String kaName; // KeyAgreement name
 
+    /**
+     * Associates a key-pair algorithm with its agreement engine.
+     *
+     * @param kpgName JCA key-pair generator name
+     * @param kaName JCA key-agreement name
+     */
     XdhSpec(String kpgName, String kaName) {
         this.kpgName = kpgName;
         this.kaName = kaName;

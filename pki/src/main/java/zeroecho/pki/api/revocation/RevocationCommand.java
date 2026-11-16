@@ -65,7 +65,12 @@ public sealed interface RevocationCommand
      * @param attributes   safe administrative metadata
      */
     record Hold(PkiId credentialId, AttributeSet attributes) implements RevocationCommand {
-        /** Validates and snapshots the command. */
+        /**
+         * Validates and snapshots the command.
+         * @param credentialId credential identifier
+         * @param attributes safe administrative metadata
+         * @throws NullPointerException if credentialId or attributes is null, or an attribute value is null
+         */
         public Hold {
             Objects.requireNonNull(credentialId, "credentialId");
             attributes = RevocationTransition.snapshotAttributes(attributes);
@@ -79,7 +84,12 @@ public sealed interface RevocationCommand
      * @param attributes   safe administrative metadata
      */
     record Unhold(PkiId credentialId, AttributeSet attributes) implements RevocationCommand {
-        /** Validates and snapshots the command. */
+        /**
+         * Validates and snapshots the command.
+         * @param credentialId credential identifier
+         * @param attributes safe administrative metadata
+         * @throws NullPointerException if credentialId or attributes is null, or an attribute value is null
+         */
         public Unhold {
             Objects.requireNonNull(credentialId, "credentialId");
             attributes = RevocationTransition.snapshotAttributes(attributes);
@@ -95,7 +105,15 @@ public sealed interface RevocationCommand
      */
     record RevokePermanently(PkiId credentialId, RevocationReason reason, AttributeSet attributes)
             implements RevocationCommand {
-        /** Validates and snapshots the command. */
+        /**
+         * Validates and snapshots the command.
+         * @param credentialId credential identifier
+         * @param reason permanent revocation reason
+         * @param attributes safe administrative metadata
+         * @throws NullPointerException if credentialId, reason or attributes is null, or an attribute value is null
+         * @throws IllegalArgumentException if reason is CERTIFICATE_HOLD or REMOVE_FROM_CRL rather than a
+         *     permanent reason
+         */
         public RevokePermanently {
             Objects.requireNonNull(credentialId, "credentialId");
             Objects.requireNonNull(reason, "reason");

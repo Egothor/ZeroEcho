@@ -47,13 +47,22 @@ import java.util.Optional;
  * @param credentialEvidence verified end-client evidence, or empty when unsupported or absent
  */
 public record AdministrativeDecisionActor(String principalId, Optional<CertificateIdentityEvidence> credentialEvidence) {
-    /** Validates the actor without manufacturing missing credential evidence. */
+    /**
+     * Validates the actor without manufacturing missing credential evidence.
+     * @param principalId authenticated administrative principal
+     * @param credentialEvidence verified end-client evidence, or empty when unsupported or absent
+     * @throws NullPointerException if {@code credentialEvidence} is null
+     */
     public AdministrativeDecisionActor {
         Permission.requirePrincipal(principalId);
         Objects.requireNonNull(credentialEvidence, "credentialEvidence");
     }
 
-    /** @return redacted diagnostic description */
+    /**
+     * Returns a diagnostic representation with sensitive identity and custody details redacted.
+     *
+     * @return redacted diagnostic description
+     */
     @Override public String toString() { return "AdministrativeDecisionActor[redacted]"; }
 }
 

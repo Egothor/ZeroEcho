@@ -57,6 +57,9 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for managed key proof challenge.
+ */
 final class ManagedKeyProofChallengeTest {
     private static final PkiId OPERATION = new PkiId("zsign:v1:store.provider:0:" + "0".repeat(32));
     private static final byte[] SPKI = HexFormat.of().parseHex("302a300506032b6570032100" + "00".repeat(32));
@@ -69,6 +72,9 @@ final class ManagedKeyProofChallengeTest {
             + "7a65726f6563686f2e6275696c74696e363a626d39755a5100000007300506032b65700000002c302a300506032b657003210000000000000000"
             + "00000000000000000000000000000000000000000000000000";
 
+    /**
+     * Binds parent deadline and intent and rejects version one.
+     */
     @Test void bindsParentDeadlineAndIntentAndRejectsVersionOne() {
         java.time.Instant deadline = java.time.Instant.ofEpochSecond(60);
         PkiId parent = new PkiId("zsign:v1:store.provider:0:" + "1".repeat(32));
@@ -88,6 +94,9 @@ final class ManagedKeyProofChallengeTest {
         assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.decode(old));
     }
 
+    /**
+     * Responder candidate version four binds pre certificate purpose role and target.
+     */
     @Test void responderCandidateVersionFourBindsPreCertificatePurposeRoleAndTarget() {
         var parent = new PkiId("zsign:v1:store.provider:0:" + "8".repeat(32));
         var profile = new zeroecho.pki.api.profile.CertificateProfileRef("ocsp", 1, new byte[32]);
@@ -113,6 +122,9 @@ final class ManagedKeyProofChallengeTest {
         assertThrows(IllegalArgumentException.class, () -> ManagedKeyProofChallenge.decode(downgraded));
     }
 
+    /**
+     * Golden framing and reconstructed commitments are stable.
+     */
     @Test void goldenFramingAndReconstructedCommitmentsAreStable() {
         byte[] nonce = new byte[32];
         for (int index = 0; index < nonce.length; index++) { nonce[index] = (byte) index; }
@@ -141,6 +153,9 @@ final class ManagedKeyProofChallengeTest {
         assertEquals(decoded.command(), DomainContinuationValidation.validate(template));
     }
 
+    /**
+     * Role context binds independent subject proof and rejects invalid role encoding.
+     */
     @Test void roleContextBindsIndependentSubjectProofAndRejectsInvalidRoleEncoding() {
         var parent = new PkiId("zsign:v1:store.provider:0:" + "1".repeat(32));
         var primary = new ManagedKeyProofChallenge.CaContext(parent, "ca-intent:v1:" + "2".repeat(64),
@@ -164,6 +179,9 @@ final class ManagedKeyProofChallengeTest {
                 primary.intentCommitment(), primary.role(), Optional.empty()));
     }
 
+    /**
+     * Rejects every truncation bad header framing UTF-8 and trailing data.
+     */
     @Test void rejectsEveryTruncationBadHeaderFramingUtf8AndTrailingData() {
         byte[] golden = HexFormat.of().parseHex(GOLDEN);
         for (int length = 0; length < golden.length; length++) {
@@ -187,6 +205,11 @@ final class ManagedKeyProofChallengeTest {
                 new byte[ManagedKeyProofCommand.MAX_CHALLENGE_BYTES + 1]));
     }
 
+    /**
+     * Rejects invalid nonce coordinates DER and aggregate size before encoding.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsInvalidNonceCoordinatesDerAndAggregateSizeBeforeEncoding() throws Exception {
         for (int length : new int[] {0, 31, 33}) {
             assertThrows(IllegalArgumentException.class,
@@ -225,6 +248,9 @@ final class ManagedKeyProofChallengeTest {
                 OPERATION).createdAt().plusSeconds(60), java.util.Optional.empty(), metadata(), new byte[32], maximumSpki)).spki());
     }
 
+    /**
+     * Complete schema rejects malformed values and separates installed algorithm semantics.
+     */
     @Test void completeSchemaRejectsMalformedValuesAndSeparatesInstalledAlgorithmSemantics() {
         DomainCommandEncoding.Decoded valid = ManagedKeyProofChallenge.decode(HexFormat.of().parseHex(GOLDEN)).command();
         for (int count = 0; count < 14; count++) {

@@ -32,5 +32,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-/** Immutable application carriers for durable signing. */
+/**
+ * Immutable application carriers for durable signing.
+ *
+ * <p>Prepared requests, receipts, proof coordinates and retained observations
+ * describe distinct stages of signing. Constructing or decoding a carrier does
+ * not itself grant signing authority or establish durable acceptance.</p>
+ */
 package zeroecho.pki.api.signing;

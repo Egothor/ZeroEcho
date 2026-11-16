@@ -94,11 +94,24 @@ import org.bouncycastle.operator.MacCalculator;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
-/** Independent BC wire client; it never uses ZeroEcho's production CMP codec. */
+/**
+ * Independent BC wire client; it never uses ZeroEcho's production CMP codec.
+ */
 final class CmpTestClient {
+    /**
+     * Fixed CRMF request identity used to correlate fixture enrollment, polling and confirmation bodies.
+     */
     static final BigInteger REQUEST_ID = BigInteger.valueOf(7);
     private CmpTestClient() { }
 
+    /**
+     * Builds an RSA-signed CRMF enrollment or renewal body with the localhost subject/SAN.
+     *
+     * @param subject subject RSA key pair used for proof of possession
+     * @param predecessor prior credential for renewal, or null for initial enrollment
+     * @return CMP initialization or key-update body with the fixed fixture request identity
+     * @throws Exception if CRMF construction, signature generation or encoding fails
+     */
     static PKIBody enrollment(KeyPair subject, X509Certificate predecessor) throws Exception {
         CertificateRequestMessageBuilder builder = new CertificateRequestMessageBuilder(REQUEST_ID)
                 .setSubject(new X500Name("CN=localhost")).setPublicKey(SubjectPublicKeyInfo.getInstance(subject.getPublic().getEncoded()));
@@ -116,6 +129,15 @@ final class CmpTestClient {
                 .build().toASN1Structure()));
     }
 
+    /**
+     * Builds the fixture hybrid CRMF request with an alternative public-key extension.
+     *
+     * @param subject primary ECDSA subject key pair used for proof of possession
+     * @param alternative alternative subject public-key pair
+     * @param predecessor prior credential for renewal, or null for initial enrollment
+     * @return initialization or key-update body with the fixture subject and alternative SPKI
+     * @throws Exception if CRMF construction or primary proof generation fails
+     */
     static PKIBody sdkEnrollment(KeyPair subject, KeyPair alternative, X509Certificate predecessor) throws Exception {
         CertificateRequestMessageBuilder builder = new CertificateRequestMessageBuilder(REQUEST_ID)
                 .setSubject(new X500Name("CN=localhost")).setPublicKey(SubjectPublicKeyInfo.getInstance(subject.getPublic().getEncoded()));
@@ -131,6 +153,19 @@ final class CmpTestClient {
                 .build().toASN1Structure()));
     }
 
+    /**
+     * Protects an SDK fixture CMP body using ECDSA with SHA-384 and explicit sender/recipient key identifiers.
+     *
+     * @param body native CMP body to protect
+     * @param transaction protocol transaction bytes
+     * @param nonce sender nonce bytes
+     * @param recipientNonce previous server nonce, or null before the first response
+     * @param signer request-protection key pair
+     * @param certificate requester certificate included in the message
+     * @param responder exact recipient certificate
+     * @return newly allocated protected CMP message DER
+     * @throws Exception if certificate encoding, message construction or signing fails
+     */
     static byte[] signedSdk(PKIBody body, byte[] transaction, byte[] nonce, byte[] recipientNonce, KeyPair signer,
             X509Certificate certificate, X509Certificate responder) throws Exception {
         var message = builder(body, transaction, nonce, recipientNonce,
@@ -141,12 +176,33 @@ final class CmpTestClient {
         return message.build(new JcaContentSignerBuilder("SHA384withECDSA").build(signer.getPrivate())).toASN1Structure().getEncoded();
     }
 
+    /**
+     * Builds a polling request for the fixed fixture CRMF request identity.
+     *
+     * @return CMP pollReq body
+     */
     static PKIBody poll() { return new PKIBody(25, new PollReqContent(REQUEST_ID)); }
+    /**
+     * Builds explicit certificate confirmation using the fixture's SHA-256 certificate hash.
+     *
+     * @param certificate issued certificate to accept or reject
+     * @param accepted whether the client accepts the issued certificate
+     * @return CMP certConf body bound to the fixed fixture request identity
+     * @throws Exception if certificate hashing or ASN.1 encoding fails
+     */
     static PKIBody confirmation(X509Certificate certificate, boolean accepted) throws Exception {
         CertStatus status = new CertStatus(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()), REQUEST_ID,
                 new PKIStatusInfo(accepted ? PKIStatus.granted : PKIStatus.rejection));
         return new PKIBody(24, CertConfirmContent.getInstance(new DERSequence(status)));
     }
+    /**
+     * Builds explicit certificate confirmation using the fixture's SHA-384 certificate hash.
+     *
+     * @param certificate issued certificate to accept or reject
+     * @param accepted whether the client accepts the issued certificate
+     * @return CMP certConf body bound to the fixed fixture request identity
+     * @throws Exception if certificate hashing or ASN.1 encoding fails
+     */
     static PKIBody sdkConfirmation(X509Certificate certificate, boolean accepted) throws Exception {
         // The SDK fixture's actual native ECDSA-SHA384 certificate signature selects SHA384.
         assertEquals("1.2.840.10045.4.3.3", certificate.getSigAlgOID());
@@ -154,13 +210,38 @@ final class CmpTestClient {
                 new PKIStatusInfo(accepted ? PKIStatus.granted : PKIStatus.rejection));
         return new PKIBody(24, CertConfirmContent.getInstance(new DERSequence(status)));
     }
+    /**
+     * Builds a revocation request for the supplied certificate issuer/serial coordinates.
+     *
+     * @param certificate public credential to revoke
+     * @return CMP revocation-request body
+     */
     static PKIBody revoke(X509Certificate certificate) {
         return new PKIBody(11, new RevReqContent(new RevDetails(new CertTemplateBuilder()
                 .setSerialNumber(new ASN1Integer(certificate.getSerialNumber()))
                 .setIssuer(X500Name.getInstance(certificate.getIssuerX500Principal().getEncoded())).build())));
     }
+    /**
+     * Builds a general-message request for published CA certificates.
+     *
+     * @return CMP genm body selecting the CA-certificate information type
+     */
     static PKIBody discovery() { return new PKIBody(21, new GenMsgContent(new InfoTypeAndValue(CMPObjectIdentifiers.id_it_caCerts))); }
 
+    /**
+     * Protects a fixture CMP body using RSA with SHA-256 and explicit certificate key identifiers.
+     *
+     * @param implicit whether to request implicit certificate confirmation
+     * @param body native CMP body to protect
+     * @param transaction protocol transaction bytes
+     * @param nonce sender nonce bytes
+     * @param recipientNonce previous server nonce, or null before the first response
+     * @param signer request-protection key pair
+     * @param certificate requester certificate included in the message
+     * @param responder exact recipient certificate
+     * @return newly allocated protected CMP message DER
+     * @throws Exception if certificate encoding, message construction or signing fails
+     */
     static byte[] signed(PKIBody body, byte[] transaction, byte[] nonce, byte[] recipientNonce, KeyPair signer,
             X509Certificate certificate, X509Certificate responder, boolean implicit) throws Exception {
         ProtectedPKIMessageBuilder builder = builder(body, transaction, nonce, recipientNonce,
@@ -172,6 +253,18 @@ final class CmpTestClient {
         return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(signer.getPrivate())).toASN1Structure().getEncoded();
     }
 
+    /**
+     * Builds a password-MAC-protected message using the fixture SHA-256/HMAC-SHA256 1,000-iteration profile.
+     *
+     * @param body native CMP body to protect
+     * @param transaction protocol transaction bytes
+     * @param nonce sender nonce bytes
+     * @param recipientNonce previous server nonce, or null for an initial message
+     * @param secret shared request-authentication bytes
+     * @param authority recipient authority certificate
+     * @return newly allocated password-protected CMP message DER
+     * @throws Exception if key derivation, MAC calculation or message encoding fails
+     */
     static byte[] pbm(PKIBody body, byte[] transaction, byte[] nonce, byte[] recipientNonce,
             byte[] secret, X509Certificate authority) throws Exception {
         PBMParameter parameters = new PBMParameter(nonce(41), new AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256), 1000,
@@ -181,6 +274,16 @@ final class CmpTestClient {
                 .setSenderKID(new byte[] {1, 2}).build(mac(parameters, secret)).toASN1Structure().getEncoded();
     }
 
+    /**
+     * Verifies the actual responder signature and key identifier before checking response correlation.
+     *
+     * @param encoded complete protected response DER
+     * @param transaction expected protocol transaction bytes
+     * @param requestNonce exact nonce sent by the client
+     * @param responder expected public response-signing certificate
+     * @return verified and correlated response view
+     * @throws Exception if response parsing or signature verification setup fails
+     */
     static Reply signatureResponse(byte[] encoded, byte[] transaction, byte[] requestNonce, X509Certificate responder) throws Exception {
         ProtectedPKIMessage protectedMessage = new ProtectedPKIMessage(new GeneralPKIMessage(encoded));
         assertTrue(protectedMessage.verify(new JcaContentVerifierProviderBuilder().build(responder.getPublicKey())));
@@ -189,6 +292,16 @@ final class CmpTestClient {
         return reply(message, transaction, requestNonce);
     }
 
+    /**
+     * Checks the exact PBM response profile, verifies its MAC and checks request correlation.
+     *
+     * @param encoded complete protected response DER
+     * @param transaction expected protocol transaction bytes
+     * @param requestNonce exact nonce sent by the client
+     * @param secret shared response-authentication bytes
+     * @return verified and correlated response view
+     * @throws Exception if response parsing, key derivation or MAC verification setup fails
+     */
     static Reply pbmResponse(byte[] encoded, byte[] transaction, byte[] requestNonce, byte[] secret) throws Exception {
         PKIMessage message = PKIMessage.getInstance(encoded);
         assertEquals(CMPObjectIdentifiers.passwordBasedMac, message.getHeader().getProtectionAlg().getAlgorithm());
@@ -208,6 +321,12 @@ final class CmpTestClient {
         assertTrue(message.getHeader().getSenderNonce().getOctets().length >= 16);
         return new Reply(message);
     }
+    /**
+     * Creates a deterministic 16-byte protocol nonce for a fixture step.
+     *
+     * @param value byte value repeated after narrowing to eight bits
+     * @return newly allocated 16-byte nonce
+     */
     static byte[] nonce(int value) { byte[] result = new byte[16]; Arrays.fill(result, (byte) value); return result; }
     private static byte[] keyId(X509Certificate certificate) throws Exception {
         byte[] extension = certificate.getExtensionValue(Extension.subjectKeyIdentifier.getId());
@@ -237,13 +356,39 @@ final class CmpTestClient {
         };
     }
 
+    /**
+     * Parsed response view returned only after fixture protection and correlation assertions.
+     *
+     * @param message verified correlated native CMP message
+     */
     record Reply(PKIMessage message) {
+        /**
+         * Returns the native CMP body discriminator.
+         *
+         * @return ASN.1 PKIBody type code
+         */
         int type() { return message.getBody().getType(); }
+        /**
+         * Returns the response sender nonce for the next fixture protocol step.
+         *
+         * @return nonce octets supplied by the parsed ASN.1 message
+         */
         byte[] nonce() { return message.getHeader().getSenderNonce().getOctets(); }
+        /**
+         * Recognizes pollRep or waiting certificate-response status from the native CMP body.
+         *
+         * @return whether the response instructs the fixture to continue polling
+         */
         boolean pending() {
             return type() == 26 || (type() == 1 || type() == 3 || type() == 8)
                     && CertRepMessage.getInstance(message.getBody().getContent()).getResponse()[0].getStatus().getStatus().intValueExact() == 3;
         }
+        /**
+         * Extracts an issued certificate only from supported certificate-response body types.
+         *
+         * @return issued X.509 certificate, or empty for another body type or absent certified key pair
+         * @throws Exception if certificate DER cannot be decoded
+         */
         Optional<X509Certificate> certificate() throws Exception {
             if (type() != 1 && type() != 3 && type() != 8) return Optional.empty();
             CertResponse response = CertRepMessage.getInstance(message.getBody().getContent()).getResponse()[0];
@@ -252,6 +397,9 @@ final class CmpTestClient {
             byte[] encoded = response.getCertifiedKeyPair().getCertOrEncCert().getCertificate().getEncoded();
             return Optional.of((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(new ByteArrayInputStream(encoded)));
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "CmpTestClient.Reply[redacted]"; }
     }
 }

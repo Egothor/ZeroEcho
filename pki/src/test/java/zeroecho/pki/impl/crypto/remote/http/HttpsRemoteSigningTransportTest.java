@@ -83,12 +83,19 @@ import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteSigningStatus
 import zeroecho.pki.testkit.ReferenceRemoteSigner;
 import zeroecho.pki.testkit.TestMutualTls;
 
-/** End-to-end proof of the packaged mutually-authenticated HTTPS/JSON remote signing transport. */
+/**
+ * End-to-end proof of the packaged mutually-authenticated HTTPS/JSON remote signing transport.
+ */
 public final class HttpsRemoteSigningTransportTest {
 
     private static final String KEY_HANDLE = "rk-1";
     private static final String ALGORITHM = zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm();
 
+    /**
+     * Signs end to end over mutual TLS through the transport.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void signsEndToEndOverMutualTlsThroughTheTransport() throws Exception {
         System.out.println("signsEndToEndOverMutualTlsThroughTheTransport");
@@ -116,6 +123,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * External approval drives queued to signed over the transport.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void externalApprovalDrivesQueuedToSignedOverTheTransport() throws Exception {
         System.out.println("externalApprovalDrivesQueuedToSignedOverTheTransport");
@@ -135,6 +147,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Conflicting resubmission surfaces as illegal state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void conflictingResubmissionSurfacesAsIllegalState() throws Exception {
         System.out.println("conflictingResubmissionSurfacesAsIllegalState");
@@ -149,6 +166,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Unknown operation is reported denied not thrown.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void unknownOperationIsReportedDeniedNotThrown() throws Exception {
         System.out.println("unknownOperationIsReportedDeniedNotThrown");
@@ -161,6 +183,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Hostile oversized wire reason is discarded before transport status.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void hostileOversizedWireReasonIsDiscardedBeforeTransportStatus() throws Exception {
         String hostile = "private-key\u0000\n" + "x".repeat(100_000);
@@ -177,6 +204,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Streamed status response is rejected at its endpoint bound.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void streamedStatusResponseIsRejectedAtItsEndpointBound() throws Exception {
         TestMutualTls tls = TestMutualTls.create();
@@ -190,6 +222,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Oversized signature text is rejected before base64 decoding.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void oversizedSignatureTextIsRejectedBeforeBase64Decoding() throws Exception {
         String oversized = Base64.getEncoder().encodeToString(new byte[1_048_577]);
@@ -204,6 +241,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Signature on non signed state is rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void signatureOnNonSignedStateIsRejected() throws Exception {
         TestMutualTls tls = TestMutualTls.create();
@@ -217,6 +259,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Capability and public key responses have independent finite bounds.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void capabilityAndPublicKeyResponsesHaveIndependentFiniteBounds() throws Exception {
         TestMutualTls tls = TestMutualTls.create();
@@ -240,6 +287,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Rejects invalid explicit input capabilities without fallback.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsInvalidExplicitInputCapabilitiesWithoutFallback() throws Exception {
         TestMutualTls tls = TestMutualTls.create();
@@ -259,6 +311,12 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Provider configured with pkcs12 signs over https.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void providerConfiguredWithPkcs12SignsOverHttps(@TempDir Path directory) throws Exception {
         System.out.println("providerConfiguredWithPkcs12SignsOverHttps");
@@ -292,6 +350,11 @@ public final class HttpsRemoteSigningTransportTest {
         }
     }
 
+    /**
+     * Rejects recursive digest capability before general identity parsing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsRecursiveDigestCapabilityBeforeGeneralIdentityParsing() throws Exception {
         String nested = "digest=zeroecho.sha2-256.".repeat(1024) + "none";

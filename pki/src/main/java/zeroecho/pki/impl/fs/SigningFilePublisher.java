@@ -67,15 +67,51 @@ final class SigningFilePublisher {
         // utility class
     }
 
+    /**
+     * Publishes one previously absent immutable signing artifact with strict file and directory durability.
+     *
+     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the publisher closes their channels.</p>
+     *
+     * @param target file path in an existing secured nonsymlink parent directory
+     * @param writer synchronous complete-image writer borrowing the temporary file channel
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the parent or target file type is invalid
+     * @throws PublicationException if writing, forcing or atomic namespace publication fails
+     * @throws IOException if artifact publication cannot be durably completed
+     */
     /* default */ static void publishImmutable(Path target, ContentWriter writer) throws IOException {
         publish(target, false, writer, SYSTEM_OPERATIONS);
     }
 
+    /**
+     * Atomically replaces the authoritative signing manifest after its complete image is forced.
+     *
+     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the publisher closes their channels.</p>
+     *
+     * @param target file path in an existing secured nonsymlink parent directory
+     * @param writer synchronous complete-image writer borrowing the temporary file channel
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the parent or target file type is invalid
+     * @throws PublicationException if writing, forcing or atomic namespace publication fails
+     * @throws IOException if artifact publication cannot be durably completed
+     */
     /* default */ static void publishManifest(Path target, ContentWriter writer) throws IOException {
         publish(target, true, writer, SYSTEM_OPERATIONS);
     }
 
     // Publication errors are deliberately translated to stable, path-free states.
+    /**
+     * Publishes a complete signing artifact through exact temporary-file identity checks and atomic move.
+     *
+     * @param target file path in an existing secured nonsymlink parent directory
+     * @param replace whether the authoritative target is replaced rather than required absent
+     * @param writer synchronous image writer that leaves channel closure to this publisher
+     * @param operations borrowed filesystem and deterministic fault-injection seam
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if parent or target file type is invalid
+     * @throws PublicationException if a persistence stage fails; its stage and uncertainty flag describe the publication boundary
+     * @throws IOException if artifact publication cannot be durably completed
+     */
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
     /* default */ static void publish(Path target, boolean replace, ContentWriter writer,
             PublicationOperations operations) throws IOException {
@@ -124,7 +160,9 @@ final class SigningFilePublisher {
         }
     }
 
-    /** Writes one complete temporary file image; the publisher owns the channel. */
+    /**
+     * Writes one complete temporary file image; the publisher owns the channel.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface ContentWriter {
@@ -137,19 +175,62 @@ final class SigningFilePublisher {
         void write(FileChannel channel) throws IOException;
     }
 
-    /** Package-local fault seam; callers must not share mutable implementations. */
+    /**
+     * Package-local fault seam; callers must not share mutable implementations.
+     */
     @SuppressWarnings({ "PMD.CommentRequired", "PMD.CommentDefaultAccessModifier" })
     /* default */ interface PublicationOperations {
+        /**
+         * Creates a uniquely named owned temporary file with captured filesystem identity.
+         *
+         * @param parent existing secured publication directory
+         * @param prefix filename prefix identifying this publication attempt
+         * @return owned temporary file and open channel; caller closes or transfers ownership
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         TemporaryFile createTemporary(Path parent, String prefix) throws IOException;
 
+        /**
+         * Writes a complete candidate image without closing its owned publication channel.
+         *
+         * @param channel open candidate file channel
+         * @param writer synchronous complete-image callback
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         void write(FileChannel channel, ContentWriter writer) throws IOException;
 
+        /**
+         * Confirms durability of candidate file data and metadata.
+         *
+         * @param channel open candidate channel whose complete image was written
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         void forceFile(FileChannel channel) throws IOException;
 
+        /**
+         * Requires that the temporary path still refers to the captured regular-file identity.
+         *
+         * @param temporary owned candidate file and captured filesystem identity
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         void validateTemporary(TemporaryFile temporary) throws IOException;
 
+        /**
+         * Atomically moves the candidate into the authoritative publication namespace.
+         *
+         * @param source exact validated temporary candidate path
+         * @param target exact authoritative destination path
+         * @param replace whether an existing target may be atomically replaced
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         void atomicMove(Path source, Path target, boolean replace) throws IOException;
 
+        /**
+         * Confirms durability of the completed publication namespace update.
+         *
+         * @param directory exact publication parent directory
+         * @throws IOException if the filesystem operation or injected persistence boundary fails
+         */
         void forceDirectory(Path directory) throws IOException;
     }
 
@@ -163,23 +244,50 @@ final class SigningFilePublisher {
      * notably Windows, report {@code null}; the regular-file check then remains
      * the strongest available guard.
      * </p>
+     * @param path exact local filesystem path
+     * @param channel owned open temporary-file channel
+     * @param fileKey captured filesystem identity used to detect replacement
      */
     /* default */ record TemporaryFile(Path path, FileChannel channel, Object fileKey) {
+        /**
+         * Creates the open, uniquely created temporary file and its filesystem identity.
+         *
+         * @param path exact local filesystem path
+         * @param channel owned open temporary-file channel
+         * @param fileKey captured filesystem identity used to detect replacement
+         * @throws NullPointerException if {@code path} is null; or if {@code channel} is null
+         */
         TemporaryFile {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(channel, "channel");
         }
     }
 
-    /** Stable boundaries used by fault tests and redacted diagnostics. */
+    /**
+     * Stable boundaries used by fault tests and redacted diagnostics.
+     */
     /* default */ enum PublicationStage {
+        /**
+         * Writing complete candidate content before publication.
+         */
         WRITE,
+        /**
+         * Forcing candidate file data and metadata before publication.
+         */
         FILE_FORCE,
+        /**
+         * Atomically moving the candidate into its final namespace.
+         */
         ATOMIC_MOVE,
+        /**
+         * Forcing the final parent directory after publication.
+         */
         DIRECTORY_FORCE
     }
 
-    /** Stable redacted failure; directory-force failure means durability is uncertain. */
+    /**
+     * Stable redacted failure; directory-force failure means durability is uncertain.
+     */
     /* default */ static final class PublicationException extends IOException {
         private static final long serialVersionUID = 1601142753017350472L;
 
@@ -194,31 +302,59 @@ final class SigningFilePublisher {
             this.durabilityUncertain = durabilityUncertain;
         }
 
+        /**
+         * Returns the publication stage at which the failure occurred.
+         *
+         * @return publication stage at which the failure occurred
+         */
         /* default */ PublicationStage stage() {
             return stage;
         }
 
+        /**
+         * Reports whether publication may have changed the namespace without confirmed durability.
+         *
+         * @return true if the move outcome or the durability of a completed move is uncertain
+         */
         /* default */ boolean durabilityUncertain() {
             return durabilityUncertain;
         }
     }
 
-    /** Closes a newly opened channel unless ownership transfers to a temporary file. */
+    /**
+     * Closes a newly opened channel unless ownership transfers to a temporary file.
+     */
     /* default */ static final class TemporaryChannel implements AutoCloseable {
         private final FileChannel channel;
         private boolean transferred;
 
+        /**
+         * Takes responsibility for closing a newly opened candidate channel until transfer succeeds.
+         *
+         * @param channel owned open candidate channel
+         * @throws NullPointerException if a required input is null
+         */
         /* default */ TemporaryChannel(FileChannel channel) {
             this.channel = Objects.requireNonNull(channel, "channel");
         }
 
-        /** Transfers channel closure responsibility to the returned temporary file. */
+        /**
+         * Transfers channel closure responsibility to the returned temporary file.
+         *
+         * @param path exact owned temporary candidate path
+         * @param fileKey captured filesystem identity, or null where unavailable
+         * @return temporary file carrier now responsible for channel closure
+         * @throws NullPointerException if the candidate path is null
+         */
         /* default */ TemporaryFile transfer(Path path, Object fileKey) {
             TemporaryFile result = new TemporaryFile(path, channel, fileKey);
             transferred = true;
             return result;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!transferred) {
@@ -227,8 +363,13 @@ final class SigningFilePublisher {
         }
     }
 
-    /** JDK filesystem implementation of the publication seam. */
+    /**
+     * JDK filesystem implementation of the publication seam.
+     */
     /* default */ static final class SystemPublicationOperations implements PublicationOperations {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         @SuppressWarnings("PMD.EmptyCatchBlock")
         public TemporaryFile createTemporary(Path parent, String prefix) throws IOException {
@@ -250,7 +391,9 @@ final class SigningFilePublisher {
             throw new IOException("signing temporary-file creation is unavailable");
         }
 
-        /** Opens an owned channel until the temporary identity has been captured. */
+        /**
+         * Opens an owned channel until the temporary identity has been captured.
+         */
         private static TemporaryFile openTemporary(Path path, Set<OpenOption> options,
                 FileAttribute<?>... attributes) throws IOException {
             try (TemporaryChannel opened = new TemporaryChannel(FileChannel.open(path, options, attributes))) {
@@ -264,16 +407,25 @@ final class SigningFilePublisher {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void write(FileChannel channel, ContentWriter writer) throws IOException {
             writer.write(channel);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceFile(FileChannel channel) throws IOException {
             channel.force(true);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void validateTemporary(TemporaryFile temporary) throws IOException {
             BasicFileAttributes current = Files.readAttributes(temporary.path(),
@@ -298,6 +450,9 @@ final class SigningFilePublisher {
                     || temporary.fileKey().equals(current.fileKey());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void atomicMove(Path source, Path target, boolean replace) throws IOException {
             if (replace) {
@@ -307,6 +462,9 @@ final class SigningFilePublisher {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceDirectory(Path directory) throws IOException {
             SigningFormatSupport.forceDirectory(directory);

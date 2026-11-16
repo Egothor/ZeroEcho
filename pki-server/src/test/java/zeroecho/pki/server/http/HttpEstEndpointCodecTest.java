@@ -52,11 +52,16 @@ import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.server.est.KeygenPolicy;
 
-/** Strict HTTPS decoding coverage for the EST endpoint admin operation family. */
+/**
+ * Strict HTTPS decoding coverage for the EST endpoint admin operation family.
+ */
 class HttpEstEndpointCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks that an omitted EST key-generation policy becomes the explicit disabled policy and registration remains a mutating administer action.
+     */
     @Test
     void registersEstEndpointWithoutKeygen() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -80,6 +85,9 @@ class HttpEstEndpointCodecTest {
         assertTrue(DESCRIPTORS.require(ServerControlOperation.RegisterEstEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks preservation of the EC/RSA allow-list, 4,096-bit key bound and disabled key-retention selection in EST registration.
+     */
     @Test
     void registersEstEndpointWithExplicitKeygenPolicy() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -103,6 +111,9 @@ class HttpEstEndpointCodecTest {
         assertFalse(keygen.storeGeneratedKeys());
     }
 
+    /**
+     * Checks that EST registration rejects an unexpected top-level argument alongside valid endpoint coordinates.
+     */
     @Test
     void rejectsRegistrationWithUnknownTopLevelField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -115,6 +126,9 @@ class HttpEstEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterEstEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that enabled EST generation rejects an unknown nested policy field rather than ignoring it.
+     */
     @Test
     void rejectsRegistrationWithUnknownKeygenSubField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -132,6 +146,9 @@ class HttpEstEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterEstEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a EST endpoint label containing spaces fails strict decoding.
+     */
     @Test
     void rejectsRegistrationWithInvalidLabel() {
         String badLabel = "\"label\":\"bad label with spaces\"";
@@ -144,6 +161,9 @@ class HttpEstEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterEstEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a label-only EST removal decodes to the administer permission without accepting caller scope coordinates.
+     */
     @Test
     void deregistersEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"internal-devices\"}}";
@@ -156,6 +176,9 @@ class HttpEstEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.DeregisterEstEndpoint.NAME).action());
     }
 
+    /**
+     * Checks that EST removal rejects an added authority field instead of allowing input to widen its target.
+     */
     @Test
     void rejectsDeregistrationWithExtraField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -165,6 +188,9 @@ class HttpEstEndpointCodecTest {
                 () -> decode(ServerControlOperation.DeregisterEstEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that label-only EST inspection selects the read action and is classified as nonmutating.
+     */
     @Test
     void inspectsEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"internal-devices\"}}";
@@ -178,6 +204,9 @@ class HttpEstEndpointCodecTest {
         assertFalse(DESCRIPTORS.require(ServerControlOperation.InspectEstEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks that a EST listing preserves offset zero and limit 50 and selects the endpoint read permission.
+     */
     @Test
     void listsEndpointsWithBoundedPagination() {
         String json = "{\"version\":1,\"arguments\":{\"offset\":0,\"limit\":50}}";
@@ -191,6 +220,9 @@ class HttpEstEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.ListEstEndpoints.NAME).action());
     }
 
+    /**
+     * Checks EST listing rejection for offset minus one, limit zero and limit 257.
+     */
     @Test
     void rejectsListWithInvalidPaginationBounds() {
         assertThrows(IllegalArgumentException.class, () -> decode(
@@ -210,6 +242,9 @@ class HttpEstEndpointCodecTest {
                 REALM, DESCRIPTORS::require);
     }
 
+    /**
+     * Checks that EST registration cannot infer its enrollment policy from a certificate profile alone.
+     */
     @Test
     void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","

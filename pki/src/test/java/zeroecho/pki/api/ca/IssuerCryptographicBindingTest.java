@@ -8,7 +8,13 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.*;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 
+/**
+ * Contract and regression tests for issuer cryptographic binding.
+ */
 class IssuerCryptographicBindingTest {
+    /**
+     * Strict round trip commits complete public evidence and preserves value equality.
+     */
     @Test void strictRoundTripCommitsCompletePublicEvidenceAndPreservesValueEquality() {
         var binding = binding();
         byte[] encoded = IssuerCryptographicBindingCodec.encode(binding);
@@ -20,6 +26,9 @@ class IssuerCryptographicBindingTest {
                 Optional.empty(), "2".repeat(64), binding.profile(), "3".repeat(64), binding.certificateHybridBaseline(), "4".repeat(64));
         assertNotEquals(binding.commitment(), different.commitment());
     }
+    /**
+     * Rejects unknown version flags truncation trailing bytes and malformed UTF-8.
+     */
     @Test void rejectsUnknownVersionFlagsTruncationTrailingBytesAndMalformedUtf8() {
         byte[] encoded = IssuerCryptographicBindingCodec.encode(binding());
         for (int offset : new int[] {0, 5, 7}) {
@@ -31,6 +40,9 @@ class IssuerCryptographicBindingTest {
         byte[] bad = encoded.clone(); bad[12] = (byte)0xff;
         assertThrows(IllegalArgumentException.class, () -> IssuerCryptographicBindingCodec.decode(bad));
     }
+    /**
+     * Rejects unpaired hybrid evidence.
+     */
     @Test void rejectsUnpairedHybridEvidence() {
         var value = binding();
         assertThrows(IllegalArgumentException.class, () -> new IssuerCryptographicBinding(1, value.issuerId(), value.authorityId(), value.credentialId(), "X.509",

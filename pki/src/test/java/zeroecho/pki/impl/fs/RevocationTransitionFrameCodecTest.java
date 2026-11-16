@@ -66,6 +66,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for revocation transition frame codec.
+ */
 final class RevocationTransitionFrameCodecTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -74,9 +77,15 @@ final class RevocationTransitionFrameCodecTest {
     private static final byte[] DOMAIN = "ZeroEcho revocation transition record v1"
             .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Decode scratch has exact capacity and drops storage on close.
+     */
     @Test
     void decodeScratchHasExactCapacityAndDropsStorageOnClose() {
         RevocationTransitionFrameCodec.DecodeScratch scratch =
@@ -87,6 +96,11 @@ final class RevocationTransitionFrameCodecTest {
         scratch.close();
     }
 
+    /**
+     * Canonical round trip preserves every transition field.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void canonicalRoundTripPreservesEveryTransitionField() throws Exception {
         System.out.print("canonicalRoundTripPreservesEveryTransitionField ");
@@ -131,6 +145,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Preamble and successor links round trip canonically.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preambleAndSuccessorLinksRoundTripCanonically() throws Exception {
         System.out.print("preambleAndSuccessorLinksRoundTripCanonically ");
@@ -156,6 +175,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Every partial fixed header is an incomplete tail.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void everyPartialFixedHeaderIsAnIncompleteTail() throws Exception {
         System.out.print("everyPartialFixedHeaderIsAnIncompleteTail ");
@@ -173,6 +197,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Partial payload and commitment are incomplete but authenticated length corruption is corrupt.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialPayloadAndCommitmentAreIncompleteButAuthenticatedLengthCorruptionIsCorrupt() throws Exception {
         System.out.print("partialPayloadAndCommitmentAreIncompleteButAuthenticatedLengthCorruptionIsCorrupt ");
@@ -202,6 +231,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed semantic fields and trailing payload are corrupt.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedSemanticFieldsAndTrailingPayloadAreCorrupt() throws Exception {
         System.out.print("malformedSemanticFieldsAndTrailingPayloadAreCorrupt ");
@@ -230,6 +264,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Commitment mismatch and unknown header fields are corrupt.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void commitmentMismatchAndUnknownHeaderFieldsAreCorrupt() throws Exception {
         System.out.print("commitmentMismatchAndUnknownHeaderFieldsAreCorrupt ");
@@ -255,6 +294,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Invalid lengths revisions and identity are rejected before writing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidLengthsRevisionsAndIdentityAreRejectedBeforeWriting() throws Exception {
         System.out.print("invalidLengthsRevisionsAndIdentityAreRejectedBeforeWriting ");
@@ -278,6 +322,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Invalid state reason combinations are rejected on encode and decode.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidStateReasonCombinationsAreRejectedOnEncodeAndDecode() throws Exception {
         System.out.print("invalidStateReasonCombinationsAreRejectedOnEncodeAndDecode ");
@@ -313,6 +362,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed utf16 is rejected before any record header byte is written.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedUtf16IsRejectedBeforeAnyRecordHeaderByteIsWritten() throws Exception {
         System.out.print("malformedUtf16IsRejectedBeforeAnyRecordHeaderByteIsWritten ");
@@ -338,6 +392,11 @@ final class RevocationTransitionFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Repeated decode is deterministic and retains only one finite record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void repeatedDecodeIsDeterministicAndRetainsOnlyOneFiniteRecord() throws Exception {
         System.out.print("repeatedDecodeIsDeterministicAndRetainsOnlyOneFiniteRecord ");

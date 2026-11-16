@@ -49,14 +49,33 @@ import zeroecho.pki.api.backup.BackupLimits;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Conservative, read-only authority comparison; never recovers or repairs the baseline. */
+/**
+ * Conservative, read-only authority comparison; never recovers or repairs the baseline.
+ */
 final class FsRestoreSafety {
     private static final String INVALID_BASELINE = "RESTORE_BASELINE_INVALID";
 
     private FsRestoreSafety() { }
 
+    /**
+     * Canonical logical and filesystem observations used to compare restore safety boundaries.
+     *
+     * @param namespace captured store namespace identity
+     * @param revision authoritative metadata revision
+     * @param watermark authoritative signing-time watermark
+     * @param logical canonical SHA-256 commitment to the compared logical ledger state
+     * @param files canonical SHA-256 commitment to the compared filesystem state
+     */
     /* default */ record Projection(String namespace, long revision, long watermark, String logical, String files) { }
 
+    /**
+     * Rejects a candidate that changes the baseline namespace or logical/file authority commitments, or moves the metadata revision or signing-time watermark backward.
+     *
+     * @param baseline baseline store root whose authority must be retained
+     * @param candidate candidate replacement store root
+     * @param limits resource and path limits to enforce
+     * @throws IOException if either projection is invalid, I/O fails or the candidate violates the baseline safety boundary
+     */
     /* default */ static void requireCompatible(Path baseline, Path candidate, BackupLimits limits) throws IOException {
         Projection previous = project(baseline, limits);
         Projection replacement = project(candidate, limits);
@@ -68,6 +87,14 @@ final class FsRestoreSafety {
     }
 
     // Each call owns one recovery graph, capped by the existing checkpoint cardinality limit.
+    /**
+     * Recovers and authenticates the store's bounded metadata and filesystem safety projection. Each call owns and closes its recovery graph; the input store files remain unchanged.
+     *
+     * @param root filesystem tree or store root
+     * @param limits resource and path limits to enforce
+     * @return authenticated safety projection
+     * @throws IOException if recovery, authority validation or bounded filesystem inspection fails
+     */
     /* default */ static Projection project(Path root, BackupLimits limits) throws IOException {
         if (Files.size(root.resolve("VERSION")) != FilesystemPkiStore.CURRENT_STORE_VERSION.length()
                 || Files.size(root.resolve("SIGNING_NAMESPACE")) != 32) {

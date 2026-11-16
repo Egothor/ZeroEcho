@@ -61,17 +61,29 @@ import zeroecho.pki.api.request.SubjectRdn;
  */
 @SuppressWarnings("PMD.DataClass")
 public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.framework.ValidatedCaRequest {
-    /** Closed CA certificate operations authorized by this gate. */
+    /**
+     * Closed CA certificate operations authorized by this gate.
+     */
     public enum Operation {
-        /** Creates a self-signed root credential. */
+        /**
+         * Creates a self-signed root credential.
+         */
         CREATE_ROOT,
-        /** Imports an existing root credential after full profile validation. */
+        /**
+         * Imports an existing root credential after full profile validation.
+         */
         IMPORT_ROOT,
-        /** Creates an intermediate CA's initial credential. */
+        /**
+         * Creates an intermediate CA's initial credential.
+         */
         CREATE_INTERMEDIATE,
-        /** Issues an additional intermediate CA credential. */
+        /**
+         * Issues an additional intermediate CA credential.
+         */
         ISSUE_INTERMEDIATE,
-        /** Rolls over or rotates an intermediate CA, advancing it to a new generation. */
+        /**
+         * Rolls over or rotates an intermediate CA, advancing it to a new generation.
+         */
         ROLLOVER_INTERMEDIATE
     }
 
@@ -100,7 +112,15 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
      */
     public record FrozenPublication(PkiId parentIssuerId, PkiId parentPathId,
             String parentPathCommitment, KeyRef subjectKeyRef) {
-        /** Validates immutable CA publication authority. */
+        /**
+         * Validates immutable CA publication authority.
+         * @param parentIssuerId exact parent issuer-generation identifier
+         * @param parentPathId exact parent chain-path identifier
+         * @param parentPathCommitment lowercase 64-hex-character path commitment
+         * @param subjectKeyRef managed key bound to the subject authority
+         * @throws NullPointerException if parentIssuerId, parentPathId, subjectKeyRef is null
+         * @throws IllegalArgumentException if parentPathCommitment is null or not 64 lowercase hexadecimal characters
+         */
         public FrozenPublication {
             Objects.requireNonNull(parentIssuerId, "parentIssuerId");
             Objects.requireNonNull(parentPathId, "parentPathId");
@@ -112,6 +132,27 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
     }
 
     // The constructor is the single cohesive gate output boundary.
+    /**
+     * Creates a gate-approved certificate request with defensive copies of mutable inputs.
+     *
+     * <p>This carrier records validated policy inputs; construction alone does not authorize
+     * issuance or prove possession of the subject key.</p>
+     *
+     * @param operation validated CA operation kind; must not be null
+     * @param formatId validated credential format identity; must not be null
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param subjectCaId logical subject authority identity; must not be null
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param certificateType validated CA certificate kind; must not be null
+     * @param subjectRef validated subject identity; must not be null
+     * @param subjectRdns validated distinguished-name components, defensively copied; no null elements
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param validity validated certificate validity interval; must not be null
+     * @param serial positive serial number encoded in at most 20 signed integer bytes
+     * @param policy validated CA certificate policy; must not be null
+     * @throws NullPointerException if a required input or collection element is null
+     * @throws IllegalArgumentException if the serial is nonpositive or exceeds 20 bytes
+     */
     @SuppressWarnings("PMD.ExcessiveParameterList")
     /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
             PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
@@ -121,6 +162,28 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
                 exactPublicKey, validity, serial, policy, X509AlgorithmBindingPolicy.standardOnly());
     }
 
+    /**
+     * Creates a gate-approved certificate request with defensive copies of mutable inputs.
+     *
+     * <p>This carrier records validated policy inputs; construction alone does not authorize
+     * issuance or prove possession of the subject key.</p>
+     *
+     * @param operation validated CA operation kind; must not be null
+     * @param formatId validated credential format identity; must not be null
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param subjectCaId logical subject authority identity; must not be null
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param certificateType validated CA certificate kind; must not be null
+     * @param subjectRef validated subject identity; must not be null
+     * @param subjectRdns validated distinguished-name components, defensively copied; no null elements
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param validity validated certificate validity interval; must not be null
+     * @param serial positive serial number encoded in at most 20 signed integer bytes
+     * @param policy validated CA certificate policy; must not be null
+     * @param algorithmBindingPolicy validated algorithm binding policy; must not be null
+     * @throws NullPointerException if a required input or collection element is null
+     * @throws IllegalArgumentException if the serial is nonpositive or exceeds 20 bytes
+     */
     @SuppressWarnings("PMD.ExcessiveParameterList")
     /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
             PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
@@ -164,6 +227,17 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
         this.frozenPublication = Objects.requireNonNull(frozenPublication, "frozenPublication");
     }
 
+    /**
+     * Binds a copy of this request to the exact parent path and subject managed key.
+     *
+     * @param parentIssuerId exact selected parent issuer-generation identity; must not be null
+     * @param parentPathId exact selected parent chain-path identity; must not be null
+     * @param parentPathCommitment lowercase 64-character hexadecimal parent-path commitment
+     * @param subjectKeyRef managed key reference bound to the subject authority; must not be null
+     * @return immutable request copy carrying the frozen publication selection
+     * @throws NullPointerException if a required selection is null
+     * @throws IllegalArgumentException if the path commitment is not lowercase SHA-256 hexadecimal
+     */
     /* default */ ValidatedCaCertificateRequest withFrozenPublication(PkiId parentIssuerId,
             PkiId parentPathId, String parentPathCommitment, KeyRef subjectKeyRef) {
         return new ValidatedCaCertificateRequest(this,

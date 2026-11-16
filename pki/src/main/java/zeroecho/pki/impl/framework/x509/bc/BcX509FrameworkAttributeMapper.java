@@ -90,7 +90,9 @@ import zeroecho.pki.spi.framework.FrameworkAttributeMapper;
  */
 public final class BcX509FrameworkAttributeMapper implements FrameworkAttributeMapper {
 
-    /** Creates the stateless X.509 framework attribute mapper. */
+    /**
+     * Creates the stateless X.509 framework attribute mapper.
+     */
     public BcX509FrameworkAttributeMapper() {
         // Stateless.
     }

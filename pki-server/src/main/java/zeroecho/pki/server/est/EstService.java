@@ -79,6 +79,11 @@ import zeroecho.pki.server.ServerRealmContext;
  * <p>Endpoint registration uses the durable realm registry; operation
  * methods are stateless with respect to the endpoint registry and safe to call concurrently.</p>
  *
+ * <p>The realm, endpoint registry, enrollment coordinator and session are borrowed;
+ * the service does not close them. Certificate arguments represent identity already
+ * validated by the native TLS boundary. Building an evidence value here is not
+ * an independent TLS authentication or general certificate-path validation.</p>
+ *
  * @since 1.0
  */
 public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST protocol lifecycle complexity across the five shared realm/endpoint operations; individual methods remain checked.
@@ -87,14 +92,22 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     private static final String TEXT_ENDPOINT = "endpoint";
 
 
-    /** SHA-256withRSA (PKCS#1 v1.5) OID. */
+    /**
+     * SHA-256withRSA (PKCS#1 v1.5) OID.
+     */
     private static final String OID_SHA256_WITH_RSA = "1.2.840.113549.1.1.11";
-    /** SHA-256withECDSA OID. */
+    /**
+     * SHA-256withECDSA OID.
+     */
     private static final String OID_SHA256_WITH_ECDSA = "1.2.840.10045.4.3.2";
 
-    /** EC P-256 curve name. */
+    /**
+     * EC P-256 curve name.
+     */
     private static final String EC_P256 = "secp256r1";
-    /** Default RSA key size in bits when not otherwise constrained by policy. */
+    /**
+     * Default RSA key size in bits when not otherwise constrained by policy.
+     */
     private static final int RSA_DEFAULT_BITS = 2048;
 
     private final ServerRealmContext realm;
@@ -104,6 +117,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * Creates an EST service over the given realm.
      *
      * @param realm lifecycle-owned realm context
+     * @throws NullPointerException if the realm or its enrollment registry is null
      */
     public EstService(ServerRealmContext realm) {
         this.realm = Objects.requireNonNull(realm, "realm");
@@ -116,6 +130,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
 
     /**
      * Checks endpoint policy and runtime bindings without registering it.
+     *
      * @param endpoint exact proposed endpoint
      * @throws IllegalStateException if policy or runtime credential bindings are unavailable
      */
@@ -125,6 +140,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * Registers an EST endpoint, replacing any existing endpoint with the same label.
      *
      * @param endpoint the endpoint to register
+     * @throws NullPointerException if the endpoint is null
      */
     public void register(EstEndpoint endpoint) {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
@@ -175,6 +191,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * @param endpoint the EST endpoint
      * @return MIME-base64-encoded CMS certs-only DER
      * @throws EstProtocolException if the CA or chain is unavailable
+     * @throws NullPointerException if the endpoint is null
      */
     public byte[] cacerts(EstEndpoint endpoint) throws EstProtocolException {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
@@ -191,6 +208,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * @param clientCert authenticated mTLS client certificate
      * @return completed CMS response, pending approval/signing response, or terminal rejection
      * @throws EstProtocolException if input validation or durable admission is unavailable
+     * @throws NullPointerException if endpoint, request body or client certificate is null
      */
     public EnrollmentResult simpleenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
             throws EstProtocolException {
@@ -203,12 +221,14 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
 
     /**
      * Admits or continues enrollment with cancellation before the durable signing claim.
+     *
      * @param endpoint exact endpoint
      * @param csrBody bounded original PKCS#10 DER, PEM, or base64
      * @param clientCert verified TLS end-client certificate
      * @param cancellation transport cancellation signal
      * @return durable response outcome
      * @throws EstProtocolException if validation or admission fails
+     * @throws NullPointerException if endpoint, client certificate or cancellation signal is null
      */
     public EnrollmentResult simpleenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert,
             CancellationSignal cancellation) throws EstProtocolException {
@@ -225,6 +245,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * @param clientCert authenticated mTLS client certificate (the predecessor)
      * @return completed CMS response, pending approval/signing response, or terminal rejection
      * @throws EstProtocolException if identity validation or durable admission is unavailable
+     * @throws NullPointerException if endpoint, request body or client certificate is null
      */
     public EnrollmentResult simplereenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert)
             throws EstProtocolException {
@@ -237,12 +258,14 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
 
     /**
      * Admits or continues exact-identity renewal with pre-claim cancellation.
+     *
      * @param endpoint exact endpoint
      * @param csrBody bounded original PKCS#10 DER, PEM, or base64
      * @param clientCert verified TLS predecessor certificate
      * @param cancellation transport cancellation signal
      * @return durable response outcome
      * @throws EstProtocolException if validation or admission fails
+     * @throws NullPointerException if endpoint, client certificate or cancellation signal is null
      */
     public EnrollmentResult simplereenroll(EstEndpoint endpoint, byte[] csrBody, X509Certificate clientCert,
             CancellationSignal cancellation) throws EstProtocolException {
@@ -252,12 +275,21 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     /**
      * Immutable EST enrollment response. Pending work carries an explicit retry
      * interval; terminal responses never masquerade as pending approval.
+     *
      * @param status HTTP response status
      * @param body completed MIME-base64 CMS or empty for non-success responses
      * @param retryAfterSeconds positive interval only for HTTP 202
      */
     public record EnrollmentResult(int status, byte[] body, Optional<Long> retryAfterSeconds) {
-        /** Validates response state and defensively copies the response body. */
+        /**
+         * Copies response bytes and checks status/retry/body correspondence without parsing CMS.
+         *
+         * @param status one of 200, 202, 403, 410 or 500
+         * @param body response bytes; must be empty outside status 200
+         * @param retryAfterSeconds positive retry interval present exactly for status 202
+         * @throws NullPointerException if the body or retry container is null
+         * @throws IllegalArgumentException if status, retry presence/positivity or body shape is invalid
+         */
         public EnrollmentResult {
             body = Objects.requireNonNull(body, "body").clone();
             Objects.requireNonNull(retryAfterSeconds, "retryAfterSeconds");
@@ -269,17 +301,25 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
         }
         /**
          * Returns a defensive copy.
+         *
          * @return independently owned response bytes
          */
         @Override public byte[] body() { return body.clone(); }
-        /** @return response status without body content */
+        /**
+         * Returns response status without body content.
+         *
+         * @return response status without body content
+         */
         @Override public String toString() { return "EnrollmentResult[status=" + status + "]"; }
     }
 
     /**
      * Reports configured profile/runtime support without granting enrollment authority.
+     *
      * @param endpoint registered endpoint
-     * @return whether client-owned SDK enrollment is usable
+     * @return whether the configured active policy/runtime and request-owned AltSignature profile match
+     * @throws NullPointerException if the endpoint is null
+     * @throws RuntimeException if required realm/profile state cannot be resolved
      */
     public boolean hybridSdkAvailable(EstEndpoint endpoint) {
         var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
@@ -291,12 +331,21 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     }
 
     /**
-     * Creates only a challenge for client-owned ISSUE/RENEW keys under actual validated TLS identity.
-     * @param endpoint registered endpoint @param operation simpleenroll or simplereenroll
-     * @param requestDer exact PKCS#10 SDK DER @param certificate validated TLS end-client certificate
-     * @param clientNonce exact client nonce @param canonicalOrigin configured listener origin
+     * Creates a retained challenge for client-owned ISSUE/RENEW keys using supplied native TLS identity.
+     *
+     * <p>Fresh challenge construction resolves the current endpoint/policy,
+     * derives exact F6 certificate commitments and native transaction identity,
+     * and delegates to the coordinator. It does not consume client proofs,
+     * create a server-generated key or dispatch issuance.</p>
+     *
+     * @param endpoint registered endpoint
+     * @param operation simpleenroll or simplereenroll
+     * @param requestDer exact PKCS#10 SDK DER
+     * @param certificate validated TLS end-client certificate
+     * @param clientNonce exact client nonce
+     * @param canonicalOrigin configured listener origin
      * @return retained immutable SDK challenge
-     * @throws EstProtocolException if authentication context, policy or request is unavailable
+     * @throws EstProtocolException for rejected input (400) or unavailable security/policy state (503)
      */
     public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(EstEndpoint endpoint, String operation,
             byte[] requestDer, X509Certificate certificate, byte[] clientNonce, String canonicalOrigin) throws EstProtocolException {
@@ -309,13 +358,28 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     /**
      * Accepts both client proofs or retrieves the exact consumed result before fresh renewal/source checks.
      * Only the same existing authenticated certificate owner is permitted; aliases grant no access.
-     * @param endpoint registered endpoint @param operation original native operation
-     * @param requestDer original typed request @param certificate validated TLS end-client certificate
-     * @param intentId retained intent @param sdkRequestId stable acceptance identity
-     * @param primaryProof client primary proof @param alternativeProof client alternative proof
-     * @param canonicalOrigin configured listener origin @param cancellation transport cancellation
+     *
+     * <p>Consumed replay checks exact owner/certificate, endpoint, operation,
+     * configured origin and original request before the coordinator's retained
+     * proof/receipt comparison, without fresh renewal/source selection. OPEN
+     * acceptance rebuilds the current native context and dispatches the admitted
+     * receipt with the supplied cancellation signal. Cancellation does not erase
+     * a durable acceptance already recorded.</p>
+     *
+     * @param endpoint registered endpoint
+     * @param operation original native operation
+     * @param requestDer original typed request
+     * @param certificate validated TLS end-client certificate
+     * @param intentId retained intent
+     * @param sdkRequestId stable acceptance identity
+     * @param primaryProof client primary proof
+     * @param alternativeProof client alternative proof
+     * @param canonicalOrigin configured listener origin
+     * @param cancellation transport cancellation
      * @return ordinary EST pending/error or CMS certificate-chain response
-     * @throws EstProtocolException if proof, ownership, policy or retained state is rejected
+     * @throws EstProtocolException for rejected input/proofs (400), differing owner (403),
+     * or unavailable security/retained state (503)
+     * @throws IllegalArgumentException if the repeated EST SDK request differs from its retained original
      */
     public EnrollmentResult acceptSdk(EstEndpoint endpoint, String operation, byte[] requestDer, X509Certificate certificate,
             String intentId, String sdkRequestId, byte[] primaryProof, byte[] alternativeProof, String canonicalOrigin,
@@ -451,6 +515,7 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      *
      * @param endpoint the EST endpoint
      * @return MIME-base64-encoded CsrAttrs DER (empty sequence when no suggestions)
+     * @throws NullPointerException if the endpoint is null
      */
     public byte[] csrattrs(EstEndpoint endpoint) {
         Objects.requireNonNull(endpoint, TEXT_ENDPOINT);
@@ -460,11 +525,13 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
     /**
      * Performs server-key generation through durable encrypted-artifact admission.
      * This overload has no caller cancellation signal.
+     *
      * @param endpoint registered endpoint
      * @param csrBody exact DER, PEM or MIME-base64 PKCS#10 template
      * @param clientCert authenticated TLS recipient
      * @return pending, terminal or lazily leased encrypted delivery
      * @throws EstProtocolException if validation or custody is unavailable
+     * @throws NullPointerException if endpoint or client certificate is null
      */
     public EstServerKeygenResponse serverkeygen(EstEndpoint endpoint, byte[] csrBody,
             X509Certificate clientCert) throws EstProtocolException {
@@ -477,12 +544,16 @@ public final class EstService { // NOPMD CyclomaticComplexity - Aggregate EST pr
      * attached before approval or issuance. Exact retries resume the retained
      * transaction and never regenerate a key. Template proof is ignored as required
      * by RFC 7030; the generated CSR undergoes normal frozen-profile proof checks.
+     *
      * @param endpoint registered endpoint
      * @param csrBody original template in DER, PEM or MIME-base64 form
      * @param clientCert actual authenticated TLS recipient
      * @param cancellation checked before generation, attachment and dispatch
      * @return typed protocol status with resource-free deferred delivery
      * @throws EstProtocolException if input, negotiation, policy or custody fails
+     * @throws NullPointerException if endpoint, client certificate or cancellation signal is null
+     * @throws IllegalStateException if the provider-generated private key cannot be encoded for protected
+     *         client delivery
      */
     public EstServerKeygenResponse serverkeygen(EstEndpoint endpoint, byte[] csrBody,
             X509Certificate clientCert, CancellationSignal cancellation) throws EstProtocolException {

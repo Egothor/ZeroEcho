@@ -115,6 +115,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @param session active session used to create the digest context
      * @param spec digest specification; may be {@code null} to select the default
      * @return a builder that produces digest-based {@link TagEngine} instances
+     * @throws NullPointerException if {@code session} is null
      */
     public static TagEngineBuilder<byte[]> digest(final ZeroEchoSession session, final DigestSpec spec) {
         Objects.requireNonNull(session, "session");

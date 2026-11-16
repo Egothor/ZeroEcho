@@ -83,6 +83,13 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
      *
      * @throws IllegalArgumentException if inputs are invalid or optional container
      *                                  is null
+     * @param profileId stable profile identifier
+     * @param formatId framework/format supported by the profile
+     * @param displayName human-readable name
+     * @param maximumValidity positive maximum validity
+     * @param subjectPolicy complete end-entity subject policy
+     * @param leafPolicy complete end-entity extension policy
+     * @param algorithmBindingPolicy explicit role-specific X.509 representation policy
      */
     public CertificateProfile {
         if (profileId == null || profileId.isBlank()) {

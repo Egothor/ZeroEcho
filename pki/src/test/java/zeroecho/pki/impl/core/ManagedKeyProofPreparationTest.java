@@ -85,6 +85,9 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for managed key proof preparation.
+ */
 final class ManagedKeyProofPreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final Duration TTL = Duration.ofMinutes(5);
@@ -95,6 +98,11 @@ final class ManagedKeyProofPreparationTest {
             new Purpose("PROVE"), Optional.empty(), Optional.empty());
     private static final byte[] SPKI = HexFormat.of().parseHex("302a300506032b6570032100" + "00".repeat(32));
 
+    /**
+     * Prepares both purposes with exact provider and fresh nonce submission and commitments.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preparesBothPurposesWithExactProviderAndFreshNonceSubmissionAndCommitments() throws Exception {
         Fixture fixture = new Fixture();
         ManagedKeyProofPreparation preparation = fixture.preparer();
@@ -144,6 +152,9 @@ final class ManagedKeyProofPreparationTest {
         assertEquals(0, fixture.retirements);
     }
 
+    /**
+     * Rejects missing source wrong executor unsupported and mismatched algorithms before staging.
+     */
     @Test void rejectsMissingSourceWrongExecutorUnsupportedAndMismatchedAlgorithmsBeforeStaging() {
         Fixture missing = new Fixture();
         SigningProvider noSource = missing.provider(false);
@@ -184,6 +195,9 @@ final class ManagedKeyProofPreparationTest {
         assertEquals(0, wrongVerifier.begins);
     }
 
+    /**
+     * Rejects provider content and input bounds without any staging.
+     */
     @Test void rejectsProviderContentAndInputBoundsWithoutAnyStaging() {
         for (EncodedObject invalid : List.of(new EncodedObject(Encoding.BINARY, SPKI),
                 new EncodedObject(Encoding.DER, new byte[] {0x30, 0}))) {
@@ -209,6 +223,9 @@ final class ManagedKeyProofPreparationTest {
         assertEquals(0, metadata.begins);
     }
 
+    /**
+     * Rejects oversized export at metadata boundary without staging.
+     */
     @Test void rejectsOversizedExportAtMetadataBoundaryWithoutStaging() {
         Fixture fixture = new Fixture();
         fixture.exported = new EncodedObject(Encoding.DER, new byte[ManagedKeyProofCommand.MAX_SPKI_BYTES + 1]);
@@ -220,6 +237,9 @@ final class ManagedKeyProofPreparationTest {
         assertEquals(0, fixture.retirements);
     }
 
+    /**
+     * Cancellation before and after lookup never stages.
+     */
     @Test void cancellationBeforeAndAfterLookupNeverStages() {
         Fixture before = new Fixture();
         before.cancelled = true;
@@ -233,6 +253,9 @@ final class ManagedKeyProofPreparationTest {
         assertEquals(0, after.begins);
     }
 
+    /**
+     * Staging failures close partial sinks and retire only completed unowned content.
+     */
     @Test void stagingFailuresClosePartialSinksAndRetireOnlyCompletedUnownedContent() {
         for (Cut cut : List.of(Cut.OPEN, Cut.WRITE, Cut.COMPLETE, Cut.CLOSE, Cut.CANCEL_WRITE, Cut.CANCEL_COMPLETE)) {
             Fixture fixture = new Fixture();

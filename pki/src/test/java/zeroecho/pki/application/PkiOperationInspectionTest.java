@@ -83,7 +83,16 @@ import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for PKI operation inspection.
+ */
 final class PkiOperationInspectionTest {
+    /**
+     * Missing required generation binding fails without inferring defaults.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void missingRequiredGenerationBindingFailsWithoutInferringDefaults(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -101,6 +110,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Projects exact metadata from real store without other executor I/O.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void projectsExactMetadataFromRealStoreWithoutOtherExecutorIo(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -161,6 +176,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * All missing kinds use safe not found after exactly one point lookup.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void allMissingKindsUseSafeNotFoundAfterExactlyOnePointLookup(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -181,6 +202,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Precancelled inspections perform no store lookup.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void precancelledInspectionsPerformNoStoreLookup(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -199,6 +226,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Retained executor rejects every inspection after session close.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void retainedExecutorRejectsEveryInspectionAfterSessionClose(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -219,6 +252,9 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Inspection records require identifiers and preserve semantic names.
+     */
     @Test
     void inspectionRecordsRequireIdentifiersAndPreserveSemanticNames() {
         assertThrows(NullPointerException.class, () -> new PkiOperation.InspectAuthority(null));
@@ -229,6 +265,12 @@ final class PkiOperationInspectionTest {
         for (Inspection inspection : inspections()) assertEquals(inspection.name(), inspection.operation().name());
     }
 
+    /**
+     * Lists real authorities statuses and issuer paths with exact prefixes and scope.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void listsRealAuthoritiesStatusesAndIssuerPathsWithExactPrefixesAndScope(@TempDir Path temporary)
             throws Exception {
@@ -289,6 +331,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Path listing projects all returned paths in store order without hidden cap.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pathListingProjectsAllReturnedPathsInStoreOrderWithoutHiddenCap(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -321,6 +369,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Listing failures are not converted to partial results.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void listingFailuresAreNotConvertedToPartialResults(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -341,6 +395,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Listings respect pre cancellation and closed session without store calls.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void listingsRespectPreCancellationAndClosedSessionWithoutStoreCalls(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -371,6 +431,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Traverses more than one thousand requests and authorizes before lookahead.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void traversesMoreThanOneThousandRequestsAndAuthorizesBeforeLookahead(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -418,6 +484,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Known key metadata cursor cancellation retains cancellation classification.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void knownKeyMetadataCursorCancellationRetainsCancellationClassification(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -434,6 +506,9 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Listing inputs validate existing bounds and semantic names.
+     */
     @Test
     void listingInputsValidateExistingBoundsAndSemanticNames() {
         for (int limit : new int[] { 0, 1001 }) {
@@ -449,6 +524,12 @@ final class PkiOperationInspectionTest {
         for (Inspection listing : listings()) assertEquals(listing.name(), listing.operation().name());
     }
 
+    /**
+     * Maps typed store durability uncertainty to safe recovery outcome without retry.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mapsTypedStoreDurabilityUncertaintyToSafeRecoveryOutcomeWithoutRetry(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -470,6 +551,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Preserves policy classification for message tokens with no typed reason.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preservesPolicyClassificationForMessageTokensWithNoTypedReason(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -489,6 +576,12 @@ final class PkiOperationInspectionTest {
         }
     }
 
+    /**
+     * Maps typed PKI exception reason by its classification.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mapsTypedPkiExceptionReasonByItsClassification(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -646,7 +739,9 @@ final class PkiOperationInspectionTest {
 
     private record Inspection(PkiOperation operation, String name, String method) { }
 
-    /** Observes executor calls while preserving real store integrity checks and ownership. */
+    /**
+     * Observes executor calls while preserving real store integrity checks and ownership.
+     */
     private static final class ObservedBootstrap implements DefaultPkiSession.Bootstrap {
         private PkiStore store;
         private String expectedMethod;

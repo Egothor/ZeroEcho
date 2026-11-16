@@ -45,22 +45,49 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 
-/** Best-effort local invocation attribution, separate from immutable accepted evidence. */
+/**
+ * Best-effort local invocation attribution, separate from immutable accepted evidence.
+ */
 final class LocalInvocationAudit {
     private final AuditSink sink;
     private final Clock clock;
     private final Principal operator;
 
+    /**
+     * Captures borrowed audit and clock collaborators for a fixed local operator.
+     *
+     * @param sink best-effort destination for invocation events
+     * @param clock event timestamp source
+     * @param operator trusted configured local operator identity
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ LocalInvocationAudit(AuditSink sink, Clock clock, Principal operator) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.operator = Objects.requireNonNull(operator, "operator");
     }
 
+    /**
+     * Creates audit and authorization context attributed to the configured local operator.
+     *
+     * @param operation nonblank semantic purpose text
+     * @return context without an object or format selection
+     * @throws IllegalArgumentException if the operation is null or blank
+     */
     /* default */ AccessContext access(String operation) {
         return new AccessContext(operator, new Purpose(operation), Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Attempts to record a local invocation event without changing its authoritative outcome.
+     *
+     * <p>Runtime failures during event construction or sink delivery are suppressed.</p>
+     *
+     * @param operation semantic operation used as the event purpose
+     * @param action invocation lifecycle action
+     * @param id optional related object or operation identity
+     * @param result safe result classification stored as event metadata
+     */
     /* default */ // Local invocation auditing remains best effort under its existing sink-failure contract.
                   @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
                   void record(String operation, String action, Optional<PkiId> id, String result) {

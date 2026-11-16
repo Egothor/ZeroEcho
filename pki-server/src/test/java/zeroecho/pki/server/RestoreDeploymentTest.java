@@ -43,9 +43,20 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Checks restore deployment prerequisites and separation of replaceable PKI state from server authority.
+ */
 class RestoreDeploymentTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks the launcher rejects a legacy volume before bootstrap or new store creation and preserves the original version marker.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void legacyVolumeIsRejectedBeforeAnyLauncherOrBootstrap() throws Exception {
         Path script = Path.of("deploy/pki-server/entrypoint.sh").toAbsolutePath();
         if (!Files.exists(script)) script = Path.of("../deploy/pki-server/entrypoint.sh").toAbsolutePath();

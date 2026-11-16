@@ -57,10 +57,22 @@ import java.util.Set;
 public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyrings,
         List<CredentialSet> credentialSets, List<ActiveCredential> activeCredentials,
         Optional<KeygenArtifacts> keygenArtifacts) {
-    /** Current companion configuration version; independent of server schema 8. */
+    /**
+     * Current companion configuration version; independent of server schema 8.
+     */
     public static final int VERSION = 1;
 
-    /** Validates bounded collections and every cross-reference. */
+    /**
+     * Validates bounded collections and every cross-reference.
+     * @param budgets explicit transaction admission limits
+     * @param keyrings dedicated encrypted keyring owners
+     * @param credentialSets immutable, authority-scoped current and retained credentials
+     * @param activeCredentials unique selections for new protocol transactions
+     * @param keygenArtifacts optional encrypted delivery artifact capability
+     * @throws NullPointerException if any of {@code budgets}, {@code keygenArtifacts} is null
+     * @throws IllegalArgumentException if an active credential selection references an unavailable credential
+     *         set
+     */
     public EnrollmentRuntimeConfiguration {
         Objects.requireNonNull(budgets, "budgets");
         keyrings = copy(keyrings, 32);
@@ -84,11 +96,22 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
         }
     }
 
-    /** Protocols requiring explicitly provisioned message credentials. */
+    /**
+     * Protocols requiring explicitly provisioned message credentials.
+     */
     public enum Protocol {
-        /** EST server-generated private-key delivery signature. */ EST,
-        /** SCEP RA encryption and response signature. */ SCEP,
-        /** CMP signature or password-based message protection. */ CMP
+        /**
+         * EST server-generated private-key delivery signature.
+         */
+        EST,
+        /**
+         * SCEP RA encryption and response signature.
+         */
+        SCEP,
+        /**
+         * CMP signature or password-based message protection.
+         */
+        CMP
     }
 
     /**
@@ -104,7 +127,17 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      */
     public record Budgets(int maximumTransactions, int maximumPending, long maximumRetainedRequestBytes,
             int maximumRequestBytes, int maximumConcurrentDispatches, Duration pendingLifetime, Duration retryAfter) {
-        /** Validates exact positive budgets and their relationships. */
+        /**
+         * Validates exact positive budgets and their relationships.
+         * @param maximumTransactions retained transactions including tombstones, 1..1000000
+         * @param maximumPending pending transactions, at most the retained count
+         * @param maximumRetainedRequestBytes retained original bytes plus serialized metadata
+       and reserved bounded decision/receipt/result growth
+         * @param maximumRequestBytes one encoded request, 1..1048576 bytes
+         * @param maximumConcurrentDispatches concurrent dispatches, 1..1024
+         * @param pendingLifetime fixed admission lifetime, at most 30 days
+         * @param retryAfter polling interval, at most the pending lifetime
+         */
         public Budgets {
             range(maximumTransactions, 1, 1_000_000);
             range(maximumPending, 1, maximumTransactions);
@@ -122,7 +155,11 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      * @param path absolute normalized existing keyring file
      */
     public record Keyring(String id, Path path) {
-        /** Validates the identity and normalizes the path without opening it. */
+        /**
+         * Validates the identity and normalizes the path without opening it.
+         * @param id configuration-local canonical identity
+         * @param path absolute normalized existing keyring file
+         */
         public Keyring { EnrollmentRuntimeConfiguration.id(id); path = EnrollmentRuntimeConfiguration.path(path); }
     }
 
@@ -132,7 +169,11 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      * @param alias exact logical keyring alias
      */
     public record KeyReference(String keyringId, String alias) {
-        /** Validates both canonical references. */
+        /**
+         * Validates both canonical references.
+         * @param keyringId exact configured keyring identity
+         * @param alias exact logical keyring alias
+         */
         public KeyReference { id(keyringId); id(alias); }
     }
 
@@ -143,7 +184,12 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      * @param certificateChain leaf followed by the exact repository authority path
      */
     public record Signer(KeyReference key, List<Path> certificateChain) {
-        /** Validates the reference and bounded nonempty chain. */
+        /**
+         * Validates the reference and bounded nonempty chain.
+         * @param key private key reference
+         * @param certificateChain leaf followed by the exact repository authority path
+         * @throws NullPointerException if {@code key} is null
+         */
         public Signer {
             Objects.requireNonNull(key, "key");
             certificateChain = paths(certificateChain, 33, false);
@@ -160,7 +206,14 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      * @param ownerAliases explicit nonempty administrative owner exclusions
      */
     public record PbmIdentity(String senderKid, String identityId, KeyReference secret, List<String> ownerAliases) {
-        /** Validates bounded identity and exclusion fields. */
+        /**
+         * Validates bounded identity and exclusion fields.
+         * @param senderKid canonical lowercase hexadecimal identifier, 1..128 bytes
+         * @param identityId canonical requester identity
+         * @param secret encrypted keyring reference to 32..128 secret bytes
+         * @param ownerAliases explicit nonempty administrative owner exclusions
+         * @throws NullPointerException if {@code secret} is null
+         */
         public PbmIdentity {
             if (senderKid == null || !senderKid.matches("(?:[0-9a-f]{2}){1,128}")) {
                 invalid();
@@ -174,21 +227,46 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
             ownerAliases.forEach(EnrollmentRuntimeConfiguration::id);
             unique(ownerAliases);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "PbmIdentity[redacted]"; }
     }
 
-    /** Explicitly supported PBM digest families. */
+    /**
+     * Explicitly supported PBM digest families.
+     */
     public enum PbmDigest {
-        /** SHA-256. */ SHA256,
-        /** SHA-384. */ SHA384,
-        /** SHA-512. */ SHA512
+        /**
+         * SHA-256.
+         */
+        SHA256,
+        /**
+         * SHA-384.
+         */
+        SHA384,
+        /**
+         * SHA-512.
+         */
+        SHA512
     }
 
-    /** Explicitly supported PBM MAC families. */
+    /**
+     * Explicitly supported PBM MAC families.
+     */
     public enum PbmMac {
-        /** HMAC with SHA-256. */ HMAC_SHA256,
-        /** HMAC with SHA-384. */ HMAC_SHA384,
-        /** HMAC with SHA-512. */ HMAC_SHA512
+        /**
+         * HMAC with SHA-256.
+         */
+        HMAC_SHA256,
+        /**
+         * HMAC with SHA-384.
+         */
+        HMAC_SHA384,
+        /**
+         * HMAC with SHA-512.
+         */
+        HMAC_SHA512
     }
 
     /**
@@ -204,7 +282,16 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      */
     public record Pbm(int minimumIterations, int maximumIterations, int minimumSaltBytes, int maximumSaltBytes,
             Set<PbmDigest> digests, Set<PbmMac> macs, List<PbmIdentity> identities) {
-        /** Validates resource limits and independent requester mappings. */
+        /**
+         * Validates resource limits and independent requester mappings.
+         * @param minimumIterations positive iteration floor
+         * @param maximumIterations iteration ceiling, at most 1000000
+         * @param minimumSaltBytes salt floor, at least 16 bytes
+         * @param maximumSaltBytes salt ceiling, at most 64 bytes
+         * @param digests nonempty allowed digest families
+         * @param macs nonempty allowed MAC families
+         * @param identities nonempty unique sender and requester mappings
+         */
         public Pbm {
             range(maximumIterations, 1, 1_000_000);
             range(minimumIterations, 1, maximumIterations);
@@ -222,6 +309,9 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
             unique(identities.stream().map(PbmIdentity::senderKid).toList());
             unique(identities.stream().map(PbmIdentity::identityId).toList());
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "Pbm[redacted]"; }
     }
 
@@ -241,7 +331,19 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
     public record CredentialSet(String credentialId, Protocol protocol, String authorityId,
             String issuerId, String chainPathId, Optional<Signer> signer, List<Path> requestTrustAnchors,
             List<String> authorizedRaKeys, Optional<Pbm> pbm) {
-        /** Validates the closed protocol capability combination. */
+        /**
+         * Validates the closed protocol capability combination.
+         * @param credentialId stable immutable credential-set identity
+         * @param protocol protocol family
+         * @param authorityId logical issuing authority
+         * @param issuerId exact retained issuer generation
+         * @param chainPathId exact retained authority chain
+         * @param signer optional response signer, mandatory for EST and SCEP
+         * @param requestTrustAnchors explicit CMP request signature trust anchors
+         * @param authorizedRaKeys canonical public-key commitments allowed RA privileges
+         * @param pbm optional CMP password-based protection configuration
+         * @throws NullPointerException if any of {@code protocol}, {@code signer}, {@code pbm} is null
+         */
         public CredentialSet {
             id(credentialId); id(authorityId); id(issuerId); id(chainPathId);
             Objects.requireNonNull(protocol, "protocol");
@@ -265,6 +367,9 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
                 invalid();
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "CredentialSet[redacted]"; }
     }
 
@@ -275,7 +380,13 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      * @param credentialId configured immutable set identity
      */
     public record ActiveCredential(Protocol protocol, String authorityId, String credentialId) {
-        /** Validates the selection identities. */
+        /**
+         * Validates the selection identities.
+         * @param protocol protocol family
+         * @param authorityId exact authority scope
+         * @param credentialId configured immutable set identity
+         * @throws NullPointerException if {@code protocol} is null
+         */
         public ActiveCredential { Objects.requireNonNull(protocol, "protocol"); id(authorityId); id(credentialId); }
     }
 
@@ -291,7 +402,15 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
      */
     public record KeygenArtifacts(Path directory, long maximumArtifactBytes, long maximumRetainedBytes,
             int maximumArtifacts, int maximumConcurrentGenerations, Duration deliveryRetention) {
-        /** Validates all explicit artifact budgets. */
+        /**
+         * Validates all explicit artifact budgets.
+         * @param directory preprovisioned exclusive artifact directory
+         * @param maximumArtifactBytes maximum ciphertext bytes per artifact
+         * @param maximumRetainedBytes aggregate reserved ciphertext bytes
+         * @param maximumArtifacts maximum retained artifact descriptors
+         * @param maximumConcurrentGenerations maximum active generation jobs
+         * @param deliveryRetention fixed delivery retention, at most 30 days
+         */
         public KeygenArtifacts {
             directory = path(directory);
             range(maximumArtifactBytes, 1, 16_777_216);
@@ -323,8 +442,17 @@ public record EnrollmentRuntimeConfiguration(Budgets budgets, List<Keyring> keyr
         return EnrollmentRuntimeConfigurationCodec.decode(bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String toString() { return "EnrollmentRuntimeConfiguration[redacted]"; }
 
+    /**
+     * Validates one bounded enrollment configuration identity without normalization.
+     *
+     * @param value configured keyring, credential or endpoint identity
+     * @throws IllegalArgumentException if the identity is null, empty, oversized or noncanonical
+     */
     /* default */ static void id(String value) { EnrollmentEndpoint.requireProfileId(value); }
     private static void requireRing(Set<String> rings, KeyReference reference) {
         if (!rings.contains(reference.keyringId())) {

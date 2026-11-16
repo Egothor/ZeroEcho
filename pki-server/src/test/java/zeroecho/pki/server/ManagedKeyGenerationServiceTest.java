@@ -46,7 +46,17 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
 
+/**
+ * Checks pinned-administrator admission, idempotent public receipts and ambiguous generation reconciliation.
+ */
 class ManagedKeyGenerationServiceTest {
+    /**
+     * Checks immutable administrator pinning, idempotent public generation receipts and rejection of changed parameters or another administrator.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void retainsPublicReceiptAndRejectsChangedParametersAndOtherAdministrators(@TempDir Path root) throws Exception {
         var config = configuration(root);
         var provider = new Provider();
@@ -73,6 +83,13 @@ class ManagedKeyGenerationServiceTest {
         }
     }
 
+    /**
+     * Checks a lost generation result is observed once while an unresolved empty reservation cannot trigger blind regeneration.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void reconcilesPublishedKeyAfterLostResultButNeverRegeneratesAnEmptyClaim(@TempDir Path root) throws Exception {
         var config = configuration(root);
         var provider = new Provider(); provider.failAfterPublication = true;
@@ -90,6 +107,13 @@ class ManagedKeyGenerationServiceTest {
         }
     }
 
+    /**
+     * Checks administrator designation cannot change and a busy generation lane rejects concurrent key creation.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsAChangedDesignationAndConcurrentGeneration(@TempDir Path root) throws Exception {
         var config = configuration(root); var provider = new Provider();
         provider.entered = new java.util.concurrent.CountDownLatch(1);
@@ -137,6 +161,9 @@ class ManagedKeyGenerationServiceTest {
         private boolean failAfterPublication;
         private java.util.concurrent.CountDownLatch entered;
         private java.util.concurrent.CountDownLatch release;
+        /**
+         * {@inheritDoc}
+         */
         @Override public Result generate(String id, Parameters parameters) {
             generations++;
             if (entered != null) {
@@ -153,6 +180,9 @@ class ManagedKeyGenerationServiceTest {
             if (failAfterPublication) { failAfterPublication = false; throw new IllegalStateException("simulated lost receipt"); }
             return result;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<Result> observe(String id, Parameters parameters) { return Optional.ofNullable(results.get(id)); }
     }
 }

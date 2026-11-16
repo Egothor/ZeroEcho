@@ -63,8 +63,14 @@ import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 
+/**
+ * Integration coverage for encrypted payload delivery through JPEG EXIF.
+ */
 class JpegExifIntegrationTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tempDir;
 
@@ -74,6 +80,11 @@ class JpegExifIntegrationTest {
         return out.toByteArray();
     }
 
+    /**
+     * Checks encryption, JPEG embedding, extraction, and decryption as one payload round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testEncryptEmbedExtractDecrypt() throws Exception {
         System.out.println("testEncryptEmbedExtractDecrypt");

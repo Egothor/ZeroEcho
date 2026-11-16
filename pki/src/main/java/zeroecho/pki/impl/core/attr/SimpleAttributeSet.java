@@ -111,6 +111,7 @@ public record SimpleAttributeSet(List<Entry> entries) implements AttributeSet {
      *
      * @param entries ordered attribute entries; must not be {@code null}
      * @throws IllegalArgumentException if {@code entries} is {@code null}
+     * @throws NullPointerException if entries is null or a supplied collection contains a null member
      */
     public SimpleAttributeSet {
         if (entries == null) {
@@ -153,6 +154,7 @@ public record SimpleAttributeSet(List<Entry> entries) implements AttributeSet {
          * @param values ordered attribute values; must not be {@code null}
          * @throws IllegalArgumentException if {@code id} or {@code values} is
          *                                  {@code null}
+         * @throws NullPointerException if values is null or a supplied collection contains a null member
          */
         public Entry {
             if (id == null) {
@@ -176,6 +178,7 @@ public record SimpleAttributeSet(List<Entry> entries) implements AttributeSet {
      *
      * @return distinct attribute identifiers present in this set; never
      *         {@code null}
+     * @throws NullPointerException if seen.keySet is null or a supplied collection contains a null member
      */
     @Override
     public Set<AttributeId> ids() {

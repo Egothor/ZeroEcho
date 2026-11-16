@@ -50,14 +50,24 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Ordered, idempotent, resumable behaviour of the reusable append-only evidence log. */
+/**
+ * Ordered, idempotent, resumable behaviour of the reusable append-only evidence log.
+ */
 class MetadataEvidenceLogTest {
     private static final MetadataStoreId STORE_ID = new MetadataStoreId("0123456789abcdef0123456789abcdef");
     private static final String NAMESPACE = "io.zeroecho.pki.test-evidence";
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Appends are monotonic idempotent and resumable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void appendsAreMonotonicIdempotentAndResumable() throws Exception {
         try (DurableTransactionalMetadataStore store = DurableTransactionalMetadataStore.create(
@@ -96,6 +106,11 @@ class MetadataEvidenceLogTest {
         }
     }
 
+    /**
+     * Reopened log continues the same sequence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenedLogContinuesTheSameSequence() throws Exception {
         Path log = directory.resolve("reopen.log");

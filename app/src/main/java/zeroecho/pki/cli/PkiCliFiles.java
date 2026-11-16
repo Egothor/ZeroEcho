@@ -45,7 +45,9 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
 
-/** Bounded regular-file input used by the CLI trust boundary. */
+/**
+ * Bounded regular-file input used by the CLI trust boundary.
+ */
 final class PkiCliFiles {
 
     private static final int BUFFER_BYTES = 8_192;
@@ -53,6 +55,24 @@ final class PkiCliFiles {
     private PkiCliFiles() {
     }
 
+    /**
+     * Reads a bounded regular file without following a symbolic link at the final path component.
+     *
+     * <p>The absolute normalized path is checked with NOFOLLOW_LINKS and opened
+     * with the same option. Parent-directory links are not excluded and content is
+     * not locked or snapshotted against concurrent replacement. The read enforces
+     * the byte ceiling again, so growth beyond initially observed size is rejected.
+     * The opened channel/stream are closed on return or failure.</p>
+     *
+     * @param path input path, resolved against the process working directory when relative
+     * @param maximumBytes inclusive positive byte ceiling, smaller than Integer.MAX_VALUE
+     * @return newly owned file bytes; an empty regular file yields an empty array
+     * @throws NullPointerException if the path is null
+     * @throws IllegalArgumentException if the ceiling is not positive
+     * @throws ArithmeticException if adding the one-byte overrun allowance overflows
+     * @throws IOException if metadata/open/read fails, the final path is not regular,
+     *     is a symbolic link or the observed/read bytes exceed the ceiling
+     */
     /* default */ static byte[] readRegularFile(Path path, int maximumBytes) throws IOException {
         Path exact = Objects.requireNonNull(path, "path").toAbsolutePath().normalize();
         if (maximumBytes <= 0) {

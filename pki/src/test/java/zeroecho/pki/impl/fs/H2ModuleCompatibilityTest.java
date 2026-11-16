@@ -50,10 +50,21 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for H2 module compatibility.
+ */
 class H2ModuleCompatibilityTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Embedded driver retains classpath and plain named layer compatibility.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void embeddedDriverRetainsClasspathAndPlainNamedLayerCompatibility() throws Exception {
         System.out.println("embeddedDriverRetainsClasspathAndPlainNamedLayerCompatibility");

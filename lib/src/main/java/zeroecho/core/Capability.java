@@ -67,6 +67,13 @@ public record Capability(String algorithmId, AlgorithmFamily family, KeyUsage ro
      * @throws NullPointerException     if a component is {@code null}
      * @throws IllegalArgumentException if {@code defaultSpec} is incompatible with
      *                                  {@code specType}
+     * @param algorithmId canonical algorithm identifier
+     * @param family algorithm family
+     * @param role supported key usage
+     * @param contextType produced context type
+     * @param keyType accepted key type
+     * @param specType accepted specification type
+     * @param defaultSpec non-null resolved default specification
      */
     public Capability {
         Objects.requireNonNull(algorithmId, "algorithmId must not be null");

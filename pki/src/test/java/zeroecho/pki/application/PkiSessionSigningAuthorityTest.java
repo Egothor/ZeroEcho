@@ -54,8 +54,13 @@ import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.crypto.SigningInputCapabilities;
 import zeroecho.pki.api.PkiId;
 
-/** Tests the exact authority factory used by session composition, without reflective access. */
+/**
+ * Tests the exact authority factory used by session composition, without reflective access.
+ */
 final class PkiSessionSigningAuthorityTest {
+    /**
+     * Declared sign algorithms keep suite binding direction and exact executor checks.
+     */
     @Test void declaredSignAlgorithmsKeepSuiteBindingDirectionAndExactExecutorChecks() {
         SigningProvider provider = provider();
         AlgorithmExecutionCapability declaration = declared("both", Set.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
@@ -85,6 +90,9 @@ final class PkiSessionSigningAuthorityTest {
                 Direction.SIGN, Optional.empty(), "explicit", SigningProvider.class));
     }
 
+    /**
+     * Supported algorithm membership cannot grant undeclared or verify only signing.
+     */
     @Test void supportedAlgorithmMembershipCannotGrantUndeclaredOrVerifyOnlySigning() {
         for (List<AlgorithmExecutionCapability> declarations : List.of(
                 List.of(declared("rsa-only", Set.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256), Direction.SIGN)),

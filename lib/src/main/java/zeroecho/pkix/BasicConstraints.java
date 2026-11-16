@@ -44,7 +44,14 @@ import java.util.OptionalInt;
  */
 public record BasicConstraints(boolean certificateAuthority, OptionalInt pathLenConstraint) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Validates the CA/path-length relationship and treats a null optional as absent.
+     *
+     * @param certificateAuthority whether the subject is a CA
+     * @param pathLenConstraint maximum number of subordinate CAs, present only when
+     *        {@code certificateAuthority} is {@code true}
+     * @throws IllegalArgumentException if a non-CA specifies a path length or the supplied path length is negative
+     */
     public BasicConstraints {
         if (pathLenConstraint == null) {
             pathLenConstraint = OptionalInt.empty();

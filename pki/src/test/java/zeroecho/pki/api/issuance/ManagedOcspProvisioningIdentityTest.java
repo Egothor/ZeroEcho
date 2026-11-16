@@ -41,7 +41,13 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for managed OCSP provisioning identity.
+ */
 class ManagedOcspProvisioningIdentityTest {
+    /**
+     * Matches independent length framed vectors and separates core from realm mapping.
+     */
     @Test void matchesIndependentLengthFramedVectorsAndSeparatesCoreFromRealmMapping() {
         // Public synthetic DER fixtures: Python hashlib/struct independently generated these framed hash vectors.
         var primary = new EncodedObject(Encoding.DER, HexFormat.of().parseHex("302a300506032b6570032100" + "00".repeat(32)));

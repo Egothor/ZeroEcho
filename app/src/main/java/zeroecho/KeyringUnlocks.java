@@ -50,6 +50,14 @@ final class KeyringUnlocks {
     private KeyringUnlocks() {
     }
 
+    /**
+     * Creates a provider that prompts for a password on each acquisition using the JVM console.
+     *
+     * <p>The provider reports absent console input or cancellation as an IOException when
+     * acquired. Its transient character buffer is cleared after creating the owned password.</p>
+     *
+     * @return reusable provider; callers must close each acquired password
+     */
     /* default */ static KeyringUnlockProvider console() {
         return () -> {
             Console console = System.console();
@@ -73,6 +81,10 @@ final class KeyringUnlocks {
      * enabling non-interactive/scripted keyring management (mirrors the PKI session's
      * {@code unlockEnvironmentVariable}). The variable value is copied into a destroyable password and the
      * transient copy is scrubbed after use.
+     *
+     * @param variable environment variable name; must not be null
+     * @return provider that reports an absent or empty value as an IOException on acquisition
+     * @throws NullPointerException if variable is null
      */
     /* default */ static KeyringUnlockProvider environment(String variable) {
         String name = java.util.Objects.requireNonNull(variable, "variable");
@@ -90,6 +102,16 @@ final class KeyringUnlocks {
         };
     }
 
+    /**
+     * Opens a keyring using one acquired password, which is destroyed before this call returns.
+     *
+     * @param path existing keyring location
+     * @param provider password acquisition callback; must not be null
+     * @return opened store owned by the caller
+     * @throws IOException if acquisition, file access, or decoding fails
+     * @throws GeneralSecurityException if unlocking or cryptographic validation fails
+     * @throws NullPointerException if path or provider is null
+     */
     /* default */ static KeyringStore open(Path path, KeyringUnlockProvider provider)
             throws IOException, GeneralSecurityException {
         try (KeyringPassword password = acquire(provider)) {
@@ -97,6 +119,16 @@ final class KeyringUnlocks {
         }
     }
 
+    /**
+     * Creates a keyring using one acquired password, which is destroyed before this call returns.
+     *
+     * @param path destination keyring location
+     * @param provider password acquisition callback; must not be null
+     * @return newly created store owned by the caller
+     * @throws IOException if acquisition or file creation fails
+     * @throws GeneralSecurityException if cryptographic initialization fails
+     * @throws NullPointerException if path or provider is null
+     */
     /* default */ static KeyringStore create(Path path, KeyringUnlockProvider provider)
             throws IOException, GeneralSecurityException {
         try (KeyringPassword password = acquire(provider)) {

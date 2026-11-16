@@ -61,6 +61,8 @@ public final class GenerateOperationSchema {
      * Writes the requested catalog artifacts.
      * @param args JSON output path followed by an optional TypeScript output path
      * @throws IOException if either artifact cannot be written
+     * @throws IllegalArgumentException if the output-path argument count is outside the supported one-or-two
+     *         range
      */
     public static void main(String[] args) throws IOException {
         if (args.length < 1 || args.length > TYPESCRIPT_ARGUMENT_COUNT) {

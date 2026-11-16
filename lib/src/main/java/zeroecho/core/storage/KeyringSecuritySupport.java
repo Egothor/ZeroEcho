@@ -53,11 +53,22 @@ import javax.crypto.spec.SecretKeySpec;
 
 import zeroecho.core.storage.KeyringException.Code;
 
-/** Cryptographic and filesystem validation for the encrypted keyring format. */
+/**
+ * Cryptographic and filesystem validation for the encrypted keyring format.
+ */
 final class KeyringSecuritySupport {
     private KeyringSecuritySupport() {
     }
 
+    /**
+     * Derives the AES key-encryption key using PBKDF2-HMAC-SHA-256.
+     *
+     * @param password borrowed password; its temporary character copies are cleared
+     * @param salt nonempty KDF salt, retained by neither this method nor the caller-facing key
+     * @param iterations positive PBKDF2 iteration count selected by validated policy
+     * @return newly allocated key bytes; the caller must clear them after use
+     * @throws GeneralSecurityException if the KDF cannot be obtained or the provider rejects the specification
+     */
     /* default */ static byte[] deriveKek(KeyringPassword password, byte[] salt, int iterations)
             throws GeneralSecurityException {
         char[] chars = password.copy();
@@ -69,6 +80,17 @@ final class KeyringSecuritySupport {
             spec.clearPassword();
         }
     }
+    /**
+     * Encrypts or decrypts one authenticated AES-GCM payload.
+     *
+     * @param mode JCA encryption or decryption mode
+     * @param key raw AES key bytes
+     * @param nonce GCM nonce bytes
+     * @param aad additional authenticated bytes, not encrypted
+     * @param input plaintext for encryption or authenticated ciphertext for decryption
+     * @return newly allocated ciphertext with tag, or verified plaintext
+     * @throws GeneralSecurityException if cipher initialization, authentication, or finalization fails
+     */
     /* default */ static byte[] crypt(int mode, byte[] key, byte[] nonce, byte[] aad, byte[] input)
             throws GeneralSecurityException {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -76,6 +98,14 @@ final class KeyringSecuritySupport {
         cipher.updateAAD(aad);
         return cipher.doFinal(input);
     }
+    /**
+     * Computes the keyring SHA-256 digest without retaining input bytes.
+     *
+     * @param value bytes to hash; must not be null
+     * @return newly allocated 32-byte digest
+     * @throws KeyringException with KEYRING_IO_FAILED if SHA-256 is unavailable
+     * @throws NullPointerException if the input is null
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static byte[] digest(byte[] value) throws KeyringException {
         try {
@@ -84,6 +114,13 @@ final class KeyringSecuritySupport {
             throw new KeyringException(Code.KEYRING_IO_FAILED);
         }
     }
+    /**
+     * Reads a bounded complete keyring image without following a symbolic link.
+     *
+     * @param source path of the image to read
+     * @return newly allocated image bytes; the caller must clear them when no longer needed
+     * @throws IOException if reading fails, the size exceeds the limit, or the file changes size during reading
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static byte[] readStoreImage(Path source) throws IOException {
         try (FileChannel channel = FileChannel.open(source, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
@@ -109,6 +146,14 @@ final class KeyringSecuritySupport {
             throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
         }
     }
+    /**
+     * Reads an image and rejects any length other than the required framing length.
+     *
+     * @param source file to read without following symbolic links
+     * @param expected required image length, in bytes
+     * @return newly allocated image of exactly the requested length
+     * @throws IOException if the file cannot be read or has an invalid length
+     */
     /* default */ static byte[] readFixedImage(Path source, int expected) throws IOException {
         byte[] image = readStoreImage(source);
         if (image.length != expected) {
@@ -117,15 +162,49 @@ final class KeyringSecuritySupport {
         }
         return image;
     }
+    /**
+     * Applies the platform path policy before keyring access.
+     *
+     * @param requested requested keyring path
+     * @param createParent whether the policy may create the secured parent directory
+     * @return normalized path satisfying the platform policy
+     * @throws IOException if ownership, permissions, links, or filesystem checks fail
+     */
     /* default */ static Path securePath(Path requested, boolean createParent) throws IOException {
         return KeyringPlatformPolicy.INSTANCE.securePath(requested, createParent);
     }
+    /**
+     * Checks that an existing keyring file has the required owner and protection.
+     *
+     * @param file file to validate
+     * @param expectedOwner required filesystem owner
+     * @throws IOException if the platform security checks fail
+     */
     /* default */ static void validateExistingFile(Path file, UserPrincipal expectedOwner) throws IOException {
         KeyringPlatformPolicy.INSTANCE.validateExistingFile(file, expectedOwner);
     }
+    /**
+     * Checks platform permissions for owner-only access.
+     *
+     * @param path file or directory to validate
+     * @param directory whether directory permissions are required
+     * @throws IOException if permissions or filesystem attributes fail the policy
+     */
     /* default */ static void validateOwnerOnly(Path path, boolean directory) throws IOException {
         KeyringPlatformPolicy.INSTANCE.validateOwnerOnly(path, directory);
     }
+    /**
+     * Authenticates the nonce sidecar and checks that it belongs to the expected store.
+     *
+     * @param keyring main keyring path whose sibling nonce sidecar is read
+     * @param owner required sidecar owner
+     * @param expectedStoreId expected encoded store UUID
+     * @param expectedPrefix expected nonce prefix
+     * @param nonceReservationMacKey borrowed sidecar HMAC key
+     * @return authenticated high-water counter, at least the minimum reservation
+     * @throws IOException if reading, security checks, framing, identity, or tag verification fails
+     * @throws GeneralSecurityException if the MAC provider cannot execute
+     */
     /* default */ static long readNonceReservation(Path keyring, UserPrincipal owner, byte[] expectedStoreId,
             int expectedPrefix, byte[] nonceReservationMacKey) throws IOException, GeneralSecurityException {
         Path reservation = keyring.resolveSibling(keyring.getFileName() + ".nonce");
@@ -165,6 +244,14 @@ final class KeyringSecuritySupport {
         }
     }
 
+    /**
+     * Encodes the nonce-reservation framing before its authentication tag is appended.
+     *
+     * @param storeId encoded store UUID
+     * @param prefix nonce prefix bound to this store
+     * @param highWater reserved nonce counter
+     * @return newly allocated unauthenticated reservation bytes
+     */
     /* default */ static byte[] encodeNonceReservation(byte[] storeId, int prefix, long highWater) {
         return ByteBuffer
                 .allocate(KeyringStore.NONCE_RESERVATION_MAGIC.length + Integer.BYTES + KeyringStore.UUID_BYTES
@@ -173,6 +260,14 @@ final class KeyringSecuritySupport {
                 .putInt(prefix).putLong(highWater).array();
     }
 
+    /**
+     * Computes HMAC-SHA-256 for the supplied key and transcript.
+     *
+     * @param key borrowed MAC key bytes
+     * @param input bytes to authenticate
+     * @return newly allocated 32-byte authentication tag
+     * @throws GeneralSecurityException if the MAC is unavailable or rejects the key
+     */
     /* default */ static byte[] hmac(byte[] key, byte[] input) throws GeneralSecurityException {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(key, "HmacSHA256"));

@@ -66,7 +66,16 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.core.io.CancellationSignal;
 
+/**
+ * Contract and regression tests for filesystem CRL scope recovery.
+ */
 class FilesystemCrlScopeRecoveryTest {
+    /**
+     * Missing counter or owner fails reopen without reconstruction.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingCounterOrOwnerFailsReopenWithoutReconstruction(@TempDir Path root) throws Exception {
         CrlScopeOwner owner = unreferencedOwner();
         for (boolean removeOwner : new boolean[] {false, true}) {
@@ -81,6 +90,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Malformed wrong scope and legacy counters fail reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedWrongScopeAndLegacyCountersFailReopen(@TempDir Path root) throws Exception {
         CrlScopeOwner owner = unreferencedOwner();
         byte[] encoded = CrlScopeMetadataCodec.encode(new CrlScopeCounter(owner.scope().digest(), BigInteger.ONE));
@@ -103,6 +118,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Counter under wrong key fails even with another valid pair.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void counterUnderWrongKeyFailsEvenWithAnotherValidPair(@TempDir Path root) throws Exception {
         CrlScopeOwner owner = unreferencedOwner();
         CrlScopeCounter counter = new CrlScopeCounter(owner.scope().digest(), BigInteger.ONE);
@@ -116,6 +137,12 @@ class FilesystemCrlScopeRecoveryTest {
         assertThrows(IllegalStateException.class, () -> open(root));
     }
 
+    /**
+     * Invalid pair snapshot publishes neither target nor partial root.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidPairSnapshotPublishesNeitherTargetNorPartialRoot(@TempDir Path root) throws Exception {
         CrlScopeOwner owner = unreferencedOwner();
         for (int kind = 0; kind < 3; kind++) {
@@ -139,6 +166,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Coherent different key root claims cannot replace retained candidate scope.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void coherentDifferentKeyRootClaimsCannotReplaceRetainedCandidateScope(@TempDir Path root) throws Exception {
         Instant now = Instant.parse("2026-09-20T00:00:00Z");
         try (FilesystemPkiStore store = openAt(root, now)) {
@@ -163,6 +196,12 @@ class FilesystemCrlScopeRecoveryTest {
         assertEquals("Root signing scope differs from its retained accepted candidate", failure.getMessage());
     }
 
+    /**
+     * Terminal operations reopen without tbs and purge keeps claims through two snapshots.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void terminalOperationsReopenWithoutTbsAndPurgeKeepsClaimsThroughTwoSnapshots(@TempDir Path root)
             throws Exception {
         for (boolean expire : new boolean[] {false, true}) {
@@ -209,6 +248,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Missing serial and issuance projections are rebuilt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingSerialAndIssuanceProjectionsAreRebuilt(@TempDir Path root) throws Exception {
         PkiId id;
         try (FilesystemPkiStore store = open(root)) {
@@ -228,6 +273,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Contradictory evidence marker and serial projection fail closed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void contradictoryEvidenceMarkerAndSerialProjectionFailClosed(@TempDir Path root) throws Exception {
         for (boolean evidence : new boolean[] {true, false}) {
             Path directory = root.resolve(Boolean.toString(evidence));
@@ -245,6 +296,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Accepted unpublished root requires both permanent rows.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void acceptedUnpublishedRootRequiresBothPermanentRows(@TempDir Path root) throws Exception {
         for (boolean owner : new boolean[] {false, true}) {
             Path directory = root.resolve(Boolean.toString(owner));
@@ -259,6 +316,12 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Published import requires exact reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publishedImportRequiresExactReservation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             zeroecho.pki.api.credential.Credential credential = SemanticIssuanceFixture.issuer(store, 1);
@@ -268,6 +331,12 @@ class FilesystemCrlScopeRecoveryTest {
         assertThrows(IllegalStateException.class, () -> open(root));
     }
 
+    /**
+     * Accepted issuance requires reservation and reopens without generation enumeration.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void acceptedIssuanceRequiresReservationAndReopensWithoutGenerationEnumeration(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             store.acceptSign(FilesystemSignScopeAcceptanceTest.command(store, 1, 42, -1, "", null));
@@ -283,6 +352,12 @@ class FilesystemCrlScopeRecoveryTest {
         assertThrows(IllegalStateException.class, () -> open(root));
     }
 
+    /**
+     * Malformed unreferenced authority fails at open.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedUnreferencedAuthorityFailsAtOpen(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             store.metadataStore().directCommit(List.of(new SigningTransactionPayloadCodec.Mutation(
@@ -292,6 +367,12 @@ class FilesystemCrlScopeRecoveryTest {
         assertThrows(IllegalStateException.class, () -> open(root));
     }
 
+    /**
+     * Valid unpublished root reopens without completed ca.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void validUnpublishedRootReopensWithoutCompletedCa(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             assertEquals(SignWorkflowStore.AcceptanceResult.ACCEPTED,
@@ -303,6 +384,13 @@ class FilesystemCrlScopeRecoveryTest {
         }
     }
 
+    /**
+     * Deletes the selected metadata record through a committed fixture transaction.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param key fixture signing key pair or logical key reference selected for the operation
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void remove(FilesystemPkiStore store, MetadataKey key) throws Exception {
         long revision;
         try (MetadataSnapshot snapshot = store.metadataStore().snapshot();

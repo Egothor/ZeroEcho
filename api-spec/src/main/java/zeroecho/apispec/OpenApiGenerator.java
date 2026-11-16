@@ -87,7 +87,9 @@ public final class OpenApiGenerator {
     private static final String TEXT_STRING = STRING_TYPE;
 
 
-    /** Creates a build-time generator without loading the catalog or writing output. */
+    /**
+     * Creates a build-time generator without loading the catalog or writing output.
+     */
     public OpenApiGenerator() {
         // The generator has no per-instance state.
     }

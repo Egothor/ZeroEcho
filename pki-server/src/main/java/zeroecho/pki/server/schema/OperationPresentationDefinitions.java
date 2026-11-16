@@ -39,7 +39,9 @@ import zeroecho.pki.server.schema.OperationDescriptorCatalog.FieldSemantics;
 import zeroecho.pki.server.schema.OperationDescriptorCatalog.Presentation;
 import zeroecho.pki.server.schema.OperationDescriptorCatalog.TransportSemantics;
 
-/** Reviewed request semantics and presentation for every canonical operation. */
+/**
+ * Reviewed request semantics and presentation for every canonical operation.
+ */
 final class OperationPresentationDefinitions {
     private static final String TEXT_WIDGET = "text";
     private static final String PARAM_JUSTIFICATION = "justification";
@@ -85,6 +87,11 @@ final class OperationPresentationDefinitions {
     private static final String TEXT_ENROLLMENT = "enrollment";
 
     private OperationPresentationDefinitions() { }
+    /**
+     * Returns the closed presentation and transport-field definitions for the operation catalog.
+     *
+     * @return immutable ordered definitions used by schema and administrative UI projections
+     */
     /* default */ static List<Presentation> definitions() {
         return List.of(
                 new Presentation("profile.list-all", "List certificate profiles", "Browse registered certificate profiles.", TEXT_PROFILES,

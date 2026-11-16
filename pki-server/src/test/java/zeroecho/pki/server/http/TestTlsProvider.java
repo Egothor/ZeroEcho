@@ -41,17 +41,30 @@ import javax.net.ssl.SSLContext;
 import zeroecho.pki.server.spi.PkiServerTlsProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Deterministic test-only TLS capability selected explicitly by provider ID. */
+/**
+ * Deterministic test-only TLS capability selected explicitly by provider ID.
+ */
 public final class TestTlsProvider implements PkiServerTlsProvider {
     private static final AtomicReference<SSLContext> CONTEXT = new AtomicReference<>();
 
-    /** Installs one test fixture before server construction. */
+    /**
+     * Publishes the exact fixture TLS context for subsequent provider creation.
+     *
+     * @param context initialized test server TLS context
+     * @throws NullPointerException if context is null
+     */
     public static void install(SSLContext context) {
         CONTEXT.set(Objects.requireNonNull(context, "context"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String id() { return "test-tls"; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SSLContext create(ProviderConfig configuration) {
         if (!configuration.properties().isEmpty()) {
             throw new IllegalArgumentException("Test TLS configuration must be empty");

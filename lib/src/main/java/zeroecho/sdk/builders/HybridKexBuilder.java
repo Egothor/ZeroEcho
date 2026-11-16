@@ -127,6 +127,7 @@ public final class HybridKexBuilder {
      *
      * @param profile profile (must not be null)
      * @return this builder
+     * @throws NullPointerException if {@code profile} is null
      */
     public HybridKexBuilder profile(HybridKexProfile profile) {
         this.profile = Objects.requireNonNull(profile, "profile");

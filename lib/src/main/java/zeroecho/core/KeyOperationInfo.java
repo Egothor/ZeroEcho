@@ -57,6 +57,10 @@ public record KeyOperationInfo(KeyOperation operation, Class<? extends Algorithm
      * @throws IllegalArgumentException if a default is incompatible with
      *                                  {@code specType}, or an import operation
      *                                  declares a default
+     * @param operation operation guaranteed by the associated lookup
+     * @param specType exact accepted specification type
+     * @param defaultSpec resolved generation default, or {@code null} for import
+     *                    operations and generators without a default
      */
     public KeyOperationInfo {
         Objects.requireNonNull(operation, "operation must not be null");

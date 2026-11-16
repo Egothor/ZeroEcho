@@ -47,7 +47,15 @@ import org.junit.jupiter.api.Test;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for LMS metadata.
+ */
 class LmsMetadataTest {
+    /**
+     * Structure and level are validated without signing.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void structureAndLevelAreValidatedWithoutSigning() throws Exception {
         BouncyCastleActivator.init();
         PublicKey original = new ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("LMS", LmsKeyGenSpec.DEFAULT).getPublic();

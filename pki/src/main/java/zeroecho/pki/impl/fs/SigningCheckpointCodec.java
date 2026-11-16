@@ -43,15 +43,38 @@ import java.util.Objects;
 import java.util.Optional;
 import zeroecho.pki.spi.store.MetadataKey;
 
-/** Streaming version-one self-contained immutable signing checkpoint codec. */
+/**
+ * Streaming version-one self-contained immutable signing checkpoint codec.
+ */
 final class SigningCheckpointCodec {
 
+    /**
+     * Fixed binary magic identifying this persisted format.
+     */
     /* default */ static final int MAGIC = 0x5A454350;
+    /**
+     * Current binary format version encoded independently of enum ordering.
+     */
     /* default */ static final short VERSION = 1;
+    /**
+     * Fixed encoded header length in bytes.
+     */
     /* default */ static final int HEADER_BYTES = 44;
+    /**
+     * Encoded checkpoint integrity footer length in bytes.
+     */
     /* default */ static final int FOOTER_BYTES = SigningFormatSupport.SHA_256_BYTES;
+    /**
+     * Inclusive maximum encoded checkpoint key length in bytes.
+     */
     /* default */ static final int MAX_KEY_BYTES = 8192;
+    /**
+     * Inclusive maximum number of checkpoint entries.
+     */
     /* default */ static final int MAX_ENTRIES = 1_000_000;
+    /**
+     * Inclusive maximum complete checkpoint length in bytes.
+     */
     /* default */ static final long MAX_CHECKPOINT_BYTES = 1L << 40;
 
     private static final short FLAGS = 0;
@@ -62,27 +85,64 @@ final class SigningCheckpointCodec {
         // utility class
     }
 
+    /**
+     * Starts a checkpoint writer on the borrowed channel using the declared header. The caller owns channel forcing and closure.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param header validated checkpoint header and declared entry count
+     * @return new checkpoint writer borrowing the channel
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or header is null
+     * @throws IllegalArgumentException if the header violates checkpoint bounds or data-region coordinates
+     */
     /* default */ static Writer writer(WritableByteChannel channel, Header header) throws IOException {
         return new Writer(channel, header);
     }
 
+    /**
+     * Opens a validating checkpoint reader over the borrowed channel; the caller retains channel ownership.
+     *
+     * @param channel borrowed channel, which remains open
+     * @return new checkpoint reader borrowing the channel
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel is null
+     */
     /* default */ static Reader reader(SeekableByteChannel channel) throws IOException {
         return new Reader(channel);
     }
 
+    /**
+     * Installs a non-null read-fault callback for the current thread, replacing any previous callback.
+     *
+     * @param fault non-null callback installed for this thread
+     * @throws NullPointerException if fault is null
+     */
     /* default */ static void installReadFault(ReadFaultInjector fault) {
         READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
     }
 
+    /**
+     * Removes the current thread's read-fault callback.
+     *
+     */
     /* default */ static void clearReadFault() {
         READ_FAULTS.remove();
     }
 
+    /**
+     * Calculates the encoded index-entry size for a validated canonical metadata key.
+     *
+     * @param key metadata key to encode
+     * @return index-entry size in bytes
+     * @throws IllegalArgumentException if the key is not a valid bounded canonical metadata key
+     */
     /* default */ static int encodedIndexBytes(String key) {
         return Math.addExact(Integer.BYTES + ENTRY_FIXED_BYTES, canonicalKey(key).length);
     }
 
-    /** Thread-confined two-phase writer; the caller owns and closes the channel. */
+    /**
+     * Thread-confined two-phase writer; the caller owns and closes the channel.
+     */
     @SuppressWarnings("PMD.AvoidMessageDigestField")
     /* default */ static final class Writer {
         private final WritableByteChannel channel;
@@ -105,6 +165,14 @@ final class SigningCheckpointCodec {
             writeAuthenticated(encodeHeader(header));
         }
 
+        /**
+         * Appends the next strictly ordered index entry during the index phase, validating its descriptor and contiguous data offset.
+         *
+         * @param entry ordered index entry describing the frame
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         * @throws NullPointerException if entry is null
+         * @throws IllegalStateException if the writer is finished, data writing has begun or the declared index count is exhausted
+         */
         /* default */ void writeIndex(EntryDescriptor entry) throws IOException {
             Objects.requireNonNull(entry, "entry");
             if (finished || dataStarted || indexed >= header.entryCount()) {
@@ -130,6 +198,11 @@ final class SigningCheckpointCodec {
             indexed++;
         }
 
+        /**
+         * Ends the index phase after verifying its declared count and exact data boundary, then starts frame writing.
+         *
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         /* default */ void beginData() throws IOException {
             if (finished || dataStarted || indexed != header.entryCount()
                     || position != header.dataOffset()) {
@@ -138,10 +211,24 @@ final class SigningCheckpointCodec {
             dataStarted = true;
         }
 
+        /**
+         * Authenticates an encoded frame against its descriptor and appends it at the next declared data offset.
+         *
+         * @param entry ordered index entry describing the frame
+         * @param encodedFrame complete encoded frame bytes
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         /* default */ void writeFrame(EntryDescriptor entry, byte[] encodedFrame) throws IOException {
             writeFrame(entry, encodedFrame, true);
         }
 
+        /**
+         * Appends a frame already authenticated by the caller, checking the descriptor, length and expected data position without repeating frame decoding.
+         *
+         * @param entry ordered index entry describing the frame
+         * @param encodedFrame complete encoded frame bytes
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         /* default */ void writeValidatedFrame(EntryDescriptor entry, byte[] encodedFrame)
                 throws IOException {
             writeFrame(entry, encodedFrame, false);
@@ -162,6 +249,13 @@ final class SigningCheckpointCodec {
             dataFrames++;
         }
 
+        /**
+         * Verifies that all declared entries and frames were written, appends the authenticated footer and completes the writer. The borrowed channel is neither forced nor closed.
+         *
+         * @return independent 32-byte whole-file commitment
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         * @throws IllegalStateException if the writer has already finished
+         */
         /* default */ byte[] finish() throws IOException {
             if (finished) {
                 throw new IllegalStateException("signing checkpoint writer is already finished");
@@ -183,7 +277,9 @@ final class SigningCheckpointCodec {
         }
     }
 
-    /** Thread-confined reader retaining only one bounded key and encoded frame. */
+    /**
+     * Thread-confined reader retaining only one bounded key and encoded frame.
+     */
     @SuppressWarnings("PMD.AvoidMessageDigestField")
     /* default */ static final class Reader {
         private final SeekableByteChannel channel;
@@ -230,11 +326,22 @@ final class SigningCheckpointCodec {
             expectedFrameOffset = header.dataOffset();
         }
 
+        /**
+         * Returns the validated immutable checkpoint header.
+         *
+         * @return validated immutable checkpoint header
+         */
         /* default */ Header header() {
             return header;
         }
 
         // Sequential boundary, ordering, checksum, and EOF checks authenticate one cursor transition.
+        /**
+         * Reads and validates the next ordered index entry, including its bounded key and contiguous frame coordinates.
+         *
+         * @return next validated entry, or empty when the declared index is exhausted
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
         /* default */ Optional<EntryDescriptor> next() throws IOException {
             if (verified || read == header.entryCount()) {
@@ -287,6 +394,14 @@ final class SigningCheckpointCodec {
             return Optional.of(entry);
         }
 
+        /**
+         * Reads and authenticates the next declared frame and advances the reader's data digest. Frames must be read in descriptor order.
+         *
+         * @param entry ordered index entry describing the frame
+         * @return authenticated decoded frame
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         * @throws NullPointerException if entry is null
+         */
         /* default */ SigningWalFrameCodec.Frame readFrame(EntryDescriptor entry) throws IOException {
             Objects.requireNonNull(entry, "entry");
             if (dataInput.position() != entry.frameOffset()) {
@@ -298,6 +413,11 @@ final class SigningCheckpointCodec {
             return validateFrame(entry, encoded);
         }
 
+        /**
+         * Verifies that all declared entries and frames were consumed and authenticates the footer and exact file length. Repeated calls after successful verification have no effect.
+         *
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         /* default */ void verifyComplete() throws IOException {
             if (verified) {
                 return;
@@ -323,6 +443,12 @@ final class SigningCheckpointCodec {
             fileCommitment = wholeFile.digest();
         }
 
+        /**
+         * Returns an independent copy of the whole-file commitment obtained by successful completion verification.
+         *
+         * @return independent copy of the authenticated whole-file commitment
+         * @throws IllegalStateException if complete-file verification has not succeeded
+         */
         /* default */ byte[] fileCommitment() {
             if (!verified) {
                 throw new IllegalStateException("signing checkpoint is not verified");
@@ -330,6 +456,11 @@ final class SigningCheckpointCodec {
             return fileCommitment.clone();
         }
 
+        /**
+         * Captures the reader's accumulated physical-read counters in an immutable statistics value.
+         *
+         * @return immutable accumulated physical-read statistics
+         */
         /* default */ ReadStatistics statistics() {
             return new ReadStatistics(Math.addExact(commitmentIndexReadCalls,
                     indexInput.readCalls()), dataInput.readCalls());
@@ -432,7 +563,9 @@ final class SigningCheckpointCodec {
         return new MalformedCheckpointException(diagnostic);
     }
 
-    /** Internal marker separating malformed bytes from operational channel I/O. */
+    /**
+     * Internal marker separating malformed bytes from operational channel I/O.
+     */
     /* default */ static final class MalformedCheckpointException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -441,30 +574,74 @@ final class SigningCheckpointCodec {
         }
     }
 
-    /** Calling-thread injection point for operational checkpoint read failures. */
+    /**
+     * Calling-thread injection point for operational checkpoint read failures.
+     */
     /* default */
     @FunctionalInterface
     interface ReadFaultInjector {
-        /** Runs before reading checkpoint content. */
+        /**
+         * Runs immediately before a checkpoint read and may inject an I/O failure.
+         *
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         void beforeRead() throws IOException;
     }
 
+    /**
+     * Validated checkpoint generation identity, committed coverage and record count.
+     *
+     * @param generationIdentity exact immutable artifact generation identity
+     * @param revision authoritative metadata revision
+     * @param committedSequence last sequence covered by the committed state
+     * @param entryCount number of encoded checkpoint entries
+     * @param dataOffset zero-based byte offset of the checkpoint data region
+     */
     /* default */ record Header(long generationIdentity, long revision,
             long committedSequence, int entryCount, long dataOffset) {
     }
 
+    /**
+     * Checkpoint key and exact persisted frame locator used for bounded lookup.
+     *
+     * @param key exact logical metadata identity
+     * @param recordType closed persisted record discriminator
+     * @param frameOffset zero-based byte offset of the encoded frame
+     * @param revision authoritative metadata revision
+     * @param sequence exact persisted record sequence
+     * @param frameLength complete encoded frame length in bytes
+     */
     /* default */ record EntryDescriptor(String key, SigningWalFrameCodec.RecordType recordType,
             long frameOffset, int frameLength, long revision, long sequence) {
+        /**
+         * Creates the checkpoint key and exact persisted frame locator used for bounded lookup.
+         *
+         * @param key exact logical metadata identity
+         * @param recordType closed persisted record discriminator
+         * @param frameOffset zero-based byte offset of the encoded frame
+         * @param frameLength complete encoded frame length in bytes
+         * @param revision authoritative metadata revision
+         * @param sequence exact persisted record sequence
+         * @throws NullPointerException if {@code key} is null; or if {@code recordType} is null
+         */
         EntryDescriptor {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(recordType, "recordType");
         }
     }
 
+    /**
+     * Constant-size counters distinguishing checkpoint index and payload channel reads.
+     *
+     * @param indexChannelReads number of checkpoint index channel reads
+     * @param dataChannelReads number of checkpoint payload channel reads
+     */
     /* default */ record ReadStatistics(long indexChannelReads, long dataChannelReads) {
     }
 
-    /** Absolute-position buffered cursor; channel seeks are proportional to buffer refills. */
+    /**
+     * Absolute-position buffered cursor; channel seeks are proportional to buffer refills.
+     */
     private static final class Cursor {
         private final SeekableByteChannel channel;
         private final long limit;

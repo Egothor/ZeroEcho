@@ -68,6 +68,12 @@ import zeroecho.pki.server.http.StrictJson;
  * decisions only change approval state; this worker resumes as the original requester. Signing
  * receipts precede acceptance and recovery never submits an uncertain replacement. Generic
  * synchronous mutations interrupted after their durable dispatch marker require reconciliation.</p>
+ *
+ * <p>The realm, control store, clock and signing-service supplier are borrowed
+ * composition dependencies. The coordinator owns its daemon worker, wake signal
+ * and in-flight guard, not the lifetime of those session resources. Construction
+ * does not start recovery. Durable records remain authoritative if an advisory
+ * wakeup or audit projection is unavailable.</p>
  */
 public final class AdministrativeRequestCoordinator implements AutoCloseable {
     private static final int MAXIMUM_RETAINED = 10000;
@@ -87,22 +93,58 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     private volatile PkiServerConfiguration.Authentication authentication;
     private int scanOffset;
 
+    /**
+     * Composes realm-session signing with SDK resolution left unsupported. Construction does not start the worker.
+     *
+     * @param realm owning realm and session, borrowed
+     * @param control authoritative control store, borrowed
+     * @param clock trusted workflow clock, borrowed
+     */
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock) {
         this(realm, control, clock, () -> realm.session().semanticSigning().orElseThrow());
     }
 
-    /** Composes the signing observation boundary without changing durable request authority. */
+    /**
+     * Composes a supplied signing observer with SDK resolution left unsupported. Construction does not start
+     * the worker.
+     *
+     * @param realm owning realm and session, borrowed
+     * @param control authoritative control store, borrowed
+     * @param clock trusted workflow clock, borrowed
+     * @param signingService required service supplier; resolved at preparation/observation time
+     */
+
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock,
             java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService) {
         this(realm,control,clock,signingService,"https://unconfigured.invalid:443",HybridSdkAdmissionService.unsupported());
     }
 
-    /** Explicit internal SDK composition; public carrier activation remains a separate configured boundary. */
+    /**
+     * Composes an explicit SDK origin with the realm issuer resolver. Construction does not start the worker.
+     *
+     * @param realm owning realm and session, borrowed
+     * @param control authoritative control store, borrowed
+     * @param clock trusted workflow clock, borrowed
+     * @param sdkOrigin configured SDK origin; does not activate an HTTP carrier
+     */
+
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock, String sdkOrigin) {
         this(realm,control,clock,()->realm.session().semanticSigning().orElseThrow(),sdkOrigin,new HybridSdkIssuerResolver(realm));
     }
 
-    /** Internal server-owned SDK resolver composition; the default constructor remains unsupported. */
+    /**
+     * Composes explicit server-owned SDK resolution and signing observation dependencies. Construction does not
+     * start the worker.
+     *
+     * @param realm owning realm and session, borrowed
+     * @param control authoritative control store, borrowed
+     * @param clock trusted workflow clock, borrowed
+     * @param signingService required service supplier; resolved at preparation/observation time
+     * @param sdkOrigin configured SDK origin; does not activate an HTTP carrier
+     * @param sdkResolver server-owned SDK target resolver
+     * @throws NullPointerException if {@code signingService} is null
+     */
+
     AdministrativeRequestCoordinator(ServerRealmContext realm, ServerControlStore control, Clock clock,
             java.util.function.Supplier<zeroecho.pki.api.SemanticSigningService> signingService,
             String sdkOrigin, HybridSdkAdmissionService.Resolver sdkResolver) {
@@ -112,11 +154,22 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         this.ocspProvisioning=new OcspResponderProvisioningService(realm.configuration().realmId(),control,signingService);
     }
 
+    /**
+     * Returns the internally composed SDK admission service without enabling a public carrier.
+     *
+     * @return realm-owned SDK service instance
+     */
     HybridSdkAdmissionService sdkAdmission() { return sdkAdmission; }
 
     /**
      * Starts bounded startup recovery and decision-driven dispatch for the permanent server.
+     * <p>A repeated call replaces the current policy reference but creates no
+     * second worker. The worker scans bounded pages and responds to advisory
+     * wakeups; this call does not wait for recovery or drain retained work.</p>
+     *
      * @param authentication current trusted authentication/mapping policy
+     * @throws NullPointerException if the authentication policy is null
+     * @throws IllegalStateException if the coordinator was closed
      */
     public synchronized void start(PkiServerConfiguration.Authentication authentication) {
         if (closed.get()) throw new IllegalStateException("Administrative workflow is closed");
@@ -125,16 +178,31 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         worker = new Thread(this::run, "zeroecho-administrative-requests"); worker.setDaemon(true); worker.start();
     }
 
-    /** Coalesces advisory wakeups; durable state and periodic scans remain authoritative. */
+    /**
+     * Coalesces advisory wakeups; durable state and periodic scans remain authoritative.
+     */
     public void wake() { if (!closed.get() && wake.availablePermits()==0) wake.release(); }
 
     /**
      * Admits one exact authenticated target without executing it on the submitting connection.
+     * <p>Exact ordinary replay checks requester ownership and retained target/SDK
+     * proof linkage. Dedicated OCSP provisioning derives its canonical request ID
+     * from the selected slot and can return an authorized existing request instead
+     * of using the caller's ID. New admission validates before approval and checks
+     * replay races again inside the committing control transaction. No signing
+     * dispatch is performed by this submitting connection.</p>
+     *
      * @param requestId stable client identity reused after uncertain acknowledgements
      * @param request original trusted actor and decoded operation
      * @param envelope strict operation envelope containing only version, arguments and optional authority/deadline
      * @param executionTimeout bounded post-approval execution budget
+     *
      * @return original or newly retained authoritative request
+     * @throws IllegalArgumentException if identity/budget/operation validation fails
+     * @throws Conflict if an ordinary ID is retained for different immutable input
+     * @throws ProvisioningConflict if an authorized caller targets an occupied canonical slot
+     * @throws Capacity if retained or nonterminal request capacity is full
+     * @throws SecurityException if requester ownership or target-read authorization fails
      */
     public AdministrativeRequest submit(String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, Duration executionTimeout) {
@@ -155,6 +223,18 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
         return submitInternal(requestId,request,envelope,executionTimeout,Optional.empty(),Optional.empty());
     }
 
+    /**
+     * Submits the exact target using the SDK service's retained acceptance context and consumption mutation.
+     *
+     * @param requestId stable request identity
+     * @param request original trusted gateway request
+     * @param envelope retained strict operation envelope
+     * @param executionTimeout post-approval execution budget
+     * @param proof trusted retained SDK acceptance; not caller-authenticated by this wrapper
+     * @return original or newly retained administrative request
+     * @throws NullPointerException if proof is null
+     * @throws IllegalArgumentException if delegated identity, budget or validation fails
+     */
     AdministrativeRequest submitSdk(String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, Duration executionTimeout, HybridSdkAdmissionService.Acceptance proof) {
         return submitInternal(requestId,request,envelope,executionTimeout,Optional.of(proof),Optional.empty());
@@ -241,7 +321,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
      * Reads a retained request after caller-specific ownership or approval-read authorization.
      * @param requestId durable request identity
      * @param viewer authenticated current viewer
-     * @return retained request, or a uniform unavailable failure
+     * @return retained private request; use projection for disclosure to an HTTP client
+     * @throws SecurityException if the request is absent or the viewer cannot read it
      */
     public AdministrativeRequest inspect(String requestId,String viewer) {
         var value=find(requestId).orElseThrow(()->new SecurityException("Request unavailable"));
@@ -249,14 +330,21 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     }
 
     /**
-     * Lists a bounded stable page of visible request metadata without arguments.
+     * Reads a bounded private-record page and filters its retained requests for the viewer.
+     *
+     * <p>The returned values still contain private envelope/result references. HTTP
+     * callers must apply {@link #projection} before disclosure. Visibility and
+     * field filters are applied after selecting the underlying bounded page, so
+     * a short or empty result can still have a continuation.</p>
      * @param viewer authenticated current viewer
      * @param offset zero-based private-record offset
      * @param limit page size, from one through one hundred
      * @param state optional exact state filter
      * @param requester optional exact requesting identity filter
      * @param operation optional exact catalog operation filter
-     * @return visible rows and continuation over the bounded private snapshot
+     * @return visible retained values with the underlying page continuation
+     * @throws NullPointerException if a filter container is null
+     * @throws IllegalArgumentException if offset/limit or operation-filter syntax is invalid
      */
     public ServerControlStore.Page<AdministrativeRequest> list(String viewer,int offset,int limit,
             Optional<AdministrativeRequest.State> state,Optional<String> requester,Optional<String> operation) {
@@ -271,6 +359,11 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
 
     /**
      * Projects approved metadata; detailed target/result disclosure requires current operation authority.
+     * <p>The caller must establish metadata visibility first; this method does not
+     * repeat canRead. Original requester summaries and detailed target/results
+     * additionally require current target-review authority. Fields are projected
+     * from retained values rather than globally sanitized or re-authenticated.</p>
+     *
      * @param value already visible request
      * @param viewer current viewer
      * @param detail whether to consider original target and final result disclosure
@@ -300,8 +393,17 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
 
     /**
      * Processes one retained request; useful for deterministic fixtures and bounded worker scans.
+     * <p>The in-flight guard excludes concurrent work on the same ID in this
+     * coordinator. Closed or already in-flight requests are returned without new
+     * work. Retained signing receipts are resolved before considering a new
+     * dispatch; only definitive nonacceptance of the exact ordinary receipt can
+     * restore READY. Uncertain synchronous/root-activation outcomes use their
+     * reconciliation paths rather than creating replacement mutations.</p>
+     *
      * @param id retained request identity
-     * @return latest authoritative state
+     *
+     * @return latest authoritative state; it can remain pending or require reconciliation
+     * @throws java.util.NoSuchElementException if no retained request exists for the ID
      */
     public AdministrativeRequest process(String id) {
         synchronized(control) { if(closed.get() || !inFlight.add(id)) return find(id).orElseThrow(); }
@@ -611,6 +713,15 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
                 decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),value.approvalId(),value.requestId());
     }
     private void validateActor(AdministrativeRequest value) { validateActor(value.actor()); }
+    /**
+     * Rechecks the SDK requester's enabled identity and currently configured credential mapping.
+     *
+     * <p>When start has not installed an authentication policy, only the enabled
+     * principal check applies. This helper does not authenticate a new transport.</p>
+     *
+     * @param request original trusted gateway actor snapshot
+     * @throws SecurityException if the enabled/mode/proxy/evidence mapping checks reject the actor
+     */
     void requireSdkActor(ServerOperationGateway.Request request) {
         validateActor(new AdministrativeRequest.Actor(request.principalId(),request.authenticationMode(),request.transportPrincipalId(),request.credentialEvidence()));
     }
@@ -679,7 +790,8 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
     /**
      * States which catalog operations have a durable ordinary-result workflow boundary.
      * @param descriptor current operation descriptor
-     * @return whether submission is supported; reads, approval decisions and secret/channel operations are excluded
+     * @return whether the descriptor passes this durable ordinary-result eligibility filter
+     * @throws NullPointerException if the descriptor is null
      */
     public static boolean supports(OperationSecurityDescriptors.Descriptor descriptor) {
         String id=descriptor.operationId();
@@ -703,30 +815,86 @@ public final class AdministrativeRequestCoordinator implements AutoCloseable {
             catch(RuntimeException failure) { try { Thread.sleep(1000); } catch(InterruptedException stopped) { if(closed.get()) break; } }
         }
     }
-    /** Stops and joins the realm-owned worker before control/session resources are closed. */
+    /**
+     * Marks the coordinator closed, wakes and interrupts its worker, and waits up to ten seconds.
+     *
+     * <p>This is shutdown of the coordinator-owned worker, not a drain of retained
+     * requests or closure of borrowed control/session resources. The worker can
+     * remain alive if a provider/callback does not stop; that condition is reported
+     * rather than claiming completion. A call from the worker does not join itself.</p>
+     *
+     * @throws IllegalStateException if the joining caller is interrupted or the worker remains alive
+     */
     @Override public void close() {
         closed.set(true);wake.release();Thread thread=worker;
         if(thread!=null && thread!=Thread.currentThread()) { thread.interrupt();try{thread.join(10000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("Workflow shutdown interrupted");}if(thread.isAlive())throw new IllegalStateException("Workflow worker did not stop"); }
     }
-    /** Stable input failure suitable for field-level transport responses. */
+    /**
+     * Stable input failure suitable for field-level transport responses.
+     */
     public static final class ValidationFailure extends IllegalArgumentException {
         private static final long serialVersionUID=1L;
+        /**
+         * Checked machine-code text retained in this exception's serialized state.
+         *
+         * @serial uppercase letters/digits/underscores, from 3 through 128 characters
+         */
         private final String code;
-        /** @param code closed safe machine failure code */
+        /**
+         * Creates a field-validation failure with a checked finite machine-code spelling.
+         *
+         * @param code uppercase letters/digits/underscores, from 3 through 128 characters
+         * @throws NullPointerException if the code is null
+         * @throws IllegalArgumentException if the code does not match the permitted spelling
+         */
         public ValidationFailure(String code) { super(code); if(!code.matches("[A-Z0-9_]{3,128}"))throw new IllegalArgumentException("Invalid validation code");this.code=code; }
-        /** @return safe field validation code */
+        /**
+         * Returns safe field validation code.
+         *
+         * @return safe field validation code
+         */
         public String code() { return code; }
     }
-    /** Authorized conflict with an already occupied canonical responder provisioning target. */
+    /**
+     * Authorized conflict with an already occupied canonical responder provisioning target.
+     */
     public static final class ProvisioningConflict extends IllegalArgumentException {
         private static final long serialVersionUID=1L;
+        /**
+         * Authorized canonical request reference retained in this exception's serialized state.
+         *
+         * @serial supplied request identity; the private constructor does not revalidate it
+         */
         private final String canonicalRequestId;
+        /**
+         * Retains a canonical request identity after the caller has passed target-review authorization.
+         *
+         * @param requestId authorized retained request identity; stored without further validation
+         */
         private ProvisioningConflict(String requestId){super("OCSP_PROVISIONING_TARGET_CONFLICT");this.canonicalRequestId=requestId;}
-        /** @return authorized canonical pending or completed request identity */
+        /**
+         * Returns the canonical request identity retained at the authorized conflict boundary.
+         *
+         * @return supplied request identity; this accessor does not grant read authority
+         */
         public String canonicalRequestId(){return canonicalRequestId;}
     }
-    /** Conflicting reuse of an ordinary client-selected request identity. */
-    public static final class Conflict extends IllegalArgumentException { private static final long serialVersionUID=1L; }
-    /** Finite retained/pending capacity has been reached. */
-    public static final class Capacity extends IllegalStateException { private static final long serialVersionUID=1L; }
+    /**
+     * Conflicting reuse of an ordinary client-selected request identity.
+     */
+    public static final class Conflict extends IllegalArgumentException { private static final long serialVersionUID=1L;
+        /**
+         * Creates the existing ordinary-request conflict signal without a detail message or cause.
+         */
+        public Conflict() { }
+    }
+    /**
+     * Finite retained/pending capacity has been reached.
+     */
+    public static final class Capacity extends IllegalStateException { private static final long serialVersionUID=1L;
+        /**
+         * Creates the existing finite-capacity signal without a detail message or cause.
+         */
+        public Capacity() { }
+    }
 }

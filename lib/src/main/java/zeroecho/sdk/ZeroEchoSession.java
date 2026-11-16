@@ -358,14 +358,35 @@ public final class ZeroEchoSession {
                 "n/a", metadata);
     }
 
+    /**
+     * Reports a generated asymmetric pair to the session audit sink.
+     *
+     * @param algorithm selected algorithm and provider
+     * @param spec specification used for generation
+     * @param keyPair generated key pair
+     */
     /* default */ void notifyKeyPairGenerated(CryptoAlgorithm algorithm, AlgorithmKeySpec spec, KeyPair keyPair) {
         auditSink.onKeyGenerated(algorithm.id(), algorithm.providerName(), spec, keyPair);
     }
 
+    /**
+     * Reports a generated key to the session audit sink.
+     *
+     * @param algorithm selected algorithm and provider
+     * @param spec specification used for generation
+     * @param key generated key
+     */
     /* default */ void notifyKeyGenerated(CryptoAlgorithm algorithm, AlgorithmKeySpec spec, Key key) {
         notifyKeyBuilt(algorithm, spec, key);
     }
 
+    /**
+     * Reports a built or imported key to the session audit sink.
+     *
+     * @param algorithm selected algorithm and provider
+     * @param spec specification used for key construction
+     * @param key constructed key
+     */
     /* default */ void notifyKeyBuilt(CryptoAlgorithm algorithm, AlgorithmKeySpec spec, Key key) {
         auditSink.onKeyBuilt(algorithm.id(), algorithm.providerName(), spec, key);
     }

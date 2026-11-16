@@ -74,6 +74,16 @@ final class RevocationAuditProjector {
     private final Clock clock;
     private final AuditSink sink;
 
+    /**
+     * Composes thread-confined revocation-evidence delivery for one authoritative realm.
+     *
+     * @param realmId trusted realm identity attached to projected evidence
+     * @param revocations authoritative revocation-transition service
+     * @param control durable projection-cursor authority
+     * @param clock retry eligibility time source
+     * @param sink audit destination supporting deterministic event re-emission
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ RevocationAuditProjector(RealmId realmId, RevocationService revocations,
             ServerControlStore control, Clock clock, AuditSink sink) {
         this.realmId = Objects.requireNonNull(realmId, "realmId");
@@ -94,6 +104,7 @@ final class RevocationAuditProjector {
      * @implNote Cancellation is cooperative between bounded operations and does not interrupt an active
      *           {@link AuditSink#record(AuditEvent)} call. Cancellation observed after sink acknowledgement but
      *           before cursor persistence leaves the cursor unchanged, so a retry may emit the same event ID.
+     * @throws NullPointerException if {@code cancellation} is null
      */
     /* default */ PassResult project(int maxExamined, int maxSinkCalls, CancellationSignal cancellation)
             throws IOException {
@@ -126,7 +137,15 @@ final class RevocationAuditProjector {
         }
     }
 
-    /** Runs one bounded non-cancelling pass. */
+    /**
+     * Runs one bounded revocation-evidence delivery pass without external cancellation.
+     *
+     * @param maxExamined maximum source transitions examined, from zero through 4,096
+     * @param maxSinkCalls maximum audit-sink calls, from zero through 4,096
+     * @return counters, captured source watermark and scheduling observations
+     * @throws IllegalArgumentException if a pass bound is outside the supported range
+     * @throws IOException if the source feed or durable cursor cannot be accessed
+     */
     /* default */ PassResult project(int maxExamined, int maxSinkCalls) throws IOException {
         return project(maxExamined, maxSinkCalls, CancellationSignal.NONE);
     }
@@ -308,7 +327,9 @@ final class RevocationAuditProjector {
         }
     }
 
-    /** Mutable state confined to one synchronous projection pass. */
+    /**
+     * Mutable state confined to one synchronous projection pass.
+     */
     private final class ProjectionProgress {
         private Optional<RevocationAuditProjectionState.Loaded> loaded;
         private RevocationAuditProjectionState state;
@@ -334,11 +355,33 @@ final class RevocationAuditProjector {
         }
     }
 
-    /** Immutable bounded-pass outcome for future scheduler integration. */
+    /**
+     * Immutable delivery and scheduling observations from one bounded revocation pass.
+     *
+     * @param examined number of source transitions examined
+     * @param sinkCalls number of audit-sink delivery calls
+     * @param advanced number of transitions durably advanced past
+     * @param endReached whether the captured source head was reached
+     * @param blocked whether a delivery failure/backoff blocked progress
+     * @param nextEligible next retry instant, or empty when no retry is pending
+     * @param observedHead exact captured authoritative source high watermark
+     */
     /* default */
     record PassResult(int examined, int sinkCalls, int advanced, boolean endReached, boolean blocked,
             Optional<Instant> nextEligible, RevocationTransitionFeed.HighWatermark observedHead) {
-        /** Validates immutable pass counters and snapshots. */
+        /**
+         * Validates pass counters and required captured-source/retry observations.
+         *
+         * @param examined number of source transitions examined
+         * @param sinkCalls number of audit-sink delivery calls
+         * @param advanced number of transitions durably advanced past
+         * @param endReached whether the captured source head was reached
+         * @param blocked whether a delivery failure/backoff blocked progress
+         * @param nextEligible next retry instant, or empty when no retry is pending
+         * @param observedHead exact captured authoritative source high watermark
+         * @throws IllegalArgumentException if a counter is negative or exceeds the examined count
+         * @throws NullPointerException if the retry container or observed source head is null
+         */
         PassResult {
             if (examined < 0 || sinkCalls < 0 || advanced < 0
                     || sinkCalls > examined || advanced > examined) {

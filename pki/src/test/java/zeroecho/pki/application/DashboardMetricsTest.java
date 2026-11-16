@@ -50,7 +50,16 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for dashboard metrics.
+ */
 class DashboardMetricsTest {
+    /**
+     * Preserves measured zero and separates unavailable from collection failure.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preservesMeasuredZeroAndSeparatesUnavailableFromCollectionFailure(@TempDir Path root) throws Exception {
         DashboardLiveSource source = new DashboardLiveSource() {
             @Override public long approvalPendingTotal() { return 0; }
@@ -76,6 +85,9 @@ class DashboardMetricsTest {
         }
     }
 
+    /**
+     * Absent source does not fabricate zeros and cancellation survives.
+     */
     @Test void absentSourceDoesNotFabricateZerosAndCancellationSurvives() {
         DashboardLiveSource.NONE.snapshot().values().forEach(metric -> {
             assertEquals(DashboardLiveSource.State.UNAVAILABLE, metric.state());

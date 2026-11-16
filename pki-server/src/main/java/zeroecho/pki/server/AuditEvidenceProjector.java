@@ -65,7 +65,9 @@ final class AuditEvidenceProjector {
     private final AuditSink sink;
     private final Clock clock;
 
-    /** Opens the family feed strictly after a durable sequence. */
+    /**
+     * Opens the family feed strictly after a durable sequence.
+     */
     @FunctionalInterface
     public interface FeedOpener {
         /**
@@ -78,6 +80,17 @@ final class AuditEvidenceProjector {
         AuditEvidenceFeed open(long afterSequenceExclusive) throws IOException;
     }
 
+    /**
+     * Composes one thread-confined evidence-family delivery cursor and audit-sink projection.
+     *
+     * @param control durable realm-owned cursor authority
+     * @param recordId stable family projection identity
+     * @param feedOpener opens authoritative evidence strictly after the retained sequence
+     * @param mapper maps recognized evidence to deterministic safe audit events
+     * @param sink destination audit sink, which may receive the same event after crash recovery
+     * @param clock retry eligibility time source
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ AuditEvidenceProjector(ServerControlStore control, String recordId, FeedOpener feedOpener,
             Function<AuditEvidenceFeed.Entry, Optional<AuditEvent>> mapper, AuditSink sink, Clock clock) {
         this.control = Objects.requireNonNull(control, "control");
@@ -88,11 +101,24 @@ final class AuditEvidenceProjector {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Observes the retained consecutive delivery failure count for this family.
+     *
+     * @return current failure count, or zero before cursor creation
+     */
     /* default */ long failureCount() {
         return AuditEvidenceProjectionState.load(control, recordId).map(value -> (long) value.state().failureCount()).orElse(0L);
     }
 
-    /** Runs one bounded non-cancelling pass. */
+    /**
+     * Runs one bounded evidence-delivery pass without an external cancellation request.
+     *
+     * @param maxExamined maximum entries examined, from zero through 4,096
+     * @param maxSinkCalls maximum audit-sink calls, from zero through 4,096
+     * @return delivery counts, feed-end classification and retry eligibility
+     * @throws IllegalArgumentException if a pass bound is outside the supported range
+     * @throws IOException if the source feed or durable cursor cannot be accessed
+     */
     /* default */ PassResult project(int maxExamined, int maxSinkCalls) throws IOException {
         return project(maxExamined, maxSinkCalls, CancellationSignal.NONE);
     }
@@ -105,6 +131,7 @@ final class AuditEvidenceProjector {
      * @param cancellation cooperative cancellation checked between bounded operations
      * @return immutable pass outcome
      * @throws IOException if the evidence feed cannot be read safely
+     * @throws NullPointerException if {@code cancellation} is null
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink and the mapper declare RuntimeException.
     /* default */ PassResult project(int maxExamined, int maxSinkCalls, CancellationSignal cancellation)
@@ -178,9 +205,28 @@ final class AuditEvidenceProjector {
         }
     }
 
-    /** Immutable bounded-pass outcome. */
+    /**
+     * Immutable scheduling and delivery observations from one bounded evidence pass.
+     *
+     * @param examined number of evidence entries examined
+     * @param emitted number of events delivered to the sink
+     * @param endReached whether the captured feed head was reached
+     * @param blocked whether a delivery failure/backoff blocked progress
+     * @param nextEligible next retry instant, or empty when no retry is pending
+     */
     /* default */ record PassResult(int examined, int emitted, boolean endReached, boolean blocked,
             Optional<Instant> nextEligible) {
+        /**
+         * Validates delivery counters and the explicit retry container.
+         *
+         * @param examined number of evidence entries examined
+         * @param emitted number of events delivered to the sink
+         * @param endReached whether the captured feed head was reached
+         * @param blocked whether a delivery failure/backoff blocked progress
+         * @param nextEligible next retry instant, or empty when no retry is pending
+         * @throws IllegalArgumentException if counts are negative or emitted exceeds examined
+         * @throws NullPointerException if the retry container is null
+         */
         PassResult {
             if (examined < 0 || emitted < 0 || emitted > examined) {
                 throw new IllegalArgumentException("Audit evidence projection result is invalid");

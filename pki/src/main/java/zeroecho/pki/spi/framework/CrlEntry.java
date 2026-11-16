@@ -60,6 +60,10 @@ public record CrlEntry(BigInteger serialNumber, Instant transitionTime, Revocati
      *
      * @throws IllegalArgumentException if the serial is non-positive, a value is
      *                                  missing
+     * @param serialNumber positive certificate serial number
+     * @param transitionTime authoritative revocation or hold transition time
+     * @param reason explicit CRL reason
+     * @throws NullPointerException if serialNumber, transitionTime, reason is null
      */
     public CrlEntry {
         Objects.requireNonNull(serialNumber, "serialNumber");

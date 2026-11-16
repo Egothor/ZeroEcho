@@ -42,7 +42,9 @@ import zeroecho.pki.impl.framework.x509.bc.BcHybridSdkProofVerifier;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 
-/** Public fixed-suite SDK proof boundary without exposing framework implementation packages. */
+/**
+ * Public fixed-suite SDK proof boundary without exposing framework implementation packages.
+ */
 public final class HybridSdkProofs {
     private HybridSdkProofs() { }
 
@@ -63,6 +65,7 @@ public final class HybridSdkProofs {
      * @param payload exact bounded original request
      * @return primary-proof-verified request; fresh dual proofs remain required
      * @throws UnsupportedOperationException when the typed syntax is unavailable
+     * @throws NullPointerException if payload is null
      */
     public static ParsedHybridSdkRequest parse(zeroecho.pki.api.request.X509EnrollmentPayload payload) {
         java.util.Objects.requireNonNull(payload, "payload");

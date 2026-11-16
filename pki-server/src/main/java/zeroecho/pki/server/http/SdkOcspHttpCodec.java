@@ -40,12 +40,35 @@ import java.util.Set;
 import zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Exact bounded HTTP envelope for separate SDK OCSP evidence; decoding never establishes trust. */
+/**
+ * Exact bounded HTTP envelope for separate SDK OCSP evidence; decoding never establishes trust.
+ */
 final class SdkOcspHttpCodec {
+    /**
+     * Media type for the versioned hybrid-SDK OCSP JSON envelope.
+     */
     static final String MEDIA = "application/vnd.zeroecho.hybrid-sdk+json";
+    /**
+     * Exact hybrid-SDK version-one profile identifier accepted by this codec.
+     */
     static final String PROFILE = "zeroecho-hybrid-sdk-v1";
     private SdkOcspHttpCodec() { }
+    /**
+     * Decoded transport inputs before native OCSP validation or trust establishment.
+     *
+     * @param requestDer decoded OCSP request bytes; retained without copying by this carrier
+     * @param clientNonce decoded 32-byte client nonce; retained without copying by this carrier
+     */
     record Query(byte[] requestDer,byte[] clientNonce) { }
+    /**
+     * Decodes the exact version-one SDK OCSP query envelope under independent byte bounds.
+     *
+     * @param bytes complete JSON request entity
+     * @param maximumBytes maximum JSON entity length, in bytes
+     * @param maximumNativeBytes maximum decoded OCSP request length, in bytes
+     * @return decoded OCSP request and exact 32-byte client nonce
+     * @throws IllegalArgumentException if fields, version, profile, base64url encoding or bounds are invalid
+     */
     static Query decode(byte[] bytes,int maximumBytes,int maximumNativeBytes) {
         if(!(StrictJson.parse(bytes,maximumBytes) instanceof PkiOperationValue.ObjectValue object))throw invalid();
         var fields=object.fields();
@@ -56,6 +79,13 @@ final class SdkOcspHttpCodec {
         byte[] nonce=decodeBytes(text(fields,"clientNonce"),32);
         if(nonce.length!=32)throw invalid();return new Query(request,nonce);
     }
+    /**
+     * Encodes public hybrid-SDK OCSP evidence into the version-one JSON transport envelope.
+     *
+     * @param evidence complete evidence carrier; encoding does not authenticate its contents
+     * @return newly allocated UTF-8 JSON bytes
+     * @throws NullPointerException if evidence is null
+     */
     static byte[] encode(SdkOcspEvidence evidence) {
         var fields=new LinkedHashMap<String,PkiOperationValue>();
         fields.put("version",new PkiOperationValue.IntegerValue(1));fields.put("profile",text(PROFILE));
@@ -65,6 +95,15 @@ final class SdkOcspHttpCodec {
         fields.put("primarySignature",bytes(evidence.primarySignature()));fields.put("alternativeSignature",bytes(evidence.alternativeSignature()));
         return StrictJson.encode(new PkiOperationValue.ObjectValue(fields));
     }
+    /**
+     * Publishes the SDK OCSP route, profile and caller-visible request/response limits.
+     *
+     * @param origin canonical public server origin
+     * @param bodyBytes maximum JSON request entity length, in bytes
+     * @param nativeBytes maximum decoded native request length, in bytes
+     * @param entries maximum requested certificate count
+     * @return UTF-8 JSON capability document
+     */
     static byte[] capability(String origin,int bodyBytes,int nativeBytes,int entries) {
         return StrictJson.encode(new PkiOperationValue.ObjectValue(Map.ofEntries(
                 Map.entry("version",new PkiOperationValue.IntegerValue(1)),Map.entry("profile",text(PROFILE)),

@@ -41,47 +41,83 @@ import zeroecho.pki.api.PkiException;
 public final class ProfileLifecycleFailure extends PkiException {
     private static final long serialVersionUID = -6689413907385449245L;
 
-    /** Closed profile lifecycle failure codes. */
+    /**
+     * Closed profile lifecycle failure codes.
+     */
     // These names are emitted as stable sanitized failure codes and asserted by external callers.
     @SuppressWarnings("PMD.LongVariable")
     public enum Code {
-        /** Supplied profile document is structurally or semantically invalid. */
+        /**
+         * Supplied profile document is structurally or semantically invalid.
+         */
         PROFILE_DOCUMENT_INVALID,
-        /** Imported profile failed closed validation. */
+        /**
+         * Imported profile failed closed validation.
+         */
         PROFILE_IMPORT_VALIDATION_FAILED,
-        /** A built-in profile definition is invalid. */
+        /**
+         * A built-in profile definition is invalid.
+         */
         BUILT_IN_PROFILE_INVALID,
-        /** An existing profile version has different canonical content. */
+        /**
+         * An existing profile version has different canonical content.
+         */
         PROFILE_VERSION_CONFLICT,
-        /** Versions of one logical profile disagree on certificate kind. */
+        /**
+         * Versions of one logical profile disagree on certificate kind.
+         */
         PROFILE_KIND_CONFLICT,
-        /** Persisted profile-version metadata is corrupt. */
+        /**
+         * Persisted profile-version metadata is corrupt.
+         */
         PROFILE_VERSION_CORRUPT,
-        /** Persisted active-profile pointer is corrupt. */
+        /**
+         * Persisted active-profile pointer is corrupt.
+         */
         PROFILE_ACTIVE_POINTER_CORRUPT,
-        /** Persisted content does not match its profile hash. */
+        /**
+         * Persisted content does not match its profile hash.
+         */
         PROFILE_HASH_MISMATCH,
-        /** Profile storage operation failed. */
+        /**
+         * Profile storage operation failed.
+         */
         PROFILE_STORE_FAILURE,
-        /** Store could not confirm durable profile persistence. */
+        /**
+         * Store could not confirm durable profile persistence.
+         */
         PROFILE_DURABILITY_UNCONFIRMED,
-        /** Profile import failed without a more specific classification. */
+        /**
+         * Profile import failed without a more specific classification.
+         */
         PROFILE_IMPORT_FAILED,
-        /** Persisted profile lifecycle state is inconsistent. */
+        /**
+         * Persisted profile lifecycle state is inconsistent.
+         */
         PROFILE_STATE_CORRUPT,
-        /** Requested imported profile version does not exist. */
+        /**
+         * Requested imported profile version does not exist.
+         */
         PROFILE_VERSION_NOT_FOUND,
-        /** Profile activation failed. */
+        /**
+         * Profile activation failed.
+         */
         PROFILE_ACTIVATION_FAILED,
-        /** No active version exists for the requested profile. */
+        /**
+         * No active version exists for the requested profile.
+         */
         PROFILE_NOT_ACTIVE,
         // Stable public code is intentionally longer than PMD's naming threshold.
-        /** Historical activation evidence is unavailable or invalid. */
+        /**
+         * Historical activation evidence is unavailable or invalid.
+         */
         @SuppressWarnings("PMD.LongVariable")
         PROFILE_ACTIVATION_HISTORY_UNAVAILABLE
     }
 
-    /** Stable sanitized failure classification. */
+    /**
+     * Stable sanitized failure classification.
+     */
     private final Code code;
 
     /**

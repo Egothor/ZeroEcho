@@ -69,10 +69,16 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 import zeroecho.core.io.CancellationSignal;
 
+/**
+ * Contract and regression tests for default revocation service.
+ */
 final class DefaultRevocationServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-01T12:00:00Z");
     private static final PkiId CREDENTIAL_ID = new PkiId("credential:audit");
 
+    /**
+     * Success audits committed state and revision once.
+     */
     @Test
     void successAuditsCommittedStateAndRevisionOnce() {
         RevocationRecord committed = new RevocationRecord(CREDENTIAL_ID,
@@ -92,6 +98,9 @@ final class DefaultRevocationServiceTest {
         assertEquals("1", events.get(0).details().get("revision"));
     }
 
+    /**
+     * Delegates exact exclusive feed position without population work.
+     */
     @Test
     void delegatesExactExclusiveFeedPositionWithoutPopulationWork() {
         RevocationTransitionFeed source = emptyFeed();
@@ -108,6 +117,9 @@ final class DefaultRevocationServiceTest {
         assertSame(source, service.feed(afterExclusive));
     }
 
+    /**
+     * Hostile store failure is redacted and produces only one rejection audit.
+     */
     @Test
     void hostileStoreFailureIsRedactedAndProducesOnlyOneRejectionAudit() {
         String sentinel = "DO_NOT_EXPOSE_REVOCATION_STORE_SENTINEL";
@@ -136,6 +148,9 @@ final class DefaultRevocationServiceTest {
         assertTrue(lookupAttempted.get());
     }
 
+    /**
+     * Append uncertainty preserves recovery required code and audits once.
+     */
     @Test
     void appendUncertaintyPreservesRecoveryRequiredCodeAndAuditsOnce() {
         List<AuditEvent> events = new ArrayList<>();
@@ -159,6 +174,11 @@ final class DefaultRevocationServiceTest {
         assertEquals("REVOCATION_RECOVERY_REQUIRED", events.get(0).details().get("code"));
     }
 
+    /**
+     * Delayed issuer filter failure is redacted at cursor boundary.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void delayedIssuerFilterFailureIsRedactedAtCursorBoundary() throws Exception {
         String sentinel = "DO_NOT_EXPOSE_DELAYED_STORE_SENTINEL";
@@ -188,6 +208,11 @@ final class DefaultRevocationServiceTest {
         }
     }
 
+    /**
+     * Filtered snapshot preserves source and global revision without using ordinal or local revision.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void filteredSnapshotPreservesSourceAndGlobalRevisionWithoutUsingOrdinalOrLocalRevision() throws Exception {
         RevocationRecord record = new RevocationRecord(CREDENTIAL_ID,
@@ -258,6 +283,9 @@ final class DefaultRevocationServiceTest {
         };
     }
 
+    /**
+     * Hostile clock failure is redacted audited once and never reaches store transition.
+     */
     @Test
     void hostileClockFailureIsRedactedAuditedOnceAndNeverReachesStoreTransition() {
         String sentinel = "DO_NOT_EXPOSE_REVOCATION_CLOCK_SENTINEL";

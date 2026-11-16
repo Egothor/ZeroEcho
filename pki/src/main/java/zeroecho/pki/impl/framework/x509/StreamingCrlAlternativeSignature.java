@@ -69,6 +69,7 @@ public final class StreamingCrlAlternativeSignature {
      * @return complete emitted native TBS length
      * @throws IOException if the transcript, bounded fields, streaming or cancellation fails
      * @throws ArithmeticException if aggregate DER length is not representable as a long
+     * @throws NullPointerException if {@code alternativeSignature} is null
      */
     public static long completeTbs(RepeatableContent alternativeTbs, X509AlgorithmIdentifier nativeAlgorithm,
             byte[] alternativeSignature, OutputStream output, CancellationSignal cancellation) throws IOException {
@@ -171,11 +172,17 @@ public final class StreamingCrlAlternativeSignature {
             this.cancellation = cancellation;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read() throws IOException {
             byte[] single = new byte[1];
             return read(single, 0, 1) < 0 ? -1 : single[0] & 0xff;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read(byte[] buffer, int offset, int length) throws IOException {
             Objects.checkFromIndexSize(offset, length, buffer.length);
             if (closed) { throw new IOException("Alternative CRL view stream is closed"); }
@@ -210,6 +217,9 @@ public final class StreamingCrlAlternativeSignature {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException {
             if (!closed) { closed = true; source.close(); }
         }

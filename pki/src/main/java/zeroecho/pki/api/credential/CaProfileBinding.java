@@ -43,7 +43,11 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * @param reference imported CA profile version used for issuance
  */
 public record CaProfileBinding(CertificateProfileRef reference) implements CredentialProfileBinding {
-    /** Creates a CA profile binding. */
+    /**
+     * Creates a CA profile binding.
+     * @param reference imported CA profile version used for issuance
+     * @throws NullPointerException if reference is null
+     */
     public CaProfileBinding {
         Objects.requireNonNull(reference, "reference");
     }

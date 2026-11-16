@@ -69,6 +69,7 @@ public interface StatusObjectService {
      * @param command validated generation command
      * @param cancellation originating cooperative cancellation signal
      * @return generated signed status object
+     * @throws NullPointerException if cancellation is null
      */
     default StatusObject generate(StatusObjectGenerateCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, "cancellation");

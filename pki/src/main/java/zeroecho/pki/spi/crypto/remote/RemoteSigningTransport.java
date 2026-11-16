@@ -174,10 +174,15 @@ public interface RemoteSigningTransport extends AutoCloseable {
         throw new UnsupportedOperationException("Remote signing transport does not support callbacks");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     void close();
 
-    /** Best-effort remote status-change callback. */
+    /**
+     * Best-effort remote status-change callback.
+     */
     @FunctionalInterface
     interface RemoteSigningCallback {
         /**
@@ -197,17 +202,29 @@ public interface RemoteSigningTransport extends AutoCloseable {
      * orchestration, not reported here.</p>
      */
     enum RemoteSigningState {
-        /** Accepted and awaiting signing or an external (typically human) decision. */
+        /**
+         * Accepted and awaiting signing or an external (typically human) decision.
+         */
         QUEUED,
-        /** A signature has been produced. */
+        /**
+         * A signature has been produced.
+         */
         SIGNED,
-        /** The signature was refused by policy or an operator. */
+        /**
+         * The signature was refused by policy or an operator.
+         */
         DENIED,
-        /** The caller's cancellation was honoured. */
+        /**
+         * The caller's cancellation was honoured.
+         */
         CANCELLED,
-        /** Remote service cannot currently determine whether the operation exists. */
+        /**
+         * Remote service cannot currently determine whether the operation exists.
+         */
         UNKNOWN,
-        /** Remote service guarantees the operation outcome cannot be recovered. */
+        /**
+         * Remote service guarantees the operation outcome cannot be recovered.
+         */
         UNRECOVERABLE;
 
         /**
@@ -227,7 +244,12 @@ public interface RemoteSigningTransport extends AutoCloseable {
      * @param cancellation cooperative cancellation signal
      */
     record RemoteCallControl(Instant deadline, CancellationSignal cancellation) {
-        /** Validates the control. */
+        /**
+         * Validates the control.
+         * @param deadline absolute deadline after which the caller abandons the call
+         * @param cancellation cooperative cancellation signal
+         * @throws NullPointerException if deadline, cancellation is null
+         */
         public RemoteCallControl {
             Objects.requireNonNull(deadline, "deadline");
             Objects.requireNonNull(cancellation, "cancellation");
@@ -260,7 +282,28 @@ public interface RemoteSigningTransport extends AutoCloseable {
             String principalType, String principalName, String purpose, Optional<Instant> deadline,
             int protocolVersion, SigningInputCapabilities.Mode inputMode, String digestId,
             SigningProvider.ConfigurationCommitment configurationCommitment) {
-        /** Validates bounded wire structure and takes ownership of a copy. */
+        /**
+         * Validates bounded wire structure and takes ownership of a copy.
+         * @param submissionId caller-chosen idempotency key and operation id
+         * @param namespace signing namespace bound to the provider
+         * @param semanticFingerprint canonical request fingerprint the remote service pins
+         * @param fencingToken monotonic fencing token
+         * @param keyHandle opaque remote key handle
+         * @param algorithmId canonical signature algorithm identity
+         * @param contentSha256 lowercase 64-hex digest of the content
+         * @param contentLength content length in bytes
+         * @param content exact bytes to sign
+         * @param principalType audit principal type
+         * @param principalName audit principal name
+         * @param purpose audit purpose
+         * @param deadline optional request deadline
+         * @param protocolVersion exact input protocol version
+         * @param inputMode explicit original-message or prehashed-digest mode
+         * @param digestId canonical digest identity only for prehashed input; empty otherwise
+         * @param configurationCommitment expected client-effective configuration
+         * @throws NullPointerException if a required textual field, content, deadline optional, input mode, digest identity or configuration commitment is null
+         * @throws IllegalArgumentException if required text is blank or exceeds 8192 characters, the protocol or fencing token is invalid, the content length/digest is invalid, the raw payload exceeds the wire ceiling, or input mode and digest identity disagree
+         */
         public RemoteSignRequest {
             for (String value : List.of(submissionId, namespace, semanticFingerprint, keyHandle, algorithmId,
                     contentSha256, principalType, principalName, purpose)) {
@@ -283,7 +326,9 @@ public interface RemoteSigningTransport extends AutoCloseable {
             content = content.clone();
         }
 
-        /** {@return a defensive copy of the raw message or prehash bytes} */
+        /**
+         * {@return a defensive copy of the raw message or prehash bytes}
+         */
         @Override public byte[] content() { return content.clone(); }
 
         /**
@@ -317,6 +362,7 @@ public interface RemoteSigningTransport extends AutoCloseable {
          * Computes a server-owned replay commitment over every wire coordinate
          * and payload. No client-supplied fingerprint substitutes for this check.
          * @return canonical lowercase SHA-256 wire fingerprint
+         * @throws IllegalStateException if the in-memory wire fingerprint cannot be encoded
          */
         public String wireFingerprint() {
             MessageDigest digest = SigningInputCapabilities.newDigest(BootstrapAlgorithmIdentities.SHA256);
@@ -364,7 +410,15 @@ public interface RemoteSigningTransport extends AutoCloseable {
      */
     record RemoteCapabilities(Set<String> supportedAlgorithms, byte[] configurationCommitment,
             int protocolVersion, SigningInputCapabilities inputCapabilities) {
-        /** Validates and snapshots the advertised configuration. */
+        /**
+         * Validates and snapshots the advertised configuration.
+         * @param supportedAlgorithms advertised signature algorithm identities
+         * @param configurationCommitment 32-byte remote configuration commitment
+         * @param protocolVersion exact explicit-input protocol version
+         * @param inputCapabilities finite server input capability snapshot
+         * @throws NullPointerException if supportedAlgorithms, any advertised algorithm, configurationCommitment or inputCapabilities is null
+         * @throws IllegalArgumentException if the protocol version is unsupported, the configuration commitment is not 32 bytes, or advertised algorithms violate the finite input-capability contract
+         */
         public RemoteCapabilities {
             supportedAlgorithms = Set.copyOf(supportedAlgorithms);
             configurationCommitment = new SigningProvider.ConfigurationCommitment(configurationCommitment).bytes();
@@ -376,16 +430,22 @@ public interface RemoteSigningTransport extends AutoCloseable {
                     supportedAlgorithms);
         }
 
-        /** {@return a defensive copy of the provider configuration commitment} */
+        /**
+         * {@return a defensive copy of the provider configuration commitment}
+         */
         @Override public byte[] configurationCommitment() { return configurationCommitment.clone(); }
 
-        /** {@return capabilities after applying the client's finite raw wire ceiling} */
+        /**
+         * {@return capabilities after applying the client's finite raw wire ceiling}
+         */
         public SigningInputCapabilities effectiveInputs() {
             return new SigningInputCapabilities(Math.min(inputCapabilities.rawMessageMaximum(),
                     SigningInputCapabilities.REMOTE_RAW_LIMIT), inputCapabilities.prehashedDigests());
         }
 
-        /** {@return deterministic client-effective configuration commitment} */
+        /**
+         * {@return deterministic client-effective configuration commitment}
+         */
         public SigningProvider.ConfigurationCommitment effectiveCommitment() {
             return effectiveInputs().commitment(new SigningProvider.ConfigurationCommitment(configurationCommitment),
                     supportedAlgorithms);

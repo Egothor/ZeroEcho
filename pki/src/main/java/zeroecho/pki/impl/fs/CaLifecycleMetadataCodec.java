@@ -48,43 +48,147 @@ import zeroecho.pki.spi.store.*;
  * namespace; this preserves actual historical epochs rather than deriving them.
  */
 final class CaLifecycleMetadataCodec {
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.ca-head-snapshot}; persisted identities depend on this value.
+     */
     /* default */ static final String HEAD = "io.zeroecho.pki.ca-head-snapshot";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.ca-head-snapshot-history}; persisted identities depend on this value.
+     */
     /* default */ static final String HEAD_HISTORY = "io.zeroecho.pki.ca-head-snapshot-history";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.root-anchor-transition}; persisted identities depend on this value.
+     */
     /* default */ static final String TRANSITION = "io.zeroecho.pki.root-anchor-transition";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.root-anchor-activation}; persisted identities depend on this value.
+     */
     /* default */ static final String ACTIVATION = "io.zeroecho.pki.root-anchor-activation";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.root-anchor-candidate}; persisted identities depend on this value.
+     */
     /* default */ static final String CANDIDATE_INDEX = "io.zeroecho.pki.root-anchor-candidate";
     private static final int MAGIC = 0x5a434c43;
     private CaLifecycleMetadataCodec() { }
+    /**
+     * Derives the current CA lifecycle head metadata identity.
+     *
+     * @param ca exact source identity used to derive the canonical namespace key
+     * @return canonical current CA lifecycle head key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey headKey(PkiId ca) { return new MetadataKey(HEAD, AuthorityMetadataCodec.caKey(ca).key()); }
+    /**
+     * Derives the CA lifecycle head history metadata identity.
+     *
+     * @param caHistory exact source identity used to derive the canonical namespace key
+     * @return canonical CA lifecycle head history key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey historyKey(MetadataKey caHistory) { return new MetadataKey(HEAD_HISTORY, caHistory.key()); }
+    /**
+     * Derives the root trust-anchor transition metadata identity.
+     *
+     * @param id exact source identity used to derive the canonical namespace key
+     * @return canonical root trust-anchor transition key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey transitionKey(PkiId id) { return new MetadataKey(TRANSITION, digest(id.value())); }
+    /**
+     * Derives the root trust-anchor activation metadata identity.
+     *
+     * @param id exact source identity used to derive the canonical namespace key
+     * @return canonical root trust-anchor activation key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey activationKey(PkiId id) { return new MetadataKey(ACTIVATION, digest(id.value())); }
+    /**
+     * Derives the candidate issuer lookup for a root transition metadata identity.
+     *
+     * @param id exact source identity used to derive the canonical namespace key
+     * @return canonical candidate issuer lookup for a root transition key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey candidateKey(PkiId id) { return new MetadataKey(CANDIDATE_INDEX, digest(id.value())); }
 
+    /**
+     * Reads and validates the exact current CA lifecycle head from a stable metadata snapshot.
+     *
+     * @param snapshot borrowed stable metadata snapshot
+     * @param ca exact logical identity being requested
+     * @return matching validated value, or an empty optional if absent
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if stored content cannot be read or its framing and identity are invalid
+     */
     /* default */ static Optional<CaHeadSnapshot> head(MetadataSnapshot snapshot, PkiId ca) throws IOException {
         return read(snapshot, headKey(ca), bytes -> {
             var value = decodeHead(bytes); if (!value.caId().equals(ca)) { throw invalid(); } return value;
         });
     }
+    /**
+     * Reads and validates the exact root trust-anchor transition from a stable metadata snapshot.
+     *
+     * @param snapshot borrowed stable metadata snapshot
+     * @param id exact logical identity being requested
+     * @return matching validated value, or an empty optional if absent
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if stored content cannot be read or its framing and identity are invalid
+     */
     /* default */ static Optional<RootTrustAnchorTransition> transition(MetadataSnapshot snapshot, PkiId id) throws IOException {
         return read(snapshot, transitionKey(id), bytes -> {
             var value = decodeTransition(bytes); if (!value.transitionId().equals(id)) { throw invalid(); } return value;
         });
     }
+    /**
+     * Reads and validates the exact root trust-anchor activation from a stable metadata snapshot.
+     *
+     * @param snapshot borrowed stable metadata snapshot
+     * @param id exact logical identity being requested
+     * @return matching validated value, or an empty optional if absent
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if stored content cannot be read or its framing and identity are invalid
+     */
     /* default */ static Optional<RootTrustAnchorActivation> activation(MetadataSnapshot snapshot, PkiId id) throws IOException {
         return read(snapshot, activationKey(id), bytes -> {
             var value = decodeActivation(bytes); if (!value.transitionId().equals(id)) { throw invalid(); } return value;
         });
     }
+    /**
+     * Decodes a CA lifecycle head row and checks its exact metadata identity.
+     *
+     * @param key persisted metadata row identity
+     * @param bytes complete encoded lifecycle metadata value
+     * @return validated immutable CA lifecycle head
+     * @throws NullPointerException if the key is null
+     * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
+     */
     /* default */ static CaHeadSnapshot headRow(MetadataKey key, byte[] bytes) {
         try { var value = decodeHead(bytes); if (!key.equals(headKey(value.caId()))) { throw invalid(); } return value; }
         catch (IOException failure) { throw new IllegalStateException("CA head metadata invalid", failure); }
     }
+    /**
+     * Decodes a root transition or candidate-index entry row and checks its exact metadata identity.
+     *
+     * @param key persisted metadata row identity
+     * @param bytes complete encoded lifecycle metadata value
+     * @return validated immutable root transition or candidate-index entry
+     * @throws NullPointerException if the key is null
+     * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
+     */
     /* default */ static RootTrustAnchorTransition transitionRow(MetadataKey key, byte[] bytes) {
         try { var value = decodeTransition(bytes); if (!key.equals(transitionKey(value.transitionId()))
                 && !key.equals(candidateKey(value.candidateIssuerId()))) { throw invalid(); } return value; }
         catch (IOException failure) { throw new IllegalStateException("Root transition metadata invalid", failure); }
     }
+    /**
+     * Decodes a root activation row and checks its exact metadata identity.
+     *
+     * @param key persisted metadata row identity
+     * @param bytes complete encoded lifecycle metadata value
+     * @return validated immutable root activation
+     * @throws NullPointerException if the key is null
+     * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
+     */
     /* default */ static RootTrustAnchorActivation activationRow(MetadataKey key, byte[] bytes) {
         try { var value = decodeActivation(bytes); if (!key.equals(activationKey(value.transitionId()))) { throw invalid(); } return value; }
         catch (IOException failure) { throw new IllegalStateException("Root activation metadata invalid", failure); }
@@ -95,9 +199,25 @@ final class CaLifecycleMetadataCodec {
             return row == null ? Optional.empty() : Optional.of(decoder.decode(CredentialMetadataAuthority.read(row, SigningWalFrameCodec.MAX_PAYLOAD_BYTES)));
         }
     }
+    /**
+     * Encodes an immutable CA lifecycle head snapshot with its explicit record kind.
+     *
+     * @param value validated exact CA lifecycle head snapshot
+     * @return newly allocated versioned binary lifecycle record
+     * @throws NullPointerException if the value is null
+     * @throws IOException if bounded canonical field encoding fails
+     */
     /* default */ static byte[] encode(CaHeadSnapshot value) throws IOException {
         return encode(1, out -> writeHead(out, value));
     }
+    /**
+     * Encodes an immutable root trust-anchor transition with its explicit record kind.
+     *
+     * @param value validated exact root trust-anchor transition
+     * @return newly allocated versioned binary lifecycle record
+     * @throws NullPointerException if the value is null
+     * @throws IOException if bounded canonical field encoding fails
+     */
     /* default */ static byte[] encode(RootTrustAnchorTransition value) throws IOException {
         return encode(2, out -> {
             out.writeInt(value.version()); text(out, value.transitionId().value()); text(out, value.caId().value()); writeHead(out, value.expectedHead());
@@ -107,6 +227,14 @@ final class CaLifecycleMetadataCodec {
             text(out, value.originatingSigningOperationId().value()); text(out, value.commandCommitment());
         });
     }
+    /**
+     * Encodes an immutable root trust-anchor activation with its explicit record kind.
+     *
+     * @param value validated exact root trust-anchor activation
+     * @return newly allocated versioned binary lifecycle record
+     * @throws NullPointerException if the value is null
+     * @throws IOException if bounded canonical field encoding fails
+     */
     /* default */ static byte[] encode(RootTrustAnchorActivation value) throws IOException {
         return encode(3, out -> {
             out.writeInt(value.version()); text(out, value.transitionId().value()); text(out, value.transitionCommitment()); writeHead(out, value.expectedHead());
@@ -115,16 +243,37 @@ final class CaLifecycleMetadataCodec {
             out.writeLong(value.acceptedAt().getEpochSecond()); out.writeInt(value.acceptedAt().getNano()); out.writeBoolean(value.distributionAcknowledged());
         });
     }
+    /**
+     * Decodes one exact versioned CA lifecycle head record.
+     *
+     * @param bytes complete bounded binary lifecycle value
+     * @return validated immutable CA lifecycle head
+     * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
+     */
     /* default */ static CaHeadSnapshot decodeHead(byte[] bytes) throws IOException {
         try (var in = input(bytes, 1)) { var value = readHead(in); end(in); return value; }
         catch (RuntimeException failure) { throw new IOException("CA head metadata invalid", failure); }
     }
+    /**
+     * Decodes one exact versioned root trust-anchor transition record.
+     *
+     * @param bytes complete bounded binary lifecycle value
+     * @return validated immutable root trust-anchor transition
+     * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
+     */
     /* default */ static RootTrustAnchorTransition decodeTransition(byte[] bytes) throws IOException {
         try (var in = input(bytes, 2)) {
             var value = new RootTrustAnchorTransition(in.readInt(), id(in), id(in), readHead(in), id(in), text(in), text(in), id(in), id(in), id(in), text(in), text(in), id(in), text(in));
             end(in); return value;
         } catch (RuntimeException failure) { throw new IOException("Root transition metadata invalid", failure); }
     }
+    /**
+     * Decodes one exact versioned root trust-anchor activation record.
+     *
+     * @param bytes complete bounded binary lifecycle value
+     * @return validated immutable root trust-anchor activation
+     * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
+     */
     /* default */ static RootTrustAnchorActivation decodeActivation(byte[] bytes) throws IOException {
         try (var in = input(bytes, 3)) {
             var value = new RootTrustAnchorActivation(in.readInt(), id(in), text(in), readHead(in), id(in), id(in), in.readLong(), id(in), text(in), text(in), text(in),

@@ -65,21 +65,37 @@ public final class X509AlgorithmResolver {
      * Stable resolution failure categories.
      */
     public enum Failure {
-        /** No authoritative X.509 binding exists. */
+        /**
+         * No authoritative X.509 binding exists.
+         */
         NO_BINDING,
-        /** No installed implementation supports the tuple. */
+        /**
+         * No installed implementation supports the tuple.
+         */
         NO_CAPABILITY,
-        /** More than one implementation remains without explicit selection. */
+        /**
+         * More than one implementation remains without explicit selection.
+         */
         AMBIGUOUS_IMPLEMENTATION,
-        /** Explicit implementation is unavailable for the tuple. */
+        /**
+         * Explicit implementation is unavailable for the tuple.
+         */
         UNKNOWN_IMPLEMENTATION,
-        /** Semantic capability has no process-local executor binding. */
+        /**
+         * Semantic capability has no process-local executor binding.
+         */
         NO_EXECUTOR,
-        /** Non-overridable security floor rejected the identity. */
+        /**
+         * Non-overridable security floor rejected the identity.
+         */
         SECURITY_FLOOR,
-        /** Configured policy rejected the suite. */
+        /**
+         * Configured policy rejected the suite.
+         */
         POLICY,
-        /** Signature and key identities are incompatible. */
+        /**
+         * Signature and key identities are incompatible.
+         */
         INCOMPATIBLE_KEY
     }
 
@@ -127,6 +143,13 @@ public final class X509AlgorithmResolver {
          * Creates an immutable selection.
          *
          * @throws NullPointerException if an argument is {@code null}
+         * @param requested exact requested identity
+         * @param suite compatible exact suite
+         * @param binding exact X.509 representation
+         * @param implementation selected execution metadata
+         * @param direction authorized execution direction
+         * @param provenance stable default identifier or {@code explicit}
+         * @param authorityFingerprint authority snapshot fingerprint
          */
         public Selection {
             Objects.requireNonNull(requested, "requested");
@@ -144,9 +167,16 @@ public final class X509AlgorithmResolver {
     public static final class ResolutionException extends IllegalArgumentException {
 
         private static final long serialVersionUID = 1L;
-        /** Stable non-sensitive resolution failure. */
+        /**
+         * Stable non-sensitive resolution failure.
+         */
         private final Failure failure;
 
+        /**
+         * Creates a cause-free resolution failure with a stable diagnostic category.
+         *
+         * @param failure closed non-sensitive failure category; retained as supplied
+         */
         /* default */ ResolutionException(Failure failure) {
             super("X.509 algorithm resolution failed: " + failure);
             this.failure = failure;
@@ -173,6 +203,7 @@ public final class X509AlgorithmResolver {
      * @param bindings     authoritative binding snapshot
      * @param capabilities installed execution snapshot
      * @param policy       configured restrictive policy
+     * @throws NullPointerException if {@code bindings}, {@code capabilities} or {@code policy} is null
      */
     public X509AlgorithmResolver(X509BindingCatalog bindings, AlgorithmExecutionCapabilities capabilities,
             Policy policy) {
@@ -210,6 +241,8 @@ public final class X509AlgorithmResolver {
      * @param authorityFingerprint semantic fingerprint of the resolving authority
      * @param bindingId optional explicit role-specific binding identifier
      * @return immutable effective selection
+     * @throws NullPointerException if {@code requested}, {@code key}, {@code direction}, {@code implementation}, {@code provenance} or {@code authorityFingerprint} is null
+     * @throws X509AlgorithmResolver.ResolutionException if security floor, key compatibility, binding, policy, or executor capability selection fails
      */
     public Selection resolve(AlgorithmIdentity requested, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,

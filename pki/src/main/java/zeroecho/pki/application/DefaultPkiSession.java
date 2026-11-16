@@ -88,7 +88,9 @@ import zeroecho.pki.spi.publish.Publisher;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 
-/** Default lifecycle-owned PKI session composition. */
+/**
+ * Default lifecycle-owned PKI session composition.
+ */
 final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticComplexity totals cohesive independent operations; method-level checks remain enabled.
 
     private final PkiStore store;
@@ -166,25 +168,93 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                         localSigning, publications, this::requireOpen)) : Optional.empty();
     }
 
+    /**
+     * Opens a session with no additional runtime dependencies and the UTC system clock.
+     *
+     * <p>If construction fails, allocated resources are closed and cleanup failures are
+     * attached to the original failure. No partially initialized session is returned.</p>
+     *
+     * @param configuration validated session configuration; provider options are checked before allocation
+     * @return newly opened session whose caller owns its lifecycle
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ static PkiSession open(PkiSessionConfiguration configuration) {
         return open(configuration, PkiSessionRuntimeDependencies.none(), Clock.systemUTC(),
                 ProductionBootstrap.INSTANCE);
     }
 
+    /**
+     * Opens a session with supplied runtime dependencies and the UTC system clock.
+     *
+     * <p>If construction fails, allocated resources are closed and cleanup failures are
+     * attached to the original failure. No partially initialized session is returned.</p>
+     *
+     * @param configuration validated session configuration; provider options are checked before allocation
+     * @param dependencies runtime collaborators and policy bindings; borrowed dependencies retain their documented ownership
+     * @return newly opened session whose caller owns its lifecycle
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ static PkiSession open(PkiSessionConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies) {
         return open(configuration, dependencies, Clock.systemUTC(), ProductionBootstrap.INSTANCE);
     }
 
+    /**
+     * Opens a session with explicit runtime dependencies and time source.
+     *
+     * <p>If construction fails, allocated resources are closed and cleanup failures are
+     * attached to the original failure. No partially initialized session is returned.</p>
+     *
+     * @param configuration validated session configuration; provider options are checked before allocation
+     * @param dependencies runtime collaborators and policy bindings; borrowed dependencies retain their documented ownership
+     * @param clock clock used by session services and authoritative store runtime dependencies
+     * @return newly opened session whose caller owns its lifecycle
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ static PkiSession open(PkiSessionConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock) {
         return open(configuration, dependencies, clock, ProductionBootstrap.INSTANCE);
     }
 
+    /**
+     * Opens a session with an explicit allocation seam and no additional runtime dependencies.
+     *
+     * <p>If construction fails, allocated resources are closed and cleanup failures are
+     * attached to the original failure. No partially initialized session is returned.</p>
+     *
+     * @param configuration validated session configuration; provider options are checked before allocation
+     * @param clock clock used by session services and authoritative store runtime dependencies
+     * @param bootstrap provider validation and resource allocation seam
+     * @return newly opened session whose caller owns its lifecycle
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ static PkiSession open(PkiSessionConfiguration configuration, Clock clock, Bootstrap bootstrap) {
         return open(configuration, PkiSessionRuntimeDependencies.none(), clock, bootstrap);
     }
 
+    /**
+     * Validates configuration, allocates the service graph and starts the session signing runtime.
+     *
+     * <p>If construction fails, allocated resources are closed and cleanup failures are
+     * attached to the original failure. No partially initialized session is returned.</p>
+     *
+     * @param configuration validated session configuration; provider options are checked before allocation
+     * @param dependencies runtime collaborators and policy bindings; borrowed dependencies retain their documented ownership
+     * @param clock clock used by session services and authoritative store runtime dependencies
+     * @param bootstrap provider validation and resource allocation seam
+     * @return newly opened session whose caller owns its lifecycle
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CloseResource" })
     /* default */ static PkiSession open(PkiSessionConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, Bootstrap bootstrap) {
@@ -238,11 +308,40 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         }
     }
 
+    /**
+     * Opens a locally attributed synchronous session using production provider allocation.
+     *
+     * <p>Allocated resources are closed after construction failure. Returned services
+     * share the session lifecycle; the caller must close the session.</p>
+     *
+     * @param configuration local session configuration including operator and signing observation settings
+     * @param dependencies runtime collaborators and policy bindings; borrowed dependencies retain their documented ownership
+     * @param clock clock used by session services and authoritative store runtime dependencies
+     * @return newly opened local session
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ static PkiSession openLocal(LocalPkiSessionConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock) {
         return openLocal(configuration, dependencies, clock, ProductionBootstrap.INSTANCE);
     }
 
+    /**
+     * Validates local configuration and allocates a session with operator attribution and local signing execution.
+     *
+     * <p>Allocated resources are closed after construction failure. Returned services
+     * share the session lifecycle; the caller must close the session.</p>
+     *
+     * @param configuration local session configuration including operator and signing observation settings
+     * @param dependencies runtime collaborators and policy bindings; borrowed dependencies retain their documented ownership
+     * @param clock clock used by session services and authoritative store runtime dependencies
+     * @param bootstrap provider validation and resource allocation seam
+     * @return newly opened local session
+     * @throws NullPointerException if a required argument or allocated collaborator is null
+     * @throws IllegalArgumentException if configuration or configured provider bindings are invalid
+     * @throws IllegalStateException if provider allocation or service composition fails
+     */
     /* default */ // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
                   @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
                   static PkiSession openLocal(LocalPkiSessionConfiguration configuration,
@@ -405,6 +504,15 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                         signingAuthority, bindings.registry(), signatureAlgorithm, pureEdDsaMaximum)));
     }
 
+    /**
+     * Builds immutable public algorithm authority from the allocating provider's exact contribution.
+     *
+     * @param allocation configured signing provider and its contributed public execution capabilities
+     * @param bindingProviders explicitly configured public binding rule providers
+     * @return session signing authority without reading or exporting managed private keys
+     * @throws NullPointerException if a required input or contribution is null
+     * @throws IllegalArgumentException if contributions cannot form a valid immutable authority
+     */
     /* default */ static X509AuthoritySnapshot signingAuthority(PkiBootstrap.SigningComposition allocation,
             List<X509BindingRuleProvider> bindingProviders) {
         List<AlgorithmExecutionCapability> capabilities = new ArrayList<>();
@@ -530,131 +638,200 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
                 && ImmutableX509AlgorithmBindingRegistry.isWithin(oid, root);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ProfileService profiles() {
         requireOpen();
         return profiles;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationService confirmations() {
         requireOpen();
         return confirmations;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationService revocations() {
         requireOpen();
         return revocations;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CertificationRequestService> requests() {
         requireOpen();
         return requests;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PublicationService> publications() {
         requireOpen();
         return publications;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<SigningService> signing() {
         requireOpen();
         return signingGraph.service();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<SemanticSigningService> semanticSigning() {
         requireOpen();
         return signingGraph.semanticService();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<PkiSigningCommands> signingCommands() {
         requireOpen();
         return signingCommands;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<LocalSigningExecutor> localSigning() {
         requireOpen();
         return localSigning;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<zeroecho.pki.spi.crypto.ManagedKeyGeneration> managedKeyGeneration() {
         requireOpen();
         return signingGraph.provider() instanceof zeroecho.pki.spi.crypto.ManagedKeyGeneration capability
                 ? Optional.of(capability) : Optional.empty();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<zeroecho.pki.api.schedule.StatusScheduleCoordinator> statusSchedules() {
         requireOpen();
         return statusSchedules;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<OcspResponseService> ocsp() {
         requireOpen();
         return signingGraph.ocspService();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509AlgorithmBindingRegistry algorithmBindings() {
         requireOpen();
         return algorithmBindings;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiResourceScopeResolver resourceScopes() {
         requireOpen();
         return resourceScopes;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationExecutor operations() {
         requireOpen();
         return operations;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiRepository repository() {
         requireOpen();
         return repository;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.credential.EffectiveCredentialStatusResolver credentialStatuses() {
         requireOpen(); return credentialStatuses;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsSigningEvidenceFeed() {
         requireOpen();
         return store.supportsSigningEvidenceFeed();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.spi.store.AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
         requireOpen();
         return store.openSigningEvidenceFeed(afterSequenceExclusive);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.spi.store.AuditEvidenceFeed openIssuanceEvidenceFeed(long afterSequenceExclusive) {
         requireOpen();
         return store.openIssuanceEvidenceFeed(afterSequenceExclusive);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.spi.store.AuditEvidenceFeed openStatusEvidenceFeed(long afterSequenceExclusive) {
         requireOpen();
         return store.openStatusEvidenceFeed(afterSequenceExclusive);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.spi.store.AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         requireOpen();
         return store.openPublicationEvidenceFeed(afterSequenceExclusive);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.BackupService> backup() {
         requireOpen();
@@ -664,6 +841,9 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         return Optional.of(new StoreBackedBackupService(store));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws java.io.IOException {
         closeLock.lock();
@@ -767,49 +947,105 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         throw new java.io.IOException("PKI session close failed", failure);
     }
 
-    /** Resource bootstrap seam used for deterministic lifecycle verification. */
+    /**
+     * Resource bootstrap seam used for deterministic lifecycle verification.
+     */
     /* default */ interface Bootstrap {
-        /** Validates store configuration without allocating a store. */
+        /**
+         * Validates store configuration without allocating a store.
+         *
+         * @param configuration exact store provider configuration
+         * @throws IllegalArgumentException if the configuration is invalid
+         */
         void validateStore(ProviderConfig configuration);
 
-        /** Validates audit configuration without allocating a sink. */
+        /**
+         * Validates audit configuration without allocating a sink.
+         *
+         * @param configuration exact audit provider configuration
+         * @throws IllegalArgumentException if the configuration is invalid
+         */
         void validateAudit(ProviderConfig configuration);
 
-        /** Opens the configured store. */
+        /**
+         * Opens the configured store.
+         *
+         * @param configuration previously validated store provider configuration
+         * @return newly allocated store whose lifecycle transfers to the session
+         */
         PkiStore openStore(ProviderConfig configuration);
 
-        /** Opens the store with the session's authoritative clock. */
+        /**
+         * Opens the store with the session's authoritative clock.
+         *
+         * @param configuration previously validated store provider configuration
+         * @param dependencies exact session clock and public evidence verifiers
+         * @return newly allocated store whose lifecycle transfers to the session
+         * @throws NullPointerException if runtime dependencies are null
+         */
         default PkiStore openStore(ProviderConfig configuration, PkiStoreRuntimeDependencies dependencies) {
             Objects.requireNonNull(dependencies, "dependencies");
             return openStore(configuration);
         }
 
-        /** Opens the configured audit sink. */
+        /**
+         * Opens the configured audit sink.
+         *
+         * @param configuration previously validated audit provider configuration
+         * @return newly allocated sink whose lifecycle transfers to the session
+         */
         AuditSink openAudit(ProviderConfig configuration);
 
-        /** Validates a configured signing provider without allocation. */
+        /**
+         * Validates a configured signing provider without allocation.
+         *
+         * @param configuration exact signing provider configuration
+         * @throws IllegalArgumentException if the configuration is invalid
+         */
         default void validateSigning(ProviderConfig configuration) {
             PkiBootstrap.validateSigningProviderConfiguration(configuration);
         }
 
-        /** Opens one configured signing provider. */
+        /**
+         * Opens one configured signing provider.
+         *
+         * @param configuration previously validated signing provider configuration
+         * @param dependencies signing runtime collaborators supplied by the session
+         * @return newly allocated provider whose lifecycle transfers to the session
+         */
         default SigningProvider openSigning(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             return PkiBootstrap.openConfiguredSigningProvider(configuration, dependencies);
         }
 
-        /** Opens the exact provider with its allocating factory's contribution. */
+        /**
+         * Opens the exact provider with its allocating factory's contribution.
+         *
+         * @param configuration previously validated signing provider configuration
+         * @param dependencies signing runtime collaborators supplied by the session
+         * @return provider together with public capabilities from the exact allocating factory
+         */
         default PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             return new PkiBootstrap.SigningComposition(openSigning(configuration, dependencies), List.of());
         }
 
-        /** Validates publisher configuration. */
+        /**
+         * Validates publisher configuration.
+         *
+         * @param configuration exact publisher provider configuration
+         * @throws IllegalArgumentException if the configuration is invalid
+         */
         default void validatePublisher(ProviderConfig configuration) {
             PkiBootstrap.validatePublisherConfiguration(configuration);
         }
 
-        /** Opens one configured publisher. */
+        /**
+         * Opens one configured publisher.
+         *
+         * @param configuration previously validated publisher configuration
+         * @return newly allocated publisher whose lifecycle transfers to the session
+         */
         default Publisher openPublisher(ProviderConfig configuration) {
             return PkiBootstrap.openPublisher(configuration);
         }
@@ -859,6 +1095,9 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
             return closeResource(reactor, null);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             Throwable primary = closeResource(reactor, null);
             primary = closeResource(provider, primary);
@@ -879,51 +1118,79 @@ final class DefaultPkiSession implements PkiSession { // NOPMD - CyclomaticCompl
         }
     }
 
-    /** Session-owned resource lifecycle. */
+    /**
+     * Session-owned resource lifecycle.
+     */
     private enum Lifecycle {
         OPEN,
         QUIESCING,
         CLOSED
     }
 
-    /** Production service-loader bootstrap. */
+    /**
+     * Production service-loader bootstrap.
+     */
     private enum ProductionBootstrap implements Bootstrap {
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void validateStore(ProviderConfig configuration) {
             PkiBootstrap.validateStoreConfiguration(configuration);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void validateAudit(ProviderConfig configuration) {
             PkiBootstrap.validateAuditConfiguration(configuration);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PkiStore openStore(ProviderConfig configuration) {
             return PkiBootstrap.openStore(configuration);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PkiStore openStore(ProviderConfig configuration, PkiStoreRuntimeDependencies dependencies) {
             return PkiBootstrap.openStore(configuration, dependencies);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public AuditSink openAudit(ProviderConfig configuration) {
             return PkiBootstrap.openAudit(configuration);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void validateSigning(ProviderConfig configuration) {
             PkiBootstrap.validateSigningProviderConfiguration(configuration);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public SigningProvider openSigning(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             return PkiBootstrap.openConfiguredSigningProvider(configuration, dependencies);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             return PkiBootstrap.openConfiguredSigningComposition(configuration, dependencies);

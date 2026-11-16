@@ -43,10 +43,16 @@ package zeroecho.pkix;
  * </p>
  */
 public enum DirectoryStringType {
-    /** {@code UTF8String} — the modern default for most attributes. */
+    /**
+     * {@code UTF8String} — the modern default for most attributes.
+     */
     UTF8,
-    /** {@code PrintableString} — e.g. {@code countryName}, {@code serialNumber}. */
+    /**
+     * {@code PrintableString} — e.g. {@code countryName}, {@code serialNumber}.
+     */
     PRINTABLE,
-    /** {@code IA5String} — e.g. legacy {@code emailAddress}. */
+    /**
+     * {@code IA5String} — e.g. legacy {@code emailAddress}.
+     */
     IA5
 }

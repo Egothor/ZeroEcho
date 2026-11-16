@@ -211,7 +211,9 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -225,7 +227,9 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

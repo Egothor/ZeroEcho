@@ -37,8 +37,12 @@ package zeroecho.pki.api.profile;
  * Closed X.509 key-usage set available to CA certificate profiles.
  */
 public enum CaKeyUsage {
-    /** keyCertSign. */
+    /**
+     * keyCertSign.
+     */
     KEY_CERT_SIGN,
-    /** cRLSign. */
+    /**
+     * cRLSign.
+     */
     CRL_SIGN
 }

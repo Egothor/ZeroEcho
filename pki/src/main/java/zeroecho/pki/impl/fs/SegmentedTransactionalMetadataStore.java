@@ -67,7 +67,9 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Package-private production adapter over the segmented signing ledger. */
+/**
+ * Package-private production adapter over the segmented signing ledger.
+ */
 // The adapter exposes one transaction boundary over the ledger's storage and recovery collaborators.
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
         "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidSynchronizedStatement",
@@ -98,17 +100,59 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         this.engine = engine;
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId) throws IOException {
         return new SegmentedTransactionalMetadataStore(SigningLedgerStoreEngine.create(root, storeId));
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations) throws IOException {
         return new SegmentedTransactionalMetadataStore(
                 SigningLedgerStoreEngine.create(root, storeId, walOperations));
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork) throws IOException {
@@ -118,6 +162,22 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration)
@@ -128,6 +188,24 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
@@ -138,6 +216,25 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 residentIndexBudgetBytes, compactionBudgetBytes));
     }
 
+    /**
+     * Creates a bounded segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @param stagedContent borrowed content ownership validator; must not be null
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
@@ -150,6 +247,19 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+                   *
+                   * <p>The caller owns the returned store and must close it. The root-only open overload
+                   * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+                   *
+                   * @param root transactional metadata directory; must not be null
+                   * @param storeId exact metadata store identity; must not be null
+                   * @return open transactional metadata store with exclusive owned engine resources
+                   * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+                   * @throws NullPointerException if a required argument is null
+                   * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId) throws IOException {
@@ -161,6 +271,20 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId, int maximumSigningWork) throws IOException {
         return open(root, storeId, maximumSigningWork, SigningActiveWal.Configuration.defaults(),
@@ -168,6 +292,21 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @param storeId exact metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration) throws IOException {
@@ -177,6 +316,23 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+                   *
+                   * <p>The caller owns the returned store and must close it. The root-only open overload
+                   * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+                   *
+                   * @param root transactional metadata directory; must not be null
+                   * @param storeId exact metadata store identity; must not be null
+                   * @param maximumSigningWork positive maximum retained active signing-work entries
+                   * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+                   * @param residentIndexBudgetBytes finite resident index budget, in bytes
+                   * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+                   * @return open transactional metadata store with exclusive owned engine resources
+                   * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+                   * @throws NullPointerException if a required argument is null
+                   * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
@@ -193,6 +349,24 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+                   *
+                   * <p>The caller owns the returned store and must close it. The root-only open overload
+                   * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+                   *
+                   * @param root transactional metadata directory; must not be null
+                   * @param storeId exact metadata store identity; must not be null
+                   * @param maximumSigningWork positive maximum retained active signing-work entries
+                   * @param activeWalConfiguration validated WAL writer/admission configuration; must not be null
+                   * @param residentIndexBudgetBytes finite resident index budget, in bytes
+                   * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+                   * @param stagedContent borrowed content ownership validator; must not be null
+                   * @return open transactional metadata store with exclusive owned engine resources
+                   * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+                   * @throws NullPointerException if a required argument is null
+                   * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
@@ -210,12 +384,26 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * Recovers a segmented metadata ledger and starts its owned WAL/coordinator resources.
+     *
+     * <p>The caller owns the returned store and must close it. The root-only open overload
+     * reads the required store identity from the sibling SIGNING_NAMESPACE file.</p>
+     *
+     * @param root transactional metadata directory; must not be null
+     * @return open transactional metadata store with exclusive owned engine resources
+     * @throws IOException if creation, format validation, recovery, namespace reading, or durable startup fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if store identity or capacity/configuration bounds are invalid
+     */
     /* default */ static SegmentedTransactionalMetadataStore open(Path root) throws IOException {
         Path namespace = Objects.requireNonNull(root, "root").getParent().resolve("SIGNING_NAMESPACE");
         return open(root, new MetadataStoreId(Files.readString(namespace).trim()));
     }
 
-    /** Cause-free marker preserving malformed persistence across store layers. */
+    /**
+     * Cause-free marker preserving malformed persistence across store layers.
+     */
     /* default */ static final class OpenIntegrityException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -224,21 +412,47 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public MetadataStoreId id() { requireOpen(); return engine.storeId(); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public MetadataStoreCapabilities capabilities() { requireOpen(); return CAPABILITIES; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataTransaction beginTransaction() throws IOException {
         return beginTransactionInternal(null,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Issues a transaction using workspace protected for progress of already accepted signing work.
+     *
+     * @return owned transaction; caller commits or closes it
+     * @throws IOException if transaction capacity, issuance framing, or durability is unavailable
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ MetadataTransaction beginSigningProgressTransaction() throws IOException {
         return beginTransactionInternal(null,
                 SigningTransitionWorkspaceSizing.AdmissionClass
                         .PROTECTED_ACCEPTED_SIGNING);
     }
 
+    /**
+     * Issues an ordinary metadata transaction carrying an existing signing-capacity reservation.
+     *
+     * @param signingAdmission engine-owned signing acceptance reservation; must not be null
+     * @return owned transaction retaining the supplied admission until commit or close
+     * @throws IOException if transaction capacity or durable issuance fails
+     * @throws NullPointerException if signingAdmission is null
+     * @throws IllegalArgumentException if admission belongs to another engine
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ MetadataTransaction beginTransaction(
             SigningLedgerStoreEngine.SigningAdmission signingAdmission) throws IOException {
         Objects.requireNonNull(signingAdmission, "signingAdmission");
@@ -272,11 +486,20 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public MetadataCommitResult resolve(MetadataTransactionId transactionId)
             throws IOException { requireOpen(); return engine.resolve(transactionId); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void acknowledge(MetadataTransactionId transactionId)
             throws IOException { requireOpen(); engine.acknowledge(transactionId); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataSnapshot snapshot() throws IOException {
         requireOpen();
@@ -285,34 +508,86 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         return snapshot;
     }
 
+    /**
+     * Durably advances the monotone ledger watermark to at least the supplied epoch time.
+     *
+     * @param epochMilli nonnegative watermark time in milliseconds since the Unix epoch
+     * @return current durable watermark after the advance
+     * @throws IOException if watermark publication cannot be acknowledged
+     * @throws IllegalArgumentException if epochMilli is negative
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ long advanceWatermark(long epochMilli) throws IOException {
         requireOpen();
         return engine.advanceWatermark(epochMilli);
     }
 
+    /**
+     * Retains a monotone watermark observation for later durable commit publication.
+     *
+     * @param epochMilli nonnegative watermark time in milliseconds since the Unix epoch
+     * @throws IllegalArgumentException if epochMilli is negative
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ void observeWatermark(long epochMilli) {
         requireOpen();
         engine.observeWatermark(epochMilli);
     }
 
+    /**
+     * Commits one self-describing mutation frame without separate issue/acknowledge frames.
+     *
+     * @param mutations ordered bounded mutation descriptors
+     * @return authoritative committed, not-committed, or unknown mutation outcome
+     * @throws IOException if mutation admission, framing, or durable publication fails
+     * @throws NullPointerException if mutations or a required entry is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ MetadataCommitResult directCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations) throws IOException {
         requireOpen();
         return engine.directCommit(mutations);
     }
 
+    /**
+     * Publishes accepted-signing progress with its protected workspace admission class.
+     *
+     * @param mutations ordered bounded mutation descriptors
+     * @return authoritative direct-commit outcome
+     * @throws IOException if admission, framing, or durability fails
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ MetadataCommitResult directSigningProgressCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations) throws IOException {
         requireOpen();
         return engine.directProgressCommit(mutations);
     }
 
+    /**
+     * Commits a bounded ordered cohort of independent direct mutation frames.
+     *
+     * @param mutationCohort bounded ordered cohort of mutation lists
+     * @return ordered authoritative outcome for each cohort member
+     * @throws IOException if cohort admission, framing, or durability fails
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ List<MetadataCommitResult> directCommitCohort(
             List<List<SigningTransactionPayloadCodec.Mutation>> mutationCohort) throws IOException {
         requireOpen();
         return engine.directCommitCohort(mutationCohort);
     }
 
+    /**
+     * Commits one self-describing mutation frame without separate issue/acknowledge frames.
+     *
+     * @param mutations ordered bounded mutation descriptors
+     * @param signingAdmission engine-owned signing acceptance reservation; must not be null
+     * @return authoritative committed, not-committed, or unknown mutation outcome
+     * @throws IOException if mutation admission, framing, or durable publication fails
+     * @throws NullPointerException if an explicitly supplied signingAdmission is null
+     * @throws IllegalArgumentException if admission belongs to another engine
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ MetadataCommitResult directCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations,
             SigningLedgerStoreEngine.SigningAdmission signingAdmission) throws IOException {
@@ -321,59 +596,142 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 signingAdmission, "signingAdmission"));
     }
 
+    /**
+     * Selects between complete primary/fallback mutation branches at WAL admission.
+     *
+     * @param decision complete primary/fallback mutation branches with their admission guard and callback
+     * @return authoritative outcome and whether the primary branch was admitted
+     * @throws IOException if decision processing or durable publication fails
+     * @throws NullPointerException if decision is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningLedgerStoreEngine.ConditionalCommitResult directCommitAtAdmission(
             SigningLedgerStoreEngine.ConditionalDirectCommit decision) throws IOException {
         requireOpen();
         return engine.directCommitAtAdmission(Objects.requireNonNull(decision, "decision"));
     }
 
+    /**
+     * Reserves active signing-work capacity before accepting a new signing operation.
+     *
+     * @return owned signing admission; caller must close it unless transferred
+     * @throws IllegalStateException if the store is closed
+     * @throws SigningActiveWal.OverloadedException if bounded admission capacity is exhausted
+     */
     /* default */ SigningLedgerStoreEngine.SigningAdmission reserveAcceptanceCapacity() {
         requireOpen();
         return engine.reserveAcceptanceCapacity();
     }
 
+    /**
+     * Observes counters for the active local-signing WAL writer.
+     *
+     * @return immutable active-writer counters
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningActiveWal.Snapshot writerSnapshot() {
         requireOpen();
         return engine.writerSnapshot();
     }
 
+    /**
+     * Observes local-signing WAL counters accumulated across writer rotations.
+     *
+     * @return immutable lifetime cumulative writer counters
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningActiveWal.Snapshot cumulativeWriterSnapshot() {
         requireOpen();
         return engine.cumulativeWriterSnapshot();
     }
 
+    /**
+     * Returns the first retained recovery failure, or null if none was recorded.
+     *
+     * @return first retained recovery failure, or null if none was recorded
+     */
     /* default */ Throwable firstRecoveryFailure() {
         return engine.firstRecoveryFailure();
     }
 
+    /**
+     * Captures scalar index capacity at an idle publication boundary.
+     *
+     * @return immutable quiescent capacity observation
+     * @throws IllegalStateException if the store is closed or publication is not quiescent
+     */
     /* default */ SigningLedgerStoreEngine.CapacityObservation capacityObservation() {
         requireOpen();
         return engine.capacityObservation();
     }
 
+    /**
+     * Observes resident and transient index reservation budgets.
+     *
+     * @return immutable steady/transient budget snapshots
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningLedgerStoreEngine.CapacitySnapshot capacitySnapshot() {
         requireOpen();
         return engine.capacitySnapshot();
     }
 
+    /**
+     * Returns statistics from the recovery that opened this store.
+     *
+     * @return immutable opening recovery statistics
+     * @throws IllegalStateException if the store is closed or the engine was not opened by recovery
+     */
     /* default */ SigningLedgerRecovery.Statistics recoveryStatistics() {
         requireOpen();
         return engine.recoveryStatistics();
     }
 
+    /**
+     * Returns counters from authoritative recovery projection rebuilding.
+     *
+     * @return immutable projection visit and workspace counters
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningLedgerStoreEngine.RecoveryProjectionStatistics
             recoveryProjectionStatistics() {
         requireOpen();
         return engine.recoveryProjectionStatistics();
     }
 
+    /**
+     * Returns the recovered or durably advanced ledger watermark.
+     *
+     * @return nonnegative durable watermark
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ long recoveredWatermark() { requireOpen(); return engine.recoveredWatermark(); }
 
+    /**
+     * Selects due signing identities through an inclusive cutoff.
+     *
+     * @param cutoff inclusive due-time cutoff
+     * @param maximumResults positive upper bound on returned records
+     * @return bounded unmodifiable due operation identity list
+     * @throws IOException if projection capture is interrupted or due selection fails
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ List<String> selectSigningDue(java.time.Instant cutoff, int maximumResults)
             throws IOException {
         requireOpen(); return engine.selectDue(cutoff, maximumResults);
     }
 
+    /**
+     * Captures an identity-ordered due page and stable high-watermark metadata.
+     *
+     * @param cutoff inclusive due-time cutoff
+     * @param exclusiveCursor optional operation identity excluded from the next page
+     * @param inclusiveHighWatermark optional fixed upper identity included in the scan
+     * @param maximumResults positive upper bound on returned records
+     * @return immutable candidates, high watermark, and end-of-scan flag
+     * @throws IOException if projection capture or due selection fails
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningDuePage pageSigningDue(java.time.Instant cutoff,
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
             int maximumResults) throws IOException {
@@ -387,6 +745,15 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         return new SigningDuePage(candidates, due.highWatermark(), due.endReached());
     }
 
+    /**
+     * Captures owner identities with the exact MVCC snapshot required for decoding.
+     *
+     * @param exclusiveCursor optional operation identity excluded from the next page
+     * @param maximumResults positive upper bound on returned records
+     * @return owned owner page; caller closes it to release both selection and snapshot
+     * @throws IOException if projection capture, owner selection, or snapshot reservation fails
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ SigningOwnerPage pageSigningOwners(Optional<String> exclusiveCursor,
             int maximumResults) throws IOException {
         requireOpen();
@@ -409,11 +776,28 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * Tests whether the current work projection retains a signing operation owner.
+     *
+     * @param operationId exact signing operation identity; must not be null
+     * @return true if the exact operation identity remains owned
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ boolean containsSigningOwner(String operationId) {
         requireOpen();
         return engine.containsOwner(Objects.requireNonNull(operationId, "operationId"));
     }
 
+    /**
+     * Captures at most one current record from the requested key range.
+     *
+     * @param range metadata key range; must not be null
+     * @return owned current selection; caller closes it and each returned record
+     * @throws IOException if projection capture or selection fails
+     * @throws NullPointerException if range is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ CurrentSelection selectCurrentFirst(MetadataSnapshot.KeyRange range)
             throws IOException {
         requireOpen();
@@ -421,6 +805,15 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 Objects.requireNonNull(range, "range")));
     }
 
+    /**
+     * Captures all current record pointers in the requested key range.
+     *
+     * @param range metadata key range; must not be null
+     * @return owned current selection; caller closes it and each returned record
+     * @throws IOException if projection capture or selection fails
+     * @throws NullPointerException if range is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ CurrentSelection selectCurrentRange(MetadataSnapshot.KeyRange range)
             throws IOException {
         requireOpen();
@@ -428,12 +821,28 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 Objects.requireNonNull(range, "range")));
     }
 
+    /**
+     * Selects retained signing identities through the inclusive creation-time cutoff.
+     *
+     * @param createdAtCutoff inclusive operation creation-time cutoff
+     * @param maximumResults positive upper bound on returned records
+     * @return bounded operation identity list from the retention index
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ List<String> selectSigningRetention(java.time.Instant createdAtCutoff,
             int maximumResults) {
         requireOpen(); return engine.selectRetention(createdAtCutoff, maximumResults);
     }
 
-    /** Publishes one pinned revision directly as a fresh checkpoint ledger. */
+    /**
+     * Publishes one pinned revision directly as a fresh checkpoint ledger.
+     * @param targetRoot fresh destination metadata root; must not be null
+     * @param excludedNamespaces immutable namespace exclusions for projections rebuilt at the destination
+     * @throws IOException if snapshot validation, encoding, or destination durability fails
+     * @throws IllegalArgumentException if an explicitly supplied snapshot is closed or foreign
+     * @throws NullPointerException if targetRoot or excludedNamespaces is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ void exportSnapshotTo(Path targetRoot, Set<String> excludedNamespaces)
             throws IOException {
         requireOpen();
@@ -441,6 +850,17 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         SigningLedgerSnapshotExporter.export(engine, targetRoot, excludedNamespaces);
     }
 
+    /**
+     * Publishes a borrowed pinned revision directly as a fresh checkpoint ledger.
+     *
+     * @param snapshot open metadata snapshot owned by this store; borrowed without closing it
+     * @param targetRoot fresh destination metadata root; must not be null
+     * @param excludedNamespaces immutable namespace exclusions for projections rebuilt at the destination
+     * @throws IOException if snapshot validation, encoding, or destination durability fails
+     * @throws IllegalArgumentException if an explicitly supplied snapshot is closed or foreign
+     * @throws NullPointerException if targetRoot or excludedNamespaces is null
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ void exportSnapshotTo(MetadataSnapshot snapshot, Path targetRoot, Set<String> excludedNamespaces) throws IOException {
         requireOpen();
         if (!(snapshot instanceof SnapshotImpl exact) || !snapshots.contains(exact)) {
@@ -450,7 +870,15 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         SigningLedgerSnapshotExporter.export(engine, exact.snapshot, targetRoot, excludedNamespaces);
     }
 
-    /** Copies every namespace and preserves authoritative revisions in a bounded backup checkpoint. */
+    /**
+     * Copies every namespace and preserves authoritative revisions in a bounded backup checkpoint.
+     * @param snapshot open metadata snapshot owned by this store; borrowed without closing it
+     * @param targetRoot fresh destination metadata root; must not be null
+     * @param maximumCheckpointBytes positive finite checkpoint output bound, in bytes
+     * @throws IOException if checkpoint encoding exceeds its bound or durable export fails
+     * @throws IllegalArgumentException if snapshot is closed/foreign or the byte bound is invalid
+     * @throws IllegalStateException if the store is closed
+     */
     /* default */ void exportBackupSnapshotTo(MetadataSnapshot snapshot, Path targetRoot, long maximumCheckpointBytes)
             throws IOException {
         requireOpen();
@@ -461,7 +889,14 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         SigningLedgerSnapshotExporter.exportBackup(engine, exact.snapshot, targetRoot, maximumCheckpointBytes);
     }
 
-    /** Copies one pinned logical revision into a fresh target, excluding rebuilt namespaces. */
+    /**
+     * Copies one pinned logical revision into a fresh target, excluding rebuilt namespaces.
+     * @param target fresh open target metadata store; borrowed and left open
+     * @param excludedNamespaces immutable namespace exclusions for projections rebuilt at the destination
+     * @throws IOException if source reading, target reconstruction, or retained-outcome restoration fails
+     * @throws NullPointerException if target, exclusions, or an exclusion entry is null
+     * @throws IllegalStateException if the source store is closed
+     */
     /* default */ void copySnapshotTo(SegmentedTransactionalMetadataStore target,
             Set<String> excludedNamespaces) throws IOException {
         requireOpen();
@@ -515,19 +950,41 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * Store-local operation identity and scheduling coordinates for one due candidate.
+     *
+     * @param operationId exact signing operation identity
+     * @param scheduling exact key and authority coordinates used for fair scheduling
+     * @param malformed whether retained state is malformed and requires guarded handling
+     */
     /* default */ record SigningDueCandidate(String operationId,
             SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) { }
 
-    /** Store-local immutable lightweight due page. */
+    /**
+     * Store-local immutable lightweight due page.
+     * @param candidates immutable due candidates in traversal order
+     * @param highWatermark last traversal identity, or empty when no continuation exists
+     * @param endReached whether the traversal reached the end of the captured due set
+     */
     /* default */ record SigningDuePage(List<SigningDueCandidate> candidates,
             Optional<String> highWatermark, boolean endReached) {
+        /**
+         * Creates the store-local immutable lightweight due page.
+         *
+         * @param candidates immutable due candidates in traversal order
+         * @param highWatermark last traversal identity, or empty when no continuation exists
+         * @param endReached whether the traversal reached the end of the captured due set
+         * @throws NullPointerException if {@code candidates} is null; or if {@code highWatermark} is null
+         */
         SigningDuePage {
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
             highWatermark = Objects.requireNonNull(highWatermark, "highWatermark");
         }
     }
 
-    /** Store-local owner page whose candidate reads share one pinned revision. */
+    /**
+     * Store-local owner page whose candidate reads share one pinned revision.
+     */
     /* default */ final class SigningOwnerPage implements AutoCloseable {
         private final List<SigningDueCandidate> candidates;
         private final Optional<String> highWatermark;
@@ -544,18 +1001,42 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             this.snapshot = snapshot;
             this.owners = owners;
         }
+        /**
+         * Returns the immutable owner candidates retained by this open page.
+         *
+         * @return bounded owner candidate list
+         * @throws IllegalStateException if the owner page is closed
+         */
         /* default */ List<SigningDueCandidate> candidates() {
             requirePageOpen();
             return candidates;
         }
+        /**
+         * Returns the stable upper owner identity captured for this page.
+         *
+         * @return optional high-watermark identity
+         * @throws IllegalStateException if the owner page is closed
+         */
         /* default */ Optional<String> highWatermark() {
             requirePageOpen();
             return highWatermark;
         }
+        /**
+         * Reports whether the owner scan reached its captured end.
+         *
+         * @return true if no later owner remains within this scan boundary
+         * @throws IllegalStateException if the owner page is closed
+         */
         /* default */ boolean endReached() {
             requirePageOpen();
             return endReached;
         }
+        /**
+         * Returns the MVCC revision paired with this owner page.
+         *
+         * @return borrowed page-owned metadata snapshot; released when the page closes
+         * @throws IllegalStateException if the owner page is closed
+         */
         /* default */ MetadataSnapshot snapshot() {
             requirePageOpen();
             return snapshot;
@@ -563,6 +1044,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         private void requirePageOpen() {
             if (pageClosed.get()) throw new IllegalStateException("signing owner page is closed");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (pageClosed.compareAndSet(false, true)) {
                 snapshot.close();
@@ -571,6 +1055,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         if (!closed.compareAndSet(false, true)) return;
@@ -600,17 +1087,29 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             this.signingAdmission = signingAdmission;
             this.admissionClass = admissionClass;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public MetadataTransactionId id() { requireActive(); return id; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void create(MetadataKey key, RepeatableContent content,
                 CancellationSignal cancellation) throws IOException {
             stage(SigningTransactionPayloadCodec.MutationKind.CREATE, key, -1L, content, cancellation);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void replace(MetadataKey key, long expectedRevision,
                 RepeatableContent content, CancellationSignal cancellation) throws IOException {
             if (expectedRevision < 0L) throw new IllegalArgumentException("expectedRevision");
             stage(SigningTransactionPayloadCodec.MutationKind.REPLACE, key, expectedRevision,
                     content, cancellation);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void delete(MetadataKey key, long expectedRevision) {
             requireActive();
             if (expectedRevision < 0L) throw new IllegalArgumentException("expectedRevision");
@@ -661,6 +1160,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 throw new IllegalStateException("Metadata transaction key is duplicated");
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public MetadataCommitResult commit() throws IOException {
             requireActive();
             if (mutations.isEmpty()) throw new IllegalStateException("Metadata transaction is empty");
@@ -671,6 +1173,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             }
             finally { release(); }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void abort() throws IOException {
             requireOwner();
             if (state == State.ACTIVE) {
@@ -682,6 +1187,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 finally { release(); }
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { if (state == State.ACTIVE) abort(); }
         private void release() {
             for (SigningTransactionPayloadCodec.Mutation mutation : mutations.values()) {
@@ -706,16 +1214,31 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         private final SigningMvccIndex.Snapshot snapshot;
         private final AtomicBoolean snapshotClosed = new AtomicBoolean();
         private SnapshotImpl(SigningMvccIndex.Snapshot snapshot) { this.snapshot = snapshot; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public MetadataStoreId storeId() { requireSnapshotOpen(); return engine.storeId(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long revision() { requireSnapshotOpen(); return snapshot.revision(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<Record> get(MetadataKey key) throws IOException {
             requireSnapshotOpen();
             Optional<SigningMvccIndex.SnapshotRecord> value = snapshot.lookup(Objects.requireNonNull(key, "key"));
             return value.isEmpty() ? Optional.empty() : Optional.of(record(value.orElseThrow()));
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<MetadataKey> greatestKey(String namespace) {
             requireSnapshotOpen(); return snapshot.greatest(namespace);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public MetadataCursor scan(KeyRange range, CancellationSignal cancellation)
                 throws IOException {
             requireSnapshotOpen();
@@ -725,6 +1248,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         private RecordImpl record(SigningMvccIndex.SnapshotRecord value) throws IOException {
             return new RecordImpl(value, engine.readValue(value));
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (snapshotClosed.compareAndSet(false, true)) {
                 snapshot.close(); snapshots.remove(this);
@@ -745,6 +1271,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 this.range = range;
                 nextLower = new MetadataKey(range.namespace(), range.lowerInclusive().orElse("!"));
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public Optional<Record> next(CancellationSignal cancellation) throws IOException {
                 requireCursorOpen();
                 Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
@@ -759,6 +1288,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 lastReturned = value.key(); nextLower = lastReturned;
                 return Optional.of(record(value));
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public void close() { cursorClosed = true; page = List.of(); }
             private void requireCursorOpen() {
                 requireSnapshotOpen();
@@ -773,20 +1305,44 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             private RecordImpl(SigningMvccIndex.SnapshotRecord metadata, byte[] value) {
                 this.metadata = metadata; this.value = value;
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public MetadataKey key() { requireRecordOpen(); return metadata.key(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public long recordRevision() { requireRecordOpen(); return metadata.revision(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public long commitRevision() { requireRecordOpen(); return metadata.revision(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public Optional<MetadataSnapshot.Integrity> integrity() {
                 requireRecordOpen();
                 return Optional.empty();
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public InputStream openStream() { requireRecordOpen(); return new OwnedStream(this, value); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public OptionalLong length() { requireRecordOpen(); return OptionalLong.of(value.length); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public String contentId() {
                 requireRecordOpen();
                 return "zeroecho-segmented-metadata-v1:" + engine.storeId().value() + ':'
                         + metadata.key().canonical() + ':' + metadata.revision();
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public void close() { recordClosed.set(true); }
             private void requireRecordOpen() {
                 requireSnapshotOpen();
@@ -795,7 +1351,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
-    /** Short-lived package-local current record selection. */
+    /**
+     * Short-lived package-local current record selection.
+     */
     /* default */ final class CurrentSelection implements AutoCloseable {
         private final SigningCurrentSelection selection;
         private final AtomicBoolean selectionClosed = new AtomicBoolean();
@@ -805,6 +1363,13 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             this.selection = selection;
         }
 
+        /**
+         * Decodes the next retained current-record pointer into an owned metadata record.
+         *
+         * @return next owned record to close after use, or empty after the selection is exhausted
+         * @throws IOException if its authoritative mutation frame cannot be read or decoded
+         * @throws IllegalStateException if the selection is closed
+         */
         /* default */ Optional<MetadataSnapshot.Record> next() throws IOException {
             requireSelectionOpen();
             List<SigningMvccIndex.SnapshotRecord> records = selection.records();
@@ -817,6 +1382,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             return Optional.of(new RecordImpl(metadata, value));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (selectionClosed.compareAndSet(false, true)) {
@@ -840,26 +1408,50 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 this.value = value;
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override public MetadataKey key() { requireRecordOpen(); return metadata.key(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public long recordRevision() { requireRecordOpen(); return metadata.revision(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public long commitRevision() { requireRecordOpen(); return metadata.revision(); }
+            /**
+             * {@inheritDoc}
+             */
             @Override public Optional<MetadataSnapshot.Integrity> integrity() {
                 requireRecordOpen();
                 return Optional.empty();
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public InputStream openStream() {
                 requireRecordOpen();
                 return new CurrentOwnedStream(this, value);
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public OptionalLong length() {
                 requireRecordOpen();
                 return OptionalLong.of(value.length);
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public String contentId() {
                 requireRecordOpen();
                 return "zeroecho-segmented-metadata-v1:" + engine.storeId().value() + ':'
                         + metadata.key().canonical() + ':' + metadata.revision();
             }
+            /**
+             * {@inheritDoc}
+             */
             @Override public void close() { recordClosed.set(true); }
 
             private void requireRecordOpen() {
@@ -874,7 +1466,13 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
     private static final class OwnedStream extends ByteArrayInputStream {
         private final SnapshotImpl.RecordImpl owner;
         private OwnedStream(SnapshotImpl.RecordImpl owner, byte[] value) { super(value); this.owner = owner; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized int read() { owner.requireRecordOpen(); return super.read(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized int read(byte[] bytes, int offset, int length) {
             owner.requireRecordOpen(); return super.read(bytes, offset, length);
         }
@@ -886,7 +1484,13 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             super(value);
             this.owner = owner;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized int read() { owner.requireRecordOpen(); return super.read(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized int read(byte[] bytes, int offset, int length) {
             owner.requireRecordOpen(); return super.read(bytes, offset, length);
         }
@@ -895,9 +1499,21 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
     private static final class ByteContent implements RepeatableContent {
         private final byte[] value;
         private ByteContent(byte[] value) { this.value = value.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public InputStream openStream() { return new ByteArrayInputStream(value); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OptionalLong length() { return OptionalLong.of(value.length); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String contentId() { return "snapshot-metadata"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { Arrays.fill(value, (byte) 0); }
     }
 

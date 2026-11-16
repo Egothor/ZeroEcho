@@ -63,7 +63,9 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 import zeroecho.pki.spi.store.RevocationView;
 
-/** Store-owned coordination of the authoritative log and its derived state. */
+/**
+ * Store-owned coordination of the authoritative log and its derived state.
+ */
 // Log, index, recovery, and feed collaborators must advance under one ownership boundary.
 @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.UnusedAssignment", "PMD.ControlStatementBraces", "PMD.CouplingBetweenObjects" })
@@ -96,17 +98,53 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         this.feedChannels = feedChannels;
     }
 
+    /**
+     * Opens the authoritative revocation log and recovers its derived current-state index before returning.
+     *
+     * @param paths filesystem revocation layout
+     * @param storeId exact source metadata store identity
+     * @param credentials credential authority used to validate log transitions
+     * @param create whether to create a new log rather than open existing authority
+     * @return open authority owning its log and derived index
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if log creation, validation or index recovery fails
+     */
     /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
             FilesystemRevocationLog.CredentialAuthority credentials, boolean create) throws IOException {
         return open(paths, storeId, credentials, create, IndexUpdateFaultInjector.NONE);
     }
 
+    /**
+     * Opens the authoritative revocation log and recovers its derived current-state index before returning.
+     *
+     * @param paths filesystem revocation layout
+     * @param storeId exact source metadata store identity
+     * @param credentials credential authority used to validate log transitions
+     * @param create whether to create a new log rather than open existing authority
+     * @param indexUpdateFaults instance callback before derived index updates
+     * @return open authority owning its log and derived index
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if log creation, validation or index recovery fails
+     */
     /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
             FilesystemRevocationLog.CredentialAuthority credentials, boolean create,
             IndexUpdateFaultInjector indexUpdateFaults) throws IOException {
         return open(paths, storeId, credentials, create, indexUpdateFaults, FeedChannelFactory.DEFAULT);
     }
 
+    /**
+     * Opens the authoritative revocation log and recovers its derived current-state index before returning.
+     *
+     * @param paths filesystem revocation layout
+     * @param storeId exact source metadata store identity
+     * @param credentials credential authority used to validate log transitions
+     * @param create whether to create a new log rather than open existing authority
+     * @param indexUpdateFaults instance callback before derived index updates
+     * @param feedChannels instance factory for read-only authoritative feed channels
+     * @return open authority owning its log and derived index
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if log creation, validation or index recovery fails
+     */
     /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
             FilesystemRevocationLog.CredentialAuthority credentials, boolean create,
             IndexUpdateFaultInjector indexUpdateFaults, FeedChannelFactory feedChannels) throws IOException {
@@ -137,6 +175,15 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Reads current credential revocation state, rebuilding an invalid derived index before lookup.
+     *
+     * @param credentialId exact credential identity
+     * @return current record, or empty if no transition exists
+     * @throws NullPointerException if credentialId is null
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority is fenced, or current-state lookup or recovery fails
+     */
     /* default */ Optional<RevocationRecord> current(PkiId credentialId) throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
         lifecycle.writeLock().lock();
@@ -149,6 +196,18 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Appends one validated transition to authoritative history before updating the derived current index.
+     * A derived index update failure invalidates that index while the committed authoritative result is returned.
+     *
+     * @param credentialId credential whose transition is appended
+     * @param transition requested revocation state transition
+     * @return complete durably appended authoritative transition
+     * @throws NullPointerException if either argument is null
+     * @throws IllegalArgumentException if transition preconditions or credential binding are invalid
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery, validation fails or append durability cannot be confirmed
+     */
     /* default */ RevocationTransitionFrameCodec.CompleteRecord append(
             PkiId credentialId, RevocationTransition transition) throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
@@ -173,26 +232,55 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Instance-scoped deterministic seam for derived-update failure tests. */
+    /**
+     * Instance-scoped deterministic seam for derived-update failure tests.
+     */
     /* default */
     @FunctionalInterface
     interface IndexUpdateFaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         IndexUpdateFaultInjector NONE = () -> { };
 
-        /** Runs after authoritative append and before derived index update. */
+        /**
+         * Runs after authoritative append and before the derived current-state update.
+         *
+         * @throws IOException to inject a derived-update failure without undoing authoritative append
+         */
         void afterAppend() throws IOException;
     }
 
-    /** Instance-scoped feed-channel seam for deterministic bounded-I/O tests. */
+    /**
+     * Instance-scoped feed-channel seam for deterministic bounded-I/O tests.
+     */
     /* default */
     @FunctionalInterface
     interface FeedChannelFactory {
+        /**
+         * Default factory opening a read-only channel for the requested feed file.
+         */
         FeedChannelFactory DEFAULT = path -> FileChannel.open(path, StandardOpenOption.READ);
 
-        /** Opens one read-only channel over the authoritative log. */
+        /**
+         * Opens one read-only channel over the authoritative revocation log.
+         *
+         * @param path authoritative log path
+         * @return new read-only channel owned by the caller
+         * @throws IOException if the channel cannot be opened
+         */
         SeekableByteChannel open(Path path) throws IOException;
     }
 
+    /**
+     * Captures the current authoritative log head and opens bounded history for one credential.
+     *
+     * @param credentialId credential identity to select
+     * @return caller-owned history cursor bounded by the captured head
+     * @throws NullPointerException if credentialId is null
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery or the history cursor cannot be opened
+     */
     /* default */ RevocationHistory history(PkiId credentialId) throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
         lifecycle.writeLock().lock();
@@ -206,6 +294,16 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures a finite authoritative feed, optionally resumed after an exact retained position.
+     *
+     * @param afterExclusive continuation position, or empty to start at genesis
+     * @return caller-owned feed bounded by its captured high watermark
+     * @throws NullPointerException if afterExclusive is null
+     * @throws IllegalArgumentException if the resume position does not belong to this authority or its captured prefix
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery or the feed cannot be opened
+     */
     /* default */ RevocationTransitionFeed feed(Optional<RevocationTransitionFeed.Position> afterExclusive)
             throws IOException {
         Objects.requireNonNull(afterExclusive, "afterExclusive");
@@ -220,6 +318,18 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates an exact genesis or resumed authoritative prefix against its source identity, byte boundary and commitment chain.
+     *
+     * @param prefix expected authoritative high watermark
+     * @param boundary byte boundary corresponding to the prefix
+     * @param cancellation cooperative cancellation signal
+     * @throws NullPointerException if prefix or cancellation is null
+     * @throws IllegalArgumentException if genesis, source identity or continuation coordinates are invalid
+     * @throws java.io.InterruptedIOException if cancellation is requested
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if the authoritative prefix cannot be read or verified
+     */
     /* default */ void requirePrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(prefix, "prefix");
@@ -246,6 +356,13 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures a stable current-state snapshot at the authoritative log head, publishing an exact checkpoint if needed.
+     *
+     * @return caller-owned snapshot retaining its checkpoint and captured head
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery, recovery fails or an exact checkpoint cannot be published
+     */
     /* default */ RevocationSnapshot snapshot() throws IOException {
         lifecycle.writeLock().lock();
         try {
@@ -281,6 +398,13 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Acquires a direct current-state view after bringing the derived index up to the captured authoritative head.
+     *
+     * @return caller-owned direct view with bounded revocation coordinates
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery, index recovery or view acquisition fails
+     */
     /* default */ RevocationView view() throws IOException {
         lifecycle.writeLock().lock();
         try {
@@ -296,6 +420,13 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures the current authoritative log recovery coordinates under the lifecycle read lock.
+     *
+     * @return exact current global revision, chain commitment and byte boundary
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery or log coordinates cannot be read
+     */
     /* default */ FilesystemRevocationLog.RecoveryTarget head() throws IOException {
         lifecycle.readLock().lock();
         try {
@@ -306,10 +437,24 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the authoritative log scan count for bounded-I/O instrumentation.
+     *
+     * @return number of log scan invocations observed by this authority
+     */
     /* default */ long revocationLogScanInvocationCount() {
         return log.scanInvocationCount();
     }
 
+    /**
+     * Copies and forces exactly the captured authoritative log prefix to a new backup file, then validates the copied prefix.
+     *
+     * @param target new destination file with a non-null parent directory
+     * @return recovery coordinates bounding the validated copy
+     * @throws NullPointerException if target or its parent is null
+     * @throws IllegalStateException if this authority is closed
+     * @throws IOException if authority requires recovery, target already exists, copying or forcing fails, or copied authority is inconsistent
+     */
     /* default */ FilesystemRevocationLog.RecoveryTarget copyAuthoritativePrefix(Path target) throws IOException {
         Objects.requireNonNull(target, "target");
         lifecycle.readLock().lock();
@@ -440,6 +585,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized void close() throws IOException {
         Set<OwnedResource> resources;
@@ -499,14 +647,20 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         return first;
     }
 
-    /** Resource registered for deterministic owner-driven closure. */
+    /**
+     * Resource registered for deterministic owner-driven closure.
+     */
     @SuppressWarnings("PMD.ImplicitFunctionalInterface")
     private interface OwnedResource {
-        /** Closes the resource without reentering owner deregistration. */
+        /**
+         * Closes the resource without reentering owner deregistration.
+         */
         void closeFromOwner() throws IOException;
     }
 
-    /** Read-lock-backed direct view; callers close it before external signing. */
+    /**
+     * Read-lock-backed direct view; callers close it before external signing.
+     */
     private static final class DirectView implements RevocationView {
         private final FilesystemRevocationAuthority owner;
         private final FilesystemRevocationLog.RecoveryTarget head;
@@ -519,13 +673,25 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
 
         private void acquire() { owner.lifecycle.readLock().lock(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long revision() { requireOpen(); return head.globalRevision(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String commitment() { requireOpen(); return head.globalCommitment().value(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<RevocationRecord> get(PkiId credentialId) throws IOException {
             requireOpen();
             return owner.index.lookup(Objects.requireNonNull(credentialId, "credentialId"))
                     .map(FilesystemRevocationAuthority::record);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (closed) return;
             closed = true;
@@ -536,7 +702,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Immutable checkpoint-backed current-state view. */
+    /**
+     * Immutable checkpoint-backed current-state view.
+     */
     private static final class StableView implements RevocationSnapshot, OwnedResource {
         private final FilesystemRevocationAuthority owner;
         private final FilesystemRevocationCheckpoint checkpoint;
@@ -552,36 +720,57 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             this.head = head;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String snapshotId() {
             return checkpoint.generationId();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public MetadataStoreId sourceStoreId() {
             return head.storeId();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long revision() {
             return head.globalRevision();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long boundary() {
             return head.boundary();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String commitment() {
             return head.globalCommitment().value();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong count() {
             return OptionalLong.of(checkpoint.entryCount());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public synchronized Cursor openCursor() throws IOException {
             requireOpen();
@@ -591,11 +780,17 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return cursor;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             closeInternal(true);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void closeFromOwner() throws IOException {
             closeInternal(false);
@@ -639,7 +834,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Ordered view cursor that revalidates every derived entry against its exact frame. */
+    /**
+     * Ordered view cursor that revalidates every derived entry against its exact frame.
+     */
     private static final class ViewCursor implements RevocationSnapshot.Cursor {
         private final StableView owner;
         private final FilesystemRevocationCheckpoint.Cursor cursor;
@@ -656,6 +853,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             this.logChannel = logChannel;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean next(CancellationSignal cancellation) throws IOException {
             requireOpen();
@@ -687,6 +887,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationRecord current() {
             if (current == null) {
@@ -695,6 +898,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long currentGlobalRevision() {
             if (current == null) {
@@ -703,6 +909,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return currentGlobalRevision;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long ordinal() {
             if (current == null) {
@@ -711,6 +920,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return ordinal;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             closeInternal(true);
@@ -788,12 +1000,18 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public HighWatermark highWatermark() {
             requireOpen();
             return highWatermark;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean next(CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(cancellation, "cancellation");
@@ -828,6 +1046,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Entry current() {
             requireOpen();
@@ -837,7 +1058,13 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { closeInternal(true); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void closeFromOwner() throws IOException { closeInternal(false); }
 
         private void restore(PositionState state, Position supplied) {
@@ -903,7 +1130,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Fixed-size opaque position codec; the digest binds every decoded field. */
+    /**
+     * Fixed-size opaque position codec; the digest binds every decoded field.
+     */
     private static final class PositionCodec {
         private static final int MAGIC = 0x5A455246;
         private static final short VERSION = 1;
@@ -978,7 +1207,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Decoded exclusive position. */
+    /**
+     * Decoded exclusive position.
+     */
     private record PositionState(MetadataStoreId storeId, long globalRevision,
             RevocationTransitionFrameCodec.Commitment commitment, long nextBoundary) {
         private PositionState {
@@ -987,7 +1218,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
-    /** Two-pass bounded-memory history cursor over one captured authoritative prefix. */
+    /**
+     * Two-pass bounded-memory history cursor over one captured authoritative prefix.
+     */
     private static final class HistoryCursor implements RevocationHistory, OwnedResource {
         private final FilesystemRevocationAuthority owner;
         private final PkiId credentialId;
@@ -1019,11 +1252,17 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PkiId credentialId() {
             return credentialId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean next(CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(cancellation, "cancellation");
@@ -1048,6 +1287,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationTransition current() {
             if (current == null) {
@@ -1056,11 +1298,17 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             closeInternal(true);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void closeFromOwner() throws IOException {
             closeInternal(false);

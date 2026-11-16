@@ -55,8 +55,14 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
 
+/**
+ * Contract and regression tests for Ed448 large data.
+ */
 public class Ed448LargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Provider setup if needed
@@ -120,6 +126,11 @@ public class Ed448LargeDataTest {
         return s.verify(sig);
     }
 
+    /**
+     * Ed448 streaming sign verify and cross-check with JCA.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ed448_streaming_sign_verify_and_crosscheck_with_jca() throws Exception {
         final int SIZE = 48 * 1024 + 123;

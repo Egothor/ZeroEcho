@@ -64,6 +64,9 @@ import zeroecho.core.spi.ContextAware;
  */
 public class ChaChaLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // If you need external providers, add them here, e.g.:
@@ -108,7 +111,11 @@ public class ChaChaLargeDataTest {
     // ChaCha20 (stream)
     // ------------------------------------------------------------------------
 
-    /** ChaCha20 round-trip using Ctx-only parameters (nonce shared via Ctx). */
+    /**
+     * ChaCha20 round-trip using Ctx-only parameters (nonce shared via Ctx).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void chacha20LargeData_ctxOnly() throws Exception {
         final int SIZE = 32 * 1024 + 777;
@@ -138,7 +145,11 @@ public class ChaChaLargeDataTest {
         logEnd();
     }
 
-    /** ChaCha20 round-trip using an in-band header (nonce + counter in header). */
+    /**
+     * ChaCha20 round-trip using an in-band header (nonce + counter in header).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void chacha20LargeData_headerCodec() throws Exception {
         final int SIZE = 32 * 1024 + 777;
@@ -172,6 +183,8 @@ public class ChaChaLargeDataTest {
      * ChaCha20: counter affects the keystream. - Encrypt with counter=7. - Decrypt
      * with the same counter → success. - Decrypt with a different counter →
      * plaintext differs.
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
      */
     @Test
     void chacha20_counterMatters() throws Exception {
@@ -228,7 +241,11 @@ public class ChaChaLargeDataTest {
     // ChaCha20-Poly1305 (AEAD)
     // ------------------------------------------------------------------------
 
-    /** AEAD round-trip using Ctx-only parameters (nonce + AAD in Ctx). */
+    /**
+     * AEAD round-trip using Ctx-only parameters (nonce + AAD in Ctx).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void chacha20Poly1305LargeData_ctxOnly_withAad() throws Exception {
         final int SIZE = 32 * 1024 + 777;
@@ -261,7 +278,11 @@ public class ChaChaLargeDataTest {
         logEnd();
     }
 
-    /** AEAD round-trip with in-band header; header validates AAD hash. */
+    /**
+     * AEAD round-trip with in-band header; header validates AAD hash.
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void chacha20Poly1305LargeData_headerCodec_withAad() throws Exception {
         final int SIZE = 32 * 1024 + 777;
@@ -297,6 +318,8 @@ public class ChaChaLargeDataTest {
     /**
      * AEAD: AAD mismatch must fail verification (expect an IOException from
      * doFinal).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
      */
     @Test
     void chacha20Poly1305_aadMismatchFails() throws Exception {

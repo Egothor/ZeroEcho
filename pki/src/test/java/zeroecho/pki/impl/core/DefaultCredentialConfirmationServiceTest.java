@@ -114,6 +114,9 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofVerification;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for default credential confirmation service.
+ */
 final class DefaultCredentialConfirmationServiceTest {
     private static final ConfirmationProofSuiteRef SUITE = new ConfirmationProofSuiteRef(
             "test.signature-pop.v1", "a".repeat(64));
@@ -128,6 +131,11 @@ final class DefaultCredentialConfirmationServiceTest {
     @TempDir
     private Path temporary;
 
+    /**
+     * Issues persisted challenge and exactly replays public presentation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuesPersistedChallengeAndExactlyReplaysPublicPresentation() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -155,6 +163,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Emits only fixed challenge and submission outcome telemetry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void emitsOnlyFixedChallengeAndSubmissionOutcomeTelemetry() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -190,6 +203,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Failing audit sink cannot change proof results or persisted state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failingAuditSinkCannotChangeProofResultsOrPersistedState() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -223,6 +241,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Missing policy provider and preflight failure do not persist challenge.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void missingPolicyProviderAndPreflightFailureDoNotPersistChallenge() throws Exception {
         try (FilesystemPkiStore store = open("preflight", new MutableClock(NOW))) {
@@ -247,6 +270,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Mismatching credential identity fails before challenge persistence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mismatchingCredentialIdentityFailsBeforeChallengePersistence() throws Exception {
         try (FilesystemPkiStore store = open("credential-identity", new MutableClock(NOW))) {
@@ -265,6 +293,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Malformed trailing and noncanonical certificates fail before persistence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedTrailingAndNoncanonicalCertificatesFailBeforePersistence() throws Exception {
         byte[] trailing = Arrays.copyOf(CERTIFICATE, CERTIFICATE.length + 1);
@@ -303,6 +336,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Valid ec certificate reaches accepting provider and issues challenge.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validEcCertificateReachesAcceptingProviderAndIssuesChallenge() throws Exception {
         byte[] ecCertificate = certificate("EC");
@@ -325,6 +363,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Freezes existing binding and lifetime across reopen and expiry replacement.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void freezesExistingBindingAndLifetimeAcrossReopenAndExpiryReplacement() throws Exception {
         Path root = temporary.resolve("frozen");
@@ -350,6 +393,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Presentation failure leaves exact challenge retryable by new service.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void presentationFailureLeavesExactChallengeRetryableByNewService() throws Exception {
         try (FilesystemPkiStore store = open("presentation", new MutableClock(NOW))) {
@@ -371,6 +419,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Concurrent safe facade calls converge on one exact persisted challenge.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentSafeFacadeCallsConvergeOnOneExactPersistedChallenge() throws Exception {
         try (FilesystemPkiStore store = open("concurrent-facade", new MutableClock(NOW))) {
@@ -408,6 +461,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Rejected proof leaves pending lifecycle challenge and review unchanged.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectedProofLeavesPendingLifecycleChallengeAndReviewUnchanged() throws Exception {
         try (FilesystemPkiStore store = open("rejected-proof", new MutableClock(NOW))) {
@@ -434,6 +492,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Provider null and exception fail closed without completion.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void providerNullAndExceptionFailClosedWithoutCompletion() throws Exception {
         try (FilesystemPkiStore store = open("verification-failure", new MutableClock(NOW))) {
@@ -456,6 +519,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Exact terminal retry bypasses provider and response specific validation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactTerminalRetryBypassesProviderAndResponseSpecificValidation() throws Exception {
         try (FilesystemPkiStore store = open("terminal-retry", new MutableClock(NOW))) {
@@ -488,6 +556,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Exact suite response bound is rejected before provider verification.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactSuiteResponseBoundIsRejectedBeforeProviderVerification() throws Exception {
         try (FilesystemPkiStore store = open("response-bound", new MutableClock(NOW))) {
@@ -505,6 +578,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Verified proof propagates rotated challenge conflict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void verifiedProofPropagatesRotatedChallengeConflict() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -534,6 +612,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Verified expired proof propagates expiry instead of rejection.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void verifiedExpiredProofPropagatesExpiryInsteadOfRejection() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -565,6 +648,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Proof verification rejects clock regression before credential or provider work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void proofVerificationRejectsClockRegressionBeforeCredentialOrProviderWork() throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -595,6 +683,11 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Concurrent verified submissions converge on one confirmed lifecycle.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentVerifiedSubmissionsConvergeOnOneConfirmedLifecycle() throws Exception {
         try (FilesystemPkiStore store = open("concurrent-proof", new MutableClock(NOW))) {
@@ -638,6 +731,9 @@ final class DefaultCredentialConfirmationServiceTest {
         }
     }
 
+    /**
+     * Missing challenge race recovers only an exact terminal lifecycle.
+     */
     @Test
     void missingChallengeRaceRecoversOnlyAnExactTerminalLifecycle() {
         CredentialConfirmationLifecycle pending = CredentialConfirmationLifecycle.initialize(

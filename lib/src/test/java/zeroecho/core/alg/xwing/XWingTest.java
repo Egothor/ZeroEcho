@@ -58,11 +58,19 @@ public final class XWingTest {
 
     private static final String INDENT = "...";
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * X-Wing KEM round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void xwing_kem_roundtrip() throws Exception {
         System.out.println("xwing_kem_roundtrip");

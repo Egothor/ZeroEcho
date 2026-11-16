@@ -196,7 +196,9 @@ public final class SecretPassword implements SecretContent, Destroyable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -210,7 +212,9 @@ public final class SecretPassword implements SecretContent, Destroyable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

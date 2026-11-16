@@ -54,11 +54,17 @@ public record X509AlgorithmBindingPolicy(Mode mode, Optional<BindingReference> s
         Optional<BindingReference> csrSignature, Optional<BindingReference> certificateSignature,
         Optional<BindingReference> crlSignature) {
 
-    /** Selection mode. */
+    /**
+     * Selection mode.
+     */
     public enum Mode {
-        /** Only sealed official bindings may be selected. */
+        /**
+         * Only sealed official bindings may be selected.
+         */
         STANDARD_ONLY,
-        /** Every custom representation is selected by stable binding identity. */
+        /**
+         * Every custom representation is selected by stable binding identity.
+         */
         EXPLICIT
     }
 
@@ -69,7 +75,13 @@ public record X509AlgorithmBindingPolicy(Mode mode, Optional<BindingReference> s
      * @param semanticCommitment exact contract commitment
      */
     public record BindingReference(String bindingId, String semanticCommitment) {
-        /** Validates one binding reference. */
+        /**
+         * Validates one binding reference.
+         * @param bindingId stable binding identity
+         * @param semanticCommitment exact contract commitment
+         * @throws IllegalArgumentException if bindingId or semanticCommitment is null or blank, or the
+         *     commitment exceeds 1024 characters
+         */
         public BindingReference {
             if (bindingId == null || bindingId.isBlank() || semanticCommitment == null
                     || semanticCommitment.isBlank() || semanticCommitment.length() > 1024) {
@@ -78,7 +90,18 @@ public record X509AlgorithmBindingPolicy(Mode mode, Optional<BindingReference> s
         }
     }
 
-    /** Validates and snapshots the policy. */
+    /**
+     * Validates and snapshots the policy.
+     * @param mode standard-only or explicit binding selection
+     * @param subjectPublicKey optional SPKI binding
+     * @param csrSignature optional CSR-signature binding
+     * @param certificateSignature optional certificate-signature binding
+     * @param crlSignature optional CRL-signature binding
+     * @throws NullPointerException if mode, subjectPublicKey, csrSignature, certificateSignature, crlSignature
+     *     is null
+     * @throws IllegalArgumentException if STANDARD_ONLY has an explicit selection or a nonstandard mode has no
+     *     selection
+     */
     public X509AlgorithmBindingPolicy {
         Objects.requireNonNull(mode, "mode");
         subjectPublicKey = Objects.requireNonNull(subjectPublicKey, "subjectPublicKey");

@@ -133,6 +133,9 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for PKI session full CRL.
+ */
 class PkiSessionFullCrlTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -141,6 +144,12 @@ class PkiSessionFullCrlTest {
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "session"),
             new Purpose("STATUS_GENERATE"), Optional.empty(), Optional.empty());
 
+    /**
+     * Prepares without dispatch discards and publishes bounded result then reopens.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preparesWithoutDispatchDiscardsAndPublishesBoundedResultThenReopens(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         SigningAcceptanceReceipt receipt;
@@ -187,6 +196,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Administrative hold survives restart and release publishes full and delta state.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void administrativeHoldSurvivesRestartAndReleasePublishesFullAndDeltaState(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         Path mirror = root.resolve("mirror");
@@ -266,6 +281,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Delta releases use global revision at equal times and keep frozen cutoff across restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaReleasesUseGlobalRevisionAtEqualTimesAndKeepFrozenCutoffAcrossRestart(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         PkiId deltaOperation;
@@ -340,6 +361,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Invalid latest base does not fall back reserve stage or dispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidLatestBaseDoesNotFallBackReserveStageOrDispatch(@TempDir Path root) throws Exception {
         for (String defect : List.of("key", "signed-time", "source", "prefix")) {
             Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
@@ -385,6 +412,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Delta uses persisted base after its workflow has been purged.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaUsesPersistedBaseAfterItsWorkflowHasBeenPurged(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         PkiId issuer;
@@ -428,6 +461,12 @@ class PkiSessionFullCrlTest {
                 .getInstance(crl.getExtensionValue(oid)).getOctets()).getValue();
     }
 
+    /**
+     * Validates null cancellation and closed session before reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void validatesNullCancellationAndClosedSessionBeforeReservation(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         SemanticSigningService semantic;
@@ -446,6 +485,12 @@ class PkiSessionFullCrlTest {
         assertThrows(SigningExecutionException.class, () -> semantic.prepareFullCrl(ACCESS, request, CancellationSignal.NONE));
     }
 
+    /**
+     * Rejects missing or incompatible selected capability before number reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsMissingOrIncompatibleSelectedCapabilityBeforeNumberReservation(@TempDir Path root) throws Exception {
         for (Capability capability : List.of(Capability.ABSENT, Capability.INCOMPATIBLE)) {
             Fixture fixture = new Fixture(false, capability);
@@ -463,6 +508,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Adoption limit failure retires tbs and consumes number.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void adoptionLimitFailureRetiresTbsAndConsumesNumber(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(true, Capability.COMPATIBLE);
         try (PkiSession session = fixture.open(root, OptionalLong.of(1))) {
@@ -476,6 +527,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Retired same key generation uses shared number scope.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void retiredSameKeyGenerationUsesSharedNumberScope(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false, Capability.COMPATIBLE);
         try (PkiSession session = fixture.open(root, OptionalLong.empty())) {
@@ -491,6 +548,12 @@ class PkiSessionFullCrlTest {
         }
     }
 
+    /**
+     * Unconfigured session has no semantic signing facade.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unconfiguredSessionHasNoSemanticSigningFacade(@TempDir Path root) throws Exception {
         try (PkiSession session = PkiSession.open(new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", root.toString())), new ProviderConfig("memory", Map.of()),

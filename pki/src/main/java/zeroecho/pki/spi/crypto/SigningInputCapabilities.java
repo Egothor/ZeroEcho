@@ -68,18 +68,30 @@ public final class SigningInputCapabilities {
             "(?:digest=zeroecho\\.sha2-(?:256|384|512)\\.none"
             + "|hash=zeroecho\\.sha2-(?:256|384|512)\\.none,mask=zeroecho\\.mgf1\\.none,"
             + "maskhash=zeroecho\\.sha2-(?:256|384|512)\\.none,salt=(?:0|[1-9][0-9]{0,9}),trailer=1)");
-    /** Version of the explicit raw/prehashed input protocol. */
+    /**
+     * Version of the explicit raw/prehashed input protocol.
+     */
     public static final int PROTOCOL_VERSION = 2;
-    /** Maximum number of advertised algorithm identities. */
+    /**
+     * Maximum number of advertised algorithm identities.
+     */
     public static final int MAXIMUM_ALGORITHMS = 1024;
-    /** Current remote client's inclusive raw input ceiling. */
+    /**
+     * Current remote client's inclusive raw input ceiling.
+     */
     public static final long REMOTE_RAW_LIMIT = 16L * 1024 * 1024;
 
-    /** Meaning of the transmitted signing input. */
+    /**
+     * Meaning of the transmitted signing input.
+     */
     public enum Mode {
-        /** Original message bytes. */
+        /**
+         * Original message bytes.
+         */
         RAW_MESSAGE,
-        /** Exact algorithm digest, without another message hashing step. */
+        /**
+         * Exact algorithm digest, without another message hashing step.
+         */
         PREHASHED_DIGEST
     }
 
@@ -93,6 +105,7 @@ public final class SigningInputCapabilities {
      * @param rawMessageMaximum inclusive positive raw length maximum
      * @param prehashedDigests canonical signature identity to exact digest
      * @throws IllegalArgumentException for unsafe, noncanonical or excessive mappings
+     * @throws NullPointerException if prehashedDigests or a mapping key/value is null
      */
     public SigningInputCapabilities(long rawMessageMaximum, Map<String, AlgorithmIdentity> prehashedDigests) {
         if (rawMessageMaximum <= 0) {
@@ -114,10 +127,14 @@ public final class SigningInputCapabilities {
         this.prehashedDigests = Map.copyOf(prehashedDigests);
     }
 
-    /** {@return inclusive positive raw-message maximum} */
+    /**
+     * {@return inclusive positive raw-message maximum}
+     */
     public long rawMessageMaximum() { return rawMessageMaximum; }
 
-    /** {@return immutable exact canonical signature-to-digest mappings} */
+    /**
+     * {@return immutable exact canonical signature-to-digest mappings}
+     */
     public Map<String, AlgorithmIdentity> prehashedDigests() { return prehashedDigests; }
 
     /**
@@ -127,6 +144,7 @@ public final class SigningInputCapabilities {
      * @param length original content length, including zero
      * @return deterministic input mode
      * @throws IllegalArgumentException for negative or unsupported input length
+     * @throws NullPointerException if algorithmId is null
      */
     public Mode select(String algorithmId, long length) {
         Objects.requireNonNull(algorithmId, "algorithmId");
@@ -149,6 +167,9 @@ public final class SigningInputCapabilities {
      * @param backend immutable backend configuration commitment
      * @param algorithms exact advertised algorithm set
      * @return client-effective configuration commitment
+     * @throws NullPointerException if backend, algorithms or an algorithm-set element is null
+     * @throws IllegalArgumentException if algorithms exceeds the finite bound, omits a prehashed mapping or contains an invalid canonical identity
+     * @throws IllegalStateException if SHA-256 is unavailable or the in-memory commitment cannot be encoded
      */
     public SigningProvider.ConfigurationCommitment commitment(SigningProvider.ConfigurationCommitment backend,
             Set<String> algorithms) {
@@ -187,6 +208,7 @@ public final class SigningInputCapabilities {
      * @param signature exact typed signature identity
      * @return message digest implied by the exact identity
      * @throws IllegalArgumentException if equivalent prehash semantics are not supported
+     * @throws NullPointerException if signature is null
      */
     public static AlgorithmIdentity requiredDigest(AlgorithmIdentity signature) {
         Objects.requireNonNull(signature, "signature");
@@ -226,6 +248,8 @@ public final class SigningInputCapabilities {
      * Creates an independent JDK engine for a supported prehash digest.
      * @param digest exact supported digest identity
      * @return new independently owned JDK digest engine
+     * @throws IllegalArgumentException if digest does not identify a supported SHA-2 digest
+     * @throws IllegalStateException if the runtime does not provide the required SHA-2 engine
      */
     public static MessageDigest newDigest(AlgorithmIdentity digest) {
         String name = switch (digestLength(digest)) {

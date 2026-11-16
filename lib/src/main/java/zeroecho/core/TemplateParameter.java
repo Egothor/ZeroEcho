@@ -61,6 +61,12 @@ public record TemplateParameter(String name, String displayName, Class<?> type, 
      *
      * @throws NullPointerException if any field is {@code null}
      * @throws IllegalArgumentException if the name, label or description is blank
+     * @param name machine-readable parameter name used as the map key
+     *                    (e.g., {@code "keySizeBits"})
+     * @param displayName human-readable label for UIs and error messages
+     * @param type the Java type of the parameter value (e.g.,
+     *                    {@code Integer.class})
+     * @param description brief description of constraints and purpose
      */
     public TemplateParameter {
         Objects.requireNonNull(name, "name must not be null");

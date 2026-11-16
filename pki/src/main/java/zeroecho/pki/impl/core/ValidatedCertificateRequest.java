@@ -89,7 +89,15 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
      */
     public record FrozenIssuance(PkiId issuerId, PkiId chainPathId, String chainPathCommitment,
             java.util.Optional<IssuanceIntent> intent) {
-        /** Validates one immutable issuance selection. */
+        /**
+         * Validates one immutable issuance selection.
+         * @param issuerId exact selected issuer-generation identifier
+         * @param chainPathId exact selected issuer-chain-path identifier
+         * @param chainPathCommitment lowercase 64-hex-character immutable path commitment
+         * @param intent optional caller idempotency intent frozen for publication
+         * @throws NullPointerException if issuerId, chainPathId, intent is null
+         * @throws IllegalArgumentException if the chain-path commitment is null or not canonical lowercase SHA-256 hexadecimal
+         */
         public FrozenIssuance {
             Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(chainPathId, "chainPathId");
@@ -100,6 +108,27 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
         }
     }
 
+    /**
+     * Creates a gate-approved certificate request with defensive copies of mutable inputs.
+     *
+     * <p>This carrier records validated policy inputs; construction alone does not authorize
+     * issuance or prove possession of the subject key.</p>
+     *
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param subjectRef validated subject identity; must not be null
+     * @param subjectRdns validated distinguished-name components, defensively copied; no null elements
+     * @param subjectAlternativeNames validated subject alternative names, defensively copied; no null elements
+     * @param sanCritical whether the subjectAlternativeName extension is critical
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param validity validated certificate validity interval; must not be null
+     * @param keyUsages validated leaf key usages, defensively copied; no null elements
+     * @param extendedKeyUsages validated extended key usages, defensively copied; no null elements
+     * @param keyUsageCritical whether the keyUsage extension is critical
+     * @param extendedKeyUsageCritical whether the extendedKeyUsage extension is critical
+     * @param basicConstraintsCritical whether the basicConstraints extension is critical
+     * @throws NullPointerException if a required input or collection element is null
+     */
     /* default */ ValidatedCertificateRequest(PkiId issuerCaId, CertificateProfileRef profileReference,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
             boolean sanCritical, EncodedObject exactPublicKey, Validity validity,
@@ -111,6 +140,28 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
                 X509AlgorithmBindingPolicy.standardOnly());
     }
 
+    /**
+     * Creates a gate-approved certificate request with defensive copies of mutable inputs.
+     *
+     * <p>This carrier records validated policy inputs; construction alone does not authorize
+     * issuance or prove possession of the subject key.</p>
+     *
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param subjectRef validated subject identity; must not be null
+     * @param subjectRdns validated distinguished-name components, defensively copied; no null elements
+     * @param subjectAlternativeNames validated subject alternative names, defensively copied; no null elements
+     * @param sanCritical whether the subjectAlternativeName extension is critical
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param validity validated certificate validity interval; must not be null
+     * @param keyUsages validated leaf key usages, defensively copied; no null elements
+     * @param extendedKeyUsages validated extended key usages, defensively copied; no null elements
+     * @param keyUsageCritical whether the keyUsage extension is critical
+     * @param extendedKeyUsageCritical whether the extendedKeyUsage extension is critical
+     * @param basicConstraintsCritical whether the basicConstraints extension is critical
+     * @param algorithmBindingPolicy validated algorithm binding policy; must not be null
+     * @throws NullPointerException if a required input or collection element is null
+     */
     /* default */ ValidatedCertificateRequest(PkiId issuerCaId, CertificateProfileRef profileReference,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
             boolean sanCritical, EncodedObject exactPublicKey, Validity validity,
@@ -173,6 +224,17 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
         this.executionEvidence = Objects.requireNonNull(executionEvidence, "executionEvidence");
     }
 
+    /**
+     * Binds a copy of this request to the exact issuer path and optional idempotency intent.
+     *
+     * @param issuerId exact selected issuer-generation identity; must not be null
+     * @param chainPathId exact selected issuer-chain-path identity; must not be null
+     * @param chainPathCommitment lowercase 64-character hexadecimal chain-path commitment
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @return immutable request copy carrying the frozen issuance selection
+     * @throws NullPointerException if a required selection or optional container is null
+     * @throws IllegalArgumentException if the path commitment is not lowercase SHA-256 hexadecimal
+     */
     /* default */ ValidatedCertificateRequest withFrozenIssuance(PkiId issuerId, PkiId chainPathId,
             String chainPathCommitment, java.util.Optional<IssuanceIntent> intent) {
         return new ValidatedCertificateRequest(this,

@@ -128,6 +128,12 @@ final class FsSnapshotExporter {
 
     private final FsPkiStoreOptions options;
 
+    /**
+     * Creates a historical snapshot exporter with the supplied store options.
+     *
+     * @param options store and historical-export options
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ FsSnapshotExporter(final FsPkiStoreOptions options) {
         this.options = Objects.requireNonNull(options, "options");
     }
@@ -135,6 +141,15 @@ final class FsSnapshotExporter {
     /*
      * Snapshot/profile failures deliberately cross this boundary without input-
      * bearing causes or filesystem paths.
+     */
+    /**
+     * Exports the selected historical view into a new target store root while preserving current signing safety metadata. The source is borrowed and remains open; failures can leave a partial target for caller cleanup.
+     *
+     * @param source source file or borrowed source store
+     * @param targetRoot fresh target store root
+     * @param at inclusive historical selection instant
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalStateException if historical selection, profile validation or snapshot publication fails
      */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ void exportSnapshot(final FilesystemPkiStore source, final Path targetRoot, final Instant at) {
@@ -198,7 +213,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Builds the validated logical credential and selected-CA export plan. */
+    /**
+     * Builds the validated logical credential and selected-CA export plan.
+     */
     private static final class AuthorityPlanner {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
@@ -355,7 +372,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Owns the sibling temporary root until one atomic target publication. */
+    /**
+     * Owns the sibling temporary root until one atomic target publication.
+     */
     private static final class SnapshotPublisher {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
@@ -471,7 +490,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Reconstructs target credential authority before publishing selected CAs. */
+    /**
+     * Reconstructs target credential authority before publishing selected CAs.
+     */
     private static final class AuthorityRestorer {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
@@ -615,7 +636,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Owns a completed target reference until its credential is persisted. */
+    /**
+     * Owns a completed target reference until its credential is persisted.
+     */
     private static final class CredentialTransfer implements AutoCloseable {
         private final FilesystemPkiStore target;
         private final Credential sourceCredential;
@@ -636,6 +659,9 @@ final class FsSnapshotExporter {
             persisted = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!persisted) {
@@ -644,7 +670,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Owns reminted target content until its status authority is committed. */
+    /**
+     * Owns reminted target content until its status authority is committed.
+     */
     private static final class StatusTransfer implements AutoCloseable {
         private final FilesystemPkiStore target;
         private final StatusObject sourceStatus;
@@ -665,6 +693,9 @@ final class FsSnapshotExporter {
             persisted = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!persisted) {
@@ -897,6 +928,11 @@ final class FsSnapshotExporter {
             bytes = bytes.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained bytes bytes.
+         *
+         * @return newly allocated array containing the retained bytes
+         */
         @Override
         public byte[] bytes() {
             return bytes.clone();
@@ -932,7 +968,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Cause-free marker for invalid source credential or CA authority. */
+    /**
+     * Cause-free marker for invalid source credential or CA authority.
+     */
     private static final class SnapshotAuthorityFailure extends IllegalStateException {
         private static final long serialVersionUID = -8051398945014616477L;
 
@@ -941,7 +979,9 @@ final class FsSnapshotExporter {
         }
     }
 
-    /** Cause-free internal marker for profile preflight rejection. */
+    /**
+     * Cause-free internal marker for profile preflight rejection.
+     */
     private static final class SnapshotProfileFailure extends RuntimeException {
         private static final long serialVersionUID = -4451876406166515230L;
 

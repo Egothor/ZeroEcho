@@ -52,12 +52,34 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for keyring stateful recovery.
+ */
 class KeyringStatefulRecoveryTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path root;
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void provider() { BouncyCastleActivator.init(); }
 
+    /**
+     * Persistence fault selected for an authority or keyring transaction.
+     *
+     * @param target persistence destination at which to inject the failure
+     * @param occurrence one-based matching transaction occurrence
+     * @param step persistence phase name
+     * @param after whether failure occurs after the selected phase has run
+     */
     record Fault(KeyringFileOperations.Target target, int occurrence, String step, boolean after) { }
 
+    /**
+     * Enumerates persistence failures before and after each selected transaction phase.
+     *
+     * @return ordered fault cases covering the primary image, nonce reservation, and authority
+     */
     static Stream<Fault> faults() {
         return Stream.of(KeyringFileOperations.Target.values()).flatMap(target ->
                 Stream.iterate(1, n -> n + 1).limit(target == KeyringFileOperations.Target.STATEFUL_AUTHORITY ? 2 : 1)
@@ -65,6 +87,12 @@ class KeyringStatefulRecoveryTest {
                 .flatMap(step -> Stream.of(false, true).map(after -> new Fault(target, occurrence, step, after)))));
     }
 
+    /**
+     * Every signing persistence boundary fails closed.
+     *
+     * @param fault persistence phase and occurrence selected for fault injection
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest @MethodSource("faults")
     void everySigningPersistenceBoundaryFailsClosed(Fault fault) throws Exception {
         Path keys = root.resolve("keys/store");
@@ -97,6 +125,11 @@ class KeyringStatefulRecoveryTest {
         }
     }
 
+    /**
+     * Stale whole image and moved authority are rejected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void staleWholeImageAndMovedAuthorityAreRejected() throws Exception {
         Path keys = root.resolve("keys/store");
@@ -120,6 +153,12 @@ class KeyringStatefulRecoveryTest {
         assertThrows(IOException.class, () -> LocalStatefulSigningAuthority.open(moved));
     }
 
+    /**
+     * Interrupted enrollment cannot reconstruct authority.
+     *
+     * @param fault persistence phase and occurrence selected for fault injection
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest @MethodSource("faults")
     void interruptedEnrollmentCannotReconstructAuthority(Fault fault) throws Exception {
         Path keys = root.resolve("keys/store");
@@ -146,6 +185,11 @@ class KeyringStatefulRecoveryTest {
         }
     }
 
+    /**
+     * Copied keyring and missing open authority header are rejected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void copiedKeyringAndMissingOpenAuthorityHeaderAreRejected() throws Exception {
         Path keys = root.resolve("keys/store");
@@ -169,6 +213,12 @@ class KeyringStatefulRecoveryTest {
         assertThrows(IOException.class, () -> LocalStatefulSigningAuthority.open(ledger));
     }
 
+    /**
+     * Terminal removal never releases an uncommitted final leaf.
+     *
+     * @param fault persistence phase and occurrence selected for fault injection
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest @MethodSource("faults")
     void terminalRemovalNeverReleasesAnUncommittedFinalLeaf(Fault fault) throws Exception {
         Path keys = root.resolve("keys/store");
@@ -203,6 +253,11 @@ class KeyringStatefulRecoveryTest {
         }
     }
 
+    /**
+     * Terminal authority rejects restored private entry.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void terminalAuthorityRejectsRestoredPrivateEntry() throws Exception {
         Path keys = root.resolve("keys/store");
@@ -220,6 +275,11 @@ class KeyringStatefulRecoveryTest {
         }
     }
 
+    /**
+     * Malformed missing and future authority records fail closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void malformedMissingAndFutureAuthorityRecordsFailClosed() throws Exception {
         Path keys = root.resolve("keys/store");
@@ -247,10 +307,21 @@ class KeyringStatefulRecoveryTest {
         }
     }
 
+    /**
+     * Persistence boundary that injects the armed failure before or after a selected phase.
+     */
     static final class Faults implements KeyringFileOperations {
         private Fault fault;
         private int occurrence;
+        /**
+         * Whether the currently armed persistence fault has been reached.
+         */
         boolean hit;
+        /**
+         * Arms one fault and resets the observation flag.
+         *
+         * @param value persistence phase and occurrence to fail
+         */
         void arm(Fault value) { fault = value; occurrence = 0; hit = false; }
         private void check(Target target, String step, boolean after) throws IOException {
             if (fault != null && target == fault.target() && step.equals(fault.step()) && after == fault.after()
@@ -259,24 +330,42 @@ class KeyringStatefulRecoveryTest {
                 throw new IOException("Injected persistence failure");
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Path createTemporary(Target target, Path parent, String prefix, String suffix) throws IOException {
             check(target, "create", false);
             Path value = NIO.createTemporary(target, parent, prefix, suffix);
             check(target, "create", true);
             return value;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void writeTemporary(Target target, Path temporary, byte[] image) throws IOException {
             check(target, "write", false); NIO.writeTemporary(target, temporary, image); check(target, "write", true);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void forceTemporary(Target target, Path temporary) throws IOException {
             check(target, "force", false); NIO.forceTemporary(target, temporary); check(target, "force", true);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void atomicReplace(Target target, Path temporary, Path destination) throws IOException {
             check(target, "replace", false); NIO.atomicReplace(target, temporary, destination); check(target, "replace", true);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void forceDirectory(Target target, Path parent) throws IOException {
             check(target, "directory", false); NIO.forceDirectory(target, parent); check(target, "directory", true);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void deleteTemporary(Target target, Path temporary) throws IOException { NIO.deleteTemporary(target, temporary); }
     }
 }

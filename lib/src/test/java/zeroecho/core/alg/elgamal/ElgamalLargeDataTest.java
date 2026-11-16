@@ -50,8 +50,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 
+/**
+ * Contract and regression tests for ElGamal large data.
+ */
 public class ElgamalLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());
@@ -83,6 +89,8 @@ public class ElgamalLargeDataTest {
 
     /**
      * PKCS1-style padding round-trip on >16KB payload (non-multiple of block size).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
      */
     @Test
     void elgamalPkcs1LargeData() throws Exception {
@@ -114,7 +122,11 @@ public class ElgamalLargeDataTest {
         logEnd();
     }
 
-    /** NOPADDING round-trip on >16KB payload (non-multiple of block size). */
+    /**
+     * NOPADDING round-trip on >16KB payload (non-multiple of block size).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void elgamalNoPaddingLargeData() throws Exception {
         final int SIZE = 32 * 255 * 4;
@@ -145,7 +157,11 @@ public class ElgamalLargeDataTest {
         logEnd();
     }
 
-    /** NOPADDING round-trip on >16KB payload (non-multiple of block size). */
+    /**
+     * NOPADDING round-trip on >16KB payload (non-multiple of block size).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void elgamalNoPaddingFailLargeData() throws Exception {
         final int SIZE = 32 * 255 * 4 + 3 /* + 777 */;

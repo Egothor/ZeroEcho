@@ -55,12 +55,27 @@ import java.util.Optional;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
-/** Strict non-authoritative delivery state for one revocation-audit projection. */
+/**
+ * Non-authoritative revocation-audit delivery cursor bound to one transition source.
+ *
+ * @param sourceStoreId stable identity of the authoritative transition source
+ * @param lastPosition last projected transition position, or empty before first delivery
+ * @param failureCount consecutive delivery failure count, from zero through 31
+ * @param nextEligible retry instant, present exactly when the failure count is positive
+ * @param observedHighRevision latest observed nonnegative source revision
+ * @param observedHighCommitment lowercase SHA-256 of the observed source high watermark
+ */
 record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
         Optional<RevocationTransitionFeed.Position> lastPosition, int failureCount,
         Optional<Instant> nextEligible, long observedHighRevision, String observedHighCommitment) {
 
+    /**
+     * Stable control-record identity for the version-one revocation delivery cursor.
+     */
     /* default */ static final String RECORD_ID = "revocation-v1";
+    /**
+     * Maximum consecutive delivery failure count before backoff counting saturates.
+     */
     /* default */ static final int MAXIMUM_FAILURE_COUNT = 31;
 
     private static final int MAGIC = 0x5A455241;
@@ -68,7 +83,18 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
     private static final int MAXIMUM_PAYLOAD_BYTES = 1_024;
     private static final int MAXIMUM_TEXT_BYTES = 256;
 
-    /** Validates one immutable state snapshot. */
+    /**
+     * Validates the source-bound delivery cursor and retry/high-watermark invariants.
+     *
+     * @param sourceStoreId stable identity of the authoritative transition source
+     * @param lastPosition last projected transition position, or empty before first delivery
+     * @param failureCount consecutive delivery failure count, from zero through 31
+     * @param nextEligible retry instant, present exactly when the failure count is positive
+     * @param observedHighRevision latest observed nonnegative source revision
+     * @param observedHighCommitment lowercase SHA-256 of the observed source high watermark
+     * @throws NullPointerException if the source identity or optional container is null
+     * @throws IllegalArgumentException if retry or high-watermark coordinates are invalid
+     */
     RevocationAuditProjectionState {
         Objects.requireNonNull(sourceStoreId, "sourceStoreId");
         lastPosition = Objects.requireNonNull(lastPosition, "lastPosition");
@@ -83,16 +109,36 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
         }
     }
 
-    /** One decoded state paired with its control-record CAS commitment. */
+    /**
+     * Decoded delivery state paired with its exact compare-and-set payload commitment.
+     *
+     * @param state validated revocation delivery cursor
+     * @param recordCommitment lowercase SHA-256 of the retained cursor payload
+     */
     /* default */
     record Loaded(RevocationAuditProjectionState state, String recordCommitment) {
-        /** Validates the loaded state identity. */
+        /**
+         * Validates the decoded state and compare-and-set commitment.
+         *
+         * @param state decoded delivery cursor; must not be null
+         * @param recordCommitment canonical lowercase payload SHA-256
+         * @throws NullPointerException if state is null
+         * @throws IllegalArgumentException if the commitment is invalid
+         */
         Loaded {
             Objects.requireNonNull(state, "state");
             requireDigest(recordCommitment);
         }
     }
 
+    /**
+     * Loads and verifies the retained revocation-delivery cursor.
+     *
+     * @param control realm-owned durable control store
+     * @return verified cursor and CAS commitment, or empty before initial persistence
+     * @throws NullPointerException if control is null
+     * @throws IllegalArgumentException if retained bytes, identity or commitment are invalid
+     */
     /* default */ static Optional<Loaded> load(ServerControlStore control) {
         Objects.requireNonNull(control, "control");
         return control.protocolRecord(ServerControlStore.REVOCATION_AUDIT_PROJECTION, RECORD_ID)
@@ -106,6 +152,15 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
                 });
     }
 
+    /**
+     * Persists a replacement cursor guarded by the exact previously observed commitment.
+     *
+     * @param control realm-owned durable control store
+     * @param current previous loaded state, or empty for initial creation
+     * @param next replacement delivery state
+     * @return persisted replacement state and its CAS commitment
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static Loaded persist(ServerControlStore control, Optional<Loaded> current,
             RevocationAuditProjectionState next) {
         Objects.requireNonNull(control, "control");
@@ -119,17 +174,37 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
         return new Loaded(next, commitment);
     }
 
+    /**
+     * Creates an undelivered cursor bound to the observed authoritative source head.
+     *
+     * @param head authoritative transition-feed high watermark
+     * @return source-bound cursor without a delivery position or retry delay
+     */
     /* default */ static RevocationAuditProjectionState initial(RevocationTransitionFeed.HighWatermark head) {
         return new RevocationAuditProjectionState(head.sourceStoreId(), Optional.empty(), 0, Optional.empty(),
                 head.globalRevision(), head.transitionCommitment());
     }
 
+    /**
+     * Records a delivered transition position and clears failure/backoff state.
+     *
+     * @param position newly delivered transition position
+     * @param head latest observed source high watermark
+     * @return replacement cursor retaining this source identity
+     */
     /* default */ RevocationAuditProjectionState advance(RevocationTransitionFeed.Position position,
             RevocationTransitionFeed.HighWatermark head) {
         return new RevocationAuditProjectionState(sourceStoreId, Optional.of(position), 0, Optional.empty(),
                 head.globalRevision(), head.transitionCommitment());
     }
 
+    /**
+     * Retains the delivery position while recording a failed attempt and retry instant.
+     *
+     * @param eligible absolute retry eligibility instant
+     * @param head latest observed source high watermark
+     * @return replacement cursor with a saturating increment of failure count
+     */
     /* default */ RevocationAuditProjectionState fail(Instant eligible,
             RevocationTransitionFeed.HighWatermark head) {
         int nextFailureCount = Math.min(MAXIMUM_FAILURE_COUNT, failureCount + 1);
@@ -137,11 +212,26 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
                 Optional.of(eligible), head.globalRevision(), head.transitionCommitment());
     }
 
+    /**
+     * Updates only the observed source high watermark.
+     *
+     * @param head latest authoritative source high watermark
+     * @return replacement preserving delivery position and retry state
+     */
     /* default */ RevocationAuditProjectionState observe(RevocationTransitionFeed.HighWatermark head) {
         return new RevocationAuditProjectionState(sourceStoreId, lastPosition, failureCount, nextEligible,
                 head.globalRevision(), head.transitionCommitment());
     }
 
+    /**
+     * Encodes bounded canonical version-one delivery state.
+     *
+     * @param state validated source-bound delivery cursor
+     * @return newly allocated canonical binary payload
+     * @throws IllegalArgumentException if a text field or the payload exceeds its byte bound
+     * @throws NullPointerException if state is null
+     * @throws IllegalStateException if in-memory state encoding unexpectedly fails
+     */
     /* default */ static byte[] encode(RevocationAuditProjectionState state) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream(MAXIMUM_PAYLOAD_BYTES);
@@ -173,6 +263,14 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
         }
     }
 
+    /**
+     * Decodes a complete bounded payload and requires byte-for-byte canonical re-encoding.
+     *
+     * @param payload retained binary cursor bytes; copied
+     * @return validated canonical delivery state
+     * @throws NullPointerException if payload is null
+     * @throws IllegalArgumentException if bytes are empty, oversized, malformed, noncanonical or unsupported
+     */
     @SuppressWarnings("PMD.PreserveStackTrace") // persisted bytes are untrusted and causes are sanitized
     /* default */ static RevocationAuditProjectionState decode(byte[] payload) {
         byte[] source = Objects.requireNonNull(payload, "payload").clone();

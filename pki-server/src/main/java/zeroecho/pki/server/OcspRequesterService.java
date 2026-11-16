@@ -83,7 +83,9 @@ public final class OcspRequesterService {
     private static final String OID_MGF1 = "1.2.840.113549.1.1.8";
     private static final String OID_RSA_PSS = "1.2.840.113549.1.1.10";
     private static final byte[] DER_NULL = { 0x05, 0x00 };
-    /** Canonical DER of the approved RSASSA-PSS parameters (SHA-256, MGF1-SHA-256, salt 32). */
+    /**
+     * Canonical DER of the approved RSASSA-PSS parameters (SHA-256, MGF1-SHA-256, salt 32).
+     */
     private static final byte[] PSS_SHA256_PARAMETERS = pssSha256Parameters();
 
     /**
@@ -97,7 +99,15 @@ public final class OcspRequesterService {
      */
     public record SignedRequest(byte[] tbsRequest, byte[] requestorName, byte[] signatureAlgorithm,
             byte[] signature, List<byte[]> certificates) {
-        /** Snapshots all security-sensitive input bytes. */
+        /**
+         * Snapshots all security-sensitive input bytes.
+         * @param tbsRequest canonical to-be-signed request DER
+         * @param requestorName canonical requestor-name DER
+         * @param signatureAlgorithm canonical signature algorithm identifier DER
+         * @param signature request signature bytes
+         * @param certificates bounded requester certificate chain
+         * @throws NullPointerException if {@code certificates} is null
+         */
         public SignedRequest {
             tbsRequest = requireBytes(tbsRequest, "tbsRequest", 1_048_576);
             requestorName = requireBytes(requestorName, "requestorName", 65_536);
@@ -134,16 +144,25 @@ public final class OcspRequesterService {
      * @param principalId authenticated enabled principal identifier
      */
     public record Authorized(String principalId) {
-        /** Validates the mapped principal identity. */
+        /**
+         * Validates the mapped principal identity.
+         * @param principalId authenticated enabled principal identifier
+         */
         public Authorized { Permission.requirePrincipal(principalId); }
     }
 
-    /** Safe authentication or authorization rejection. */
+    /**
+     * Safe authentication or authorization rejection.
+     */
     public static final class UnauthorizedException extends RuntimeException {
         private static final long serialVersionUID = 1L;
-        /** Safe non-secret rejection classification. */
+        /**
+         * Safe non-secret rejection classification.
+         */
         private final String classification;
-        /** Creates a redacted rejection. */
+        /**
+         * Creates a redacted rejection.
+         */
         public UnauthorizedException() { this("UNSPECIFIED"); }
         private UnauthorizedException(String classification) {
             super("OCSP requester is unauthorized");
@@ -157,10 +176,14 @@ public final class OcspRequesterService {
         public String classification() { return classification; }
     }
 
-    /** Dependency corruption or recovery-required authorization authority. */
+    /**
+     * Dependency corruption or recovery-required authorization authority.
+     */
     public static final class UnavailableException extends RuntimeException {
         private static final long serialVersionUID = 1L;
-        /** Creates a redacted unavailable result. */
+        /**
+         * Creates a redacted unavailable result.
+         */
         public UnavailableException() { super("OCSP requester authority is unavailable"); }
     }
 
@@ -172,6 +195,7 @@ public final class OcspRequesterService {
      *
      * @param realm owning realm context
      * @param clock authoritative server clock
+     * @throws NullPointerException if any of {@code realm}, {@code clock} is null
      */
     public OcspRequesterService(ServerRealmContext realm, Clock clock) {
         this.realm = Objects.requireNonNull(realm, "realm");
@@ -186,6 +210,9 @@ public final class OcspRequesterService {
      * @param request canonical signed request fields
      * @param requests certificate identifiers authorized as one unit
      * @return authenticated enabled requester principal
+     * @throws UnauthorizedException if signer validation, enabled-principal mapping or any CertID authorization
+     *         fails
+     * @throws UnavailableException if authoritative requester validation services are unavailable
      */
     public Authorized authenticate(OcspResponderService.Responder responder, SignedRequest request,
             List<OcspResponseService.CertId> requests) {

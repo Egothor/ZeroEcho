@@ -55,6 +55,9 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 public final class XWingPublicKeySpec implements AlgorithmKeySpec {
 
     private static final String RAW_B64 = "raw.b64";
+    /**
+     * Required length of a raw X-Wing public-key encoding, in bytes.
+     */
     /* default */ static final int RAW_LENGTH = 1216;
     private final byte[] raw;
 
@@ -116,6 +119,11 @@ public final class XWingPublicKeySpec implements AlgorithmKeySpec {
         return new XWingPublicKeySpec(Base64.getDecoder().decode(b64));
     }
 
+    /**
+     * Returns the specification label and encoded-key length without disclosing key bytes.
+     *
+     * @return diagnostic type label and retained encoding length in bytes
+     */
     @Override
     public String toString() {
         return "XWingPublicKeySpec[len=" + raw.length + "]";

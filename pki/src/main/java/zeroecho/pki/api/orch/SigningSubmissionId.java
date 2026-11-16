@@ -60,7 +60,15 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
     private static final String PREFIX = "zsign:v1:";
     private static final int RANDOM_BYTES = 16;
 
-    /** Validates and preserves the exact submission identity components. */
+    /**
+     * Validates and preserves the exact submission identity components.
+     * @param id identifier value
+     * @param namespace provider/store namespace
+     * @param createdAt embedded creation time with millisecond precision
+     * @throws NullPointerException if id or createdAt is null
+     * @throws IllegalArgumentException if namespace is null, blank, longer than 128 characters or contains
+     *     characters outside lowercase ASCII letters, digits, dot, underscore and hyphen
+     */
     public SigningSubmissionId {
         Objects.requireNonNull(id, "id");
         requireNamespace(namespace);
@@ -74,6 +82,9 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
      * @param now       trusted caller creation time
      * @param random    secure random source
      * @return new identifier
+     * @throws NullPointerException if now or random is null
+     * @throws IllegalArgumentException if namespace violates the supported lowercase namespace syntax
+     * @throws ArithmeticException if now cannot be represented as epoch milliseconds
      */
     public static SigningSubmissionId create(String namespace, Instant now, SecureRandom random) {
         requireNamespace(namespace);
@@ -92,6 +103,7 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
      * @param id identifier to parse
      * @return parsed identifier
      * @throws IllegalArgumentException if the identifier is malformed
+     * @throws NullPointerException if id is null
      */
     public static SigningSubmissionId parse(PkiId id) {
         Objects.requireNonNull(id, "id");
@@ -125,6 +137,7 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
      * @param horizon           maximum accepted age
      * @param permittedSkew     allowed future clock skew
      * @throws IllegalArgumentException if namespace or lifetime is invalid
+     * @throws NullPointerException if now, horizon or permittedSkew is null
      */
     public void validate(String requiredNamespace, Instant now, Duration horizon, Duration permittedSkew) {
         requireNamespace(requiredNamespace);

@@ -43,13 +43,18 @@ package zeroecho.sdk;
  * @since 1.0
  */
 public record Pbkdf2Limits(int operationalMaximum, int absoluteDecodedMaximum) {
-    /** Mandatory minimum PBKDF2 iteration count. */
+    /**
+     * Mandatory minimum PBKDF2 iteration count.
+     */
     public static final int MINIMUM = 10_000;
 
     /**
      * Validates {@code minimum <= operationalMaximum <= absoluteDecodedMaximum}.
      *
      * @throws IllegalArgumentException if the limits violate the ordering
+     * @param operationalMaximum largest iteration count accepted from trusted
+     *                               local configuration
+     * @param absoluteDecodedMaximum hard safety ceiling for untrusted decoded data
      */
     public Pbkdf2Limits {
         if (operationalMaximum < MINIMUM) {

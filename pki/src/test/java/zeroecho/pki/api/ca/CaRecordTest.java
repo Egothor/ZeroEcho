@@ -45,8 +45,14 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 
+/**
+ * Contract and regression tests for ca record.
+ */
 final class CaRecordTest {
 
+    /**
+     * Issuer identifiers are ordered immutable and unique.
+     */
     @Test
     void issuerIdentifiersAreOrderedImmutableAndUnique() {
         System.out.println("issuerIdentifiersAreOrderedImmutableAndUnique");

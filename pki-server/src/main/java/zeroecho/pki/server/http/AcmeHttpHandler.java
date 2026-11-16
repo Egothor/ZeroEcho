@@ -83,8 +83,9 @@ import zeroecho.pki.server.acme.AcmeWireBounds;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 
-/** Strict ACME route adapter; protocol state and PKI business rules remain in {@link AcmeService}. */
-@SuppressWarnings("PMD")
+/**
+ * Strict ACME route adapter; protocol state and PKI business rules remain in {@link AcmeService}.
+ */
 final class AcmeHttpHandler implements HttpHandler {
     private static final String JOSE = "application/jose+json";
     private static final String JSON = "application/json";
@@ -104,6 +105,19 @@ final class AcmeHttpHandler implements HttpHandler {
     private final BooleanSupplier ready;
     private final MutualTlsAuthenticator proxyAuthenticator;
 
+    /**
+     * Composes ACME HTTP admission, account authentication and challenge-validation execution.
+     *
+     * @param configuration ACME listener, origin, rate and proxy-transport policies
+     * @param realm lifecycle-owned realm context
+     * @param service realm-owned ACME service
+     * @param nonces bounded ACME replay-nonce owner
+     * @param runtime lifecycle-owned protocol operation executor
+     * @param validations separately admitted challenge-validation executor
+     * @param clock deadline, rate and audit time source
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     */
     AcmeHttpHandler(PkiServerConfiguration.AcmeListener configuration, ServerRealmContext realm,
             AcmeService service, AcmeNonceService nonces, ServerRuntime runtime,
             ServerRuntime.ChallengeRuntime validations, Clock clock, RequestIds requestIds,
@@ -116,6 +130,9 @@ final class AcmeHttpHandler implements HttpHandler {
                 realm::principal, clock);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request";
         try {
@@ -601,6 +618,12 @@ final class AcmeHttpHandler implements HttpHandler {
                 + "\",\"detail\":\"ACME request rejected\"}").getBytes(StandardCharsets.UTF_8),
                 Optional.empty(), null, Map.of());
     }
+    /**
+     * Maps an execution failure to a safe ACME problem document without exposing exception text.
+     *
+     * @param failure protocol, authorization, CSR, signing or internal failure
+     * @return ACME problem response with the corresponding HTTP status
+     */
     static Response protocolFailure(Throwable failure) {
         if (failure instanceof zeroecho.pki.api.SigningExecutionException signingFailure
                 && signingFailure.classification()
@@ -861,18 +884,47 @@ final class AcmeHttpHandler implements HttpHandler {
                 .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
+    /**
+     * ACME response metadata with either a buffered entity or a deferred streaming writer.
+     *
+     * @param status HTTP response status
+     * @param contentType response media type
+     * @param body buffered entity bytes; copied
+     * @param writer optional deferred entity writer
+     * @param directoryId directory identity for link metadata, or null when unavailable
+     * @param headers additional response header values; copied to an immutable map
+     */
     record Response(int status, String contentType, byte[] body, Optional<BodyWriter> writer,
             String directoryId, Map<String, String> headers) {
+        /**
+         * Snapshots buffered entity bytes and additional response headers.
+         *
+         * @param status HTTP response status
+         * @param contentType response media type
+         * @param body buffered entity bytes; copied
+         * @param writer optional deferred entity writer
+         * @param directoryId directory identity, or null
+         * @param headers additional response fields; copied
+         * @throws NullPointerException if body, writer, headers or a header entry is null
+         */
         Response {
             body = body.clone();
             writer = Objects.requireNonNull(writer, "writer");
             headers = Map.copyOf(headers);
         }
+        /**
+         * Copies the buffered ACME response entity.
+         *
+         * @return caller-owned response bytes; empty for responses using only a streaming writer
+         */
         @Override public byte[] body() { return body.clone(); }
     }
     @FunctionalInterface private interface BodyWriter { void write(OutputStream output) throws IOException; }
     private static final class NonClosingOutput extends java.io.FilterOutputStream {
         private NonClosingOutput(OutputStream output) { super(output); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { flush(); }
     }
 }

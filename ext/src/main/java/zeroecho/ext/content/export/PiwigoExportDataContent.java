@@ -102,6 +102,18 @@ class PiwigoExportDataContent extends AbstractExportableDataContent {
         this(imageFileName, piwigoUrl, username, password, albumId, new HttpsPiwigoTransport());
     }
 
+    /**
+     * Creates a structured upload using a supplied transport, without opening a connection.
+     *
+     * @param imageFileName nonempty header-safe image filename
+     * @param piwigoUrl absolute HTTPS API endpoint without user information or unsafe controls
+     * @param username account name; must not be null
+     * @param password account secret copied into owned character storage; must not be null
+     * @param albumId destination album identifier; must not be null
+     * @param transport borrowed upload implementation; must not be null
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if the filename or endpoint is unsafe
+     */
     /* package */ PiwigoExportDataContent(String imageFileName, String piwigoUrl, String username, String password,
             String albumId, PiwigoTransport transport) {
         super();
@@ -158,6 +170,11 @@ class PiwigoExportDataContent extends AbstractExportableDataContent {
         }
     }
 
+    /**
+     * Returns a diagnostic description that omits credentials and endpoint path/query values.
+     *
+     * @return label containing only the endpoint scheme, host, and configured-state indicator
+     */
     @Override
     public String toString() {
         return "PiwigoExportDataContent[endpoint=" + endpoint.getScheme() + "://" + endpoint.getHost()
@@ -284,6 +301,21 @@ class PiwigoExportDataContent extends AbstractExportableDataContent {
         }
     }
 
+    /**
+     * Writes and flushes the Piwigo image-upload form, leaving both streams open.
+     *
+     * <p>The caller supplies a safe boundary and header-safe filename. This method emits
+     * the password into the request but does not retain or clear the supplied array.</p>
+     *
+     * @param output borrowed destination for UTF-8 form fields and binary image bytes
+     * @param boundary multipart boundary selected for this request
+     * @param imageFileName validated filename for the image part
+     * @param username account name emitted as a form field
+     * @param password account secret emitted directly from its character array
+     * @param albumId target category identifier
+     * @param source borrowed image stream, consumed through end of input
+     * @throws IOException if reading, writing, or flushing the request fails
+     */
     /* package */ static void writeMultipart(OutputStream output, String boundary, String imageFileName,
             String username, char[] password, String albumId, InputStream source) throws IOException {
         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8));

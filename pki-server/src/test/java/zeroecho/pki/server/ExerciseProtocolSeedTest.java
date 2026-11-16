@@ -51,9 +51,18 @@ import zeroecho.pki.application.*;
 import zeroecho.pki.server.http.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Real protected custody, runtime validation and protocol wire prerequisites in fresh state. */
+/**
+ * Real protected custody, runtime validation and protocol wire prerequisites in fresh state.
+ */
 @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named="ZEROECHO_PROTOCOL_INTEGRATION",matches="true")
 class ExerciseProtocolSeedTest {
+    /**
+     * Checks seed ownership, separated client custody and successful loading of real ACME and EST protocol services.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void ownedSeedLoadsAllProtocolServicesAndRealAcmeEstWire(@TempDir Path root)throws Exception {
         Files.setPosixFilePermissions(root,PosixFilePermissions.fromString("rwx------"));
         Path repository=Path.of("").toAbsolutePath();if(!Files.isDirectory(repository.resolve("deploy")))repository=repository.getParent();

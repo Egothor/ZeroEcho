@@ -62,7 +62,9 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 import zeroecho.pki.spi.store.StagedContentStore;
 
-/** Lifecycle owner for the v6 segmented transactional signing ledger. */
+/**
+ * Lifecycle owner for the v6 segmented transactional signing ledger.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.AvoidSynchronizedStatement", "PMD.AvoidUsingVolatile", "PMD.CloseResource",
@@ -228,7 +230,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         maintenanceCoordinator.setDaemon(true);
     }
 
-    /** Starts WAL and engine coordinators only after deterministic reconstruction completes. */
+    /**
+     * Starts WAL and engine coordinators only after deterministic reconstruction completes.
+     */
     private void start() throws IOException {
         start(NO_START_FAULT);
     }
@@ -269,6 +273,19 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId) throws IOException {
         return create(root, storeId, null, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
@@ -277,6 +294,20 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations) throws IOException {
         return create(root, storeId, walOperations, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
@@ -285,6 +316,21 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork) throws IOException {
@@ -294,6 +340,24 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
@@ -303,6 +367,25 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 residentIndexBudgetBytes, compactionBudgetBytes, null, null);
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @param stagedContent borrowed staged-content store used to validate content ownership; must not be null
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
@@ -313,6 +396,25 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 Objects.requireNonNull(stagedContent, "stagedContent"));
     }
 
+    /**
+     * Creates and starts a new durable signing ledger with bounded resident and transient workspace.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param walOperations injectable WAL operations, or null for production operations
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @param maintenanceFaults optional deterministic maintenance fault callback
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine create(Path root,
             MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
             int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
@@ -391,6 +493,19 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return new SigningIndexCapacityBudget(maximumBytes, protectedProgressBytes);
     }
 
+    /**
+     * Recovers and starts an existing signing ledger, validating durable metadata before admitting work.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine open(Path root,
             MetadataStoreId storeId) throws IOException {
         return open(root, storeId, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
@@ -399,6 +514,20 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Recovers and starts an existing signing ledger, validating durable metadata before admitting work.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine open(Path root,
             MetadataStoreId storeId, int maximumSigningWork) throws IOException {
         return open(root, storeId, maximumSigningWork,
@@ -407,6 +536,23 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
+    /**
+     * Recovers and starts an existing signing ledger, validating durable metadata before admitting work.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration,
@@ -415,6 +561,24 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 residentIndexBudgetBytes, compactionBudgetBytes, null);
     }
 
+    /**
+     * Recovers and starts an existing signing ledger, validating durable metadata before admitting work.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @param stagedContent borrowed content-ownership validator, or null for metadata-only recovery
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration,
@@ -425,6 +589,25 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 NO_START_FAULT);
     }
 
+    /**
+     * Recovers and starts an existing signing ledger, validating durable metadata before admitting work.
+     *
+     * <p>The caller owns the returned engine and must close it. Partial initialization
+     * closes already-acquired resources before propagating a failure.</p>
+     *
+     * @param root transactional metadata root; must not be null
+     * @param storeId stable metadata store identity; must not be null
+     * @param maximumSigningWork positive maximum retained active signing-work entries
+     * @param activeWalConfiguration validated WAL writer and admission configuration; must not be null
+     * @param residentIndexBudgetBytes finite resident index reservation budget, in bytes
+     * @param compactionBudgetBytes finite transient compaction workspace budget, in bytes
+     * @param stagedContent borrowed content-ownership validator, or null for metadata-only recovery
+     * @param startFaults deterministic startup callback for verifying partial resource cleanup
+     * @return open engine with its owned WAL and background coordinators
+     * @throws IOException if ledger creation, recovery, or durable initialization fails
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if capacity or configuration bounds are invalid
+     */
     /* default */ static SigningLedgerStoreEngine open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration,
@@ -534,22 +717,51 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Deterministic recovery construction and thread-start boundaries. */
+    /**
+     * Deterministic recovery construction and thread-start boundaries.
+     */
     /* default */ enum StartStage {
+        /**
+         * Observation point recovery activation.
+         */
         RECOVERY_ACTIVATED,
+        /**
+         * Observation point starting the WAL writer.
+         */
         WAL_WRITER,
+        /**
+         * Observation point starting the commit coordinator.
+         */
         COMMIT_COORDINATOR,
+        /**
+         * Observation point starting the maintenance coordinator.
+         */
         MAINTENANCE_COORDINATOR
     }
 
-    /** Package-local fault seam for startup cleanup verification. */
+    /**
+     * Package-local fault seam for startup cleanup verification.
+     */
     /* default */
     @FunctionalInterface
     interface StartFaultInjector {
+        /**
+         * Observes an acquired startup resource before the next initialization stage.
+         *
+         * @param stage completed startup stage
+         * @param wal currently acquired WAL writer
+         * @param registry currently acquired generation registry
+         * @throws IOException to inject a startup failure and exercise cleanup
+         */
         void after(StartStage stage, SigningActiveWal wal,
                 SigningGenerationRegistry registry) throws IOException;
     }
 
+    /**
+     * Returns the stable identity attached to this metadata ledger.
+     *
+     * @return immutable metadata store identity
+     */
     /* default */ MetadataStoreId storeId() { return storeId; }
 
     private static SigningLedgerRecovery.Configuration recoveryConfiguration(
@@ -560,10 +772,25 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 activeWalConfiguration);
     }
 
+    /**
+     * Durably issues a new transaction identity before its mutations may be committed.
+     *
+     * @return fresh store-bound transaction identity
+     * @throws IOException if issuance framing or durable publication fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ MetadataTransactionId issue() throws IOException {
         return issue(SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Durably issues a new transaction identity before its mutations may be committed.
+     *
+     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted work; must not be null
+     * @return fresh store-bound transaction identity
+     * @throws IOException if issuance framing or durable publication fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ MetadataTransactionId issue(
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) throws IOException {
         requireOpen();
@@ -575,12 +802,41 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return transactionId;
     }
 
+    /**
+     * Commits ordered mutations under an issued transaction identity and optional signing admission.
+     *
+     * <p>Oversized requests are rejected before coordination. The result retains commit
+     * uncertainty rather than assuming a failed durable write had no effect.</p>
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @return authoritative committed, not-committed, or unknown transaction outcome
+     * @throws IOException if durable commit coordination or outcome publication fails
+     * @throws IllegalArgumentException if transaction or signing admission belongs to another engine
+     * @throws NullPointerException if a required transaction, mutation, or admission-class input is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ MetadataCommitResult commit(MetadataTransactionId transactionId,
             List<SigningTransactionPayloadCodec.Mutation> mutations) throws IOException {
         return commit(transactionId, mutations, null,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Commits ordered mutations under an issued transaction identity and optional signing admission.
+     *
+     * <p>Oversized requests are rejected before coordination. The result retains commit
+     * uncertainty rather than assuming a failed durable write had no effect.</p>
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @param signingAdmission optional engine-owned signing-capacity reservation, or null when not required
+     * @return authoritative committed, not-committed, or unknown transaction outcome
+     * @throws IOException if durable commit coordination or outcome publication fails
+     * @throws IllegalArgumentException if transaction or signing admission belongs to another engine
+     * @throws NullPointerException if a required transaction, mutation, or admission-class input is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ MetadataCommitResult commit(MetadataTransactionId transactionId,
             List<SigningTransactionPayloadCodec.Mutation> mutations,
             SigningAdmission signingAdmission) throws IOException {
@@ -588,6 +844,22 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Commits ordered mutations under an issued transaction identity and optional signing admission.
+     *
+     * <p>Oversized requests are rejected before coordination. The result retains commit
+     * uncertainty rather than assuming a failed durable write had no effect.</p>
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @param signingAdmission optional engine-owned signing-capacity reservation, or null when not required
+     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted work; must not be null
+     * @return authoritative committed, not-committed, or unknown transaction outcome
+     * @throws IOException if durable commit coordination or outcome publication fails
+     * @throws IllegalArgumentException if transaction or signing admission belongs to another engine
+     * @throws NullPointerException if a required transaction, mutation, or admission-class input is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ MetadataCommitResult commit(MetadataTransactionId transactionId,
             List<SigningTransactionPayloadCodec.Mutation> mutations,
             SigningAdmission signingAdmission,
@@ -611,13 +883,26 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 signingAdmission, admissionClass);
     }
 
-    /** Publishes one self-describing mutation frame without issuance or acknowledgement frames. */
+    /**
+     * Publishes one self-describing mutation frame without issuance or acknowledgement frames.
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @return authoritative commit outcome for the directly published mutation frame
+     * @throws IOException if mutation framing or durable publication fails
+     */
     /* default */ MetadataCommitResult directCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations) throws IOException {
         return directCommit(mutations, null,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Publishes one self-describing mutation frame without separate issuance or acknowledgement.
+     *
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @param signingAdmission optional engine-owned signing-capacity reservation, or null when not required
+     * @return authoritative commit outcome for the directly published mutation frame
+     * @throws IOException if mutation framing or durable publication fails
+     */
     /* default */ MetadataCommitResult directCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations,
             SigningAdmission signingAdmission) throws IOException {
@@ -625,6 +910,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Commits progress for accepted signing work using its protected workspace admission class.
+     *
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @return authoritative commit outcome
+     * @throws IOException if framing, coordination, or durable publication fails
+     */
     /* default */ MetadataCommitResult directProgressCommit(
             List<SigningTransactionPayloadCodec.Mutation> mutations) throws IOException {
         return directCommit(mutations, null,
@@ -681,7 +973,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return awaitAndPublish(prepared);
     }
 
-    /** Admits a bounded cohort of independent singleton direct mutations before awaiting it. */
+    /**
+     * Admits a bounded cohort of independent singleton direct mutations before awaiting it.
+     * @param mutationCohort ordered bounded cohort of independent mutation lists
+     * @return ordered transaction outcomes for the cohort
+     * @throws IOException if cohort admission, framing, or durable publication fails
+     * @throws IllegalArgumentException if the cohort is empty, exceeds the commit batch bound, or contains a mutation list that is not a singleton
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws NullPointerException if mutationCohort, a member list, or a mutation is null
+     */
     /* default */ List<MetadataCommitResult> directCommitCohort(
             List<List<SigningTransactionPayloadCodec.Mutation>> mutationCohort) throws IOException {
         requireOpen();
@@ -782,7 +1082,14 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Chooses between complete direct mutation sets at WAL admission. */
+    /**
+     * Chooses between complete direct mutation sets at WAL admission.
+     * @param decision complete primary/fallback mutation branches with the admission-time guard and pre-primary callback
+     * @return authoritative outcome of the admitted decision
+     * @throws IOException if decision processing or durable publication fails
+     * @throws NullPointerException if decision is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ ConditionalCommitResult directCommitAtAdmission(
             ConditionalDirectCommit decision) throws IOException {
         requireOpen();
@@ -897,6 +1204,14 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return request.await();
     }
 
+    /**
+     * Computes tracked commit-coordinator workspace before a request is admitted.
+     *
+     * @param mutations ordered immutable mutation inputs retained through commit coordination
+     * @return exact reservation size in bytes including encoded, retained, and fixed request/mutation workspace
+     * @throws ArithmeticException if workspace arithmetic overflows
+     * @throws IllegalArgumentException if mutation encoding is outside supported bounds
+     */
     /* default */ static long coordinatorReservationBytes(
             List<SigningTransactionPayloadCodec.Mutation> mutations) {
         long encodedBytes = SigningTransactionPayloadCodec.encodedCommitSize(mutations);
@@ -907,6 +1222,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 MUTATION_FIXED_BYTES, mutations.size()));
     }
 
+    /**
+     * Observes reserved coordinator request and byte counts under its monitor.
+     *
+     * @return immutable current coordinator reservation statistics
+     */
     /* default */ CoordinatorStatistics coordinatorStatistics() {
         synchronized (coordinatorLock) {
             return new CoordinatorStatistics(coordinatorReservedRequests,
@@ -914,7 +1234,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Captures existing scalar index statistics only at an idle publication boundary. */
+    /**
+     * Captures existing scalar index statistics only at an idle publication boundary.
+     * @return immutable scalar capacity observation captured at an idle publication boundary
+     * @throws IllegalStateException if the engine is unavailable or publication is not quiescent
+     */
     /* default */ CapacityObservation capacityObservation() {
         synchronized (stateLock) {
             synchronized (coordinatorLock) {
@@ -956,7 +1280,10 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Captures both resident-index budgets without requiring quiescence. */
+    /**
+     * Captures both resident-index budgets without requiring quiescence.
+     * @return immutable resident and transient index budget observations
+     */
     /* default */ CapacitySnapshot capacitySnapshot() {
         requireOpen();
         return new CapacitySnapshot(capacity.snapshot(), transientCapacity.snapshot());
@@ -1003,12 +1330,19 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             SigningActiveWal active) {
     }
 
-    /** Returns the first cause that forced this live engine to require recovery. */
+    /**
+     * Returns the first cause that forced this live engine to require recovery.
+     * @return first recovery-required cause, or null if no such failure was retained
+     */
     /* default */ Throwable firstRecoveryFailure() {
         return firstRecoveryFailure.get();
     }
 
-    /** Returns immutable statistics from the recovery that opened this live engine. */
+    /**
+     * Returns immutable statistics from the recovery that opened this live engine.
+     * @return immutable statistics from the recovery that opened this engine
+     * @throws IllegalStateException if the engine is unavailable or was not opened by recovery
+     */
     /* default */ SigningLedgerRecovery.Statistics recoveryStatistics() {
         requireOpen();
         if (recoveryHandle == null) {
@@ -1017,12 +1351,23 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return recoveryHandle.statistics();
     }
 
-    /** Returns counters emitted by the actual production projection rebuild. */
+    /**
+     * Returns counters emitted by the actual production projection rebuild.
+     * @return immutable counters from production recovery projection rebuilding
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ RecoveryProjectionStatistics recoveryProjectionStatistics() {
         requireOpen();
         return recoveryProjectionStatistics;
     }
 
+    /**
+     * Reserves bounded active-work capacity before signing acceptance is admitted.
+     *
+     * @return engine-owned admission reservation; caller closes it unless transferred to accepted work
+     * @throws SigningActiveWal.OverloadedException if projection cutover or work capacity prevents admission
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ SigningAdmission reserveAcceptanceCapacity() {
         SigningProjectionCutoverGate.Capture capture = projectionCutover.tryEnter();
         if (capture == null) {
@@ -1034,6 +1379,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Requires a non-null signing-capacity reservation owned by this engine.
+     *
+     * @param admission reservation to validate; must not be null
+     * @throws NullPointerException if admission is null
+     * @throws IllegalArgumentException if admission belongs to another engine
+     */
     /* default */ void requireSigningAdmission(SigningAdmission admission) {
         Objects.requireNonNull(admission, "signingAdmission");
         requireOwned(admission);
@@ -1078,12 +1430,30 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Records a known rejection for an issued transaction before mutation admission.
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @param category stable rejection category; must not be null
+     * @return authoritative not-committed result
+     * @throws IOException if rejection outcome persistence fails
+     * @throws NullPointerException if category is null
+     * @throws IllegalArgumentException if the transaction belongs to another engine
+     */
     /* default */ MetadataCommitResult reject(MetadataTransactionId transactionId,
             MetadataCommitResult.FailureCategory category) throws IOException {
         requireOwned(transactionId);
         return rejectedBeforeAdmission(transactionId, Objects.requireNonNull(category, "category"));
     }
 
+    /**
+     * Returns the retained authoritative outcome for an issued transaction.
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @return retained known or unknown transaction result
+     * @throws IOException if the transaction was not issued by this store or cannot be resolved
+     * @throws IllegalArgumentException if the transaction belongs to another engine
+     */
     /* default */ MetadataCommitResult resolve(MetadataTransactionId transactionId)
             throws IOException {
         requireOwned(transactionId);
@@ -1098,6 +1468,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Durably acknowledges a known retained transaction outcome so it may be reclaimed.
+     *
+     * @param transactionId transaction identity previously issued by this engine
+     * @throws IOException if the transaction is unknown, unissued, or acknowledgement persistence fails
+     * @throws IllegalArgumentException if the transaction belongs to another engine
+     */
     /* default */ void acknowledge(MetadataTransactionId transactionId) throws IOException {
         MetadataCommitResult retained = resolve(transactionId);
         if (retained.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
@@ -1114,6 +1491,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 SigningTransactionPayloadCodec.acknowledgePayload(), admissionClass);
     }
 
+    /**
+     * Captures an MVCC revision while holding the projection cutover capture gate.
+     *
+     * @return owned metadata snapshot that the caller must close
+     * @throws MetadataStoreException if capture is interrupted or snapshot reservation fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ SigningMvccIndex.Snapshot snapshot() throws MetadataStoreException {
         SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
         try (ignored) {
@@ -1122,6 +1506,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures the first current key in a range under the projection cutover gate.
+     *
+     * @param range metadata key range; must not be null
+     * @return current selection whose retained resources must be closed by the caller
+     * @throws MetadataStoreException if capture is interrupted or selection reservation fails
+     * @throws NullPointerException if range is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ SigningCurrentSelection selectCurrentFirst(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
         SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
@@ -1133,6 +1526,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures the current range selection under the projection cutover gate.
+     *
+     * @param range metadata key range; must not be null
+     * @return current selection whose retained resources must be closed by the caller
+     * @throws MetadataStoreException if capture is interrupted or selection reservation fails
+     * @throws NullPointerException if range is null
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ SigningCurrentSelection selectCurrentRange(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
         SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
@@ -1144,6 +1546,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Reads the exact mutation value referenced by an MVCC snapshot record.
+     *
+     * @param record record pointer from a retained metadata snapshot; must not be null
+     * @return decoded mutation content bytes
+     * @throws IOException if the frame is unreadable, has the wrong kind, or omits the referenced key
+     */
     /* default */ byte[] readValue(SigningMvccIndex.SnapshotRecord record) throws IOException {
         SigningWalFrameCodec.Frame frame = readFrame(record.pointer());
         SigningTransactionPayloadCodec.Payload payload =
@@ -1160,6 +1569,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         throw new IOException("Metadata record is absent from its transaction frame");
     }
 
+    /**
+     * Durably advances the watermark only when the observation exceeds its current value.
+     *
+     * @param observed nonnegative monotone watermark observation
+     * @return current durable watermark after the attempted monotone advance
+     * @throws IOException if watermark framing or durable publication fails
+     * @throws IllegalArgumentException if observed is negative
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ long advanceWatermark(long observed) throws IOException {
         if (observed < 0L) throw new IllegalArgumentException("observed");
         synchronized (watermarkAdvanceLock) {
@@ -1175,6 +1593,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Retains an in-memory monotone watermark observation for later commit publication.
+     *
+     * @param observed nonnegative monotone watermark observation
+     * @throws IllegalArgumentException if observed is negative
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ void observeWatermark(long observed) {
         if (observed < 0L) throw new IllegalArgumentException("observed");
         synchronized (stateLock) {
@@ -1183,14 +1608,33 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the currently recovered or durably advanced watermark under the state monitor.
+     *
+     * @return nonnegative durable watermark
+     */
     /* default */ long recoveredWatermark() {
         synchronized (stateLock) { return watermark; }
     }
 
+    /**
+     * Tests whether a namespace contains internal outcome or ledger-state metadata.
+     *
+     * @param namespace metadata namespace to test; null does not match
+     * @return true for the outcome or ledger-state namespace
+     */
     /* default */ static boolean internalNamespace(String namespace) {
         return OUTCOME_NAMESPACE.equals(namespace) || LEDGER_STATE_NAMESPACE.equals(namespace);
     }
 
+    /**
+     * Decodes a retained transaction outcome from an internal snapshot record.
+     *
+     * @param record record pointer from a retained metadata snapshot; must not be null
+     * @return retained transaction outcome, or empty for a record outside the outcome namespace
+     * @throws IOException if the frame cannot be read or its outcome pointer is inconsistent
+     * @throws NullPointerException if record is null
+     */
     /* default */ Optional<SnapshotOutcome> snapshotOutcome(
             SigningMvccIndex.SnapshotRecord record) throws IOException {
         Objects.requireNonNull(record, "record");
@@ -1212,6 +1656,14 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return Optional.of(new SnapshotOutcome(frame.transactionId(), result));
     }
 
+    /**
+     * Decodes a durable watermark from the exact internal watermark record.
+     *
+     * @param record record pointer from a retained metadata snapshot; must not be null
+     * @return watermark value, or empty for a different key
+     * @throws IOException if the frame cannot be read or its watermark pointer is inconsistent
+     * @throws NullPointerException if record is null
+     */
     /* default */ OptionalLong snapshotWatermark(SigningMvccIndex.SnapshotRecord record)
             throws IOException {
         Objects.requireNonNull(record, "record");
@@ -1228,6 +1680,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return OptionalLong.of(payload.watermark());
     }
 
+    /**
+     * Replays snapshot transaction issuance and its retained terminal result into the new ledger.
+     *
+     * @param snapshot frozen transaction outcome to restore; must not be null
+     * @throws IOException if the transaction is duplicated or replay publication fails
+     * @throws NullPointerException if snapshot is null
+     */
     /* default */ void restoreOutcome(SnapshotOutcome snapshot) throws IOException {
         Objects.requireNonNull(snapshot, "snapshot");
         UUID token = snapshot.transactionId();
@@ -1290,6 +1749,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 projection.activeEntriesBuilt(), projection.statePointersRetained());
     }
 
+    /**
+     * Selects due operation identities through an inclusive time cutoff, closing temporary selection resources.
+     *
+     * @param cutoff inclusive due-time cutoff
+     * @param maximumResults positive upper bound on returned operation identities
+     * @return unmodifiable bounded list of due operation identities
+     * @throws MetadataStoreException if projection capture or due-index selection fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ List<String> selectDue(Instant cutoff, int maximumResults)
             throws MetadataStoreException {
         SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
@@ -1303,6 +1771,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures one identity-ordered page of due work and its stable scan high watermark.
+     *
+     * @param cutoff inclusive due-time cutoff
+     * @param exclusiveCursor optional last operation identity excluded from the next page
+     * @param inclusiveHighWatermark optional fixed upper operation identity included in the scan
+     * @param maximumResults positive upper bound on returned operation identities
+     * @return immutable bounded candidates, high watermark, and end-of-scan indicator
+     * @throws MetadataStoreException if projection capture or bounded due-index selection fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ DuePage pageDue(Instant cutoff, Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumResults)
             throws MetadataStoreException {
@@ -1325,6 +1804,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures an owner identity page paired with the exact MVCC revision used for decoding.
+     *
+     * @param exclusiveCursor optional last operation identity excluded from the next page
+     * @param maximumResults positive upper bound on returned operation identities
+     * @return owned due snapshot; the caller must close it to release selection and MVCC resources
+     * @throws MetadataStoreException if projection capture, owner selection, or snapshot reservation fails
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ DueSnapshot pageOwners(Optional<String> exclusiveCursor, int maximumResults)
             throws MetadataStoreException {
         SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture();
@@ -1356,6 +1844,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Tests active-work ownership under the authoritative state monitor.
+     *
+     * @param operationId exact signing operation identity to look up
+     * @return true if the work projection retains the exact operation identity
+     * @throws IllegalStateException if the engine is unavailable
+     */
     /* default */ boolean containsOwner(String operationId) {
         synchronized (stateLock) {
             requireOpen();
@@ -1363,6 +1858,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Selects retained operation identities through their inclusive creation-time cutoff.
+     *
+     * @param createdAtCutoff inclusive creation-time cutoff
+     * @param maximumResults positive upper bound on returned operation identities
+     * @return bounded identity list selected by the retention index
+     */
     /* default */ List<String> selectRetention(Instant createdAtCutoff, int maximumResults) {
         synchronized (stateLock) {
             return retention.selectThrough(createdAtCutoff, maximumResults);
@@ -1903,6 +2405,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Retains accepted-work capacity pressure and requests maintenance after capacity release.
+     *
+     * @param exhausted capacity failure carrying the release epoch to observe; must not be null
+     * @throws NullPointerException if exhausted is null
+     */
     /* default */ void signalProtectedProgressPressure(
             SigningIndexCapacityBudget.CapacityExceededException exhausted) {
         protectedProgressPressure.set(Objects.requireNonNull(exhausted, "exhausted"));
@@ -2088,12 +2596,26 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Formats a nonsecret low-space warning without changing admission or durable state.
+     *
+     * @param usable observed usable filesystem space in bytes
+     * @param threshold configured warning threshold in bytes
+     * @return warning containing the stable diagnostic code and scalar byte counts
+     */
     /* default */ static String usableSpaceWarning(long usable, long threshold) {
         return "Filesystem usable space is low: code=FILESYSTEM_USABLE_SPACE_LOW usable="
                 + usable + " threshold=" + threshold
                 + "; recovery may require operator action";
     }
 
+    /**
+     * Installs the sole process-wide observer used by deterministic filesystem-probe tests.
+     *
+     * @param observer probe observer; must not be null
+     * @throws NullPointerException if observer is null
+     * @throws IllegalStateException if an observer is already installed
+     */
     /* default */ static void installUsableSpaceObserver(UsableSpaceObserver observer) {
         if (!USABLE_SPACE_OBSERVER.compareAndSet(null,
                 Objects.requireNonNull(observer, "observer"))) {
@@ -2101,6 +2623,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Removes the process-wide test observer for filesystem-space probes.
+     */
     /* default */ static void clearUsableSpaceObserver() {
         USABLE_SPACE_OBSERVER.set(null);
     }
@@ -2268,6 +2793,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         synchronized (coordinatorLock) {
@@ -2381,7 +2909,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return new FormatUnsupportedException();
     }
 
-    /** Cause-free marker for malformed persistent metadata. */
+    /**
+     * Cause-free marker for malformed persistent metadata.
+     */
     /* default */ static final class FormatUnsupportedException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -2416,7 +2946,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 WAL_ADMISSION_FULL_MESSAGE);
     }
 
-    /** Sticky headroom pressure owned by the maintenance-signal monitor. */
+    /**
+     * Sticky headroom pressure owned by the maintenance-signal monitor.
+     */
     /* default */ static final class MaintenancePressure {
         private boolean walPending;
         private boolean protectedProgressPending;
@@ -2424,10 +2956,16 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         private boolean raisedDuringPass;
         private PressureReason activeReason;
 
+        /**
+         * Records sticky WAL headroom pressure under the owning maintenance-signal monitor.
+         */
         /* default */ void signal() {
             signal(PressureReason.WAL);
         }
 
+        /**
+         * Records sticky accepted-work progress pressure under the owning maintenance-signal monitor.
+         */
         /* default */ void signalProtectedProgress() {
             signal(PressureReason.PROTECTED_PROGRESS);
         }
@@ -2443,6 +2981,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Starts one pending pressure pass, preferring protected accepted-work progress.
+         *
+         * @return selected pressure reason, or null when no pressure is pending
+         * @throws IllegalStateException if another pressure pass is active
+         */
         /* default */ PressureReason beginPass() {
             if (!pending()) {
                 return null;
@@ -2462,6 +3006,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return activeReason;
         }
 
+        /**
+         * Ends an active pressure pass without claiming headroom was restored.
+         *
+         * @param pressurePass whether this maintenance attempt owns a pressure pass
+         * @throws IllegalStateException if pressurePass is true but no pass is active
+         */
         /* default */ void deferPass(boolean pressurePass) {
             if (!pressurePass) {
                 return;
@@ -2474,6 +3024,14 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             activeReason = null;
         }
 
+        /**
+         * Completes a pressure pass and retains unresolved or newly raised pressure.
+         *
+         * @param pressurePass whether this maintenance attempt owns a pressure pass
+         * @param headroomRestored whether the pass restored its required workspace headroom
+         * @return true only when headroom was restored and no pressure was raised during the pass
+         * @throws IllegalStateException if pressurePass is true but no pass is active
+         */
         /* default */ boolean completePass(boolean pressurePass, boolean headroomRestored) {
             if (!pressurePass) {
                 return false;
@@ -2495,10 +3053,20 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return restored;
         }
 
+        /**
+         * Tests whether WAL or protected-progress pressure remains pending.
+         *
+         * @return true if either pending pressure flag is set
+         */
         /* default */ boolean pending() {
             return walPending || protectedProgressPending;
         }
 
+        /**
+         * Returns the highest-priority pending pressure reason or the active pass reason.
+         *
+         * @return protected-progress, WAL, or active reason; null when none exists
+         */
         /* default */ PressureReason reason() {
             if (protectedProgressPending) {
                 return PressureReason.PROTECTED_PROGRESS;
@@ -2510,8 +3078,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Distinct maintenance triggers for WAL headroom and progress of already accepted signing work.
+     */
     /* default */ enum PressureReason {
+        /**
+         * Pressure originates from the active write-ahead log.
+         */
         WAL,
+        /**
+         * Pressure originates from progress reserved for already accepted signing.
+         */
         PROTECTED_PROGRESS
     }
 
@@ -2548,7 +3125,10 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         index.clearSnapshotCloseSignal();
     }
 
-    /** Returns package-internal coordinator state for deterministic lifecycle verification. */
+    /**
+     * Returns package-internal coordinator state for deterministic lifecycle verification.
+     * @return immutable pass count, request/defer flags, and current deferral reason
+     */
     /* default */ MaintenanceCoordinatorSnapshot maintenanceCoordinatorSnapshot() {
         synchronized (maintenanceSignal) {
             return new MaintenanceCoordinatorSnapshot(maintenancePasses, maintenanceRequested,
@@ -2578,25 +3158,41 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Test-only observation of the thread that performs a filesystem-space probe. */
+    /**
+     * Test-only observation of the thread that performs a filesystem-space probe.
+     */
     /* default */ @FunctionalInterface
     interface UsableSpaceObserver {
-        /** Records one probe immediately before the filesystem query. */
+        /**
+         * Records one probe immediately before the filesystem query.
+         * @param thread thread about to perform the filesystem query
+         */
         void observe(Thread thread);
 
-        /** Supplies the monotonic probe clock; overridden only by deterministic tests. */
+        /**
+         * Supplies the monotonic probe clock; overridden only by deterministic tests.
+         * @return monotonic probe time in nanoseconds, with an arbitrary origin
+         */
         default long nanoTime() {
             return System.nanoTime();
         }
     }
 
-    /** Hysteretic, rate-limited scalar state for the maintenance-thread probe. */
+    /**
+     * Hysteretic, rate-limited scalar state for the maintenance-thread probe.
+     */
     /* default */ static final class SoftUsableSpaceObservation {
         private final long warningIntervalNanos;
         private long lastProbeNanos = Long.MIN_VALUE;
         private long lastWarningNanos = Long.MIN_VALUE;
         private boolean low;
 
+        /**
+         * Creates a rate-limited filesystem-space observation state.
+         *
+         * @param warningIntervalNanos positive minimum probe and repeated-warning interval, in nanoseconds
+         * @throws IllegalArgumentException if warningIntervalNanos is nonpositive
+         */
         /* default */ SoftUsableSpaceObservation(long warningIntervalNanos) {
             if (warningIntervalNanos <= 0L) {
                 throw new IllegalArgumentException("warningIntervalNanos must be positive");
@@ -2604,6 +3200,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             this.warningIntervalNanos = warningIntervalNanos;
         }
 
+        /**
+         * Reserves a probe only after its minimum monotonic interval has elapsed.
+         *
+         * @param nowNanos current monotonic observation time, in nanoseconds
+         * @return true when this call records the start of an eligible probe
+         */
         /* default */ boolean beginProbe(long nowNanos) {
             if (!elapsedAtLeast(nowNanos, lastProbeNanos, warningIntervalNanos)) {
                 return false;
@@ -2612,6 +3214,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return true;
         }
 
+        /**
+         * Records a usable-space observation with low-space entry and recovery hysteresis.
+         *
+         * @param usable nonnegative observed usable filesystem space, in bytes
+         * @param threshold positive low-space warning threshold, in bytes
+         * @param nowNanos current monotonic probe time, in nanoseconds
+         * @return true when low-space entry or the repeated-warning interval requires a warning
+         * @throws IllegalArgumentException if usable is negative or threshold is nonpositive
+         */
         /* default */ boolean observe(long usable, long threshold, long nowNanos) {
             if (usable < 0L || threshold <= 0L) {
                 throw new IllegalArgumentException("usable and threshold must be non-negative");
@@ -2636,16 +3247,32 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /* default */ record MaintenanceCoordinatorSnapshot(long passes, boolean requested,
+    /* default */ /**
+     * Constant-size state of requested and deferred background maintenance.
+     *
+     * @param passes number of maintenance passes attempted
+     * @param requested whether another maintenance pass is requested
+     * @param deferred whether maintenance is currently deferred
+     * @param deferralReason closed reason for the current maintenance deferral
+     */
+    record MaintenanceCoordinatorSnapshot(long passes, boolean requested,
             boolean deferred, SigningLedgerMaintenance.DeferralReason deferralReason) {
     }
 
-    /** Constant-space lifecycle accounting used only under the WAL-admission lock. */
+    /**
+     * Constant-space lifecycle accounting used only under the WAL-admission lock.
+     */
     /* default */ static final class LifecycleSlots {
         private final int capacity;
         private int prepared;
         private int admitted;
 
+        /**
+         * Creates bounded constant-space lifecycle admission accounting.
+         *
+         * @param capacity positive maximum simultaneous prepared and admitted transitions
+         * @throws IllegalArgumentException if capacity is nonpositive
+         */
         /* default */ LifecycleSlots(int capacity) {
             if (capacity <= 0) {
                 throw new IllegalArgumentException("Metadata lifecycle capacity is invalid");
@@ -2653,10 +3280,24 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             this.capacity = capacity;
         }
 
+        /**
+         * Reserves preparation slots under the owning WAL-admission lock.
+         *
+         * @throws SigningActiveWal.OverloadedException if the lifecycle capacity is exhausted
+         * @throws ArithmeticException if lifecycle count arithmetic overflows
+         */
         /* default */ void acquirePrepared() {
             acquirePrepared(1);
         }
 
+        /**
+         * Reserves preparation slots under the owning WAL-admission lock.
+         *
+         * @param count positive number of preparation slots; defaults to one for the no-argument overload
+         * @throws IllegalArgumentException if count is nonpositive
+         * @throws SigningActiveWal.OverloadedException if the lifecycle capacity is exhausted
+         * @throws ArithmeticException if lifecycle count arithmetic overflows
+         */
         /* default */ void acquirePrepared(int count) {
             if (count <= 0) {
                 throw new IllegalArgumentException("Metadata lifecycle acquisition is invalid");
@@ -2669,6 +3310,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             requireBound();
         }
 
+        /**
+         * Transfers one existing preparation slot into admitted commit ownership.
+         *
+         * @throws IllegalStateException if no preparation slot is owned or accounting is inconsistent
+         */
         /* default */ void transferPreparedToAdmitted() {
             if (prepared <= 0) {
                 throw new IllegalStateException("Metadata lifecycle transfer is inconsistent");
@@ -2678,6 +3324,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             requireBound();
         }
 
+        /**
+         * Releases one preparation slot when owned, without decrementing an empty counter.
+         *
+         * @return true if a preparation slot was released
+         */
         /* default */ boolean releasePrepared() {
             if (prepared <= 0) {
                 return false;
@@ -2687,6 +3338,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return true;
         }
 
+        /**
+         * Releases one admitted transition slot when owned.
+         *
+         * @return true if an admitted slot was released
+         */
         /* default */ boolean releaseAdmitted() {
             if (admitted <= 0) {
                 return false;
@@ -2700,6 +3356,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return prepared == 0 && admitted == 0;
         }
 
+        /**
+         * Observes lifecycle slot accounting under its owning lock.
+         *
+         * @return immutable prepared, admitted, and capacity counts
+         */
         /* default */ LifecycleSnapshot snapshot() {
             return new LifecycleSnapshot(prepared, admitted, capacity);
         }
@@ -2711,20 +3372,45 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /* default */ record LifecycleSnapshot(int prepared, int admitted, int capacity) { }
+    /* default */ /**
+     * Prepared and admitted transition counts under the shared lifecycle capacity bound.
+     *
+     * @param prepared number of transitions holding preparation capacity
+     * @param admitted number of transitions admitted to commit coordination
+     * @param capacity maximum simultaneous lifecycle reservations
+     */
+    record LifecycleSnapshot(int prepared, int admitted, int capacity) { }
 
-    /** One monitor-owned admission, maintenance-gate, and lifecycle domain. */
+    /**
+     * One monitor-owned admission, maintenance-gate, and lifecycle domain.
+     */
     /* default */ static final class AdmissionMaintenanceGate {
         private final Object monitor;
         private final LifecycleSlots slots;
         private boolean maintenanceActive;
         private boolean closed;
 
+        /**
+         * Creates bounded constant-space lifecycle admission accounting.
+         *
+         * @param monitor shared admission/maintenance monitor; must not be null
+         * @param capacity positive maximum simultaneous prepared and admitted transitions
+         * @throws IllegalArgumentException if capacity is nonpositive
+         * @throws NullPointerException if monitor is null
+         */
         /* default */ AdmissionMaintenanceGate(Object monitor, int capacity) {
             this.monitor = Objects.requireNonNull(monitor, "monitor");
             slots = new LifecycleSlots(capacity);
         }
 
+        /**
+         * Waits for maintenance to release admission, then reserves one preparation slot.
+         *
+         * @return owned preparation token; close it unless it is transferred to admitted work
+         * @throws InterruptedException if the caller is interrupted while waiting
+         * @throws IllegalStateException if admission is closed
+         * @throws SigningActiveWal.OverloadedException if lifecycle capacity is exhausted
+         */
         /* default */ Preparation beginSingle() throws InterruptedException {
             synchronized (monitor) {
                 awaitAdmission();
@@ -2734,6 +3420,16 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Waits for admission and atomically reserves a bounded cohort of preparation slots.
+         *
+         * @param count positive cohort size no greater than the maximum commit batch
+         * @return list of owned preparation tokens; each must be closed or transferred
+         * @throws InterruptedException if the caller is interrupted while waiting
+         * @throws IllegalArgumentException if cohort size is outside supported bounds
+         * @throws IllegalStateException if admission is closed
+         * @throws SigningActiveWal.OverloadedException if lifecycle capacity is exhausted
+         */
         /* default */ List<Preparation> beginCohort(int count) throws InterruptedException {
             if (count <= 0 || count > MAXIMUM_COMMIT_BATCH) {
                 throw new IllegalArgumentException("Metadata cohort lifecycle count is invalid");
@@ -2756,6 +3452,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             requireOpen();
         }
 
+        /**
+         * Acquires maintenance admission exclusivity and waits for all lifecycle slots to drain.
+         *
+         * @return true if maintenance owns the drained boundary; false if unavailable or closed
+         * @throws InterruptedException if interrupted while waiting for prepared or admitted slots
+         */
         /* default */ boolean beginMaintenanceAndDrain() throws InterruptedException {
             synchronized (monitor) {
                 if (maintenanceActive || closed) {
@@ -2766,6 +3468,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Closes the current publication boundary and waits for all lifecycle slots to drain.
+         *
+         * @return true if maintenance owns the drained boundary; false if unavailable or closed
+         * @throws InterruptedException if interrupted while waiting for prepared or admitted slots
+         */
         /* default */ boolean closeBoundaryAndDrain() throws InterruptedException {
             synchronized (monitor) {
                 if (closed) {
@@ -2788,6 +3496,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return true;
         }
 
+        /**
+         * Reopens the publication boundary and wakes waiting admissions under the shared monitor.
+         */
         /* default */ void reopenBoundary() {
             synchronized (monitor) {
                 maintenanceActive = false;
@@ -2795,6 +3506,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Permanently closes admission and wakes maintenance and admission waiters.
+         */
         /* default */ void closeAdmissions() {
             synchronized (monitor) {
                 closed = true;
@@ -2803,6 +3517,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Releases one admitted transition slot when owned.
+         *
+         * @return true if an admitted slot was released
+         */
         /* default */ boolean releaseAdmitted() {
             synchronized (monitor) {
                 boolean released = slots.releaseAdmitted();
@@ -2811,12 +3530,22 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Tests whether the gate has no lifecycle reservations and no active maintenance.
+         *
+         * @return true only when lifecycle slots are empty and maintenance is inactive
+         */
         /* default */ boolean isIdle() {
             synchronized (monitor) {
                 return slots.isEmpty() && !maintenanceActive;
             }
         }
 
+        /**
+         * Captures gate state under the shared admission monitor.
+         *
+         * @return immutable lifecycle counts and maintenance/closed flags
+         */
         /* default */ GateSnapshot snapshot() {
             synchronized (monitor) {
                 return new GateSnapshot(slots.snapshot(), maintenanceActive, closed);
@@ -2905,7 +3634,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
         }
 
-        /** Existing short-lived preparation ownership, now gate-owned. */
+        /**
+         * Existing short-lived preparation ownership, now gate-owned.
+         */
         /* default */ static final class Preparation implements AutoCloseable {
             private final AdmissionMaintenanceGate owner;
             private long epoch;
@@ -2916,33 +3647,71 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 this.owner = owner;
             }
 
+            /**
+             * Binds the owned active preparation to its capture epoch exactly once.
+             *
+             * @param epoch projection capture epoch to bind
+             * @throws IllegalStateException if preparation is inactive or its epoch was already initialized
+             */
             /* default */ void initializeEpoch(long epoch) {
                 owner.initializeEpoch(this, epoch);
             }
 
+            /**
+             * Returns the capture epoch bound to this owned active preparation.
+             *
+             * @return initialized projection capture epoch
+             * @throws IllegalStateException if preparation is inactive or its epoch is uninitialized
+             */
             /* default */ long epoch() {
                 return owner.epoch(this);
             }
 
+            /**
+             * Requires this preparation token to retain active ownership under its gate.
+             *
+             * @throws IllegalStateException if preparation ownership is no longer active
+             */
             /* default */ void requireActive() {
                 owner.requireActive(this);
             }
 
+            /**
+             * Binds a WAL frame reservation to this active preparation under the shared gate.
+             *
+             * @param reservation WAL frame reservation to bind
+             * @throws IllegalStateException if preparation ownership is no longer active
+             */
             /* default */ void bind(SigningActiveWal.FrameReservation reservation) {
                 owner.bind(this, reservation);
             }
 
+            /**
+             * Transfers this active preparation to admitted ownership under the owning gate.
+             *
+             * @throws IllegalStateException if preparation ownership is inactive or inconsistent
+             */
             /* default */ void transferToAdmittedLocked() {
                 owner.transferToAdmitted(this);
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override public void close() {
                 owner.releasePrepared(this);
             }
         }
     }
 
-    /* default */ record GateSnapshot(
+    /* default */ /**
+     * Lifecycle admission and maintenance gate state captured by the engine.
+     *
+     * @param lifecycle prepared/admitted transition counts and shared capacity bound
+     * @param maintenanceActive whether maintenance holds the engine gate
+     * @param closed whether admission has been permanently closed
+     */
+    record GateSnapshot(
             LifecycleSnapshot lifecycle, boolean maintenanceActive, boolean closed) { }
 
     private enum State { OPEN, CLOSING, RECOVERY_REQUIRED, CLOSED }
@@ -3020,11 +3789,24 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * {@link SigningActiveWal.FrameReservation#admitIf(BooleanSupplier)}. The
      * observation seam is test-only and runs immediately before guarded admission,
      * outside the active WAL lock.
+     * @param primaryMutations exact primary branch mutation list
+     * @param fallbackMutations exact fallback branch mutation list
+     * @param primaryGuard predicate rechecked before primary branch admission
+     * @param beforePrimaryAdmission callback run before admitting the primary branch
      */
     /* default */ record ConditionalDirectCommit(
             List<SigningTransactionPayloadCodec.Mutation> primaryMutations,
             List<SigningTransactionPayloadCodec.Mutation> fallbackMutations,
             BooleanSupplier primaryGuard, Runnable beforePrimaryAdmission) {
+        /**
+         * Creates a {@code ConditionalDirectCommit} value from the supplied component coordinates.
+         *
+         * @param primaryMutations exact primary branch mutation list
+         * @param fallbackMutations exact fallback branch mutation list
+         * @param primaryGuard predicate rechecked before primary branch admission
+         * @param beforePrimaryAdmission callback run before admitting the primary branch
+         * @throws NullPointerException if {@code primaryGuard} is null; or if {@code beforePrimaryAdmission} is null
+         */
         ConditionalDirectCommit {
             primaryMutations = List.copyOf(primaryMutations);
             fallbackMutations = List.copyOf(fallbackMutations);
@@ -3033,15 +3815,28 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Result and selected branch of one conditional direct commit. */
+    /**
+     * Result and selected branch of one conditional direct commit.
+     * @param result retained transaction commit outcome
+     * @param primaryAdmitted whether the primary branch was selected for admission
+     */
     /* default */ record ConditionalCommitResult(
             MetadataCommitResult result, boolean primaryAdmitted) {
+        /**
+         * Creates a {@code ConditionalCommitResult} value from the supplied component coordinates.
+         *
+         * @param result retained transaction commit outcome
+         * @param primaryAdmitted whether the primary branch was selected for admission
+         * @throws NullPointerException if {@code result} is null
+         */
         ConditionalCommitResult {
             Objects.requireNonNull(result, "result");
         }
     }
 
-    /** Bounded admission guard evaluated after its test-only observation seam. */
+    /**
+     * Bounded admission guard evaluated after its test-only observation seam.
+     */
     private record ConditionalAdmission(BooleanSupplier guard, Runnable beforeAdmission) {
         ConditionalAdmission {
             Objects.requireNonNull(guard, "guard");
@@ -3049,7 +3844,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Store-owned ephemeral carrier deliberately absent from every durable representation. */
+    /**
+     * Store-owned ephemeral carrier deliberately absent from every durable representation.
+     */
     /* default */ static final class SigningAdmission implements AutoCloseable {
         private final SigningLedgerStoreEngine owner;
         private final SigningDueWorkIndex.Admission dueAdmission;
@@ -3060,10 +3857,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             this.dueAdmission = dueAdmission;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { dueAdmission.close(); }
     }
 
-    /** Entire fallible in-memory publication prepared before WAL admission. */
+    /**
+     * Entire fallible in-memory publication prepared before WAL admission.
+     */
     private record PreparedFrame(UUID token, SigningTransactionPayloadCodec.Kind kind,
             long watermark, SigningMvccIndex.RecordPointer pointer,
             SigningMvccIndex.PreparedApply indexApply,
@@ -3071,10 +3873,52 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             MetadataCommitResult result,
             SigningActiveWal.Acknowledgement acknowledgement) { }
 
-    /* default */ record CoordinatorStatistics(int reservedRequests, long reservedBytes,
+    /* default */ /**
+     * Current request and byte reservations of the transaction commit coordinator.
+     *
+     * @param reservedRequests number of outstanding coordinator request reservations
+     * @param reservedBytes current accounted reservation in bytes
+     * @param maximumBytes inclusive configured byte reservation limit
+     */
+    record CoordinatorStatistics(int reservedRequests, long reservedBytes,
             long maximumBytes) { }
 
-    /** Constant-space quiescent capacity evidence assembled from existing indexes. */
+    /**
+     * Constant-space quiescent capacity evidence assembled from existing indexes.
+     * @param currentKeys number of current metadata identities
+     * @param mvccLiveSnapshots number of live pinned multiversion snapshots
+     * @param canonicalKeyBytes accounted bytes occupied by canonical metadata keys
+     * @param mvccEstimatedResidentBytes estimated resident multiversion index memory in bytes
+     * @param mvccReservedBytes current multiversion index reservation in bytes
+     * @param dueWork number of retained due-work identities
+     * @param dueCanonicalIdBytes accounted canonical operation identity bytes in the due-work index
+     * @param dueEstimatedResidentBytes estimated resident due-work index memory in bytes
+     * @param dueReservedBytes current due-work index reservation in bytes
+     * @param retentionRecords number of retained terminal records
+     * @param retentionReservedBytes current terminal-retention index reservation in bytes
+     * @param ownerWork number of retained content-owner identities
+     * @param ownerCanonicalIdBytes accounted canonical operation identity bytes in the content-owner index
+     * @param ownerEstimatedResidentBytes estimated resident content-owner index memory in bytes
+     * @param ownerReservedBytes current content-owner index reservation in bytes
+     * @param projectedIdentities number of distinct projected operation identities
+     * @param projectionReservedBytes current work-projection reservation in bytes
+     * @param registeredGenerations number of registered artifact generations
+     * @param publishedGenerations number of published artifact generations
+     * @param supersededGenerations number of superseded artifact generations
+     * @param reclaimingGenerations number of artifact generations currently being reclaimed
+     * @param reclaimableGenerations number of unreferenced generations eligible for reclamation
+     * @param generationCurrentReferences generation references held by current state
+     * @param generationSnapshotPins generation pins held by live snapshots
+     * @param steadyReservedBytes current steady-state resident reservation in bytes
+     * @param steadyHighWaterReservedBytes highest observed steady-state resident reservation in bytes
+     * @param steadyMaximumBytes configured maximum steady-state resident reservation in bytes
+     * @param transientReservedBytes current transient workspace reservation in bytes
+     * @param transientHighWaterBytes highest observed transient workspace reservation in bytes
+     * @param transientMaximumBytes configured maximum transient workspace reservation in bytes
+     * @param combinedReservedBytes current combined reservation in bytes
+     * @param combinedHighWaterBytes highest observed combined reservation in bytes
+     * @param combinedMaximumBytes configured maximum combined reservation in bytes
+     */
     /* default */ record CapacityObservation(int currentKeys, int mvccLiveSnapshots,
             long canonicalKeyBytes,
             long mvccEstimatedResidentBytes, long mvccReservedBytes,
@@ -3092,29 +3936,68 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             long combinedMaximumBytes) {
     }
 
-    /** One constant-space observation of the independent steady and transient budgets. */
+    /**
+     * One constant-space observation of the independent steady and transient budgets.
+     * @param steady current observation of the resident steady-state budget
+     * @param transientBudget current observation of the transient compaction workspace budget
+     */
     /* default */ record CapacitySnapshot(SigningIndexCapacityBudget.Snapshot steady,
             SigningIndexCapacityBudget.Snapshot transientBudget) {
+        /**
+         * Creates a {@code CapacitySnapshot} value from the supplied component coordinates.
+         *
+         * @param steady current observation of the resident steady-state budget
+         * @param transientBudget current observation of the transient compaction workspace budget
+         * @throws NullPointerException if {@code steady} is null; or if {@code transientBudget} is null
+         */
         CapacitySnapshot {
             Objects.requireNonNull(steady, "steady");
             Objects.requireNonNull(transientBudget, "transientBudget");
         }
 
+        /**
+         * Adds the corresponding resident and transient budget observations using checked arithmetic.
+         *
+         * @return sum of current steady and transient reservations, in bytes
+         * @throws ArithmeticException if the combined byte count exceeds the long range
+         */
         /* default */ long combinedReservedBytes() {
             return Math.addExact(steady.reservedBytes(), transientBudget.reservedBytes());
         }
 
+        /**
+         * Adds the corresponding resident and transient budget observations using checked arithmetic.
+         *
+         * @return sum of steady and transient peak reservation observations, in bytes
+         * @throws ArithmeticException if the combined byte count exceeds the long range
+         */
         /* default */ long combinedHighWaterBytes() {
             return Math.addExact(steady.highWaterReservedBytes(),
                     transientBudget.highWaterReservedBytes());
         }
 
+        /**
+         * Adds the corresponding resident and transient budget observations using checked arithmetic.
+         *
+         * @return sum of configured steady and transient reservation bounds, in bytes
+         * @throws ArithmeticException if the combined byte count exceeds the long range
+         */
         /* default */ long combinedMaximumBytes() {
             return Math.addExact(steady.maximumBytes(), transientBudget.maximumBytes());
         }
     }
 
-    /** Visit, tracked envelope-workspace, and retained-state counts from recovery. */
+    /**
+     * Visit, tracked envelope-workspace, and retained-state counts from recovery.
+     * @param envelopesVisited number of acceptance envelopes visited during recovery
+     * @param peakTrackedEnvelopeWorkspaceBytes highest tracked envelope validation workspace reservation in bytes
+     * @param currentTrackedEnvelopeWorkspaceBytes current tracked envelope validation workspace reservation in bytes
+     * @param statesVisited number of mutable-state records visited during reconstruction
+     * @param bindingsVisited number of candidate-binding records visited during recovery
+     * @param outerRecordsVisited number of domain continuation records visited during recovery
+     * @param activeEntriesBuilt number of active work descriptors built during reconstruction
+     * @param statePointersRetained number of physical state pointers retained by the reconstructed projection
+     */
     /* default */ record RecoveryProjectionStatistics(long envelopesVisited,
             long peakTrackedEnvelopeWorkspaceBytes, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
             long currentTrackedEnvelopeWorkspaceBytes, long statesVisited, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
@@ -3125,7 +4008,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Preallocated outcome hash slot mutated without allocation after durability. */
+    /**
+     * Preallocated outcome hash slot mutated without allocation after durability.
+     */
     private static final class OutcomeSlot {
         private MetadataCommitResult value;
         private final SigningTransitionWorkspaceSizing.AdmissionClass admissionClass;
@@ -3135,31 +4020,76 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             this.admissionClass = Objects.requireNonNull(admissionClass, "admissionClass");
         }
     }
-    /* default */ record SnapshotOutcome(UUID transactionId, MetadataCommitResult result) {
+    /* default */ /**
+     * One exact transaction identity and its retained terminal commit result.
+     *
+     * @param transactionId exact durable transaction identity
+     * @param result retained transaction commit outcome
+     */
+    record SnapshotOutcome(UUID transactionId, MetadataCommitResult result) {
+        /**
+         * Creates a {@code SnapshotOutcome} value from the supplied component coordinates.
+         *
+         * @param transactionId exact durable transaction identity
+         * @param result retained transaction commit outcome
+         * @throws NullPointerException if {@code transactionId} is null; or if {@code result} is null
+         */
         SnapshotOutcome {
             Objects.requireNonNull(transactionId, "transactionId");
             Objects.requireNonNull(result, "result");
         }
     }
 
-    /* default */ record DueCandidate(String operationId,
+    /* default */ /**
+     * Lightweight operation identity and scheduling coordinates selected from due work.
+     *
+     * @param operationId exact signing operation identity
+     * @param scheduling exact key and authority coordinates used for fair scheduling
+     * @param malformed whether retained state is malformed and requires guarded handling
+     */
+    record DueCandidate(String operationId,
             zeroecho.pki.spi.store.SignWorkflowStore.SchedulingCoordinates scheduling,
             boolean malformed) {
+        /**
+         * Creates a {@code DueCandidate} value from the supplied component coordinates.
+         *
+         * @param operationId exact signing operation identity
+         * @param scheduling exact key and authority coordinates used for fair scheduling
+         * @param malformed whether retained state is malformed and requires guarded handling
+         * @throws NullPointerException if {@code operationId} is null; or if {@code scheduling} is null
+         */
         DueCandidate {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(scheduling, "scheduling");
         }
     }
 
-    /* default */ record DuePage(List<DueCandidate> candidates,
+    /* default */ /**
+     * Bounded immutable due-candidate page and its traversal continuation coordinates.
+     *
+     * @param candidates immutable due candidates in traversal order
+     * @param highWatermark last traversal identity, or empty when no continuation exists
+     * @param endReached whether the traversal reached the end of the captured due set
+     */
+    record DuePage(List<DueCandidate> candidates,
             Optional<String> highWatermark, boolean endReached) {
+        /**
+         * Creates a {@code DuePage} value from the supplied component coordinates.
+         *
+         * @param candidates immutable due candidates in traversal order
+         * @param highWatermark last traversal identity, or empty when no continuation exists
+         * @param endReached whether the traversal reached the end of the captured due set
+         * @throws NullPointerException if {@code candidates} is null; or if {@code highWatermark} is null
+         */
         DuePage {
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
             highWatermark = Objects.requireNonNull(highWatermark, "highWatermark");
         }
     }
 
-    /** One atomic owner selection and MVCC revision used for bulk candidate decoding. */
+    /**
+     * One atomic owner selection and MVCC revision used for bulk candidate decoding.
+     */
     /* default */ static final class DueSnapshot implements AutoCloseable {
         private final SigningDueWorkIndex.IdentitySelection selection;
         private final SigningMvccIndex.Snapshot snapshot;
@@ -3169,10 +4099,22 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             this.selection = selection;
             this.snapshot = snapshot;
         }
+        /**
+         * Returns the due-owner selection retained by this snapshot.
+         *
+         * @return borrowed selection valid until this due snapshot is closed
+         * @throws IllegalStateException if this due snapshot is closed
+         */
         /* default */ SigningDueWorkIndex.IdentitySelection selection() {
             requireOpen();
             return selection;
         }
+        /**
+         * Returns the MVCC revision retained by this due-owner snapshot.
+         *
+         * @return borrowed MVCC snapshot valid until its owning due snapshot is closed
+         * @throws IllegalStateException if the owning due snapshot is closed
+         */
         /* default */ SigningMvccIndex.Snapshot snapshot() {
             requireOpen();
             return snapshot;
@@ -3180,6 +4122,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         private void requireOpen() {
             if (closed.get()) throw new IllegalStateException("signing due snapshot is closed");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (closed.compareAndSet(false, true)) {
                 snapshot.close();

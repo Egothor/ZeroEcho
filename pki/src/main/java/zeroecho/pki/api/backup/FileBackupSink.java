@@ -50,7 +50,9 @@ import java.util.Objects;
 import java.util.Set;
 import zeroecho.pki.api.PkiId;
 
-/** File-backed single-writer sink with durable publication and explicit source ownership. */
+/**
+ * File-backed single-writer sink with durable publication and explicit source ownership.
+ */
 final class FileBackupSink implements BackupSink {
 
     private final Path directory;
@@ -67,7 +69,9 @@ final class FileBackupSink implements BackupSink {
     private boolean failed;
     private boolean transferred;
     private boolean closed;
-    /** Injectable filesystem boundaries for deterministic publication failure tests. */
+    /**
+     * Injectable filesystem boundaries for deterministic publication failure tests.
+     */
     /* default */ interface Operations {
         /** Opens the incomplete file for writing.
          * @param file existing incomplete file
@@ -110,10 +114,30 @@ final class FileBackupSink implements BackupSink {
         default void delete(Path file) throws IOException { Files.deleteIfExists(file); }
     }
 
+    /**
+     * Creates a file-backed sink using the default durable filesystem operations.
+     *
+     * @param directory existing writable directory in which the sink owns its temporary archive
+     * @param id logical backup identifier associated with the eventual source
+     * @param limits immutable backup size limits; the compressed-byte bound limits writes
+     * @return newly opened sink; the caller must complete it or close it to remove owned files
+     * @throws NullPointerException if an argument is null
+     * @throws IOException if the temporary archive cannot be created or opened
+     */
     /* default */ static BackupSink create(Path directory, PkiId id, BackupLimits limits) throws IOException {
         return new FileBackupSink(directory, id, limits, new Operations() { });
     }
 
+    /**
+     * Opens an owned temporary archive and captures the operations used to publish it.
+     *
+     * @param directory existing writable parent directory, retained for the durability barrier
+     * @param id logical backup identifier, retained without modification
+     * @param limits limits supplying the maximum compressed archive length in bytes
+     * @param operations filesystem operations used for output, publication and cleanup
+     * @throws NullPointerException if an argument is null
+     * @throws IOException if creation or opening fails; cleanup failures are suppressed on the opening failure
+     */
     /* default */ FileBackupSink(Path directory, PkiId id, BackupLimits limits, Operations operations) throws IOException {
         this.directory = Objects.requireNonNull(directory, "directory");
         this.id = Objects.requireNonNull(id, "backupId");
@@ -164,6 +188,9 @@ final class FileBackupSink implements BackupSink {
         if (closed || transferred || failed || outputClosed) { throw new IOException("BACKUP_SINK_CLOSED"); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public OutputStream outputStream() throws IOException {
         requireWritable();
         return output;
@@ -177,6 +204,9 @@ final class FileBackupSink implements BackupSink {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public BackupSource complete() throws IOException {
         if (closed || transferred || failed) { throw new IOException("BACKUP_SINK_CLOSED"); }
         try {
@@ -194,6 +224,9 @@ final class FileBackupSink implements BackupSink {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() throws IOException {
         if (closed || transferred) { return; }
         IOException failure = null;
@@ -208,7 +241,9 @@ final class FileBackupSink implements BackupSink {
         closed = true;
     }
 
-    /** Revocable source owning its archive and all open reader streams. */
+    /**
+     * Revocable source owning its archive and all open reader streams.
+     */
     private static final class OwnedSource implements BackupSource {
         private final java.util.concurrent.locks.ReentrantLock lifecycle = new java.util.concurrent.locks.ReentrantLock();
         private final PkiId id;
@@ -226,9 +261,21 @@ final class FileBackupSink implements BackupSink {
             this.commitment = commitment;
             this.operations = operations;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiId backupId() { return id; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long contentLength() { return length; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String sha256() { return commitment; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public InputStream openStream() throws IOException {
             lifecycle.lock();
             try {
@@ -258,6 +305,9 @@ final class FileBackupSink implements BackupSink {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException {
             lifecycle.lock();
             try {

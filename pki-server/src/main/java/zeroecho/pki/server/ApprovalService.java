@@ -48,19 +48,44 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Durable exact-operation multi-party approval service. */
+/**
+ * Durable exact-operation multi-party approval service.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel" })
 public final class ApprovalService {
-    /** Approval lifecycle states. */
+    /**
+     * Approval lifecycle states.
+     */
     public enum State {
-        /** Awaiting sufficient attributable decisions. */ PENDING(1),
-        /** Approval threshold was satisfied. */ APPROVED(2),
-        /** An eligible approver rejected the request. */ REJECTED(3),
-        /** The request exceeded its approval lifetime. */ EXPIRED(4),
-        /** The requester cancelled the request. */ CANCELLED(5),
-        /** The approved operation is durably claimed for execution. */ EXECUTING(6),
-        /** Execution completed and its safe classification is linked. */ EXECUTED(7);
+        /**
+         * Awaiting sufficient attributable decisions.
+         */
+        PENDING(1),
+        /**
+         * Approval threshold was satisfied.
+         */
+        APPROVED(2),
+        /**
+         * An eligible approver rejected the request.
+         */
+        REJECTED(3),
+        /**
+         * The request exceeded its approval lifetime.
+         */
+        EXPIRED(4),
+        /**
+         * The requester cancelled the request.
+         */
+        CANCELLED(5),
+        /**
+         * The approved operation is durably claimed for execution.
+         */
+        EXECUTING(6),
+        /**
+         * Execution completed and its safe classification is linked.
+         */
+        EXECUTED(7);
         private final int code;
         State(int code) { this.code = code; }
         /**
@@ -74,6 +99,7 @@ public final class ApprovalService {
          *
          * @param code persisted approval-state code
          * @return corresponding approval state
+         * @throws IllegalArgumentException if the code does not identify a supported persisted approval state
          */
         public static State fromCode(int code) {
             for (State candidate : values()) if (candidate.code == code) return candidate;
@@ -81,10 +107,18 @@ public final class ApprovalService {
         }
     }
 
-    /** Individual immutable approval choice. */
+    /**
+     * Individual immutable approval choice.
+     */
     public enum Choice {
-        /** Supports execution of the exact requested operation. */ APPROVE(1),
-        /** Rejects execution of the exact requested operation. */ REJECT(2);
+        /**
+         * Supports execution of the exact requested operation.
+         */
+        APPROVE(1),
+        /**
+         * Rejects execution of the exact requested operation.
+         */
+        REJECT(2);
         private final int code;
         Choice(int code) { this.code = code; }
         /**
@@ -98,6 +132,7 @@ public final class ApprovalService {
          *
          * @param code persisted approval-choice code
          * @return corresponding approval choice
+         * @throws IllegalArgumentException if the code does not identify a supported persisted approval choice
          */
         public static Choice fromCode(int code) {
             return switch (code) { case 1 -> APPROVE; case 2 -> REJECT;
@@ -119,7 +154,20 @@ public final class ApprovalService {
     public record Policy(String policyId, int threshold, Set<String> eligibleApprovers,
             Set<String> requiredRoleTemplateIds, boolean requesterSeparation, Duration lifetime,
             boolean justificationRequired) {
-        /** Validates the finite N-of-M policy. */
+        /**
+         * Validates the finite N-of-M policy.
+         * @param policyId stable policy identity
+         * @param threshold required distinct approvals
+         * @param eligibleApprovers finite M-set, empty only when a required role defines eligibility
+         * @param requiredRoleTemplateIds eligible approver role-template IDs
+         * @param requesterSeparation whether the requester is barred from approving
+         * @param lifetime positive approval lifetime
+         * @param justificationRequired whether a nonblank justification is mandatory
+         * @throws NullPointerException if any of {@code eligibleApprovers}, {@code requiredRoleTemplateIds},
+         *         {@code lifetime} is null
+         * @throws IllegalArgumentException if the approval threshold and eligible-principal set are
+         *         inconsistent or the approval lifetime is outside its supported bound
+         */
         public Policy {
             Permission.requireId(policyId, "approval policy");
             eligibleApprovers = Set.copyOf(Objects.requireNonNull(eligibleApprovers, "eligibleApprovers"));
@@ -160,7 +208,14 @@ public final class ApprovalService {
      * @param decidedAt server-authoritative decision time
      */
     public record Decision(String principalId, Choice choice, String justification, Instant decidedAt) {
-        /** Validates the decision. */
+        /**
+         * Validates the decision.
+         * @param principalId deciding principal identifier
+         * @param choice approval or rejection
+         * @param justification bounded operator justification
+         * @param decidedAt server-authoritative decision time
+         * @throws NullPointerException if any of {@code choice}, {@code decidedAt} is null
+         */
         public Decision {
             Permission.requirePrincipal(principalId);
             Objects.requireNonNull(choice, "choice");
@@ -189,7 +244,26 @@ public final class ApprovalService {
             Permission.Scope scope, String requesterPrincipalId, Instant createdAt, Instant expiresAt,
             Policy policy, String policyCommitment, State state, List<Decision> decisions,
             Optional<String> resultClassification) {
-        /** Validates and snapshots the durable record. */
+        /**
+         * Validates and snapshots the durable record.
+         * @param approvalId stable record identity
+         * @param operationId stable typed operation name
+         * @param operationCommitment exact safe operation commitment
+         * @param scope exact realm/authority/issuer/profile scope
+         * @param requesterPrincipalId requester identity
+         * @param createdAt creation time
+         * @param expiresAt expiry time
+         * @param policy approval policy
+         * @param policyCommitment exact policy commitment
+         * @param state lifecycle state
+         * @param decisions immutable attributable decisions
+         * @param resultClassification safe linked execution classification
+         * @throws NullPointerException if any of {@code scope}, {@code createdAt}, {@code expiresAt}, {@code
+         *         policy}, {@code state}, {@code decisions}, {@code resultClassification} is null
+         * @throws IllegalArgumentException if approval expiry is not after creation or the retained policy
+         *         commitment differs from its canonical policy or execution state and retained result linkage
+         *         are inconsistent
+         */
         public Request {
             Permission.requireId(approvalId, "approval");
             Permission.requireBounded(operationId, 256, "operation ID");
@@ -220,15 +294,35 @@ public final class ApprovalService {
     private final OwnDecisionAuthorizer ownDecisionAuthorizer;
     private volatile Runnable decisionWake = () -> { };
 
+    /**
+     * Installs the advisory wake callback invoked after approval decisions.
+     *
+     * @param wake payload-free reconciliation callback
+     * @throws NullPointerException if wake is null
+     */
     void onDecision(Runnable wake) { decisionWake = Objects.requireNonNull(wake, "wake"); }
 
-    /** Resolves the additional own-decision capability without replacing ordinary approval checks. */
+    /**
+     * Resolves the additional own-decision capability without replacing ordinary approval checks.
+     */
     @FunctionalInterface
     interface OwnDecisionAuthorizer {
+        /**
+         * Checks the additional scoped own-decision capability without replacing ordinary approval checks.
+         *
+         * @param request exact approval request being decided
+         * @param principal authoritative current deciding principal
+         * @param justification supplied safe decision justification
+         * @return whether this actor may decide a request they originally submitted
+         */
         boolean allowed(Request request, SecurityPrincipal principal, String justification);
     }
 
-    /** Supplies the same authoritative clock to side-effect-free control preflight. */
+    /**
+     * Returns the authoritative clock observation used by pure control preflight.
+     *
+     * @return current server instant
+     */
     Instant validationTime() { return clock.instant(); }
 
     /**
@@ -245,6 +339,15 @@ public final class ApprovalService {
         this(store, clock, auditSink, (request, principal, justification) -> false);
     }
 
+    /**
+     * Composes durable approval processing with an additional scoped own-decision authorizer.
+     *
+     * @param store durable realm-owned control authority
+     * @param clock approval expiry and decision timestamp source
+     * @param auditSink safe server-security audit sink
+     * @param ownDecisionAuthorizer additional capability check for requester-owned decisions
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ ApprovalService(ServerControlStore store, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink,
             OwnDecisionAuthorizer ownDecisionAuthorizer) {
         this.store = Objects.requireNonNull(store, "store");
@@ -286,6 +389,9 @@ public final class ApprovalService {
      * @param choice approval or rejection
      * @param justification bounded operator justification
      * @return durably updated approval request
+     * @throws IllegalStateException if the principal is ineligible to decide the request or the principal is
+     *         not currently an eligible approver or the principal has already recorded a decision
+     * @throws IllegalArgumentException if the decision justification is absent or blank
      */
     public synchronized Request decide(String approvalId, String principalId,
             Choice choice, String justification) {
@@ -333,6 +439,7 @@ public final class ApprovalService {
      * @param approvalId stable approval identifier
      * @param requesterPrincipalId requesting principal identifier
      * @return durably cancelled request
+     * @throws IllegalStateException if the caller is not the requester of a pending approval
      */
     public synchronized Request cancel(String approvalId, String requesterPrincipalId) {
         Request current = requireCurrent(approvalId);
@@ -355,6 +462,8 @@ public final class ApprovalService {
      * @param operationCommitment exact safe operation commitment
      * @param scope exact security scope
      * @return durably claimed executing request
+     * @throws IllegalStateException if the approval does not bind the exact requested operation or the approval
+     *         is not in an executable state
      */
     public synchronized Request claim(String approvalId, String operationId, String operationCommitment,
             Permission.Scope scope) {
@@ -376,6 +485,7 @@ public final class ApprovalService {
      * @param approvalId stable approval identifier
      * @param safeResultClassification safe linked execution result
      * @return durably executed request
+     * @throws IllegalStateException if the approval is not currently executing
      */
     public synchronized Request complete(String approvalId, String safeResultClassification) {
         Request current = requireCurrent(approvalId);
@@ -437,6 +547,8 @@ public final class ApprovalService {
      *
      * @param canonical canonical non-secret value to commit
      * @return lowercase SHA-256 commitment
+     * @throws NullPointerException if {@code canonical} is null
+     * @throws IllegalStateException if the required SHA-256 provider is unavailable
      */
     public static String digest(String canonical) {
         Objects.requireNonNull(canonical, "canonical");

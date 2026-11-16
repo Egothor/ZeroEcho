@@ -60,7 +60,9 @@ import zeroecho.pkix.ocsp.OcspRequest;
 import zeroecho.pkix.ocsp.ResponderId;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** End-to-end round trips of the JCA-aligned PKIX API over the BouncyCastle backend. */
+/**
+ * End-to-end round trips of the JCA-aligned PKIX API over the BouncyCastle backend.
+ */
 class PkixRoundTripTest {
 
     private static final AlgorithmIdentifier SHA256_RSA =
@@ -77,6 +79,11 @@ class PkixRoundTripTest {
         return Pkix.signer(issuer.getPrivate(), SHA256_RSA);
     }
 
+    /**
+     * Builds, parses, and independently verifies a certificate through the PKIX facade.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void certificateBuildsParsesAndVerifies() throws Exception {
         KeyPair ca = rsa();
@@ -101,6 +108,11 @@ class PkixRoundTripTest {
         assertNotNull(parsed.getExtensionValue("2.5.29.14"), "subjectKeyIdentifier present");
     }
 
+    /**
+     * Builds, parses, and verifies a PKCS#10 certification request.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void certificationRequestBuildsParsesAndVerifies() throws Exception {
         KeyPair leaf = rsa();
@@ -119,6 +131,11 @@ class PkixRoundTripTest {
                 .contains(new GeneralName.DnsName("leaf.example.com")));
     }
 
+    /**
+     * Builds and parses a certificate revocation list through the PKIX facade.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void crlBuildsAndParses() throws Exception {
         KeyPair ca = rsa();
@@ -138,6 +155,11 @@ class PkixRoundTripTest {
         assertNotNull(parsed.getRevokedCertificate(BigInteger.TWO), "revoked entry present");
     }
 
+    /**
+     * Builds an OCSP response and checks its successful envelope status.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ocspResponseBuildsAsSuccessful() throws Exception {
         KeyPair ca = rsa();
@@ -162,6 +184,11 @@ class PkixRoundTripTest {
         assertEquals(org.bouncycastle.cert.ocsp.OCSPResp.SUCCESSFUL, parsed.getStatus());
     }
 
+    /**
+     * Distinguished name is byte exact and raw SPKI builds certs.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void distinguishedNameIsByteExactAndRawSpkiBuildsCerts() throws Exception {
         KeyPair ca = rsa();
@@ -188,6 +215,11 @@ class PkixRoundTripTest {
         assertEquals(ca.getPublic(), Pkix.publicKeyFromSubjectPublicKeyInfo(spki));
     }
 
+    /**
+     * Parses typed distinguished name and SPKI helpers.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void parsesTypedDistinguishedNameAndSpkiHelpers() throws Exception {
         KeyPair ca = rsa();
@@ -211,6 +243,11 @@ class PkixRoundTripTest {
                 java.util.HexFormat.of().formatHex(Pkix.subjectPublicKeyInfo(cert)));
     }
 
+    /**
+     * Parses an OCSP response and verifies its signature with the expected public key.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ocspResponseParsesAndVerifies() throws Exception {
         KeyPair ca = rsa();
@@ -232,6 +269,11 @@ class PkixRoundTripTest {
         assertTrue(parsed.responses().get(0).status() instanceof CertStatus.Good);
     }
 
+    /**
+     * Parses the expected request identifiers and nonce from an OCSP request.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ocspRequestParses() throws Exception {
         KeyPair ca = rsa();

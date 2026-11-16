@@ -58,6 +58,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for durable metadata log scanner.
+ */
 final class DurableMetadataLogScannerTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -67,9 +70,17 @@ final class DurableMetadataLogScannerTest {
     private static final int HEADER_PAYLOAD_LENGTH_OFFSET = 32;
     private static final int DIGEST_BYTES = 32;
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Valid recovery is deterministic across terminal and issued transactions.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validRecoveryIsDeterministicAcrossTerminalAndIssuedTransactions() throws IOException {
         System.out.print("validRecoveryIsDeterministicAcrossTerminalAndIssuedTransactions ");
@@ -106,6 +117,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Incomplete tail reports exact boundary and writable open repairs it.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void incompleteTailReportsExactBoundaryAndWritableOpenRepairsIt() throws IOException {
         System.out.print("incompleteTailReportsExactBoundaryAndWritableOpenRepairsIt ");
@@ -153,6 +169,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Restart epochs are strict and abandon only current epoch transactions.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartEpochsAreStrictAndAbandonOnlyCurrentEpochTransactions() throws IOException {
         System.out.print("restartEpochsAreStrictAndAbandonOnlyCurrentEpochTransactions ");
@@ -214,6 +235,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Restart retains exact abandoned outcome ledger.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartRetainsExactAbandonedOutcomeLedger() throws IOException {
         System.out.print("restartRetainsExactAbandonedOutcomeLedger ");
@@ -256,6 +282,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Recovery epoch exhaustion and invalid transitions fail checked.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryEpochExhaustionAndInvalidTransitionsFailChecked() throws IOException {
         System.out.print("recoveryEpochExhaustionAndInvalidTransitionsFailChecked ");
@@ -288,6 +319,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Authenticated length and frame checksum corruption always fail closed.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authenticatedLengthAndFrameChecksumCorruptionAlwaysFailClosed() throws IOException {
         System.out.print("authenticatedLengthAndFrameChecksumCorruptionAlwaysFailClosed ");
@@ -309,6 +345,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Semantic version length and terminal chain mismatch fail closed.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void semanticVersionLengthAndTerminalChainMismatchFailClosed() throws IOException {
         System.out.print("semanticVersionLengthAndTerminalChainMismatchFailClosed ");
@@ -340,6 +381,11 @@ final class DurableMetadataLogScannerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Sequence unknown transaction duplicate and store mismatch fail closed.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sequenceUnknownTransactionDuplicateAndStoreMismatchFailClosed() throws IOException {
         System.out.print("sequenceUnknownTransactionDuplicateAndStoreMismatchFailClosed ");

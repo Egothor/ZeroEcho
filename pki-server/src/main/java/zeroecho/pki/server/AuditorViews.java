@@ -41,7 +41,9 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 
-/** Explicit certificate/request/status projection boundary for auditor data views. */
+/**
+ * Explicit certificate/request/status projection boundary for auditor data views.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass" })
 public final class AuditorViews {
     /**
@@ -65,7 +67,27 @@ public final class AuditorViews {
             Instant createdAt, String algorithmId, Optional<String> bindingId, String commitment,
             boolean subjectPresent, int subjectAlternativeNameCount, Optional<String> fullSubject,
             java.util.List<String> fullSubjectAlternativeNames, Optional<byte[]> content) {
-        /** Validates and snapshots finite source data. */
+        /**
+         * Validates and snapshots finite source data.
+         * @param objectId exact object identifier
+         * @param type resource type
+         * @param scope exact security scope
+         * @param lifecycleState bounded lifecycle state
+         * @param createdAt authoritative creation time
+         * @param algorithmId algorithm identity
+         * @param bindingId optional representation binding identifier
+         * @param commitment immutable object commitment
+         * @param subjectPresent whether subject PII exists
+         * @param subjectAlternativeNameCount number of subject-alternative names
+         * @param fullSubject optional full subject PII
+         * @param fullSubjectAlternativeNames full subject-alternative-name PII
+         * @param content optional full binary content
+         * @throws NullPointerException if any of {@code objectId}, {@code type}, {@code scope}, {@code
+         *         createdAt}, {@code bindingId}, {@code fullSubject}, {@code fullSubjectAlternativeNames},
+         *         {@code content} is null
+         * @throws IllegalArgumentException if the object commitment is noncanonical or the
+         *         subject-alternative-name count is negative
+         */
         public Source {
             Objects.requireNonNull(objectId, "objectId");
             Objects.requireNonNull(type, "type");
@@ -109,7 +131,12 @@ public final class AuditorViews {
      * @param safeMetadata immutable additional non-PII metadata
      */
     public record FullMetadata(Redacted redacted, Map<String, String> safeMetadata) {
-        /** Defensively snapshots safe metadata. */
+        /**
+         * Defensively snapshots safe metadata.
+         * @param redacted common redacted metadata
+         * @param safeMetadata immutable additional non-PII metadata
+         * @throws NullPointerException if any of {@code redacted}, {@code safeMetadata} is null
+         */
         public FullMetadata {
             Objects.requireNonNull(redacted, "redacted");
             safeMetadata = Map.copyOf(Objects.requireNonNull(safeMetadata, "safeMetadata"));
@@ -123,7 +150,12 @@ public final class AuditorViews {
      * @param content complete binary content
      */
     public record FullContent(FullMetadata metadata, byte[] content) {
-        /** Defensively snapshots content. */
+        /**
+         * Defensively snapshots content.
+         * @param metadata authorized full metadata
+         * @param content complete binary content
+         * @throws NullPointerException if any of {@code metadata}, {@code content} is null
+         */
         public FullContent {
             Objects.requireNonNull(metadata, "metadata");
             content = Objects.requireNonNull(content, "content").clone();
@@ -144,7 +176,14 @@ public final class AuditorViews {
      * @param subjectAlternativeNames full subject-alternative names
      */
     public record Pii(FullMetadata metadata, Optional<String> subject, java.util.List<String> subjectAlternativeNames) {
-        /** Defensively snapshots PII data. */
+        /**
+         * Defensively snapshots PII data.
+         * @param metadata authorized full metadata
+         * @param subject optional full subject name
+         * @param subjectAlternativeNames full subject-alternative names
+         * @throws NullPointerException if any of {@code metadata}, {@code subject}, {@code
+         *         subjectAlternativeNames} is null
+         */
         public Pii {
             Objects.requireNonNull(metadata, "metadata");
             subject = Objects.requireNonNull(subject, "subject");
@@ -170,6 +209,7 @@ public final class AuditorViews {
      *
      * @param source validated source projection
      * @return redacted non-PII projection
+     * @throws NullPointerException if {@code source} is null
      */
     public Redacted redacted(Source source) {
         Source exact = Objects.requireNonNull(source, "source");
@@ -184,6 +224,7 @@ public final class AuditorViews {
      * @param source validated source projection
      * @param authorized whether full metadata access is authorized
      * @return authorized full metadata
+     * @throws SecurityException if the caller is not authorized for the full-metadata auditor view
      */
     public FullMetadata fullMetadata(Source source, boolean authorized) {
         if (!authorized) throw new SecurityException("Auditor view is not authorized");
@@ -197,6 +238,7 @@ public final class AuditorViews {
      * @param metadataFullAuthorized whether full metadata access is authorized
      * @param contentAuthorized whether binary-content access is authorized
      * @return authorized full binary-content projection
+     * @throws SecurityException if the selected object has no authorized full-content view
      */
     public FullContent fullContent(Source source, boolean metadataFullAuthorized, boolean contentAuthorized) {
         if (!contentAuthorized || source.content().isEmpty()) throw new SecurityException("Content view is unavailable");
@@ -212,6 +254,7 @@ public final class AuditorViews {
      * @param metadataFullAuthorized whether full metadata access is authorized
      * @param piiAuthorized whether PII access is separately authorized
      * @return authorized PII projection
+     * @throws SecurityException if the caller is not authorized for the PII view
      */
     public Pii pii(Source source, SecurityPrincipal principal, String reasonReference,
             boolean metadataFullAuthorized, boolean piiAuthorized) {

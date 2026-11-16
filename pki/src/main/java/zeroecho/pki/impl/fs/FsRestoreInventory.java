@@ -42,7 +42,9 @@ import java.util.Iterator;
 import java.util.stream.Stream;
 import zeroecho.pki.api.backup.BackupLimits;
 
-/** Rejects colocated external authority instead of silently leaving it in the rollback root. */
+/**
+ * Rejects colocated external authority instead of silently leaving it in the rollback root.
+ */
 final class FsRestoreInventory {
     private static final String INPUT_ARCHIVE = "input.zip";
     private static final String UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -50,6 +52,14 @@ final class FsRestoreInventory {
             + "|wal-active-[0-9]{20}[.]zew|wal-[0-9]{20}-[0-9]{20}[.]zew)";
     private FsRestoreInventory() { }
 
+    /**
+     * Validates the restored store layout and its bounded canonical filesystem inventory.
+     *
+     * @param root candidate store root being verified before live promotion
+     * @param limits finite inventory entry-count and UTF-8 path-length bounds
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if the signing layout, file inventory, safe entry types or configured bounds are invalid
+     */
     /* default */ static void validate(Path root, BackupLimits limits) throws IOException {
         SigningLedgerRecovery.validateExistingLayout(root.resolve("metadata"), SigningLedgerRecovery.Configuration.defaults());
         scan(root, limits, false);

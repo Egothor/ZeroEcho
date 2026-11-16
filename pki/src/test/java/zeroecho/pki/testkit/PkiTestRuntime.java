@@ -54,13 +54,21 @@ import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
-/** Small store and workflow fixtures shared by focused PKI tests. */
+/**
+ * Small store and workflow fixtures shared by focused PKI tests.
+ */
 public final class PkiTestRuntime {
 
     private PkiTestRuntime() {
     }
 
-    /** Creates real CSR verification and leaf preparation for focused semantic-service tests. */
+    /**
+     * Creates real CSR verification and leaf preparation for focused semantic-service tests.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param clock authoritative fixture clock
+     * @return preparer borrowing the store, clock, and fixed fixture cryptographic bindings
+     */
     public static zeroecho.pki.impl.core.EndEntitySigningPreparation endEntityPreparation(PkiStore store, Clock clock) {
         zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor verification =
                 new zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor();
@@ -79,7 +87,14 @@ public final class PkiTestRuntime {
                 BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
     }
 
-    /** Stages one credential fixture in the supplied store. */
+    /**
+     * Stages one credential fixture in the supplied store.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param encoded complete encoded credential bytes borrowed for staging
+     * @return store-issued durable credential-content reference
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static DurableContentReference stageCredential(PkiStore store, byte[] encoded) throws IOException {
         try (ContentSink sink = store.stagedContent().beginContent(
                 Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
@@ -89,7 +104,15 @@ public final class PkiTestRuntime {
         }
     }
 
-    /** Stages bytes with the requested encoding and persistent lifecycle. */
+    /**
+     * Stages bytes with the requested encoding and persistent lifecycle.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param encoding encoding label retained with the staged or synthetic reference
+     * @param bytes content bytes borrowed for the staging operation
+     * @return store-issued durable fixture-content reference
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static DurableContentReference fixtureReference(StagedContentStore store, Encoding encoding, byte[] bytes)
             throws IOException {
         try (ContentSink sink = store.beginContent(encoding, DurableContentReference.Lifecycle.PERSISTED);
@@ -99,7 +122,15 @@ public final class PkiTestRuntime {
         }
     }
 
-    /** Stages an operation-owned signing candidate. */
+    /**
+     * Stages an operation-owned signing candidate.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param encoding encoding label retained with the staged or synthetic reference
+     * @param bytes content bytes borrowed for the staging operation
+     * @return store-issued operation-lifecycle content reference
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static DurableContentReference operationReference(StagedContentStore store,
             Encoding encoding, byte[] bytes) throws IOException {
         try (ContentSink sink = store.beginContent(encoding, DurableContentReference.Lifecycle.OPERATION);
@@ -109,13 +140,26 @@ public final class PkiTestRuntime {
         }
     }
 
-    /** Creates a non-store-issued reference for trust-boundary tests. */
+    /**
+     * Creates a non-store-issued reference for trust-boundary tests.
+     *
+     * @param source store-issued reference whose coordinates are copied into the synthetic reference
+     * @param encoding encoding label retained with the staged or synthetic reference
+     * @return synthetic reference with copied coordinates but no store-issued capability
+     */
     public static DurableContentReference untrustedReference(DurableContentReference source, Encoding encoding) {
         return new UntrustedReference(source.storeId(), source.contentId(), encoding, source.length(), source.sha256(),
                 source.lifecycle());
     }
 
-    /** Reads one store-owned content fixture. */
+    /**
+     * Reads one store-owned content fixture.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param reference durable content reference issued by the selected store
+     * @return newly owned complete content bytes
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static byte[] readContent(PkiStore store, DurableContentReference reference) throws IOException {
         try (zeroecho.core.io.RepeatableContent content = store.stagedContent().openContent(reference);
                 java.io.InputStream input = content.openStream()) {
@@ -123,7 +167,13 @@ public final class PkiTestRuntime {
         }
     }
 
-    /** Composes an X.509 authority owning exactly the supplied signing provider. */
+    /**
+     * Composes an X.509 authority owning exactly the supplied signing provider.
+     *
+     * @param workflow signing provider bound into the fixture X.509 executor snapshot
+     * @return X.509 executor snapshot bound to the exact supported signing identities
+     * @throws NullPointerException if {@code workflow} is null
+     */
     public static X509AuthoritySnapshot signingAuthority(SigningProvider workflow) {
         Objects.requireNonNull(workflow, "workflow");
         Set<String> supported = Set.copyOf(

@@ -112,6 +112,13 @@ import zeroecho.pkix.Pkix;
  * Local time and auxiliary memory are O(K + S + T + E) for bounded public-key,
  * subject, TBS and command bytes, plus existing provider/planning/store work;
  * staging writes O(T) bytes and performs no authority inventory scan.
+ *
+ * <p>The store, provider and authority snapshot are borrowed and remain owned by
+ * the session. This component resolves existing managed public keys; it neither
+ * generates keys nor imports private material. Root possession is established by
+ * the eventual verified self-signature rather than a separate subject-proof child
+ * prepared here. Candidate construction does not install an external trust anchor,
+ * acknowledge distribution or perform durable root activation.</p>
  */
 public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private final PkiStore store;
@@ -130,7 +137,10 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * @param authority SIGN authority bound to that provider
      * @param bindings exact installed X.509 binding registry
      * @param signatureAlgorithm canonical configured signature identity
-     * @param pureEdDsaMaximum inclusive positive pure-EdDSA input bound in bytes
+     * @param pureEdDsaMaximum inclusive pure-EdDSA input bound, from 1 through Integer.MAX_VALUE minus 8 bytes
+     * @throws NullPointerException if a required session dependency or signature identity is null
+     * @throws IllegalArgumentException if the configured identity cannot be resolved canonically,
+     *     is not a permitted signature identity or the pure-EdDSA bound is outside its finite range
      */
     public RootSigningPreparation(PkiStore store, Clock clock, SigningProvider provider,
             X509AuthoritySnapshot authority, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
@@ -149,7 +159,15 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
         this.pureEdDsaMaximum = pureEdDsaMaximum;
     }
 
-    /** @return exact configured canonical creation signature; performs no lookup or mutation */
+    /**
+     * Returns the canonical creation signature selected when this preparer was bound.
+     *
+     * <p>This accessor performs no lookup or mutation. An individual creation command
+     * can select a different explicit identity; existing-root operations resolve
+     * their effective identity from retained outgoing roles and the rotation selector.</p>
+     *
+     * @return exact configured canonical signature identity
+     */
     public String creationSignatureAlgorithm() { return signature.canonicalForm(); }
 
     private RootSigningPreparation selected(CaCreateCommand input) {
@@ -168,7 +186,7 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * @param input immutable root creation input
      * @param cancellation cooperative validation cancellation
      * @throws IOException if public metadata cannot be read or validation is cancelled
-     * @throws RuntimeException if the profile, subject, key or algorithm is invalid
+     * @throws RuntimeException if access, input or cancellation is null; or the profile, subject, key or algorithm is invalid
      */
     public void validate(AccessContext access, CaCreateCommand input,
             CancellationSignal cancellation) throws IOException {
@@ -242,6 +260,12 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * the approved interval. All policy, algorithm and size checks precede staging.
      * A successful return transfers one unowned candidate to the caller, which must
      * adopt or retire it; the access context is preserved without granting authority.
+     *
+     * <p>AltSignature preparation can already have produced and verified an alternative
+     * signature before staging begins. On a later failure, completed unowned staged
+     * content is retired when possible and cleanup failures are suppressed onto the
+     * original failure. Cleanup cannot undo a signature already produced by a provider.</p>
+     *
      * @param access separately authenticated and authorized invocation context
      * @param input immutable root creation command with an existing managed key
      * @param submission fresh internally allocated submission identity
@@ -249,7 +273,9 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged root signing request
      * @throws IOException if DER validation, staging or cancellation fails
-     * @throws RuntimeException if profile, subject, provider, key, binding or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or profile, subject, provider, key, binding or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, CaCreateCommand input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -294,6 +320,13 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * version of the selected credential's profile. The old credential supplies
      * profile identity only; its expiry/revocation does not cap or veto renewal.
      * This internal root-typed primitive does not provide a public lifecycle dispatcher.
+     *
+     * <p>The retained outgoing algorithms and alternative role are authoritative;
+     * the current creation default and an old profile's key reference do not replace
+     * them. A supplied expected head must match, and the exact original head is
+     * captured in the returned lifecycle context for later admission. Preparation
+     * does not conditionally replace that head.</p>
+     *
      * @param access separately authorized invocation context
      * @param input root identifier and optional policy-checked validity
      * @param submission fresh internally allocated submission identity
@@ -301,7 +334,9 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged request requiring adoption or retirement
      * @throws IOException if DER validation, staging or cancellation fails
-     * @throws RuntimeException if authority, profile, key, bindings or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or authority, profile, key, bindings or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, CaRolloverCommand.Root input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -311,19 +346,32 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
     }
 
     /**
-     * Prepares root rotation with the supplied managed key and authoritative active
-     * profile. Reusing the current key reference is permitted. The fresh candidate
-     * must subsequently obtain a valid self-signature against its frozen public key.
-     * No old-key proof, chain walk, primary-signing dispatch or CA mutation is performed.
-     * An AltSignature root retains its alternative key and signs a fresh pre-TBS.
+     * Prepares root rotation from explicit outgoing-role changes and the active profile.
+     *
+     * <p>Partial and algorithm-only selectors are resolved against the retained
+     * generation binding, so a role can retain its managed key while changing its
+     * signature algorithm. Reusing the current key reference is permitted. Both
+     * selected AltSignature roles must preserve the profile's hybrid family; the
+     * alternative key is retained or replaced according to the effective selector,
+     * and a fresh alternative signature is produced and verified.</p>
+     *
+     * <p>A changed public key, public-key algorithm, signature identity or signature
+     * DER in either outgoing role marks a fresh root candidate. The exact original
+     * head and transition identity are frozen for later publication and activation.
+     * The returned TBS still requires its verified primary self-signature. No old-key
+     * proof, separate managed subject-proof child, primary-signing dispatch, CA head
+     * replacement, external trust distribution or activation occurs here.</p>
+     *
      * @param access separately authorized invocation context
-     * @param input root identifier and explicitly provisioned replacement key
+     * @param input root identifier, outgoing-role changes and optional original-head fence
      * @param submission fresh internally allocated submission identity
      * @param ttl positive configured signing lifetime
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged request requiring adoption or retirement
      * @throws IOException if DER validation, staging or cancellation fails
-     * @throws RuntimeException if authority, profile, key, bindings or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or authority, profile, key, bindings or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, CaKeyRotationCommand.Root input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -404,7 +452,13 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
 
 
     /**
-     * Validates rollover input without serial allocation, signing, staging or acceptance.
+     * Validates current root rollover policy without allocating a serial, signing or staging.
+     *
+     * <p>Reads the selected credential and retained binding, checks an optional
+     * expected head, active profile and public-key continuity, and evaluates a local
+     * provisional serial. This is a current-state preflight; preparation repeats its
+     * checks and freezes the actual original head and generated TBS.</p>
+     *
      * @param access trusted invocation context
      * @param command typed rollover input
      * @param cancellation cooperative cancellation
@@ -416,7 +470,14 @@ public final class RootSigningPreparation { // NOPMD CyclomaticComplexity - Aggr
     }
 
     /**
-     * Validates rotation input without serial allocation, signing, staging or acceptance.
+     * Validates effective root role changes without allocating a serial, signing or staging.
+     *
+     * <p>Resolves partial selectors against the retained generation, checks optional
+     * original-head evidence and validates public inputs under the active profile.
+     * Alternative-role preflight checks metadata and capability without obtaining an
+     * alternative signature; preparation must still validate its actual signed TBS.
+     * No rotation, candidate completion or activation is admitted by this check.</p>
+     *
      * @param access trusted invocation context
      * @param command typed rotation input
      * @param cancellation cooperative cancellation

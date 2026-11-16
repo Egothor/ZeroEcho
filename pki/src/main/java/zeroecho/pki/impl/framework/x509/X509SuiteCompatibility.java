@@ -59,6 +59,7 @@ public final class X509SuiteCompatibility {
      * @param publicKey exact SPKI identity
      * @return complete suite
      * @throws IllegalArgumentException if family roles are incompatible
+     * @throws NullPointerException if {@code signature} or {@code publicKey} is null
      */
     public static AlgorithmSuite requireCompatible(AlgorithmIdentity signature, AlgorithmIdentity publicKey) {
         Objects.requireNonNull(signature, "signature");

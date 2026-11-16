@@ -66,11 +66,18 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Independent BouncyCastle CRMF fixture and structural facade contracts. */
+/**
+ * Independent BouncyCastle CRMF fixture and structural facade contracts.
+ */
 class CrmfRequestTest {
     private static KeyPair key;
     private static byte[] fixture;
 
+    /**
+     * Prepares cryptographic keys, certificates, and protocol material used by the tests.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @BeforeAll
     static void fixture() throws Exception {
         BouncyCastleActivator.init();
@@ -88,6 +95,11 @@ class CrmfRequestTest {
                 .build().getEncoded();
     }
 
+    /**
+     * Extracts and independently verifies complete signed request.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void extractsAndIndependentlyVerifiesCompleteSignedRequest() throws Exception {
         CrmfRequest request = CrmfRequest.parse(fixture);
@@ -104,6 +116,9 @@ class CrmfRequestTest {
         assertTrue(request.toString().contains("redacted"));
     }
 
+    /**
+     * Rejects truncation trailing bytes oversize and deeply nested input.
+     */
     @Test
     void rejectsTruncationTrailingBytesOversizeAndDeeplyNestedInput() {
         assertThrows(IllegalArgumentException.class, () -> CrmfRequest.parse(Arrays.copyOf(fixture, fixture.length - 1)));
@@ -123,6 +138,11 @@ class CrmfRequestTest {
         assertThrows(IllegalArgumentException.class, () -> CrmfRequest.parse(deep));
     }
 
+    /**
+     * Rejects missing proof subject and unsupported template fields.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsMissingProofSubjectAndUnsupportedTemplateFields() throws Exception {
         CertReqMsg original = CertReqMsg.getInstance(fixture);
@@ -147,6 +167,11 @@ class CrmfRequestTest {
         assertThrows(IllegalArgumentException.class, () -> CrmfRequest.parse(inputProof));
     }
 
+    /**
+     * Rejects correctly signed but reordered template.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsCorrectlySignedButReorderedTemplate() throws Exception {
         org.bouncycastle.asn1.ASN1Sequence fields = org.bouncycastle.asn1.ASN1Sequence.getInstance(
@@ -162,6 +187,11 @@ class CrmfRequestTest {
         assertThrows(IllegalArgumentException.class, () -> CrmfRequest.parse(invalid));
     }
 
+    /**
+     * Emits deterministic public request fixture for independent core tests.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void emitsDeterministicPublicRequestFixtureForIndependentCoreTests() throws Exception {
         Path directory = Path.of("build", "generated", "crmf-test-fixtures");
@@ -181,6 +211,11 @@ class CrmfRequestTest {
         Files.write(directory.resolve("rsa2048-sha384.der"), sha384);
     }
 
+    /**
+     * Retains signed old certificate control and rejects ambiguous or unsupported references.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void retainsSignedOldCertificateControlAndRejectsAmbiguousOrUnsupportedReferences() throws Exception {
         org.bouncycastle.asn1.crmf.CertId reference = new org.bouncycastle.asn1.crmf.CertId(

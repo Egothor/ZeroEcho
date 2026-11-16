@@ -80,16 +80,24 @@ public final class FileBackedAsyncBusProvider implements AsyncBusProvider {
      */
     public static final String KEY_LOG_PATH = "logPath";
 
-    /** Creates a file-backed asynchronous-bus provider descriptor. */
+    /**
+     * Creates a file-backed asynchronous-bus provider descriptor.
+     */
     public FileBackedAsyncBusProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "file";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(KEY_LOG_PATH);
@@ -114,6 +122,9 @@ public final class FileBackedAsyncBusProvider implements AsyncBusProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AsyncBus<PkiId, Principal, String, Object> allocate(ProviderConfig config) {
         Objects.requireNonNull(config, "config");

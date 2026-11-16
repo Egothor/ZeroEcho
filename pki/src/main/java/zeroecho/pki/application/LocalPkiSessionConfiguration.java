@@ -54,10 +54,22 @@ public record LocalPkiSessionConfiguration(ProviderConfig store, ProviderConfig 
         Optional<LocalSigningConfiguration> signing, List<ProviderConfig> publishers,
         List<PkiSessionConfiguration.BindingProviderConfiguration> bindingProviders) {
     private static final int MAX_OPERATOR_LENGTH = 256;
-    /** Standalone configuration document version; this does not version stored PKI data. */
+    /**
+     * Standalone configuration document version; this does not version stored PKI data.
+     */
     public static final int CURRENT_VERSION = 1;
 
-    /** Validates identity and snapshots provider lists before opening any resource. */
+    /**
+     * Validates identity and snapshots provider lists before opening any resource.
+     * @param store exclusive authoritative store configuration
+     * @param audit existing audit sink configuration
+     * @param operatorId nonblank local operator identity, at most 256 Java characters
+     * @param signing optional local signing configuration
+     * @param publishers explicit synchronous publication destinations
+     * @param bindingProviders explicit algorithm binding activations
+     * @throws NullPointerException if store, audit, signing, publishers, bindingProviders is null or a supplied collection contains a null member
+     * @throws IllegalArgumentException if operatorId exceeds its evidence bound or binding-provider identities are duplicated
+     */
     public LocalPkiSessionConfiguration {
         Objects.requireNonNull(store, "store");
         Objects.requireNonNull(audit, "audit");

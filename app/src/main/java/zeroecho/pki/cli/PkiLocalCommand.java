@@ -39,21 +39,85 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSigningOperation;
 
-/** Closed local bindings, independent of the remote wire protocol. */
+/**
+ * Closed local bindings, independent of the remote wire protocol.
+ */
 sealed interface PkiLocalCommand {
+    /**
+     * Stable local command name for inspecting an existing signing operation.
+     */
     String INSPECT = "signing.operation.inspect"; // NOPMD - ConstantsInInterface: semantic command names belong to this closed local command family.
+    /**
+     * Stable local command name for completing an existing signing operation.
+     */
     String COMPLETE = "signing.operation.complete"; // NOPMD - ConstantsInInterface: semantic command names belong to this closed local command family.
 
+    /**
+     * Synchronous non-signing operation bound for local execution.
+     *
+     * <p>Construction retains the required value without opening a session, resolving
+     * stored state or authorizing execution.</p>
+     *
+     * @param operation required typed operation
+     */
     record Core(PkiOperation operation) implements PkiLocalCommand {
+        /**
+         * Retains the required command coordinate without executing it.
+         *
+         * @param operation typed operation
+         * @throws NullPointerException if the supplied value is null
+         */
         public Core { Objects.requireNonNull(operation, "operation"); }
     }
+    /**
+     * Signing operation bound for local preparation and durable acceptance.
+     *
+     * <p>Construction retains the required value without opening a session, resolving
+     * stored state or authorizing execution.</p>
+     *
+     * @param operation required typed operation
+     */
     record Signing(PkiSigningOperation operation) implements PkiLocalCommand {
+        /**
+         * Retains the required command coordinate without executing it.
+         *
+         * @param operation typed operation
+         * @throws NullPointerException if the supplied value is null
+         */
         public Signing { Objects.requireNonNull(operation, "operation"); }
     }
+    /**
+     * Inspection of an existing local signing identity without resubmitting its command.
+     *
+     * <p>Construction retains the required value without opening a session, resolving
+     * stored state or authorizing execution.</p>
+     *
+     * @param operationId required existing signing operation identity
+     */
     record Inspect(PkiId operationId) implements PkiLocalCommand {
+        /**
+         * Retains the required command coordinate without executing it.
+         *
+         * @param operationId existing signing operation identity
+         * @throws NullPointerException if the supplied value is null
+         */
         public Inspect { Objects.requireNonNull(operationId, "operationId"); }
     }
+    /**
+     * Completion request for an existing local signing identity.
+     *
+     * <p>Construction retains the required value without opening a session, resolving
+     * stored state or authorizing execution.</p>
+     *
+     * @param operationId required existing signing operation identity
+     */
     record Complete(PkiId operationId) implements PkiLocalCommand {
+        /**
+         * Retains the required command coordinate without executing it.
+         *
+         * @param operationId existing signing operation identity
+         * @throws NullPointerException if the supplied value is null
+         */
         public Complete { Objects.requireNonNull(operationId, "operationId"); }
     }
 }

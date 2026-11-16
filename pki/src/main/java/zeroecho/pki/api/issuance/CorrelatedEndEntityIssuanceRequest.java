@@ -44,7 +44,9 @@ package zeroecho.pki.api.issuance;
  * @param intent immutable external identity and exact frozen PKI selection
  */
 public record CorrelatedEndEntityIssuanceRequest(EndEntityIssuanceRequest request, IssuanceIntent intent) {
-    /** Maximum UTF-8 byte length of each authority, issuer, path or profile identifier. */
+    /**
+     * Maximum UTF-8 byte length of each authority, issuer, path or profile identifier.
+     */
     public static final int MAXIMUM_IDENTIFIER_UTF8_BYTES = 4096; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
 
     /**
@@ -53,6 +55,8 @@ public record CorrelatedEndEntityIssuanceRequest(EndEntityIssuanceRequest reques
      *
      * @throws IllegalArgumentException if either argument is null, the profile IDs
      *         differ, or an identifier exceeds the byte limit or contains an unpaired surrogate
+     * @param request bounded immutable issuance request
+     * @param intent immutable external identity and exact frozen PKI selection
      */
     public CorrelatedEndEntityIssuanceRequest {
         if (request == null || intent == null) {
@@ -68,6 +72,13 @@ public record CorrelatedEndEntityIssuanceRequest(EndEntityIssuanceRequest reques
         }
     }
 
+    /**
+     * Checks the strict UTF-8 byte bound without allocating an encoded identifier.
+     *
+     * @param value identifier text; nonblank validation belongs to the enclosing request model
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if it exceeds 4,096 UTF-8 bytes or contains an unpaired surrogate
+     */
     /* default */ static void requireBoundedIdentifier(String value) {
         if (value.length() > MAXIMUM_IDENTIFIER_UTF8_BYTES) {
             throw new IllegalArgumentException("Correlated issuance identifier exceeds its bound");

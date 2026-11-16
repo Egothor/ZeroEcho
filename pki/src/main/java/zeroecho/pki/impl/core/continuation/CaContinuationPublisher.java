@@ -64,7 +64,9 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
-/** Publishes frozen root and intermediate CA continuations. */
+/**
+ * Publishes frozen root and intermediate CA continuations.
+ */
 final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private static final String CREATE_ROOT = "CREATE_ROOT";
     private static final String CREATE_INTERMEDIATE = "CREATE_INTERMEDIATE";
@@ -73,11 +75,27 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
     private final PkiStore store;
     private final DomainContinuationPublisher support;
 
+    /**
+     * Creates a domain-specific publisher borrowing shared store and publication support.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param support borrowed shared publication and validation support; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ CaContinuationPublisher(PkiStore store, DomainContinuationPublisher support) {
         this.store = java.util.Objects.requireNonNull(store, "store");
         this.support = java.util.Objects.requireNonNull(support, "support");
     }
 
+    /**
+     * Validates the frozen command and completed artifact before idempotent durable publication.
+     *
+     * @param command canonical decoded domain command; must not be null
+     * @param result completed encoded certificate or status result; must not be null
+     * @param domain frozen durable domain continuation record; must not be null
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     * @throws zeroecho.pki.api.PkiException if durable metadata or content storage fails
+     */
     /* default */ void publish(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
         if (CREATE_ROOT.equals(command.operation())) {
@@ -523,10 +541,14 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
                 DomainContinuationPublisher.PublicationFaultPoint.AFTER_CA);
     }
 
-    /** Root inputs grouped below the method parameter bound. */
+    /**
+     * Root inputs grouped below the method parameter bound.
+     */
     private record RootPublication(X509Certificate certificate, byte[] der) { }
 
-    /** Exact decoded root-publication fields. */
+    /**
+     * Exact decoded root-publication fields.
+     */
     private record RootCommand(FormatId format, SubjectRef subject, KeyRef keyRef,
             CertificateProfileRef profile, Instant notBefore, Instant notAfter, BigInteger serial,
             PkiId authorityId, java.util.Optional<CaOutgoingBinding> outgoing, java.util.Optional<CaLifecycleContext> lifecycle) {
@@ -541,11 +563,15 @@ final class CaContinuationPublisher { // NOPMD CyclomaticComplexity - Aggregate 
         }
     }
 
-    /** Deterministic root identifiers and immutable public-key commitment. */
+    /**
+     * Deterministic root identifiers and immutable public-key commitment.
+     */
     private record RootTargets(PkiId credentialId, PkiId authorityId, PkiId issuerId,
             PkiId pathId, String publicKeyFingerprint) { }
 
-    /** Exact decoded intermediate-publication fields. */
+    /**
+     * Exact decoded intermediate-publication fields.
+     */
     private record IntermediateCommand(FormatId format, PkiId issuerCaId, PkiId subjectCaId,
             PkiId parentIssuerId, PkiId parentPathId, String parentPathCommitment, KeyRef subjectKeyRef,
             CertificateProfileRef profile, SubjectRef subject, Instant notBefore, Instant notAfter,

@@ -188,6 +188,9 @@ public final class SntruPrimePrivateKeySpec implements AlgorithmKeySpec, Destroy
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -201,6 +204,9 @@ public final class SntruPrimePrivateKeySpec implements AlgorithmKeySpec, Destroy
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

@@ -50,6 +50,8 @@ public record Principal(String type, String name) {
      * Creates a principal.
      *
      * @throws IllegalArgumentException if inputs are null/blank
+     * @param type principal type (e.g., "USER", "SERVICE", "COMPONENT")
+     * @param name principal name/identifier
      */
     public Principal {
         if (type == null || type.isBlank()) {

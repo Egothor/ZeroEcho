@@ -63,6 +63,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for revocation checkpoint codec.
+ */
 final class RevocationCheckpointCodecTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -70,9 +73,17 @@ final class RevocationCheckpointCodecTest {
     private static final RevocationTransitionFrameCodec.Commitment GENESIS =
             RevocationTransitionFrameCodec.initialCommitment(STORE_ID);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Revision zero checkpoint has strict empty framing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void revisionZeroCheckpointHasStrictEmptyFraming() throws Exception {
         System.out.print("revisionZeroCheckpointHasStrictEmptyFraming ");
@@ -109,6 +120,11 @@ final class RevocationCheckpointCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Canonical records round trip every state reason and attribute shape.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void canonicalRecordsRoundTripEveryStateReasonAndAttributeShape() throws Exception {
         System.out.print("canonicalRecordsRoundTripEveryStateReasonAndAttributeShape ");
@@ -135,6 +151,11 @@ final class RevocationCheckpointCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Truncated header record and trailer fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void truncatedHeaderRecordAndTrailerFailClosed() throws Exception {
         System.out.print("truncatedHeaderRecordAndTrailerFailClosed ");
@@ -153,6 +174,11 @@ final class RevocationCheckpointCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Header record and whole file integrity failures are distinctly rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void headerRecordAndWholeFileIntegrityFailuresAreDistinctlyRejected() throws Exception {
         System.out.print("headerRecordAndWholeFileIntegrityFailuresAreDistinctlyRejected ");
@@ -172,6 +198,11 @@ final class RevocationCheckpointCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Invalid counts offsets timestamps and semantic codes fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidCountsOffsetsTimestampsAndSemanticCodesFailClosed() throws Exception {
         System.out.print("invalidCountsOffsetsTimestampsAndSemanticCodesFailClosed ");
@@ -199,6 +230,11 @@ final class RevocationCheckpointCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Encoder rejects declared count mismatch without aggregate limit.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void encoderRejectsDeclaredCountMismatchWithoutAggregateLimit() throws Exception {
         System.out.print("encoderRejectsDeclaredCountMismatchWithoutAggregateLimit ");

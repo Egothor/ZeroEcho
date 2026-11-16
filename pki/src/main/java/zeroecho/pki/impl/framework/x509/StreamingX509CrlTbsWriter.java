@@ -260,7 +260,12 @@ public final class StreamingX509CrlTbsWriter {
      * @param entryCount emitted entry count
      */
     public record Measurement(long entryBytes, long entryCount) {
-        /** Rejects negative or inconsistent empty measurements. */
+        /**
+         * Rejects negative or inconsistent empty measurements.
+         * @param entryBytes sum of complete DER entry encodings, without the enclosing sequence
+         * @param entryCount emitted entry count
+         * @throws IllegalArgumentException if entryBytes or entryCount is negative, or exactly one of them is zero
+         */
         public Measurement {
             if (entryBytes < 0 || entryCount < 0 || (entryBytes == 0) != (entryCount == 0)) {
                 throw new IllegalArgumentException("Invalid CRL measurement");

@@ -110,7 +110,9 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
 
     private final Path baseDir;
 
-    /** Serializes chained appends and head recovery for one process. */
+    /**
+     * Serializes chained appends and head recovery for one process.
+     */
     private final Object writeLock = new Object();
     private boolean headRecovered;
     private long headSequence = -1L;
@@ -128,6 +130,9 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
     }
 
     // This per-sink monitor makes append plus in-memory head advancement one atomic operation.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedStatement")
     @Override
     public void record(AuditEvent event) {
@@ -224,6 +229,9 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
     }
 
     // Every accepted record advances an immutable observed-head snapshot used by early corruption returns.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     @Override
     public AuditIntegrityReport verifyAnchoredPrefix(AuditChainHead anchor) {
@@ -339,6 +347,13 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
     private record ScanResult(List<AuditEventCodec.ChainedRecord> records, boolean malformed) {
     }
 
+    /**
+     * Finds retained audit events matching the query and returns a bounded ordered snapshot.
+     *
+     * @param query non-null event filters and result limit
+     * @return immutable matches in canonical audit order, bounded by the query limit
+     * @throws IllegalArgumentException if the query is null
+     */
     @Override
     public List<AuditEvent> search(AuditQuery query) {
         if (query == null) {
@@ -368,11 +383,21 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
         return List.copyOf(out.subList(0, Math.min(out.size(), query.limit())));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<AuditEvent> get(PkiId eventId) {
         return getById(eventId);
     }
 
+    /**
+     * Finds a retained audit event by its deterministic canonical event identity.
+     *
+     * @param eventId non-null exact event identity
+     * @return matching retained event, or an empty optional
+     * @throws IllegalArgumentException if the identity is null
+     */
     @Override
     public Optional<AuditEvent> getById(PkiId eventId) {
         if (eventId == null) {
@@ -549,6 +574,9 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink,
             super(in);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             // Intentionally do nothing.

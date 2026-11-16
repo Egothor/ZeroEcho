@@ -44,15 +44,29 @@ import java.util.Objects;
  * @param der original DER payload, between one byte and one MiB
  */
 public record X509EnrollmentPayload(Kind kind, byte[] der) {
-    /** Closed X.509 enrollment request syntaxes. */
+    /**
+     * Closed X.509 enrollment request syntaxes.
+     */
     public enum Kind {
-        /** PKCS#10 CertificationRequest. */ PKCS10,
-        /** RFC 4211 CertReqMsg with signing-key proof. */ CRMF
+        /**
+         * PKCS#10 CertificationRequest.
+         */ PKCS10,
+        /**
+         * RFC 4211 CertReqMsg with signing-key proof.
+         */ CRMF
     }
-    /** Maximum complete original request size in bytes. */
+    /**
+     * Maximum complete original request size in bytes.
+     */
     public static final int MAXIMUM_DER_BYTES = 1_048_576;
 
-    /** Validates syntax and bounds before copying the caller-owned bytes. */
+    /**
+     * Validates syntax and bounds before copying the caller-owned bytes.
+     * @param kind exact encoded request syntax
+     * @param der original DER payload, between one byte and one MiB
+     * @throws NullPointerException if kind is null
+     * @throws IllegalArgumentException if der is null, empty or larger than MAXIMUM_DER_BYTES
+     */
     public X509EnrollmentPayload {
         Objects.requireNonNull(kind, "kind");
         if (der == null || der.length == 0 || der.length > MAXIMUM_DER_BYTES) {
@@ -67,7 +81,10 @@ public record X509EnrollmentPayload(Kind kind, byte[] der) {
      */
     @Override public byte[] der() { return der.clone(); }
 
-    /** Returns a diagnostic representation without request data. */
+    /**
+     * Returns a diagnostic representation without request data.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "X509EnrollmentPayload[kind=" + kind + ", redacted]"; }
 }
 

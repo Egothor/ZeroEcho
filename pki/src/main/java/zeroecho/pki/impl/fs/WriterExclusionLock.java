@@ -71,7 +71,9 @@ final class WriterExclusionLock {
      */
     private static final long SENTINEL_OFFSET = Long.MAX_VALUE - 1L;
 
-    /** Sentinel region length: a single byte is sufficient for exclusion. */
+    /**
+     * Sentinel region length: a single byte is sufficient for exclusion.
+     */
     private static final long SENTINEL_LENGTH = 1L;
 
     private WriterExclusionLock() {

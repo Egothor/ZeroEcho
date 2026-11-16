@@ -84,7 +84,13 @@ import zeroecho.pkix.BasicConstraints;
 import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Checks enrollment runtime credential validation, custody ownership and lifecycle/resource bounds.
+ */
 class EnrollmentRuntimeTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
     private static KeyPair rootKey;
     private static KeyPair raKey;
@@ -92,6 +98,11 @@ class EnrollmentRuntimeTest {
     private static X509Certificate raCertificate;
     private static HttpServerTestSupport.Fixture tls;
 
+    /**
+     * Generates deterministic root and RA certificate/key material plus the shared TLS fixture.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @BeforeAll
     static void material() throws Exception {
         tls = HttpServerTestSupport.tls();
@@ -115,6 +126,11 @@ class EnrollmentRuntimeTest {
                 .build(Pkix.signer(rootKey.getPrivate(), AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
     }
 
+    /**
+     * Checks durable key custody after restart and shutdown fencing while a credential lease remains borrowed.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void realCustodySurvivesRestartAndCloseFencesWhileBorrowed() throws Exception {
         Fixture fixture = fixture();
@@ -167,6 +183,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks explicitly selected EST generation uses provisioned signer custody and retains selection across restart.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test void explicitEstGeneratorSignerUsesExistingCustodyAndSurvivesRestart() throws Exception {
         Fixture original = fixture();
         EnrollmentRuntimeConfiguration.CredentialSet prior = original.configuration().credentialSets().getFirst();
@@ -209,6 +230,11 @@ class EnrollmentRuntimeTest {
                 signer.protocol(), signer.authorityId(), signer.issuerId(), signer.chainPathId(), signer.signer(), List.of(), List.of("a".repeat(64)), Optional.empty()));
     }
 
+    /**
+     * Rejects changed credentials under the same identity and corrupt commitments while releasing failed ownership reservations.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void rejectsChangedSameIdAndCorruptCommitmentAndReleasesFailedOwners() throws Exception {
         Fixture fixture = fixture();
@@ -243,6 +269,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Retains old credential selections through rollover and rejects missing pinned credential-set state.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void rolloverKeepsOldSelectionAndMissingPinnedSetsFailClosed() throws Exception {
         Fixture fixture = fixture();
@@ -270,6 +301,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Rejects foreign authority, missing unlock material, and physically overlapping storage roots.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void rejectsWrongAuthorityMissingUnlockAndResolvedStorageOverlap() throws Exception {
         Fixture fixture = fixture();
@@ -290,6 +326,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks that PBM configuration commitments detect replacement of the binary secret or owner policy.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void pbmCommitmentDetectsSecretAndOwnerPolicyReplacement() throws Exception {
         Fixture fixture = fixture();
@@ -328,6 +369,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks unknown commit acknowledgements cannot leak ownership or silently replace a pinned credential identity.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void lostCommitAcknowledgementCannotLeaveAnOwnerOrReplacePinnedIdentity() throws Exception {
         Fixture fixture = fixture();
@@ -344,6 +390,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks admission validity boundaries and continued rejection of expired retained credentials.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void validityBoundsAdmissionAndExpiredRetainedCredentialsRemainUnavailable() throws Exception {
         Fixture fixture = fixture();
@@ -370,6 +421,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Requires provisioned authentication modes and keygen artifact support before endpoint registration.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void endpointRegistrationRequiresProvisionedModesAndArtifactCapability() throws Exception {
         Fixture fixture = fixture();
@@ -388,6 +444,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks concurrent lease ownership persists until release after shutdown has fenced new borrowers.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void concurrentBorrowerRetainsCustodyUntilItReleasesAfterShutdownFence() throws Exception {
         Fixture fixture = fixture();
@@ -420,6 +481,11 @@ class EnrollmentRuntimeTest {
         }
     }
 
+    /**
+     * Checks failed endpoint capability validation leaves a corrected credential identity available for retry.
+     *
+     * @throws Exception if cryptographic fixture setup, custody processing, or cleanup fails
+     */
     @Test
     void failedEndpointCapabilityValidationDoesNotPinCorrectableCredentialIdentity() throws Exception {
         Fixture fixture = fixture();

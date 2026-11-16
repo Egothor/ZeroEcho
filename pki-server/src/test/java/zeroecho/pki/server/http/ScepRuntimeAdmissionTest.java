@@ -57,7 +57,15 @@ import zeroecho.pki.server.scep.ScepEndpoint;
 import zeroecho.pki.server.scep.ScepService;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Checks configured SCEP admission bounds and cancellation of protocol work at transport deadlines.
+ */
 class ScepRuntimeAdmissionTest {
+    /**
+     * Checks SCEP busy status 503, deadline status 504 and cancellation of the original owned protocol task before admission capacity is reused.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void configuredAdmissionAndTimeoutCancelTheSameProtocolWork() throws Exception {
         PkiServerConfiguration.Execution execution = new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
                 Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1));

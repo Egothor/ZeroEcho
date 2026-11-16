@@ -38,7 +38,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-/** Drains projection snapshot capture before an index-root cutover. */
+/**
+ * Drains projection snapshot capture before an index-root cutover.
+ */
 final class SigningProjectionCutoverGate {
     private final ReentrantLock lock = new ReentrantLock(true);
     private final Condition admissionAvailable = lock.newCondition();
@@ -47,6 +49,13 @@ final class SigningProjectionCutoverGate {
     private boolean cutover;
     private boolean closed;
 
+    /**
+     * Waits interruptibly until projection capture is available, then registers one active capture.
+     *
+     * @return one-shot owned capture token; caller closes it after capturing exact projection state
+     * @throws InterruptedException if interrupted while acquiring admission or waiting for cutover to reopen
+     * @throws IllegalStateException if the gate is closed
+     */
     /* default */ Capture enter() throws InterruptedException {
         lock.lockInterruptibly();
         try {
@@ -61,6 +70,12 @@ final class SigningProjectionCutoverGate {
         }
     }
 
+    /**
+     * Attempts projection capture admission without waiting for an active cutover.
+     *
+     * @return owned capture token, or null while cutover excludes new captures
+     * @throws IllegalStateException if the gate is closed
+     */
     /* default */ Capture tryEnter() {
         lock.lock();
         try {
@@ -75,6 +90,12 @@ final class SigningProjectionCutoverGate {
         }
     }
 
+    /**
+     * Excludes new projection captures and waits interruptibly for existing captures to drain.
+     *
+     * @throws InterruptedException if lock acquisition or draining is interrupted; an already closed cutover remains closed until explicitly reopened
+     * @throws IllegalStateException if the gate is closed or another cutover already owns exclusion
+     */
     /* default */ void closeCutoverAndDrain() throws InterruptedException {
         lock.lockInterruptibly();
         try {
@@ -92,6 +113,12 @@ final class SigningProjectionCutoverGate {
         }
     }
 
+    /**
+     * Reopens projection capture admission after cutover and wakes waiting capture threads.
+     *
+     * <p>A permanently closed gate is retained; reopening an already open cutover has no effect.</p>
+     *
+     */
     /* default */ void reopenCutover() {
         lock.lock();
         try {
@@ -104,6 +131,12 @@ final class SigningProjectionCutoverGate {
         }
     }
 
+    /**
+     * Permanently closes capture admission and wakes both admission and drain waiters.
+     *
+     * <p>Existing capture tokens remain releasable; this call does not wait for their closure.</p>
+     *
+     */
     /* default */ void close() {
         lock.lock();
         try {
@@ -137,7 +170,9 @@ final class SigningProjectionCutoverGate {
         }
     }
 
-    /** One short-lived projection capture token. */
+    /**
+     * One short-lived projection capture token.
+     */
     /* default */ static final class Capture implements AutoCloseable {
         private final SigningProjectionCutoverGate owner;
         private final AtomicBoolean active = new AtomicBoolean(true);
@@ -146,6 +181,11 @@ final class SigningProjectionCutoverGate {
             this.owner = owner;
         }
 
+        /**
+         * Releases this capture token once and wakes a cutover waiting for the final capture.
+         *
+         * @throws IllegalStateException if owner capture accounting is inconsistent
+         */
         @Override
         public void close() {
             if (active.compareAndSet(true, false)) {

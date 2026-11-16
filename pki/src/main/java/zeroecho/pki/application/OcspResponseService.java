@@ -49,6 +49,12 @@ import zeroecho.core.io.CancellationSignal;
  * Callers authorize responder policy and authority scope before invocation. The
  * service captures one revocation view and releases it before bounded raw signing;
  * it introduces no persistent OCSP operation or foreground provider executor.
+ *
+ * <p>Native responses retain ordinary RFC 6960 single-signature semantics. The
+ * optional SDK response path adds separate F4/F5 evidence; it is not a standard
+ * alternative-signature BasicOCSPResponse. A GOOD status is not itself certificate
+ * path validation, and retained evidence does not remain fresh independently of
+ * the verifier's actual evaluation time.
  */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface OcspResponseService {
@@ -76,10 +82,25 @@ public interface OcspResponseService {
      * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw signing carries no binding selector
      */
     record SdkSigningRole(KeyRef keyRef, String signatureAlgorithm, Optional<String> signatureBindingId) {
-        /** Validates complete immutable role selection. */
+        /**
+         * Requires a key reference, binding optional and nonblank signature identity.
+         *
+         * <p>This constructor does not resolve managed custody, enforce the SDK's
+         * role algorithm or validate default-equivalent binding selection. Those
+         * checks belong to authoritative responder capture and query execution.
+         *
+         * @throws NullPointerException if the key reference or binding optional is null
+         * @throws IllegalArgumentException if the signature identity is null or blank
+         * @param keyRef existing nonexportable managed key
+         * @param signatureAlgorithm exact canonical outgoing signature identity
+         * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw signing carries no binding selector
+         */
         public SdkSigningRole {
-            Objects.requireNonNull(keyRef, "keyRef"); Objects.requireNonNull(signatureBindingId, "signatureBindingId");
-            if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) throw new IllegalArgumentException("SDK OCSP role invalid");
+            Objects.requireNonNull(keyRef, "keyRef");
+            Objects.requireNonNull(signatureBindingId, "signatureBindingId");
+            if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
+                throw new IllegalArgumentException("SDK OCSP role invalid");
+            }
         }
     }
 
@@ -87,6 +108,12 @@ public interface OcspResponseService {
      * Trusted native-service responder authorization captured before a query. No caller JSON
      * or bundle may create this authority. The service verifies immutable store coordinates,
      * public key metadata, delegation and both role plans; it never follows today's CA head.
+     *
+     * <p>Trust is established by the native capture boundary, not by this record's
+     * constructor. The constructor checks and snapshots bounded identifiers, lists
+     * and role/path structure; callers must not treat applicant-supplied JSON as
+     * an authoritative binding merely because that structure is valid.
+     *
      * @param realmId configured trusted realm
      * @param canonicalOrigin explicitly configured HTTPS origin
      * @param authorityId exact logical issuer CA
@@ -106,18 +133,57 @@ public interface OcspResponseService {
             PkiId issuerCredentialId, PkiId chainPathId, String pathCommitment, String issuerBindingCommitment,
             PkiId responderCredentialId, List<PkiId> responseChain, SdkSigningRole primary, SdkSigningRole alternative,
             List<zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline> issuerCertificateBaselines, ResponderId responderId) {
-        /** Owns bounded immutable identifiers and rejects incomplete role/path coordinates. */
+        /**
+         * Snapshots chain/baseline lists and rejects incomplete or inconsistent role/path structure.
+         *
+         * <p>The response chain begins with the responder and selected issuer, contains
+         * no duplicate credential, and has one encoding baseline per issuer-path
+         * certificate. Both managed role references must differ. No credential,
+         * public key, signature or caller authorization is resolved here.
+         *
+         * @throws NullPointerException if a required identity, role, responder ID,
+         *         list or list entry is null
+         * @throws IllegalArgumentException if realm, origin, commitment, chain shape,
+         *         baseline count or role distinctness is invalid
+         * @param realmId configured trusted realm
+         * @param canonicalOrigin explicitly configured HTTPS origin
+         * @param authorityId exact logical issuer CA
+         * @param issuerId immutable issuer generation
+         * @param issuerCredentialId immutable issuer certificate
+         * @param chainPathId immutable selected issuer path
+         * @param pathCommitment full path commitment
+         * @param issuerBindingCommitment exact raw lowercase issuer binding SHA256
+         * @param responderCredentialId directly delegated hybrid OCSP-signing leaf
+         * @param responseChain exact responder followed by issuer path, at most 32 credentials
+         * @param primary dedicated managed P384 responder role
+         * @param alternative dedicated managed ML-DSA-87 responder role
+         * @param issuerCertificateBaselines independently frozen encoding baseline per issuer-path certificate
+         * @param responderId existing native responder-ID representation
+         */
         public SdkResponderBinding {
-            if (realmId == null || realmId.isBlank()) throw new IllegalArgumentException("SDK OCSP realm invalid");
+            if (realmId == null || realmId.isBlank()) {
+                throw new IllegalArgumentException("SDK OCSP realm invalid");
+            }
             zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.requireOrigin(canonicalOrigin);
-            Objects.requireNonNull(authorityId, "authorityId"); Objects.requireNonNull(issuerId, "issuerId"); Objects.requireNonNull(issuerCredentialId, "issuerCredentialId");
-            Objects.requireNonNull(chainPathId, "chainPathId"); Objects.requireNonNull(responderCredentialId, "responderCredentialId");
-            if (pathCommitment == null || !pathCommitment.matches("[0-9a-f]{64}") || issuerBindingCommitment == null || !issuerBindingCommitment.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("SDK OCSP commitment invalid");
-            responseChain = List.copyOf(responseChain); issuerCertificateBaselines = List.copyOf(issuerCertificateBaselines);
-            Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternative, "alternative"); Objects.requireNonNull(responderId, "responderId");
+            Objects.requireNonNull(authorityId, "authorityId");
+            Objects.requireNonNull(issuerId, "issuerId");
+            Objects.requireNonNull(issuerCredentialId, "issuerCredentialId");
+            Objects.requireNonNull(chainPathId, "chainPathId");
+            Objects.requireNonNull(responderCredentialId, "responderCredentialId");
+            if (pathCommitment == null || !pathCommitment.matches("[0-9a-f]{64}")
+                    || issuerBindingCommitment == null || !issuerBindingCommitment.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException("SDK OCSP commitment invalid");
+            }
+            responseChain = List.copyOf(responseChain);
+            issuerCertificateBaselines = List.copyOf(issuerCertificateBaselines);
+            Objects.requireNonNull(primary, "primary");
+            Objects.requireNonNull(alternative, "alternative");
+            Objects.requireNonNull(responderId, "responderId");
             if (responseChain.size() < 2 || responseChain.size() > 32 || new java.util.HashSet<>(responseChain).size() != responseChain.size()
                     || !responseChain.getFirst().equals(responderCredentialId) || !responseChain.get(1).equals(issuerCredentialId)
-                    || issuerCertificateBaselines.size() != responseChain.size() - 1 || primary.keyRef().equals(alternative.keyRef())) throw new IllegalArgumentException("SDK OCSP chain/roles invalid");
+                    || issuerCertificateBaselines.size() != responseChain.size() - 1 || primary.keyRef().equals(alternative.keyRef())) {
+                throw new IllegalArgumentException("SDK OCSP chain/roles invalid");
+            }
         }
     }
 
@@ -129,24 +195,66 @@ public interface OcspResponseService {
      * @param nextUpdateAfter positive whole-second native response interval; evidence life is at most 120 seconds
      */
     record SdkCommand(SdkResponderBinding responder, byte[] originalRequestDer, byte[] clientNonce, java.time.Duration nextUpdateAfter) {
-        /** Defensively owns bounded native query values. */
+        /**
+         * Snapshots bounded request and SDK nonce bytes and validates the update interval.
+         *
+         * <p>The constructor checks one-MiB request and 32-byte SDK nonce bounds,
+         * not native ASN.1 request syntax or nonce randomness/freshness. The response
+         * interval must be positive and have whole-second precision.
+         *
+         * @throws NullPointerException if a component is null
+         * @throws IllegalArgumentException if request length, nonce length or interval is invalid
+         * @param responder trusted frozen responder authorization
+         * @param originalRequestDer exact native request, at most one MiB
+         * @param clientNonce fresh locally generated 32-byte SDK nonce, separate from native nonce
+         * @param nextUpdateAfter positive whole-second native response interval; evidence life is at most 120 seconds
+         */
         public SdkCommand {
-            Objects.requireNonNull(responder, "responder"); Objects.requireNonNull(originalRequestDer, "originalRequestDer"); Objects.requireNonNull(clientNonce, "clientNonce");
+            Objects.requireNonNull(responder, "responder");
+            Objects.requireNonNull(originalRequestDer, "originalRequestDer");
+            Objects.requireNonNull(clientNonce, "clientNonce");
             Objects.requireNonNull(nextUpdateAfter, "nextUpdateAfter");
             if (originalRequestDer.length == 0 || originalRequestDer.length > 1048576 || clientNonce.length != 32
-                    || nextUpdateAfter.isNegative() || nextUpdateAfter.isZero() || nextUpdateAfter.getNano() != 0) throw new IllegalArgumentException("SDK OCSP query invalid");
-            originalRequestDer = originalRequestDer.clone(); clientNonce = clientNonce.clone();
+                    || nextUpdateAfter.isNegative() || nextUpdateAfter.isZero() || nextUpdateAfter.getNano() != 0) {
+                throw new IllegalArgumentException("SDK OCSP query invalid");
+            }
+            originalRequestDer = originalRequestDer.clone();
+            clientNonce = clientNonce.clone();
         }
-        /** @return independent original native request bytes */
-        @Override public byte[] originalRequestDer() { return originalRequestDer.clone(); }
-        /** @return independent fresh SDK nonce bytes */
-        @Override public byte[] clientNonce() { return clientNonce.clone(); }
+        /**
+         * Returns the original native request without exposing its retained array.
+         *
+         * @return independently owned exact request DER bytes
+         */
+        @Override
+        public byte[] originalRequestDer() {
+            return originalRequestDer.clone();
+        }
+        /**
+         * Returns the caller's SDK nonce without exposing its retained array.
+         *
+         * @return an independent 32-byte SDK nonce copy
+         */
+        @Override
+        public byte[] clientNonce() {
+            return clientNonce.clone();
+        }
     }
 
     /**
      * Produces a complete native response and separate two-role SDK evidence from one status view.
      * No response DER, status or production time is accepted from the caller. No partial bundle
      * is returned on cancellation, pending or uncertain signing custody.
+     *
+     * <p>The native request is parsed and bounded to 1 through 819 CertIDs, with
+     * a present native nonce limited to 1 through 4,096 bytes. Response times and
+     * statuses derive from the service's actual clock and one captured revocation
+     * view. The separate SDK nonce is distinct from any native nonce. Successful
+     * construction self-verifies the complete native plus F4/F5 bundle; later use
+     * still requires verification at the actual evaluation time and trust context.
+     * No standard alternative-signature OCSP or certificate-path validity follows
+     * solely from a GOOD status in this result.
+     *
      * @param command genuine authorized native query and immutable responder binding
      * @param cancellation originating cancellation signal
      * @return self-verified complete evidence bundle
@@ -203,23 +311,38 @@ public interface OcspResponseService {
         throw new UnsupportedOperationException("SDK OCSP binding capture unavailable");
     }
 
-    /** Supported RFC CertID digest identities. */
+    /**
+     * Supported digest identities for the issuer-name and issuer-key hashes in RFC CertID values.
+     */
     enum CertIdHash {
-        /** SHA-1 CertID digest used by the mandatory OCSP interoperability profile. */
+        /**
+         * SHA-1 CertID digest used by the mandatory OCSP interoperability profile.
+         */
         SHA1(1),
-        /** SHA-256 CertID digest. */
+        /**
+         * SHA-256 CertID digest.
+         */
         SHA256(2);
 
         private final int code;
 
-        CertIdHash(int code) { this.code = code; }
+        /**
+         * Associates the OCSP CertID digest identity with its stable persisted code.
+         *
+         * @param code explicit canonical code assigned by the enum declaration
+         */
+        CertIdHash(int code) {
+            this.code = code;
+        }
 
         /**
          * Returns the stable persistence code.
          *
          * @return positive stable persistence code
          */
-        public int code() { return code; }
+        public int code() {
+            return code;
+        }
 
         /**
          * Resolves an exact stable persistence code.
@@ -229,27 +352,45 @@ public interface OcspResponseService {
          * @throws IllegalArgumentException if {@code code} is unknown
          */
         public static CertIdHash fromCode(int code) {
-            return switch (code) { case 1 -> SHA1; case 2 -> SHA256;
-                default -> throw new IllegalArgumentException("Unknown OCSP CertID hash code"); };
+            return switch (code) {
+                case 1 -> SHA1;
+                case 2 -> SHA256;
+                default -> throw new IllegalArgumentException("Unknown OCSP CertID hash code");
+            };
         }
     }
-    /** Exact responder identifier representation. */
+    /**
+     * Selects the exact native responder identifier representation.
+     */
     enum ResponderId {
-        /** Identifies the responder by its distinguished name. */
+        /**
+         * Identifies the responder by its distinguished name.
+         */
         BY_NAME(1),
-        /** Identifies the responder by its public-key hash. */
+        /**
+         * Identifies the responder by its public-key hash.
+         */
         BY_KEY(2);
 
         private final int code;
 
-        ResponderId(int code) { this.code = code; }
+        /**
+         * Associates the OCSP responder identifier representation with its stable persisted code.
+         *
+         * @param code explicit canonical code assigned by the enum declaration
+         */
+        ResponderId(int code) {
+            this.code = code;
+        }
 
         /**
          * Returns the stable persistence code.
          *
          * @return positive stable persistence code
          */
-        public int code() { return code; }
+        public int code() {
+            return code;
+        }
 
         /**
          * Resolves an exact stable persistence code.
@@ -259,8 +400,11 @@ public interface OcspResponseService {
          * @throws IllegalArgumentException if {@code code} is unknown
          */
         public static ResponderId fromCode(int code) {
-            return switch (code) { case 1 -> BY_NAME; case 2 -> BY_KEY;
-                default -> throw new IllegalArgumentException("Unknown OCSP responder ID code"); };
+            return switch (code) {
+                case 1 -> BY_NAME;
+                case 2 -> BY_KEY;
+                default -> throw new IllegalArgumentException("Unknown OCSP responder ID code");
+            };
         }
     }
 
@@ -273,7 +417,20 @@ public interface OcspResponseService {
      * @param serial positive certificate serial number of at most 160 bits
      */
     record CertId(CertIdHash hash, byte[] issuerNameHash, byte[] issuerKeyHash, BigInteger serial) {
-        /** Defensively owns all request values. */
+        /**
+         * Copies both issuer hashes and validates their selected digest lengths and serial bounds.
+         *
+         * <p>This structural CertID does not prove that either digest belongs to an
+         * actual issuer. The service resolves those coordinates against the selected
+         * issuer generation before determining status.
+         *
+         * @throws NullPointerException if the digest identity, either hash or serial is null
+         * @throws IllegalArgumentException if a hash length or positive 160-bit serial bound is invalid
+         * @param hash digest identity governing both issuer hashes
+         * @param issuerNameHash exact 20-byte SHA-1 or 32-byte SHA-256 issuer-name digest
+         * @param issuerKeyHash exact 20-byte SHA-1 or 32-byte SHA-256 issuer-key digest
+         * @param serial positive certificate serial number of at most 160 bits
+         */
         public CertId {
             Objects.requireNonNull(hash, "hash");
             issuerNameHash = Objects.requireNonNull(issuerNameHash, "issuerNameHash").clone();
@@ -290,13 +447,19 @@ public interface OcspResponseService {
          *
          * @return defensive copy of the issuer-name digest
          */
-        @Override public byte[] issuerNameHash() { return issuerNameHash.clone(); }
+        @Override
+        public byte[] issuerNameHash() {
+            return issuerNameHash.clone();
+        }
         /**
          * Returns the issuer-key digest without exposing internal state.
          *
          * @return defensive copy of the issuer-key digest
          */
-        @Override public byte[] issuerKeyHash() { return issuerKeyHash.clone(); }
+        @Override
+        public byte[] issuerKeyHash() {
+            return issuerKeyHash.clone();
+        }
     }
 
     /**
@@ -322,29 +485,67 @@ public interface OcspResponseService {
             String signatureAlgorithm, Optional<String> signatureBindingId,
             ResponderId responderId, Instant producedAt, Instant thisUpdate, Instant nextUpdate,
             Optional<byte[]> nonce, List<CertId> requests) {
-        /** Validates finite exact responder inputs. */
+        /**
+         * Snapshots the response chain, request list and nonce and validates local time ordering.
+         *
+         * <p>The chain has 1 through 32 credentials, the request list is nonempty,
+         * and the native update interval is positive with thisUpdate not after
+         * producedAt. This constructor does not authenticate the caller, validate
+         * delegation or prove signing-key custody; service execution performs those checks.
+         *
+         * @throws NullPointerException if a required component, optional, list or list entry is null
+         * @throws IllegalArgumentException if chain size, algorithm text, time ordering or request count is invalid
+         * @param authorityId authorized authority scope
+         * @param issuerId exact issuer generation
+         * @param issuerCredentialId issuer credential represented by the CertIDs
+         * @param responderCredentialId credential whose key signs the response
+         * @param signingKeyRef confined responder signing-key reference
+         * @param responseChain nonempty responder chain of at most 32 credentials
+         * @param signatureAlgorithm nonblank canonical signature algorithm
+         * @param signatureBindingId optional exact algorithm-binding identifier
+         * @param responderId responder identifier representation
+         * @param producedAt response production instant
+         * @param thisUpdate revocation-view effective instant, not after {@code producedAt}
+         * @param nextUpdate next scheduled update, strictly after {@code thisUpdate}
+         * @param nonce optional request nonce; its bytes are defensively copied
+         * @param requests nonempty finite CertID request list
+         */
         public Command {
-            Objects.requireNonNull(authorityId, "authorityId"); Objects.requireNonNull(issuerId, "issuerId");
+            Objects.requireNonNull(authorityId, "authorityId");
+            Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(issuerCredentialId, "issuerCredentialId");
             Objects.requireNonNull(responderCredentialId, "responderCredentialId");
             Objects.requireNonNull(signingKeyRef, "signingKeyRef");
             responseChain = List.copyOf(Objects.requireNonNull(responseChain, "responseChain"));
-            if (responseChain.isEmpty() || responseChain.size() > 32) throw new IllegalArgumentException("OCSP chain is invalid");
-            if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) throw new IllegalArgumentException("OCSP algorithm is invalid");
+            if (responseChain.isEmpty() || responseChain.size() > 32) {
+                throw new IllegalArgumentException("OCSP chain is invalid");
+            }
+            if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
+                throw new IllegalArgumentException("OCSP algorithm is invalid");
+            }
             signatureBindingId = Objects.requireNonNull(signatureBindingId, "signatureBindingId");
-            Objects.requireNonNull(responderId, "responderId"); Objects.requireNonNull(producedAt, "producedAt");
-            Objects.requireNonNull(thisUpdate, "thisUpdate"); Objects.requireNonNull(nextUpdate, "nextUpdate");
-            if (thisUpdate.isAfter(producedAt) || !nextUpdate.isAfter(thisUpdate)) throw new IllegalArgumentException("OCSP times are invalid");
+            Objects.requireNonNull(responderId, "responderId");
+            Objects.requireNonNull(producedAt, "producedAt");
+            Objects.requireNonNull(thisUpdate, "thisUpdate");
+            Objects.requireNonNull(nextUpdate, "nextUpdate");
+            if (thisUpdate.isAfter(producedAt) || !nextUpdate.isAfter(thisUpdate)) {
+                throw new IllegalArgumentException("OCSP times are invalid");
+            }
             nonce = Objects.requireNonNull(nonce, "nonce").map(byte[]::clone);
             requests = List.copyOf(Objects.requireNonNull(requests, "requests"));
-            if (requests.isEmpty()) throw new IllegalArgumentException("OCSP request is empty");
+            if (requests.isEmpty()) {
+                throw new IllegalArgumentException("OCSP request is empty");
+            }
         }
         /**
          * Returns the optional nonce without exposing internal state.
          *
          * @return optional defensive copy of the nonce
          */
-        @Override public Optional<byte[]> nonce() { return nonce.map(byte[]::clone); }
+        @Override
+        public Optional<byte[]> nonce() {
+            return nonce.map(byte[]::clone);
+        }
     }
 
     /**
@@ -359,7 +560,23 @@ public interface OcspResponseService {
      */
     record Response(byte[] der, long revocationRevision, String revocationCommitment,
             int goodCount, int revokedCount, int unknownCount) {
-        /** Defensively owns response DER. */
+        /**
+         * Copies response bytes and validates nonnegative provenance/count coordinates.
+         *
+         * <p>The three status counts must have a positive representable sum. This
+         * carrier does not parse or verify arbitrary supplied DER, validate a path
+         * or establish freshness; those guarantees require the response verifier.
+         *
+         * @throws NullPointerException if response bytes are null
+         * @throws IllegalArgumentException if revision, commitment or status counts are invalid
+         * @throws ArithmeticException if the total status count exceeds the integer range
+         * @param der canonical signed OCSP response DER, defensively copied
+         * @param revocationRevision nonnegative authoritative revocation revision
+         * @param revocationCommitment lowercase 64-hex-character snapshot commitment
+         * @param goodCount number of good single responses
+         * @param revokedCount number of revoked single responses
+         * @param unknownCount number of unknown single responses
+         */
         public Response {
             der = Objects.requireNonNull(der, "der").clone();
             if (revocationRevision < 0 || revocationCommitment == null
@@ -373,7 +590,10 @@ public interface OcspResponseService {
          *
          * @return defensive copy of the canonical signed response
          */
-        @Override public byte[] der() { return der.clone(); }
+        @Override
+        public byte[] der() {
+            return der.clone();
+        }
     }
 
     /**
@@ -444,7 +664,9 @@ public interface OcspResponseService {
     final class SigningPendingException extends PkiException {
         private static final long serialVersionUID = 825419348201647529L;
 
-        /** Creates the fixed safe pending disposition. */
+        /**
+         * Creates the fixed pending disposition without provider details or an operation identity.
+         */
         public SigningPendingException() {
             super("OCSP signing remains pending");
         }

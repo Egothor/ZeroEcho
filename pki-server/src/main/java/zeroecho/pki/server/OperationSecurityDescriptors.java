@@ -46,7 +46,9 @@ import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.api.publication.PublicationTarget;
 
-/** Immutable security descriptors keyed by existing typed-operation identities. */
+/**
+ * Immutable security descriptors keyed by existing typed-operation identities.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.AvoidDuplicateLiterals" })
 public final class OperationSecurityDescriptors {
@@ -54,17 +56,29 @@ public final class OperationSecurityDescriptors {
      * Tests current operation availability without changing its security descriptor.
      * @param operationId stable operation identity
      * @return false for remote restoration until its transport workflow is available
+     * @throws NullPointerException if {@code operationId} is null
      */
     public static boolean available(String operationId) {
         return zeroecho.pki.server.schema.OperationDescriptorCatalog.current()
                 .find(Objects.requireNonNull(operationId, "operationId"))
                 .map(zeroecho.pki.server.schema.OperationDescriptorCatalog.Entry::available).orElse(true);
     }
-    /** Internally fixed execution family; callers cannot select it. */
+    /**
+     * Internally fixed execution family; callers cannot select it.
+     */
     public enum Family {
-        /** Operation belongs to the core PKI application family. */ PKI_OPERATION,
-        /** Operation uses semantic signing preparation and admission. */ SIGNING_OPERATION,
-        /** Operation belongs to the server-control family. */ SERVER_CONTROL_OPERATION
+        /**
+         * Operation belongs to the core PKI application family.
+         */
+        PKI_OPERATION,
+        /**
+         * Operation uses semantic signing preparation and admission.
+         */
+        SIGNING_OPERATION,
+        /**
+         * Operation belongs to the server-control family.
+         */
+        SERVER_CONTROL_OPERATION
     }
     /**
      * Approval treatment for one operation.
@@ -79,16 +93,36 @@ public final class OperationSecurityDescriptors {
      * depends on the profile, not the operation identity.</p>
      */
     public enum ApprovalCategory {
-        /** No approval workflow is required. */ NONE,
-        /** Realm-wide high-risk dual control applies. */ HIGH_RISK,
-        /** Profile-selected single approval applies. */ ISSUANCE_SINGLE,
-        /** Profile-selected threshold approval applies. */ ISSUANCE_THRESHOLD
+        /**
+         * No approval workflow is required.
+         */
+        NONE,
+        /**
+         * Realm-wide high-risk dual control applies.
+         */
+        HIGH_RISK,
+        /**
+         * Profile-selected single approval applies.
+         */
+        ISSUANCE_SINGLE,
+        /**
+         * Profile-selected threshold approval applies.
+         */
+        ISSUANCE_THRESHOLD
     }
 
-    /** Future transport eligibility without defining a transport protocol. */
+    /**
+     * Future transport eligibility without defining a transport protocol.
+     */
     public enum Eligibility {
-        /** Only the authenticated administrative transport may expose the operation. */ ADMINISTRATIVE,
-        /** A read-only public transport may expose the operation. */ PUBLIC_READ
+        /**
+         * Only the authenticated administrative transport may expose the operation.
+         */
+        ADMINISTRATIVE,
+        /**
+         * A read-only public transport may expose the operation.
+         */
+        PUBLIC_READ
     }
 
     /**
@@ -116,7 +150,19 @@ public final class OperationSecurityDescriptors {
             return OperationSecurityDescriptors.available(operationId);
         }
 
-        /** Validates one finite descriptor. */
+        /**
+         * Validates one finite descriptor.
+         * @param operationId stable typed-operation identity
+         * @param family internally fixed execution family
+         * @param action required permission
+         * @param resourceType required resource type
+         * @param mutating whether the operation may commit state
+         * @param dataView required data view
+         * @param approvalCategory approval treatment
+         * @param eligibility future transport eligibility metadata
+         * @throws NullPointerException if any of {@code family}, {@code action}, {@code resourceType}, {@code
+         *         dataView}, {@code approvalCategory}, {@code eligibility} is null
+         */
         public Descriptor {
             Permission.requireBounded(operationId, 256, "operation ID");
             Objects.requireNonNull(family, "family");
@@ -148,7 +194,9 @@ public final class OperationSecurityDescriptors {
 
     private final Map<String, Descriptor> descriptors;
 
-    /** Creates the closed current gateway descriptor registry. */
+    /**
+     * Creates the closed current gateway descriptor registry.
+     */
     public OperationSecurityDescriptors() {
         this(zeroecho.pki.server.schema.OperationDescriptorCatalog.current().securityDescriptors());
     }
@@ -394,6 +442,7 @@ public final class OperationSecurityDescriptors {
      * Creates a registry and rejects duplicate operation identities.
      *
      * @param values complete finite descriptor set
+     * @throws IllegalArgumentException if the descriptor set contains a duplicate operation identity
      */
     public OperationSecurityDescriptors(List<Descriptor> values) {
         Map<String, Descriptor> copy = new LinkedHashMap<>();
@@ -410,6 +459,8 @@ public final class OperationSecurityDescriptors {
      *
      * @param operation exact typed PKI operation
      * @return corresponding security descriptor
+     * @throws NullPointerException if {@code operation} is null
+     * @throws SecurityException if the operation identity is not exposed by this gateway
      */
     public Descriptor require(PkiOperation operation) {
         Objects.requireNonNull(operation, "operation");
@@ -424,6 +475,9 @@ public final class OperationSecurityDescriptors {
      *
      * @param operation exact typed administrative operation
      * @return corresponding security descriptor
+     * @throws NullPointerException if {@code operation} is null
+     * @throws SecurityException if the operation identity is not exposed by this gateway or the operation
+     *         belongs to another descriptor family
      */
     public Descriptor require(AdministrativeOperation operation) {
         Objects.requireNonNull(operation, "operation");
@@ -452,6 +506,7 @@ public final class OperationSecurityDescriptors {
      *
      * @param operationId stable typed-operation identifier
      * @return corresponding security descriptor
+     * @throws SecurityException if the operation identity is not exposed by this gateway
      */
     public Descriptor require(String operationId) {
         Permission.requireBounded(operationId, 256, "operation ID");
@@ -523,6 +578,8 @@ public final class OperationSecurityDescriptors {
      *
      * @param operation exact typed PKI operation
      * @param resource caller-supplied resource and security scope
+     * @throws SecurityException if the supplied authorization resource type differs from the operation
+     *         descriptor or the supplied authorization scope differs from typed operation arguments
      */
     public void validateResource(PkiOperation operation, Permission.Resource resource) {
         Descriptor descriptor = require(operation);
@@ -738,6 +795,8 @@ public final class OperationSecurityDescriptors {
      *
      * @param operation closed signing operation
      * @param resource caller-supplied resource
+     * @throws SecurityException if the supplied authorization resource type differs from the operation
+     *         descriptor or the supplied authorization scope differs from typed operation arguments
      */
     public void validateResource(PkiSigningOperation operation, Permission.Resource resource) {
         Descriptor descriptor = require(new AdministrativeOperation.Signing(operation));

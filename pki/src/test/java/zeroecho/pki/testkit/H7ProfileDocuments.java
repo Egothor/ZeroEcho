@@ -69,34 +69,58 @@ public final class H7ProfileDocuments {
     private H7ProfileDocuments() {
     }
 
-    /** @return default CN-only profile document */
+    /**
+     * Creates the default CN-only profile document.
+     *
+     * @return default CN-only profile document
+     */
     public static byte[] defaultProfile() {
         return profile("default", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
                 List.of("1.3.6.1.5.5.7.3.1"));
     }
 
-    /** @return imported but intentionally inactive profile document */
+    /**
+     * Creates the imported but intentionally inactive profile document.
+     *
+     * @return imported but intentionally inactive profile document
+     */
     public static byte[] inactiveProfile() {
         return profile("inactive", false, List.of(CN), 0, 0, false, false, false, List.of(), false, serverAuth());
     }
 
-    /** @return profile document using a deliberately mismatched format */
+    /**
+     * Creates the profile document using a deliberately mismatched format.
+     *
+     * @return profile document using a deliberately mismatched format
+     */
     public static byte[] wrongFormatProfile() {
         return profile("wrong-format", "wrong", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
                 serverAuth());
     }
 
-    /** @return profile document used to reject an excessive validity request */
+    /**
+     * Creates the profile document used to reject an excessive validity request.
+     *
+     * @return profile document used to reject an excessive validity request
+     */
     public static byte[] excessiveValidityProfile() {
         return profile("too-long", false, List.of(CN), 0, 0, false, false, false, List.of(), false, serverAuth());
     }
 
-    /** @return one-DNS profile document */
+    /**
+     * Creates the one-DNS profile document.
+     *
+     * @return one-DNS profile document
+     */
     public static byte[] dnsProfile() {
         return profile("h7-dns", false, List.of(CN), 1, 1, true, false, false, List.of(DNS_ONE), false, serverAuth());
     }
 
-    /** @return multiple-DNS profile document */
+    /**
+     * Creates the multiple-DNS profile document.
+     *
+     * @return multiple-DNS profile document
+     */
     public static byte[] multipleDnsProfile() {
         return profile("h7-dns-multiple", false, List.of(CN), 1, 3, true, false, false,
                 List.of("{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":3,"
@@ -104,7 +128,11 @@ public final class H7ProfileDocuments {
                 false, serverAuth());
     }
 
-    /** @return wildcard-DNS profile document */
+    /**
+     * Creates the wildcard-DNS profile document.
+     *
+     * @return wildcard-DNS profile document
+     */
     public static byte[] wildcardDnsProfile() {
         return profile("h7-wildcard", false, List.of(CN), 1, 1, true, false, false,
                 List.of("{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
@@ -112,53 +140,89 @@ public final class H7ProfileDocuments {
                 false, serverAuth());
     }
 
-    /** @return empty-subject DNS profile document */
+    /**
+     * Creates the empty-subject DNS profile document.
+     *
+     * @return empty-subject DNS profile document
+     */
     public static byte[] emptySubjectDnsProfile() {
         return profile("h7-dns-empty", true, List.of(), 1, 1, true, false, false, List.of(DNS_ONE), false,
                 serverAuth());
     }
 
-    /** @return critical nonempty-subject DNS profile document */
+    /**
+     * Creates the critical nonempty-subject DNS profile document.
+     *
+     * @return critical nonempty-subject DNS profile document
+     */
     public static byte[] criticalDnsProfile() {
         return profile("h7-dns-critical", false, List.of(CN), 1, 1, true, false, true, List.of(DNS_ONE), false,
                 serverAuth());
     }
 
-    /** @return one IPv4-or-IPv6 profile document */
+    /**
+     * Creates the one IPv4-or-IPv6 profile document.
+     *
+     * @return one IPv4-or-IPv6 profile document
+     */
     public static byte[] ipProfile() {
         return profile("h7-ip", false, List.of(CN), 1, 1, true, false, false, List.of(IP_BOTH_ONE), false,
                 serverAuth());
     }
 
-    /** @return exact mixed IPv4/IPv6 profile document */
+    /**
+     * Creates the exact mixed IPv4/IPv6 profile document.
+     *
+     * @return exact mixed IPv4/IPv6 profile document
+     */
     public static byte[] mixedIpProfile() {
         String rule = "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":2,\"maximumOccurrences\":2,"
                 + "\"ipv4Allowed\":true,\"ipv6Allowed\":true}";
         return profile("h7-ip-mixed", false, List.of(CN), 2, 2, true, false, false, List.of(rule), false, serverAuth());
     }
 
-    /** @return empty-subject IP profile document */
+    /**
+     * Creates the empty-subject IP profile document.
+     *
+     * @return empty-subject IP profile document
+     */
     public static byte[] emptySubjectIpProfile() {
         return profile("h7-ip-empty", true, List.of(), 1, 1, true, false, false, List.of(IP_BOTH_ONE), false,
                 serverAuth());
     }
 
-    /** @return IPv4-only profile document */
+    /**
+     * Creates the IPv4-only profile document.
+     *
+     * @return IPv4-only profile document
+     */
     public static byte[] ipv4Profile() {
         return profile("h7-ipv4", false, List.of(CN), 1, 1, true, false, false, List.of(IPV4_ONE), false, serverAuth());
     }
 
-    /** @return IPv6-only profile document */
+    /**
+     * Creates the IPv6-only profile document.
+     *
+     * @return IPv6-only profile document
+     */
     public static byte[] ipv6Profile() {
         return profile("h7-ipv6", false, List.of(CN), 1, 1, true, false, false, List.of(IPV6_ONE), false, serverAuth());
     }
 
-    /** @return one-URI profile document */
+    /**
+     * Creates the one-URI profile document.
+     *
+     * @return one-URI profile document
+     */
     public static byte[] uriProfile() {
         return profile("h7-uri", false, List.of(CN), 1, 1, true, false, false, List.of(URI_ONE), false, serverAuth());
     }
 
-    /** @return multiple-URI profile document */
+    /**
+     * Creates the multiple-URI profile document.
+     *
+     * @return multiple-URI profile document
+     */
     public static byte[] multipleUriProfile() {
         String rule = "{\"type\":\"URI\",\"minimumOccurrences\":1,\"maximumOccurrences\":3,"
                 + "\"allowedSchemes\":[\"https\"]}";
@@ -166,44 +230,72 @@ public final class H7ProfileDocuments {
                 serverAuth());
     }
 
-    /** @return empty-subject URI profile document */
+    /**
+     * Creates the empty-subject URI profile document.
+     *
+     * @return empty-subject URI profile document
+     */
     public static byte[] emptySubjectUriProfile() {
         return profile("h7-uri-empty", true, List.of(), 1, 1, true, false, false, List.of(URI_ONE), false,
                 serverAuth());
     }
 
-    /** @return one-RFC822 profile document */
+    /**
+     * Creates the one-RFC822 profile document.
+     *
+     * @return one-RFC822 profile document
+     */
     public static byte[] rfc822Profile() {
         return profile("h7-rfc822", false, List.of(CN), 1, 1, false, true, false, List.of(RFC822_ONE), false,
                 serverAuth());
     }
 
-    /** @return multiple-RFC822 profile document */
+    /**
+     * Creates the multiple-RFC822 profile document.
+     *
+     * @return multiple-RFC822 profile document
+     */
     public static byte[] multipleRfc822Profile() {
         String rule = "{\"type\":\"RFC822_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":3}";
         return profile("h7-rfc822-multiple", false, List.of(CN), 1, 3, false, true, false, List.of(rule), false,
                 serverAuth());
     }
 
-    /** @return empty-subject RFC822 profile document */
+    /**
+     * Creates the empty-subject RFC822 profile document.
+     *
+     * @return empty-subject RFC822 profile document
+     */
     public static byte[] emptySubjectRfc822Profile() {
         return profile("h7-rfc822-empty", true, List.of(), 1, 1, false, true, false, List.of(RFC822_ONE), false,
                 serverAuth());
     }
 
-    /** @return independent subject-email and RFC822-SAN profile document */
+    /**
+     * Creates the independent subject-email and RFC822-SAN profile document.
+     *
+     * @return independent subject-email and RFC822-SAN profile document
+     */
     public static byte[] subjectEmailAndRfc822Profile() {
         return profile("h7-subject-email-rfc822", false, List.of(CN, SUBJECT_EMAIL), 1, 1, false, true, false,
                 List.of(RFC822_ONE), false, serverAuth());
     }
 
-    /** @return mixed supported-SAN profile document */
+    /**
+     * Creates the mixed supported-SAN profile document.
+     *
+     * @return mixed supported-SAN profile document
+     */
     public static byte[] mixedSanProfile() {
         return profile("h7-mixed", false, List.of(CN), 4, 4, true, true, false,
                 List.of(DNS_ONE, IP_BOTH_ONE, RFC822_ONE, URI_ONE), false, serverAuth());
     }
 
-    /** @return adversarial-backend baseline profile document */
+    /**
+     * Creates the adversarial-backend baseline profile document.
+     *
+     * @return adversarial-backend baseline profile document
+     */
     public static byte[] backendMutationProfile() {
         String organization = "{\"oid\":\"2.5.4.10\",\"source\":\"REQUESTER\",\"minimumOccurrences\":1,"
                 + "\"maximumOccurrences\":1,\"maximumUtf8Bytes\":256}";
@@ -212,7 +304,11 @@ public final class H7ProfileDocuments {
                 List.of("1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"));
     }
 
-    /** @return CN-only profile forbidding SAN and EKU */
+    /**
+     * Creates the CN-only profile forbidding SAN and EKU.
+     *
+     * @return CN-only profile forbidding SAN and EKU
+     */
     public static byte[] noSanOrEkuProfile() {
         return profile("h7-no-san-eku", false, List.of(CN), 0, 0, false, false, false, List.of(), false, List.of());
     }

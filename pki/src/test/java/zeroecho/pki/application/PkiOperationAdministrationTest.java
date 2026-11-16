@@ -82,7 +82,16 @@ import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
+/**
+ * Contract and regression tests for PKI operation administration.
+ */
 final class PkiOperationAdministrationTest {
+    /**
+     * Indexed selection composes legacy filters and authorization across both executor paths.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void indexedSelectionComposesLegacyFiltersAndAuthorizationAcrossBothExecutorPaths(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -121,6 +130,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Dashboard publications are scoped by authoritative source and expired credentials are not active.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void dashboardPublicationsAreScopedByAuthoritativeSourceAndExpiredCredentialsAreNotActive(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -161,6 +176,12 @@ final class PkiOperationAdministrationTest {
     private static final PkiId CHILD = new PkiId("admin-child");
     private static final PkiId MISSING = new PkiId("missing-admin-object");
 
+    /**
+     * Transitions every state preserving record and reads the post write state.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void transitionsEveryStatePreservingRecordAndReadsThePostWriteState(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -188,6 +209,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Selection on disabled authority changes key and selection only and keeps same selection write.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void selectionOnDisabledAuthorityChangesKeyAndSelectionOnlyAndKeepsSameSelectionWrite(@TempDir Path temporary)
             throws Exception {
@@ -213,6 +240,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Trusted root activation is required and exact receipt replays after later same anchor head change.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void trustedRootActivationIsRequiredAndExactReceiptReplaysAfterLaterSameAnchorHeadChange(@TempDir Path temporary) throws Exception {
         var bootstrap = new ObservedBootstrap();
@@ -254,6 +287,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Approved root activation rejects stale epoch even when selected tuple returns to original.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void approvedRootActivationRejectsStaleEpochEvenWhenSelectedTupleReturnsToOriginal(@TempDir Path temporary) throws Exception {
         var bootstrap = new ObservedBootstrap();
@@ -278,6 +317,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Registers alternate leaf to anchor path for inactive generation without changing authority.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void registersAlternateLeafToAnchorPathForInactiveGenerationWithoutChangingAuthority(@TempDir Path temporary)
             throws Exception {
@@ -304,6 +349,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Missing coordinates and policy violations remain safe and perform no writes.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void missingCoordinatesAndPolicyViolationsRemainSafeAndPerformNoWrites(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -333,6 +384,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Both conditional mutations return conflict without overwriting the concurrent winner.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bothConditionalMutationsReturnConflictWithoutOverwritingTheConcurrentWinner(@TempDir Path temporary)
             throws Exception {
@@ -354,6 +411,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Path registration retains structural and depth limits.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pathRegistrationRetainsStructuralAndDepthLimits(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -384,6 +447,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Uncertain administrative write uses one attempt and safe recovery outcome.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainAdministrativeWriteUsesOneAttemptAndSafeRecoveryOutcome(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -396,6 +465,12 @@ final class PkiOperationAdministrationTest {
         }
     }
 
+    /**
+     * Precancellation and closed session perform no store calls.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void precancellationAndClosedSessionPerformNoStoreCalls(@TempDir Path temporary) throws Exception {
         ObservedBootstrap bootstrap = new ObservedBootstrap();
@@ -419,6 +494,9 @@ final class PkiOperationAdministrationTest {
         assertTrue(bootstrap.calls.isEmpty());
     }
 
+    /**
+     * Administrative inputs require coordinates and nonblank reasons.
+     */
     @Test
     void administrativeInputsRequireCoordinatesAndNonblankReasons() {
         assertThrows(NullPointerException.class, () -> new PkiOperation.TransitionAuthority(null, CaState.ACTIVE, "reason"));
@@ -559,7 +637,9 @@ final class PkiOperationAdministrationTest {
         return session;
     }
 
-    /** Observes the executor boundary; all fixture and CAS work uses the unmodified filesystem store. */
+    /**
+     * Observes the executor boundary; all fixture and CAS work uses the unmodified filesystem store.
+     */
     private static final class ObservedBootstrap implements DefaultPkiSession.Bootstrap {
         private PkiStore store;
         private final List<String> calls = new ArrayList<>();

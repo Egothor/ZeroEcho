@@ -47,6 +47,14 @@ final class CertificateSerialAllocator {
     private CertificateSerialAllocator() {
     }
 
+    /**
+     * Allocates a nonzero random serial with its most significant encoded bit cleared.
+     *
+     * <p>The temporary 20-byte random buffer is cleared before returning. Uniqueness
+     * within an issuer remains the responsibility of authoritative acceptance.</p>
+     *
+     * @return positive serial of at most 159 bits
+     */
     /* package */ static BigInteger allocate() {
         byte[] encoded = new byte[SERIAL_BYTES];
         try {

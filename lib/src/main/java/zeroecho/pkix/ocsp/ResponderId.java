@@ -50,7 +50,12 @@ public sealed interface ResponderId permits ResponderId.ByName, ResponderId.ByKe
      * @param name the responder DN
      */
     record ByName(X500Principal name) implements ResponderId {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains validated components and defensively copies mutable inputs.
+         *
+         * @param name the responder DN
+         * @throws NullPointerException if {@code name} is null
+         */
         public ByName {
             Objects.requireNonNull(name, "name");
         }
@@ -62,7 +67,12 @@ public sealed interface ResponderId permits ResponderId.ByName, ResponderId.ByKe
      * @param keyHash the responder key hash
      */
     record ByKey(byte[] keyHash) implements ResponderId {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains validated components and defensively copies mutable inputs.
+         *
+         * @param keyHash the responder key hash
+         * @throws NullPointerException if {@code keyHash} is null
+         */
         public ByKey {
             Objects.requireNonNull(keyHash, "keyHash");
             keyHash = keyHash.clone();
@@ -78,16 +88,32 @@ public sealed interface ResponderId permits ResponderId.ByName, ResponderId.ByKe
             return keyHash.clone();
         }
 
+        /**
+         * Compares the responder public-key hash bytes by value.
+         *
+         * @param other object to compare, or null
+         * @return true for a compatible value with equal responder public-key hash bytes; false otherwise
+         */
         @Override
         public boolean equals(Object other) {
             return other instanceof ByKey that && Arrays.equals(keyHash, that.keyHash);
         }
 
+        /**
+         * Hashes the responder public-key hash bytes using the same components as equality.
+         *
+         * @return value-based hash code consistent with equals
+         */
         @Override
         public int hashCode() {
             return Arrays.hashCode(keyHash);
         }
 
+        /**
+         * Returns a diagnostic representation containing the responder key-hash byte length, omitting the hash bytes.
+         *
+         * @return responder key-hash byte length, omitting the hash bytes
+         */
         @Override
         public String toString() {
             return "ByKey[keyHash=" + keyHash.length + " bytes]";

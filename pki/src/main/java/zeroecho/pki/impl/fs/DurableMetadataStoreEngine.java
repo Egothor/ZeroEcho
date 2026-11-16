@@ -65,7 +65,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
-/** Internal serialized transaction engine over the durable metadata log. */
+/**
+ * Internal serialized transaction engine over the durable metadata log.
+ */
 final class DurableMetadataStoreEngine implements AutoCloseable {
     private static final int CONFLICT_FAILURE_CODE = 1;
     private static final long MINIMUM_VALUE_BOUNDARY = 0L;
@@ -95,11 +97,31 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         this.outcomes = new HashMap<>(outcomes);
     }
 
+    /**
+     * Creates a fresh exclusively locked metadata log and empty current-state engine.
+     *
+     * @param path exact secured structural metadata log path
+     * @param storeId exact authoritative metadata store identity
+     * @return owned engine; caller closes it after all child streams and snapshots release ownership
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     */
     /* default */ static DurableMetadataStoreEngine create(Path path, MetadataStoreId storeId)
             throws IOException {
         return create(path, storeId, DurableMetadataLog.FaultInjector.NONE, FaultInjector.NONE);
     }
 
+    /**
+     * Creates a fresh exclusively locked metadata log and empty current-state engine.
+     *
+     * @param path exact secured structural metadata log path
+     * @param storeId exact authoritative metadata store identity
+     * @param logFaults checked fault injector for structural log persistence
+     * @param engineFaults checked fault injector for post-force state publication
+     * @return owned engine; caller closes it after all child streams and snapshots release ownership
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     */
     /* default */ static DurableMetadataStoreEngine create(
             Path path,
             MetadataStoreId storeId,
@@ -111,10 +133,28 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
                 path, log, new MetadataStateIndex(), engineFaults, Map.of());
     }
 
+    /**
+     * Replays and repairs an exclusively locked metadata log into its exact current-state engine.
+     *
+     * @param path exact secured structural metadata log path
+     * @return owned engine; caller closes it after all child streams and snapshots release ownership
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     */
     /* default */ static DurableMetadataStoreEngine open(Path path) throws IOException {
         return open(path, DurableMetadataLog.FaultInjector.NONE, FaultInjector.NONE);
     }
 
+    /**
+     * Replays and repairs an exclusively locked metadata log into its exact current-state engine.
+     *
+     * @param path exact secured structural metadata log path
+     * @param logFaults checked fault injector for structural log persistence
+     * @param engineFaults checked fault injector for post-force state publication
+     * @return owned engine; caller closes it after all child streams and snapshots release ownership
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     */
     /* default */ static DurableMetadataStoreEngine open(
             Path path,
             DurableMetadataLog.FaultInjector logFaults,
@@ -129,6 +169,12 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
                 recoveredOutcomes(opened.outcomes()));
     }
 
+    /**
+     * Returns exact store identity while requiring a usable live engine.
+     *
+     * @return immutable authoritative store identity
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     */
     /* default */ MetadataStoreId storeId() {
         transactionLock.lock();
         try {
@@ -139,6 +185,13 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Durably issues a new transaction identity under engine serialization.
+     *
+     * @return exact active transaction identity retained by the structural log
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if structural issuance or its durability barrier fails
+     */
     /* default */ MetadataTransactionId issue() throws IOException {
         transactionLock.lock();
         try {
@@ -149,6 +202,20 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates and durably terminalizes one exact transaction before publishing its current-state update.
+     *
+     * <p>Mutations are detached before use; prepared resources are closed after the attempt establishes an outcome.</p>
+     *
+     * @param transactionId active transaction identity issued by this store
+     * @param mutations ordered prepared mutations whose content ownership transfers to this attempt
+     * @return definite committed result or retained conflict rejection
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws MetadataStoreException if transaction descriptors, ownership, revision or nonconflict validation are invalid
+     * @throws OutcomeUnknownException if terminal durability or post-force state publication cannot be confirmed
+     * @throws IOException if mutation transfer, structural persistence or owned-resource cleanup fails
+     */
     /* default */ CommitResult commit(
             MetadataTransactionId transactionId,
             List<PreparedMutation> mutations) throws IOException {
@@ -229,6 +296,13 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         return first;
     }
 
+    /**
+     * Reads the current authoritative metadata revision under engine serialization.
+     *
+     * @return last published committed store revision
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if the revision cannot be accessed
+     */
     /* default */ long storeRevision() throws IOException {
         transactionLock.lock();
         try {
@@ -239,6 +313,15 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Finds the exact current committed physical value descriptor under engine serialization.
+     *
+     * @param key non-null canonical metadata identity
+     * @return retained current descriptor, or an empty optional if absent
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if the current state cannot be accessed
+     */
     /* default */ Optional<MetadataStateIndex.CurrentRecord> lookup(MetadataKey key)
             throws IOException {
         transactionLock.lock();
@@ -250,6 +333,13 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Pins a stable current-map identity together with its exact authoritative revision.
+     *
+     * @return owned immutable snapshot state; caller invokes its release callback exactly once
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if the current state cannot be captured
+     */
     /* default */ SnapshotState snapshotState() throws IOException {
         transactionLock.lock();
         try {
@@ -262,6 +352,16 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Opens an independently owned bounded reader over an exact durable log value region.
+     *
+     * @param offset nonnegative absolute value offset in bytes
+     * @param length nonnegative exact value length in bytes
+     * @return owned stream limited to the requested region; caller closes it
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws MetadataStoreException if the region is negative, overflows or extends beyond the durable log
+     * @throws IOException if the nonsymlink source channel cannot be opened or sized
+     */
     /* default */ InputStream openValueSlice(long offset, long length) throws IOException {
         transactionLock.lock();
         try {
@@ -303,6 +403,16 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Resolves a retained terminal outcome without resubmitting the original transaction.
+     *
+     * @param transactionId exact store-bound transaction identity
+     * @return retained definite terminal result
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws MetadataStoreException if the transaction belongs to another store or has no retained terminal outcome
+     * @throws IOException if outcome evidence cannot be accessed
+     */
     /* default */ CommitResult resolve(MetadataTransactionId transactionId) throws IOException {
         Objects.requireNonNull(transactionId, "transactionId");
         transactionLock.lock();
@@ -406,6 +516,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         state = State.RECOVERY_REQUIRED;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         transactionLock.lock();
@@ -459,10 +572,24 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         return Map.copyOf(results);
     }
 
-    /** Immutable finite current-state metadata captured under engine serialization. */
+    /**
+     * Immutable finite current-state metadata captured under engine serialization.
+     * @param revision authoritative metadata revision
+     * @param records captured immutable current records keyed by exact metadata identity
+     * @param release callback releasing the captured snapshot pin
+     */
     /* default */ record SnapshotState(
             long revision, NavigableMap<MetadataKey, MetadataStateIndex.CurrentRecord> records,
             Runnable release) {
+        /**
+         * Creates an immutable finite current-state metadata captured under engine serialization.
+         *
+         * @param revision authoritative metadata revision
+         * @param records captured immutable current records keyed by exact metadata identity
+         * @param release callback releasing the captured snapshot pin
+         * @throws IllegalArgumentException if {@code (revision < MINIMUM_VALUE_BOUNDARY)}
+         * @throws NullPointerException if {@code records} is null; or if {@code release} is null
+         */
         SnapshotState {
             if (revision < MINIMUM_VALUE_BOUNDARY) {
                 throw new IllegalArgumentException("Snapshot revision must not be negative");
@@ -472,7 +599,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Exactly bounded reader over one immutable append-only value region. */
+    /**
+     * Exactly bounded reader over one immutable append-only value region.
+     */
     private static final class ValueSliceInputStream extends InputStream {
         private final FileChannel channel;
         private long position;
@@ -486,6 +615,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             this.remaining = remaining;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             byte[] single = new byte[1];
@@ -493,6 +625,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             return count < 0 ? -1 : Byte.toUnsignedInt(single[0]);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] target, int offset, int length) throws IOException {
             Objects.checkFromIndexSize(offset, length, target.length);
@@ -517,6 +652,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             return count;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (closed) {
@@ -533,14 +671,18 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Engine lifecycle forbidding semantic use after uncertainty or close. */
+    /**
+     * Engine lifecycle forbidding semantic use after uncertainty or close.
+     */
     private enum State {
         OPEN,
         RECOVERY_REQUIRED,
         CLOSED
     }
 
-    /** Scope guard that preserves a primary commit failure and suppresses cleanup failure. */
+    /**
+     * Scope guard that preserves a primary commit failure and suppresses cleanup failure.
+     */
     private static final class PreparedResources implements AutoCloseable {
         private final List<PreparedMutation> mutations;
         private boolean outcomeEstablished;
@@ -553,6 +695,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             outcomeEstablished = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             try {
@@ -570,7 +715,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Same-thread boundary that converts non-fatal caller cleanup failures to checked state. */
+    /**
+     * Same-thread boundary that converts non-fatal caller cleanup failures to checked state.
+     */
     private static final class CleanupBoundary {
         private static IOException close(RepeatableContent content) {
             CompletableFuture<Void> completion = CompletableFuture.completedFuture(null)
@@ -622,7 +769,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Captures checked preparation without using exceptions as transaction flow. */
+    /**
+     * Captures checked preparation without using exceptions as transaction flow.
+     */
     private record Preparation(
             MetadataStateIndex.PreparedUpdate update, MetadataStoreException failure) {
         private static Preparation attempt(
@@ -637,12 +786,27 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Closed internal result; it is not the provider-neutral store result. */
+    /**
+     * Closed internal result; it is not the provider-neutral store result.
+     * @param committed whether the transaction committed
+     * @param revision authoritative metadata revision
+     * @param failureCode stable terminal failure code, absent when not applicable
+     * @param failureReason closed reconstruction failure reason, or empty when not applicable
+     */
     /* default */ record CommitResult(
             boolean committed,
             OptionalLong revision,
             OptionalInt failureCode,
             Optional<DurableMetadataLogScanner.FailureReason> failureReason) {
+        /**
+         * Creates the closed internal result; it is not the provider-neutral store result.
+         *
+         * @param committed whether the transaction committed
+         * @param revision authoritative metadata revision
+         * @param failureCode stable terminal failure code, absent when not applicable
+         * @param failureReason closed reconstruction failure reason, or empty when not applicable
+         * @throws NullPointerException if {@code revision} is null; or if {@code failureCode} is null; or if {@code failureReason} is null
+         */
         CommitResult {
             Objects.requireNonNull(revision, "revision");
             Objects.requireNonNull(failureCode, "failureCode");
@@ -670,7 +834,18 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Store-owned semantic mutation plus its exact known-length encoded payload. */
+    /**
+     * Store-owned semantic mutation plus its exact known-length encoded payload.
+     * @param kind closed MetadataMutationPayloadCodec.MutationKind discriminator
+     * @param key exact logical metadata identity
+     * @param expectedRevision revision expected by the mutation before its update
+     * @param valueLength encoded value length in bytes
+     * @param payloadLength exact encoded mutation payload length in bytes
+     * @param payload exact encoded payload retained for this operation
+     * @param cancellation cooperative cancellation signal for reading or writing the payload
+     * @param ownedValue value content lease owned by this prepared mutation
+     * @param closed shared lifecycle flag preventing repeated resource release
+     */
     /* default */ record PreparedMutation(
             MetadataMutationPayloadCodec.MutationKind kind,
             MetadataKey key,
@@ -681,6 +856,21 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             CancellationSignal cancellation,
             RepeatableContent ownedValue,
             AtomicBoolean closed) {
+        /**
+         * Creates the store-owned semantic mutation plus its exact known-length encoded payload.
+         *
+         * @param kind closed MetadataMutationPayloadCodec.MutationKind discriminator
+         * @param key exact logical metadata identity
+         * @param expectedRevision revision expected by the mutation before its update
+         * @param valueLength encoded value length in bytes
+         * @param payloadLength exact encoded mutation payload length in bytes
+         * @param payload exact encoded payload retained for this operation
+         * @param cancellation cooperative cancellation signal for reading or writing the payload
+         * @param ownedValue value content lease owned by this prepared mutation
+         * @param closed shared lifecycle flag preventing repeated resource release
+         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if {@code expectedRevision} is null; or if {@code payload} is null; or if {@code cancellation} is null; or if {@code closed} is null
+         * @throws IllegalArgumentException if {@code (valueLength < 0L || payloadLength < valueLength)}
+         */
         PreparedMutation {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(key, "key");
@@ -693,6 +883,17 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
             }
         }
 
+        /**
+         * Prepares a known-length create payload retaining exact store-owned value custody.
+         *
+         * @param key exact canonical metadata identity
+         * @param storeOwnedValue known-length immutable value lease whose ownership transfers to the prepared mutation
+         * @param cancellation cooperative signal checked when encoded payload is transferred
+         * @return owned immutable prepared mutation with its exact framed payload length
+         * @throws NullPointerException if a required collaborator is null
+         * @throws IllegalArgumentException if the value length is unknown or replacement revision is invalid
+         * @throws MetadataStoreException if framing or known-length payload bounds cannot be represented
+         */
         /* default */ static PreparedMutation create(
                 MetadataKey key,
                 RepeatableContent storeOwnedValue,
@@ -711,6 +912,18 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
                     storeOwnedValue);
         }
 
+        /**
+         * Prepares a known-length replace payload retaining exact store-owned value custody.
+         *
+         * @param key exact canonical metadata identity
+         * @param expectedRevision nonnegative exact revision required before replacement
+         * @param storeOwnedValue known-length immutable value lease whose ownership transfers to the prepared mutation
+         * @param cancellation cooperative signal checked when encoded payload is transferred
+         * @return owned immutable prepared mutation with its exact framed payload length
+         * @throws NullPointerException if a required collaborator is null
+         * @throws IllegalArgumentException if the value length is unknown or replacement revision is invalid
+         * @throws MetadataStoreException if framing or known-length payload bounds cannot be represented
+         */
         /* default */ static PreparedMutation replace(
                 MetadataKey key,
                 long expectedRevision,
@@ -730,6 +943,15 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
                     storeOwnedValue);
         }
 
+        /**
+         * Prepares an exact-revision deletion without acquiring any value-content lease.
+         *
+         * @param key exact canonical metadata identity
+         * @param expectedRevision nonnegative exact record revision required for deletion
+         * @return prepared deletion with an empty owned-value field
+         * @throws NullPointerException if a required collaborator is null
+         * @throws IllegalArgumentException if the expected revision is invalid
+         */
         /* default */ static PreparedMutation delete(MetadataKey key, long expectedRevision) {
             RepeatableContent payload = MetadataMutationPayloadCodec.delete(key, expectedRevision);
             return prepared(
@@ -799,22 +1021,38 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
         }
     }
 
-    /** Deterministic fault boundary after a forced terminal and before publication. */
+    /**
+     * Deterministic fault boundary after a forced terminal and before publication.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for publishing committed state after the force barrier.
+         */
         POST_FORCE_PUBLICATION
     }
 
-    /** Package-private fault seam for engine-only publication uncertainty. */
+    /**
+     * Package-private fault seam for engine-only publication uncertainty.
+     */
     /* default */
     @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails the selected deterministic engine boundary. */
+        /**
+         * Fails the selected deterministic engine boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
     }
 
-    /** Outcome uncertainty requiring close and authoritative replay. */
+    /**
+     * Outcome uncertainty requiring close and authoritative replay.
+     */
     /* default */ static final class OutcomeUnknownException extends IOException {
         private static final long serialVersionUID = -5475791935837085729L;
 

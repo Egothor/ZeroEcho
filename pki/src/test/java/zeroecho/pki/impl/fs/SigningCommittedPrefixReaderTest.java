@@ -53,11 +53,19 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for signing committed prefix reader.
+ */
 final class SigningCommittedPrefixReaderTest {
 
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Rejects truncation and forced end inside a committed group.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsTruncationAndForcedEndInsideACommittedGroup() throws Exception {
         Fixture fixture = new Fixture();
@@ -88,6 +96,11 @@ final class SigningCommittedPrefixReaderTest {
         }
     }
 
+    /**
+     * Rejects commitment sequence and revision endpoint mismatch.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsCommitmentSequenceAndRevisionEndpointMismatch() throws Exception {
         Fixture fixture = new Fixture();
@@ -114,6 +127,11 @@ final class SigningCommittedPrefixReaderTest {
         assertRejected(path, revisionMismatch);
     }
 
+    /**
+     * Never reads past the forced end when the file already contains another group.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void neverReadsPastTheForcedEndWhenTheFileAlreadyContainsAnotherGroup() throws Exception {
         Fixture fixture = new Fixture();
@@ -131,6 +149,11 @@ final class SigningCommittedPrefixReaderTest {
         }
     }
 
+    /**
+     * Partial group reread does not advance and applies newly projected frames exactly once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialGroupRereadDoesNotAdvanceAndAppliesNewlyProjectedFramesExactlyOnce()
             throws Exception {

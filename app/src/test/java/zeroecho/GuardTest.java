@@ -78,12 +78,17 @@ import zeroecho.sdk.util.BouncyCastleActivator;
 public class GuardTest {
     private static final String TEST_PBKDF2_MAXIMUM = "1000000";
 
-    /** All temporary files live here and are auto-cleaned by JUnit. */
+    /**
+     * All temporary files live here and are auto-cleaned by JUnit.
+     */
     @TempDir
     Path tmp;
 
     private PrintStream savedOut;
 
+    /**
+     * Initializes cryptographic providers before tests that require their algorithms.
+     */
     @BeforeAll
     static void bootBouncyCastle() {
         System.out.println("bootBouncyCastle()");
@@ -92,6 +97,9 @@ public class GuardTest {
         System.out.println("bootBouncyCastle...ok");
     }
 
+    /**
+     * Restores the original standard output stream after a test that redirected it.
+     */
     @AfterEach
     void restoreStdout() {
         if (savedOut != null) {
@@ -106,6 +114,7 @@ public class GuardTest {
      * <p>
      * This does not require a keyring.
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void password_aesGcm_roundTrip_ok() throws Exception {
@@ -142,6 +151,11 @@ public class GuardTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that password operations require an explicit finite derivation limit.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void passwordOperationRequiresExplicitLimits() throws Exception {
         String method = "passwordOperationRequiresExplicitLimits";
@@ -157,6 +171,11 @@ public class GuardTest {
         System.out.println(method + "...ok");
     }
 
+    /**
+     * Rejects an invalid recipient key-encryption-key size in CLI input.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void recipientKekOptionRejectsUnreadableSize() throws Exception {
         String method = "recipientKekOptionRejectsUnreadableSize";
@@ -183,6 +202,7 @@ public class GuardTest {
      * Keys are generated through the real KeyStoreManagement CLI and read via Guard
      * with --to-alias and --priv-alias.
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void rsa_alias_aesGcm_and_chacha_roundTrip_ok() throws Exception {
@@ -261,6 +281,7 @@ public class GuardTest {
      * Verifies that default shuffling does not prevent decryption and that both
      * password and private-key paths can unlock.
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void mixed_recipients_with_decoys_roundTrip_ok() throws Exception {
@@ -320,6 +341,7 @@ public class GuardTest {
     /**
      * Negative: decryption should fail to parse when both --priv-alias and
      * --password are given.
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void decrypt_with_both_unlock_material_rejected() throws Exception {

@@ -44,8 +44,14 @@ import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing provider configuration commitment.
+ */
 final class SigningProviderConfigurationCommitmentTest {
 
+    /**
+     * Value is immutable constant time comparable and redacted.
+     */
     @Test
     void valueIsImmutableConstantTimeComparableAndRedacted() {
         byte[] source = new byte[SigningProvider.ConfigurationCommitment.BYTE_LENGTH];

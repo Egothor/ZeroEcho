@@ -51,7 +51,9 @@ import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 
-/** Validates runnable examples without opening listeners, providers, or stores. */
+/**
+ * Validates runnable examples without opening listeners, providers, or stores.
+ */
 class CommittedServerConfigurationExamplesTest {
     private static final Pattern JSON_FENCE = Pattern.compile(
             "(?m)^ *```json[^\\r\\n]*\\R(.*?)^ *``` *$", Pattern.DOTALL);
@@ -59,6 +61,12 @@ class CommittedServerConfigurationExamplesTest {
             "^( *)([A-Za-z0-9_.-]+\\.json): *(.*)$");
     private static final Pattern SERVER_NAME = Pattern.compile("\\\"serverName\\\"\\s*:");
 
+    /**
+     * Discovers maintained JSON, YAML literal-block and Markdown server examples for strict current-schema validation.
+     *
+     * @return stream of independently named dynamic validation tests for each discovered example
+     * @throws IOException if maintained example directories or files cannot be read
+     */
     @TestFactory
     Stream<DynamicTest> decodesEveryMaintainedServerExample() throws IOException {
         Path repository = Path.of(System.getProperty("configurationExamples.repository"));
@@ -105,6 +113,9 @@ class CommittedServerConfigurationExamplesTest {
         }));
     }
 
+    /**
+     * Checks YAML extraction ends at its block boundary and rejects folded or empty server configuration blocks.
+     */
     @Test
     void yamlExtractionRespectsBlockBoundariesAndRejectsUnsupportedServerEncoding() {
         List<Example> examples = yamlExamples("fixture.yaml", """
@@ -130,6 +141,11 @@ class CommittedServerConfigurationExamplesTest {
                 """));
     }
 
+    /**
+     * Checks changing a maintained example to an unsupported future schema version is rejected.
+     *
+     * @throws IOException if test fixture setup or execution fails
+     */
     @Test
     void currentVersionAuthorityAlsoRejectsFutureVersion() throws IOException {
         Path repository = Path.of(System.getProperty("configurationExamples.repository"));

@@ -64,12 +64,26 @@ import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for keyring stateful signing.
+ */
 class KeyringStatefulSigningTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path root;
     private static final byte[] MESSAGE = { 1, 2, 3, 4 };
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void provider() { BouncyCastleActivator.init(); }
 
+    /**
+     * LMS and XMSS sign persist and reopen without reusing leaf.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void lmsAndXmssSignPersistAndReopenWithoutReusingLeaf() throws Exception {
         for (String algorithm : List.of("LMS", "XMSS")) {
@@ -102,6 +116,11 @@ class KeyringStatefulSigningTest {
         }
     }
 
+    /**
+     * Stale private state missing authority and alias copies cannot sign.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void stalePrivateStateMissingAuthorityAndAliasCopiesCannotSign() throws Exception {
         Path keyring = root.resolve("keys/store");
@@ -123,6 +142,11 @@ class KeyringStatefulSigningTest {
         }
     }
 
+    /**
+     * Provider advanced LMS state retains consumption on import.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void providerAdvancedLmsStateRetainsConsumptionOnImport() throws Exception {
         java.security.KeyPair pair = new ZeroEchoSession().keyBuilders().asymmetric()
@@ -146,6 +170,11 @@ class KeyringStatefulSigningTest {
                 .generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(parent.getEncoded())));
     }
 
+    /**
+     * Threads serialize and exhaustion remains after reopen.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void threadsSerializeAndExhaustionRemainsAfterReopen() throws Exception {
         Path keyring = root.resolve("keys/store");
@@ -183,8 +212,18 @@ class KeyringStatefulSigningTest {
         }
     }
 
+    /**
+     * Creates owned password material for a test keyring.
+     *
+     * @return fresh password that the caller must close
+     */
     static KeyringPassword password() { return new KeyringPassword("stateful-test".toCharArray()); }
 
+    /**
+     * XMSS final leaf verifies and retirement survives restart.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void xmssFinalLeafVerifiesAndRetirementSurvivesRestart() throws Exception {
         Path keyring = root.resolve("keys/store");
@@ -208,12 +247,34 @@ class KeyringStatefulSigningTest {
         }
     }
 
+    /**
+     * Signs the fixed fixture content through the supplied durable signer.
+     *
+     * @param signer borrowed stateful signer
+     * @return independently owned signature bytes
+     * @throws Exception if durable state handling or signing fails
+     */
     static byte[] sign(StatefulSigner signer) throws Exception {
         return signer.sign(new ImmutableByteContent(MESSAGE), CancellationSignal.NONE, 4096);
     }
+    /**
+     * Extracts the consumed LMS or XMSS leaf index from a fixture signature.
+     *
+     * @param algorithm canonical stateful algorithm identifier
+     * @param signature complete encoded signature
+     * @return leaf index used to produce the signature
+     */
     static int leaf(String algorithm, byte[] signature) {
         return ByteBuffer.wrap(signature).getInt(algorithm.equals("LMS") ? 4 : 0);
     }
+    /**
+     * Independently verifies a signature over the fixed fixture content.
+     *
+     * @param algorithm canonical stateful algorithm identifier
+     * @param publicKey verification key
+     * @param signature signature produced by the fixture signer
+     * @throws Exception if verification cannot execute or the signature is invalid
+     */
     static void verify(String algorithm, PublicKey publicKey, byte[] signature) throws Exception {
         Signature verifier = Signature.getInstance(algorithm, "BCPQC");
         verifier.initVerify(publicKey);

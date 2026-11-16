@@ -88,10 +88,20 @@ import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.server.est.KeygenPolicy;
 import zeroecho.pkix.Pkix;
 
-/** Real domain completion and signature verification across lost acknowledgement and reopen. */
+/**
+ * Real domain completion and signature verification across lost acknowledgement and reopen.
+ */
 class EnrollmentIssuanceRecoveryTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks approved enrollment dispatch accepts signing once and retains exact credential/receipt/evidence across session reopen.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void approvedIssuanceCompletesOnceAndRetainsCredentialAfterSessionReopen() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 SemanticPreparationFixture real = SemanticPreparationFixture.open(directory.resolve("domain"))) {

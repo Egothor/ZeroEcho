@@ -105,16 +105,37 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for full CRL streaming publication.
+ */
 class FullCrlStreamingPublicationTest {
+    /**
+     * Fixed reference instant shared by the fixture and its expected evidence.
+     */
     static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
+    /**
+     * Fixed authoritative clock used to make fixture timestamps deterministic.
+     */
     static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    /**
+     * Logical authority identity used by the fixture.
+     */
     static final PkiId CA = new PkiId("ca:full-crl");
     private static final KeyRef KEY = new KeyRef("key:full-crl");
     private static final String HASH = "00".repeat(32);
     private static final CertificateProfileRef PROFILE = new CertificateProfileRef("root", 1, new byte[32]);
+    /**
+     * Authenticated actor and purpose attached to fixture signing requests.
+     */
     static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "crl"),
             new Purpose("STATUS_GENERATE"), Optional.empty(), Optional.empty());
 
+    /**
+     * Streams large CRL and reopens completed after retirement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void streamsLargeCrlAndReopensCompletedAfterRetirement(@TempDir Path root) throws Exception {
         SigningAcceptanceReceipt receipt;
         PkiId statusId;
@@ -148,6 +169,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Reopens signing and replays publication after durable status.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reopensSigningAndReplaysPublicationAfterDurableStatus(@TempDir Path root) throws Exception {
         SigningAcceptanceReceipt receipt;
         EncodedObject signature;
@@ -180,6 +207,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Pure Ed25519 honors admission and verifies with jdk semantics.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void pureEd25519HonorsAdmissionAndVerifiesWithJdkSemantics(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Fixture rejected = fixture(store, "Ed25519", "Ed25519", BootstrapAlgorithmIdentities.ED25519_SIGNATURE, 2);
@@ -197,6 +230,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Rejects wrong signature algorithm issuer and times.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsWrongSignatureAlgorithmIssuerAndTimes(@TempDir Path root) throws Exception {
         for (int changed : new int[] {-1, 9, 3, 7}) {
             try (FilesystemPkiStore store = open(root.resolve("case" + changed))) {
@@ -226,6 +265,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Rechecks pure ed dsa limit before publication.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rechecksPureEdDsaLimitBeforePublication(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Fixture fixture = fixture(store, "Ed25519", "Ed25519", BootstrapAlgorithmIdentities.ED25519_SIGNATURE, 2);
@@ -240,6 +285,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Rejects noncanonical metadata and completion identity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsNoncanonicalMetadataAndCompletionIdentity(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Fixture fixture = fixture(store, "RSA", "SHA256withRSA", BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, 0);
@@ -255,6 +306,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Provenance is frozen validated and survives reopen and workflow purge.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void provenanceIsFrozenValidatedAndSurvivesReopenAndWorkflowPurge(@TempDir Path root) throws Exception {
         PkiId operation;
         PkiId statusId;
@@ -341,6 +398,12 @@ class FullCrlStreamingPublicationTest {
         }
     }
 
+    /**
+     * Current command rejects missing or noncanonical snapshot coordinates.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentCommandRejectsMissingOrNoncanonicalSnapshotCoordinates(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Fixture fixture = fixture(store, "RSA", "SHA256withRSA", BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, 0);
@@ -363,11 +426,34 @@ class FullCrlStreamingPublicationTest {
                 original.thisUpdate(), original.nextUpdate(), original.content(), attributes);
     }
 
+    /**
+     * Installs issuer/profile/revocation prerequisites and prepares the selected full or delta CRL.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param keyAlgorithm JCA key-pair algorithm used by the CRL issuer
+     * @param signatureAlgorithm JCA signature algorithm used to sign the CRL fixture
+     * @param identity canonical cryptographic identity bound to prepared content
+     * @param entries revoked certificate count, or ordered attribute values for the fixture
+     * @return prepared CRL, identity, signature, and expected complete encoding
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static Fixture fixture(FilesystemPkiStore store, String keyAlgorithm, String signatureAlgorithm,
             AlgorithmIdentity identity, int entries) throws Exception {
         return fixture(store, keyAlgorithm, signatureAlgorithm, identity, entries, false);
     }
 
+    /**
+     * Installs issuer/profile/revocation prerequisites and prepares the selected full or delta CRL.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param keyAlgorithm JCA key-pair algorithm used by the CRL issuer
+     * @param signatureAlgorithm JCA signature algorithm used to sign the CRL fixture
+     * @param identity canonical cryptographic identity bound to prepared content
+     * @param entries revoked certificate count, or ordered attribute values for the fixture
+     * @param delta whether the fixture prepares a delta rather than a full CRL
+     * @return prepared CRL, identity, signature, and expected complete encoding
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static Fixture fixture(FilesystemPkiStore store, String keyAlgorithm, String signatureAlgorithm,
             AlgorithmIdentity identity, int entries, boolean delta) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance(keyAlgorithm);
@@ -438,8 +524,22 @@ class FullCrlStreamingPublicationTest {
         return result;
     }
 
+    /**
+     * Opens an owned filesystem store using the fixed fixture clock and test options.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @return open filesystem store that the caller must close
+     */
     static FilesystemPkiStore open(Path root) { return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK); }
 
+    /**
+     * Composes the fixture semantic signing service over the selected store and signing collaborators.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param algorithm algorithm identifier selected by this cryptographic fixture
+     * @param maximum maximum signing input length advertised by the fixture provider, in bytes
+     * @return semantic service borrowing the fixture store, clock, and provider
+     */
     static DefaultSemanticSigningService semantic(FilesystemPkiStore store, AlgorithmIdentity algorithm, long maximum) {
         SigningProvider provider = new SigningProvider() {
             @Override public String id() { return "crl-test"; }
@@ -465,12 +565,25 @@ class FullCrlStreamingPublicationTest {
         return new DefaultSemanticSigningService(store, signing, PkiTestRuntime.endEntityPreparation(store, CLOCK), maximum);
     }
 
+    /**
+     * Advances the fixture signing workflow with the supplied encoded signature.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @param signature signature bytes or encoded signature selected for verification/publication
+     */
     static void sign(FilesystemPkiStore store, PkiId id, EncodedObject signature) {
         SignWorkflowStore.Workflow claimed = store.claimSignStep(id, 0, Duration.ofSeconds(10)).orElseThrow();
         store.transitionSign(id, claimed.revision(), claimed.fence(), SignWorkflowStore.State.SUCCEEDED,
                 Optional.of("SIGNED"), Optional.of(signature), Optional.of(NOW)).orElseThrow();
     }
 
+    /**
+     * Persists the authority records matching the prepared CRL issuer fixture.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param fixture prepared CRL/key fixture to accept into the signing workflow
+     */
     static void registerCa(FilesystemPkiStore store, Fixture fixture) {
         PreparedFullCrlTbs prepared = fixture.prepared();
         IssuerChainPath path = IssuerChainPath.create(CA, prepared.issuerGenerationId(), List.of(prepared.issuerCredentialId()));
@@ -479,6 +592,13 @@ class FullCrlStreamingPublicationTest {
                 List.of(prepared.issuerGenerationId()), prepared.issuerGenerationId(), path.pathId()));
     }
 
+    /**
+     * Lifecycle fixture retaining an openable store and observable signing state.
+     * @param prepared prepared full-CRL TBS and issuer-content references
+     * @param algorithm exact signing algorithm identity
+     * @param signature expected encoded signature
+     * @param outer expected complete CRL bytes; retained as supplied
+     */
     record Fixture(PreparedFullCrlTbs prepared, AlgorithmIdentity algorithm, EncodedObject signature, byte[] outer) { }
     private static final class SimulatedCrash extends RuntimeException { private static final long serialVersionUID = 1L; }
 }

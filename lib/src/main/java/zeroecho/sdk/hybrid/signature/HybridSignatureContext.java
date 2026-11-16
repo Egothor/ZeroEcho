@@ -64,7 +64,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * algorithm identifiers; the profile is the source of truth.
  * </p>
  *
- * <h3>Streaming semantics</h3>
+ * <h2>Streaming semantics</h2>
  * <p>
  * This context is compatible with the existing ZeroEcho signing/verification
  * pipelines: callers wrap an {@link InputStream} and read until EOF. At EOF,
@@ -77,7 +77,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * while keeping the same external streaming behavior.
  * </p>
  *
- * <h3>Verification aggregation</h3>
+ * <h2>Verification aggregation</h2>
  * <p>
  * Verification is performed for both component signatures and aggregated by the
  * profile rule (AND / OR). The final decision is applied via this context's
@@ -109,11 +109,12 @@ final class HybridSignatureContext implements SignatureContext {
     /**
      * Creates a signing hybrid signature context.
      *
+     * @param session          owning crypto session; must not be null
      * @param profile          hybrid signature profile
      * @param classicPrivate   private key for classical engine
      * @param pqcPrivate       private key for PQC engine
      * @param maxBufferedBytes maximum buffered bytes (DoS guard)
-     * @throws NullPointerException     if {@code profile}, {@code classicPrivate},
+     * @throws NullPointerException     if {@code session}, {@code profile}, {@code classicPrivate},
      *                                  or {@code pqcPrivate} is {@code null}
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
@@ -141,11 +142,12 @@ final class HybridSignatureContext implements SignatureContext {
     /**
      * Creates a verifying hybrid signature context.
      *
+     * @param session          owning crypto session; must not be null
      * @param profile          hybrid signature profile
      * @param classicPublic    public key for classical engine
      * @param pqcPublic        public key for PQC engine
      * @param maxBufferedBytes maximum buffered bytes (DoS guard)
-     * @throws NullPointerException     if {@code profile}, {@code classicPublic},
+     * @throws NullPointerException     if {@code session}, {@code profile}, {@code classicPublic},
      *                                  or {@code pqcPublic} is {@code null}
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
@@ -170,12 +172,18 @@ final class HybridSignatureContext implements SignatureContext {
         this.expectedTag = null;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public InputStream wrap(InputStream upstream) throws IOException {
         Objects.requireNonNull(upstream, "upstream");
         return new HybridStream(upstream);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int tagLength() {
         try (SignatureContext classic = createClassic(produceMode ? KeyUsage.SIGN : KeyUsage.VERIFY);
@@ -186,6 +194,9 @@ final class HybridSignatureContext implements SignatureContext {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setExpectedTag(byte[] expected) {
         if (produceMode) {
@@ -195,26 +206,41 @@ final class HybridSignatureContext implements SignatureContext {
         this.expectedTag = expected.clone();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setVerificationApproach(VerificationBiPredicate<Signature> approach) {
         this.verificationApproach = Objects.requireNonNull(approach, "approach");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public VerificationBiPredicate<Signature> getVerificationCore() {
         return hybridCore;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CryptoAlgorithm algorithm() {
         return CryptoAlgorithms.require(profile.classicSigId());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Key key() {
         return produceMode ? classicPrivate : classicPublic;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         // Stateless at context level; per-stream resources are closed by the stream.
@@ -275,7 +301,9 @@ final class HybridSignatureContext implements SignatureContext {
      * </p>
      */
     private final class HybridStream extends InputStream {
-        /** The wrapped upstream stream providing the primary data. */
+        /**
+         * The wrapped upstream stream providing the primary data.
+         */
         private final InputStream upstream;
 
         /**
@@ -544,10 +572,14 @@ final class HybridSignatureContext implements SignatureContext {
      * </p>
      */
     private static final class VerificationSplit {
-        /** Expected signature bytes for the classic algorithm. */
+        /**
+         * Expected signature bytes for the classic algorithm.
+         */
         private final byte[] expectedClassic;
 
-        /** Expected signature bytes for the PQC algorithm. */
+        /**
+         * Expected signature bytes for the PQC algorithm.
+         */
         private final byte[] expectedPqc;
 
         /**

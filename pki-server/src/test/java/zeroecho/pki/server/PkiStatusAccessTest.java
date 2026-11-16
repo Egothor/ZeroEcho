@@ -39,9 +39,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
-/** Explicit status capability migration preserves historical grants and never implies root or certificate access. */
+/**
+ * Explicit status capability migration preserves historical grants and never implies root or certificate access.
+ */
 class PkiStatusAccessTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
+    /**
+     * Checks idempotent status-only grant migration and rejects changed identities or configuration before partial grants appear.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void migratesOnlyStatusCapabilitiesIdempotentlyAndRefusesChangedState() throws Exception {
         var configuration = AdministrativeWorkflowFixture.configuration(directory, false);
         PkiCertificateAccessTest.legacy(configuration);

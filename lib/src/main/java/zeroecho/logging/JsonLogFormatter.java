@@ -77,7 +77,9 @@ import java.util.logging.LogRecord;
 final class JsonLogFormatter extends Formatter {
     private static final int FIRST_PRINTABLE = 0x20;
 
-    /** Single reusable instance; stateless so sharing is safe. */
+    /**
+     * Single reusable instance; stateless so sharing is safe.
+     */
     /* default */ static final JsonLogFormatter INSTANCE = new JsonLogFormatter();
 
     /**

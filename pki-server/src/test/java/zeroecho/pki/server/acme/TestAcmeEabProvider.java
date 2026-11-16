@@ -48,9 +48,13 @@ import javax.crypto.spec.SecretKeySpec;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Deterministic secret-free test proof of explicit EAB provider composition. */
+/**
+ * Deterministic secret-free test proof of explicit EAB provider composition.
+ */
 public final class TestAcmeEabProvider implements AcmeExternalAccountBindingProvider {
-    /** Stable test provider identity. */
+    /**
+     * Stable test provider identity.
+     */
     public static final String ID = "test.eab.v1";
     private static final byte[] SECRET = "zeroecho-test-eab-secret-32-bytes"
             .getBytes(StandardCharsets.US_ASCII);
@@ -59,8 +63,14 @@ public final class TestAcmeEabProvider implements AcmeExternalAccountBindingProv
     private static final Pattern JWK = Pattern.compile("\\{\\\"kty\\\":\\\"EC\\\",\\\"crv\\\":\\\"P-256\\\","
             + "\\\"x\\\":\\\"([A-Za-z0-9_-]{43})\\\",\\\"y\\\":\\\"([A-Za-z0-9_-]{43})\\\"}");
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String id() { return ID; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Binding verify(Request request, ProviderConfig configuration) {
         if (!ID.equals(configuration.backendId()) || !configuration.properties().isEmpty()) {
             throw new SecurityException("Test EAB rejected");

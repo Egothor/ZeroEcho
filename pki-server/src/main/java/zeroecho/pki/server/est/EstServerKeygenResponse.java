@@ -67,6 +67,13 @@ public final class EstServerKeygenResponse {
         this.admission = admission; this.boundary = boundary; this.certificates = certificates.clone();
     }
 
+    /**
+     * Creates an EST key-generation response instructing the client to poll later.
+     *
+     * @param retryAfterSeconds positive polling delay, in seconds
+     * @return HTTP 202 response with Retry-After metadata
+     * @throws IllegalArgumentException if the delay is not positive
+     */
     /* default */ static EstServerKeygenResponse pending(long retryAfterSeconds) {
         if (retryAfterSeconds <= 0) {
             throw new IllegalArgumentException("Invalid EST retry interval");
@@ -74,6 +81,13 @@ public final class EstServerKeygenResponse {
         return new EstServerKeygenResponse(202, Optional.of(retryAfterSeconds), null, null, "", new byte[0]);
     }
 
+    /**
+     * Creates a terminal EST key-generation response without a delivery body.
+     *
+     * @param status supported terminal HTTP status: 403, 410 or 500
+     * @return terminal response without retry metadata
+     * @throws IllegalArgumentException if status is outside the supported set
+     */
     /* default */ static EstServerKeygenResponse terminal(int status) {
         if (status != 403 && status != 410 && status != 500) {
             throw new IllegalArgumentException("Invalid EST terminal status");
@@ -81,6 +95,17 @@ public final class EstServerKeygenResponse {
         return new EstServerKeygenResponse(status, Optional.empty(), null, null, "", new byte[0]);
     }
 
+    /**
+     * Creates a successful response that can acquire the exact encrypted key-delivery lease.
+     *
+     * @param coordinator realm-owned enrollment coordinator
+     * @param admission exact accepted key-generation transaction
+     * @param artifactId canonical 64-character lowercase hexadecimal delivery identity
+     * @param certificates nonempty encoded certificate entity; copied
+     * @return HTTP 200 multipart delivery descriptor
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if the delivery identity or certificate entity is invalid
+     */
     /* default */ static EstServerKeygenResponse issued(EnrollmentCoordinator coordinator, EnrollmentCoordinator.Admission admission,
             String artifactId, byte[] certificates) {
         if (!artifactId.matches("[0-9a-f]{64}") || certificates.length == 0) {
@@ -128,7 +153,11 @@ public final class EstServerKeygenResponse {
         }
     }
 
-    /** @return status only, without request or artifact data */
+    /**
+     * Returns a diagnostic representation with sensitive identity and custody details redacted.
+     *
+     * @return status only, without request or artifact data
+     */
     @Override public String toString() { return "EstServerKeygenResponse[status=" + status + "]"; }
 
     /**
@@ -154,6 +183,7 @@ public final class EstServerKeygenResponse {
          * @param cancellation checked before and during delivery
          * @throws IOException if ciphertext or transport I/O fails
          * @throws IllegalStateException if closed or already written
+         * @throws NullPointerException if any of {@code output}, {@code cancellation} is null
          */
         public void writeTo(OutputStream output, CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(output, "output"); Objects.requireNonNull(cancellation, "cancellation");
@@ -166,6 +196,11 @@ public final class EstServerKeygenResponse {
                     + "Content-Transfer-Encoding: base64\r\n\r\n");
             try (InputStream input = delivery.openStream(); OutputStream encoded = Base64.getMimeEncoder(76,
                     new byte[] {'\r', '\n'}).wrap(new FilterOutputStream(output) {
+                        /**
+                         * Flushes encoded output without closing the surrounding transport-owned stream.
+                         *
+                         * @throws IOException if buffered encoded output cannot be flushed
+                         */
                         @Override public void close() throws IOException { flush(); }
                     })) {
                 byte[] buffer = new byte[64 * 1024];
@@ -182,7 +217,13 @@ public final class EstServerKeygenResponse {
             ascii(output, "\r\n--" + boundary + "--\r\n");
         }
 
-        /** Releases the ciphertext lease; safe to call repeatedly. */
+        /**
+         * Releases the ciphertext delivery lease.
+         *
+         * <p>A successful close is idempotent. A failed underlying close may be retried.</p>
+         *
+         * @throws IOException if the ciphertext delivery lease cannot be released
+         */
         @Override public void close() throws IOException {
             if (!closed) { delivery.close(); closed = true; }
         }

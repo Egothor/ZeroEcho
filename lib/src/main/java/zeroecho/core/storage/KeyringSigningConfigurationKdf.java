@@ -50,7 +50,9 @@ import java.util.Objects;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-/** Fixed-purpose signing-configuration tag derivation. */
+/**
+ * Fixed-purpose signing-configuration tag derivation.
+ */
 final class KeyringSigningConfigurationKdf {
     private static final int MASTER_KEY_BYTES = 32;
     private static final int STORE_ID_BYTES = 16;
@@ -62,16 +64,45 @@ final class KeyringSigningConfigurationKdf {
     private KeyringSigningConfigurationKdf() {
     }
 
-    /** Borrowed encrypted-entry identity required by the signing transcript. */
+    /**
+     * Borrowed encrypted-entry identity required by the signing transcript.
+     */
     /* default */ interface EntryView {
-        /** Returns the canonical persisted entry position. */
+        /**
+         * Returns the canonical persisted entry position.
+         *
+         * @return position used to order entries in the signing transcript
+         */
         int position();
 
-        /** Appends this entry's canonical identity, metadata, and ciphertext digest. */
+        /**
+         * Appends this entry's canonical identity, metadata, and ciphertext digest.
+         *
+         * @param output borrowed transcript stream; this method must not close it
+         * @throws IOException if the entry identity cannot be written
+         */
         void writeSigningConfigurationIdentity(DataOutputStream output) throws IOException;
     }
 
-    /** Encodes, derives, and applies the store-specific signing-configuration tag. */
+    /**
+     * Computes a store-bound signing-configuration tag using an HKDF-derived HMAC key.
+     *
+     * <p>The canonical transcript orders entries by their persisted positions. Temporary
+     * transcript and derived-key arrays are cleared before this method returns.
+     *
+     * @param masterKey borrowed 32-byte store master key
+     * @param storeId borrowed 16-byte store identifier
+     * @param workflowId nonblank workflow identifier within the metadata byte bound
+     * @param operationHorizon positive duration allowed for signing operations
+     * @param keyRefPrefix nonblank key-reference prefix within the metadata byte bound
+     * @param requireComponentSuffix whether component suffixes are part of key selection
+     * @param entries borrowed entry identities; must not be null or contain null
+     * @return a newly allocated 32-byte configuration tag
+     * @throws NullPointerException if required text, duration, entries, or an entry is null
+     * @throws IllegalArgumentException if key sizes, text bounds, or duration are invalid
+     * @throws IllegalStateException if an entry's transcript cannot be encoded
+     * @throws GeneralSecurityException if HMAC initialization or key derivation fails
+     */
     /* default */ static byte[] tag(byte[] masterKey, byte[] storeId, String workflowId,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             Collection<? extends EntryView> entries) throws GeneralSecurityException {
@@ -145,6 +176,14 @@ final class KeyringSigningConfigurationKdf {
         }
     }
 
+    /**
+     * Writes a UTF-8 string with a four-byte length prefix.
+     *
+     * @param output borrowed transcript stream; not closed by this method
+     * @param value non-null text encoded as UTF-8; temporary encoded bytes are cleared
+     * @throws IOException if the output stream cannot accept the encoding
+     * @throws NullPointerException if the stream or a required value is null
+     */
     /* default */ static void writeString(DataOutputStream output, String value) throws IOException {
         byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
         try {
@@ -163,6 +202,14 @@ final class KeyringSigningConfigurationKdf {
         }
     }
 
+    /**
+     * Writes one four-byte integer as a length-prefixed big-endian value.
+     *
+     * @param output borrowed transcript stream; not closed by this method
+     * @param value integer value to encode
+     * @throws IOException if the output stream cannot accept the encoding
+     * @throws NullPointerException if the stream or a required value is null
+     */
     /* default */ static void writeInt(DataOutputStream output, int value) throws IOException {
         byte[] encoded = ByteBuffer.allocate(Integer.BYTES).putInt(value).array();
         try {
@@ -181,6 +228,14 @@ final class KeyringSigningConfigurationKdf {
         }
     }
 
+    /**
+     * Writes raw bytes preceded by their four-byte length.
+     *
+     * @param output borrowed transcript stream; not closed by this method
+     * @param value borrowed payload bytes; must not be null
+     * @throws IOException if the output stream cannot accept the encoding
+     * @throws NullPointerException if the stream or a required value is null
+     */
     /* default */ static void writeBytes(DataOutputStream output, byte[] value) throws IOException {
         output.writeInt(value.length);
         output.write(value);
@@ -210,7 +265,9 @@ final class KeyringSigningConfigurationKdf {
         }
     }
 
-    /** Byte-array output whose internal transcript storage is cleared on close. */
+    /**
+     * Byte-array output whose internal transcript storage is cleared on close.
+     */
     private static final class WipingByteArrayOutputStream extends ByteArrayOutputStream {
         @Override
         public void close() {

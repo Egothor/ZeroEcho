@@ -86,6 +86,8 @@ public final class ScepTransport implements AutoCloseable {
      * @param ready         readiness predicate checked by request handlers
      * @return started SCEP listener lifecycle owner
      * @throws IllegalStateException if the listener cannot be initialized
+     * @throws NullPointerException if any of {@code configuration}, {@code realm}, {@code random}, {@code
+     *         loader}, {@code ready} is null
      */
     public static ScepTransport start(PkiServerConfiguration.ScepListener configuration,
             ServerRealmContext realm, SecureRandom random, ClassLoader loader,
@@ -139,7 +141,9 @@ public final class ScepTransport implements AutoCloseable {
         return service;
     }
 
-    /** Rejects new protocol work. */
+    /**
+     * Rejects new protocol work.
+     */
     public void quiesce() {
         protocolRuntime.quiesce();
     }
@@ -155,6 +159,9 @@ public final class ScepTransport implements AutoCloseable {
         protocolRuntime.close();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         shutdown(Duration.ZERO);

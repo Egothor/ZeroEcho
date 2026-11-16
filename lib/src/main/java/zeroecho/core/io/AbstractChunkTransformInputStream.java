@@ -124,21 +124,37 @@ import java.io.InputStream;
  */
 public abstract class AbstractChunkTransformInputStream extends FilterInputStream {
     private static final int MIN_INPUT_CHUNK_SIZE = 2;
-    /** Input buffer storing data read from the upstream stream. */
+    /**
+     * Input buffer storing data read from the upstream stream.
+     */
     protected final byte[] inBuf;
-    /** Output buffer storing transformed bytes awaiting consumption. */
+    /**
+     * Output buffer storing transformed bytes awaiting consumption.
+     */
     protected byte[] outBuf;
-    /** Number of valid bytes currently in {@code inBuf}. */
+    /**
+     * Number of valid bytes currently in {@code inBuf}.
+     */
     protected int inLen;
-    /** Current read position within {@code outBuf}. */
+    /**
+     * Current read position within {@code outBuf}.
+     */
     protected int outPtr;
-    /** Number of valid bytes currently in {@code outBuf}. */
+    /**
+     * Number of valid bytes currently in {@code outBuf}.
+     */
     protected int outLen;
-    /** Flag indicating that end-of-stream has been reached. */
+    /**
+     * Flag indicating that end-of-stream has been reached.
+     */
     protected boolean eofSeen; // = false;
-    /** Size of one logical input chunk. */
+    /**
+     * Size of one logical input chunk.
+     */
     protected final int inChunkSize;
-    /** Size of one logical output chunk. */
+    /**
+     * Size of one logical output chunk.
+     */
     protected final int outChunkSize;
 
     /**

@@ -49,8 +49,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing ledger lifecycle slots.
+ */
 final class SigningLedgerLifecycleSlotsTest {
 
+    /**
+     * Prepared to admitted transfer preserves one bounded lifecycle slot.
+     */
     @Test
     void preparedToAdmittedTransferPreservesOneBoundedLifecycleSlot() {
         SigningLedgerStoreEngine.LifecycleSlots slots =
@@ -80,6 +86,9 @@ final class SigningLedgerLifecycleSlotsTest {
                 slots.snapshot());
     }
 
+    /**
+     * Cohort prepared acquisition is all or none.
+     */
     @Test
     void cohortPreparedAcquisitionIsAllOrNone() {
         SigningLedgerStoreEngine.AdmissionMaintenanceGate gate = gate(4);
@@ -96,6 +105,11 @@ final class SigningLedgerLifecycleSlotsTest {
                 SigningLedgerStoreEngine.AdmissionMaintenanceGate.Preparation::close);
     }
 
+    /**
+     * Maintenance wins before cohort owns any slot.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void maintenanceWinsBeforeCohortOwnsAnySlot() throws Exception {
         SigningLedgerStoreEngine.AdmissionMaintenanceGate gate = gate(4);
@@ -124,6 +138,11 @@ final class SigningLedgerLifecycleSlotsTest {
         }
     }
 
+    /**
+     * Cohort wins and maintenance drains the complete count.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cohortWinsAndMaintenanceDrainsTheCompleteCount() throws Exception {
         SigningLedgerStoreEngine.AdmissionMaintenanceGate gate = gate(4);
@@ -152,6 +171,11 @@ final class SigningLedgerLifecycleSlotsTest {
         }
     }
 
+    /**
+     * Close wakes cohort waiter without ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void closeWakesCohortWaiterWithoutOwnership() throws Exception {
         SigningLedgerStoreEngine.AdmissionMaintenanceGate gate = gate(4);
@@ -175,6 +199,11 @@ final class SigningLedgerLifecycleSlotsTest {
         }
     }
 
+    /**
+     * Interruption leaves waiting cohort without ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void interruptionLeavesWaitingCohortWithoutOwnership() throws Exception {
         SigningLedgerStoreEngine.AdmissionMaintenanceGate gate = gate(4);

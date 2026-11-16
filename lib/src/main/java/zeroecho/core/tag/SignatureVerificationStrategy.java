@@ -78,7 +78,9 @@ import zeroecho.core.util.Strings;
 public class SignatureVerificationStrategy extends VerificationBiPredicate<Signature> {
     private static final Logger LOG = Logger.getLogger(SignatureVerificationStrategy.class.getName());
 
-    /** Creates a stateless JCA signature-verification strategy. */
+    /**
+     * Creates a stateless JCA signature-verification strategy.
+     */
     public SignatureVerificationStrategy() {
         super();
         // Stateless verifier.

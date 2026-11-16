@@ -127,6 +127,9 @@ import zeroecho.sdk.util.Kdf;
 public final class HybridKexContext implements MessageAgreementContext {
 
     private static final Logger LOG = Logger.getLogger(HybridKexContext.class.getName());
+    /**
+     * Maximum complete hybrid agreement frame length, including both length fields, in bytes.
+     */
     /* default */ static final int MAX_FRAME_BYTES = 65_536;
     private static final int FRAME_HEADER_BYTES = Integer.BYTES * 2;
 
@@ -150,6 +153,15 @@ public final class HybridKexContext implements MessageAgreementContext {
         this(profile, classic, pqc, Kdf::hkdfSha256);
     }
 
+    /**
+     * Creates a hybrid agreement with an injectable derivation function.
+     *
+     * @param profile HKDF binding and output-length profile; must not be null
+     * @param classic owned classic agreement leg; must not be null
+     * @param pqc owned post-quantum message-agreement leg; must not be null
+     * @param secretDeriver derivation function; must not be null
+     * @throws NullPointerException if any argument is null
+     */
     /* default */ HybridKexContext(HybridKexProfile profile, AgreementContext classic, MessageAgreementContext pqc,
             SecretDeriver secretDeriver) {
         this.profile = Objects.requireNonNull(profile, "profile");
@@ -424,6 +436,14 @@ public final class HybridKexContext implements MessageAgreementContext {
     // Encoding helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * Frames the classic and post-quantum messages with big-endian length fields.
+     *
+     * @param classicMsg classic message bytes, or null for an empty component
+     * @param pqcMsg post-quantum message bytes, or null for an empty component
+     * @return newly allocated complete frame, no larger than MAX_FRAME_BYTES
+     * @throws IOException if the combined frame exceeds the size bound
+     */
     /* default */ static byte[] encode(byte[] classicMsg, byte[] pqcMsg) throws IOException {
         byte[] c = (classicMsg == null) ? new byte[0] : classicMsg;
         byte[] p = (pqcMsg == null) ? new byte[0] : pqcMsg;
@@ -442,6 +462,14 @@ public final class HybridKexContext implements MessageAgreementContext {
         return output.array();
     }
 
+    /**
+     * Decodes a bounded hybrid frame and rejects truncation or trailing bytes.
+     *
+     * @param msg complete frame; must not be null
+     * @return independently allocated component arrays in protocol order
+     * @throws NullPointerException if the frame is null
+     * @throws IOException if lengths, framing, or the complete size are invalid
+     */
     /* default */ static Parts decode(byte[] msg) throws IOException {
         Objects.requireNonNull(msg, "msg must not be null");
         if (msg.length > MAX_FRAME_BYTES) {
@@ -508,6 +536,12 @@ public final class HybridKexContext implements MessageAgreementContext {
         }
     }
 
+    /**
+     * Decoded hybrid message components owned by the decoding operation.
+     *
+     * @param classicPart classic-leg message bytes, possibly empty
+     * @param pqcPart post-quantum-leg message bytes, possibly empty
+     */
     /* default */ record Parts(byte[] classicPart, byte[] pqcPart) {
     }
 }

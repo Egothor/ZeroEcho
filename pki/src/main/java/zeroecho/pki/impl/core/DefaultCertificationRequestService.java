@@ -112,14 +112,18 @@ import zeroecho.pkix.Pkix;
  */
 public final class DefaultCertificationRequestService implements CertificationRequestService {
 
-    /** Bounded maximum number of certification requests returned by one search. */
+    /**
+     * Bounded maximum number of certification requests returned by one search.
+     */
     private static final int MAX_SEARCH_RESULTS = 1000;
 
     private final PkiStore store;
     private final CredentialFramework framework;
     private final Optional<X509ProfileBindingMatcher> bindingMatcher;
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requireRenewalIdentity(ParsedCertificationRequest parsed, PkiId predecessorId) {
         Objects.requireNonNull(parsed, "parsed"); Objects.requireNonNull(predecessorId, "predecessorId");
         ParsedCertificationRequest original = parseX509(encodedX509Request(parsed));
@@ -184,6 +188,7 @@ public final class DefaultCertificationRequestService implements CertificationRe
      * @param store authoritative request and imported-profile store
      * @param framework configured X.509 parsing and verification framework
      * @param bindings immutable session binding registry
+     * @throws NullPointerException if store, framework is null
      */
     public DefaultCertificationRequestService(PkiStore store, BcX509CredentialFramework framework,
             zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry bindings) {
@@ -192,7 +197,9 @@ public final class DefaultCertificationRequestService implements CertificationRe
         this.bindingMatcher = Optional.of(new X509ProfileBindingMatcher(framework.authority(), bindings));
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requireProfileProof(ParsedCertificationRequest parsed, zeroecho.pki.api.profile.CertificateProfileRef profile) {
         Objects.requireNonNull(profile, "profile");
         X509ProfileBindingMatcher matcher = bindingMatcher.orElseThrow(() -> new IllegalStateException("Profile proof validation is not configured"));
@@ -278,13 +285,17 @@ public final class DefaultCertificationRequestService implements CertificationRe
         return framework.requestParser().parse(request);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ParsedCertificationRequest parseX509(X509EnrollmentPayload request) {
         return framework.requestParser().parseX509(Objects.requireNonNull(request, "request"));
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509EnrollmentPayload encodedX509Request(ParsedCertificationRequest parsed) {
         return zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed);

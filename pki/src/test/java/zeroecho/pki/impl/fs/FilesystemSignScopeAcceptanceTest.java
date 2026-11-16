@@ -65,7 +65,16 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
+/**
+ * Contract and regression tests for filesystem sign scope acceptance.
+ */
 class FilesystemSignScopeAcceptanceTest {
+    /**
+     * Proof prefix cannot accept or reserve certificate state.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void proofPrefixCannotAcceptOrReserveCertificateState(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand base = rootCommand(store, 9);
@@ -88,6 +97,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Same scope serial across generations has one concurrent winner.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sameScopeSerialAcrossGenerationsHasOneConcurrentWinner(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
                 java.util.concurrent.ExecutorService workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
@@ -120,6 +135,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Correlation transaction conflict leaves no new reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void correlationTransactionConflictLeavesNoNewReservation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand winner = command(store, 1, 42, -1, "", null);
@@ -135,6 +156,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Definite and unknown commit resolve all claims together after reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void definiteAndUnknownCommitResolveAllClaimsTogetherAfterReopen(@TempDir Path root) throws Exception {
         for (FilesystemPkiStore.SignAcceptanceCommitFault fault : FilesystemPkiStore.SignAcceptanceCommitFault.values()) {
             Path directory = root.resolve(fault.name());
@@ -173,6 +200,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Terminal failure never releases accepted serial.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void terminalFailureNeverReleasesAcceptedSerial(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand accepted = command(store, 1, 42, -1, "", null);
@@ -185,6 +218,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Root authority is frozen before signing and cross authority scope claim conflicts.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rootAuthorityIsFrozenBeforeSigningAndCrossAuthorityScopeClaimConflicts(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand first = rootCommand(store, 9);
@@ -200,6 +239,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Intermediate claims child scope but reserves only parent serial.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void intermediateClaimsChildScopeButReservesOnlyParentSerial(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand base = command(store, 1, 42, -1, "", null);
@@ -222,6 +267,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Legacy intermediate dn recovers from retained candidate and completed certificate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void legacyIntermediateDnRecoversFromRetainedCandidateAndCompletedCertificate(@TempDir Path root) throws Exception {
         PkiId operation;
         java.security.cert.X509Certificate certificate = SemanticIssuanceFixture.caCertificate(
@@ -248,6 +299,13 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Legacy intermediate recovery rejects changed retained evidence.
+     *
+     * @param changeSignature whether the encoded signature is intentionally modified
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void legacyIntermediateRecoveryRejectsChangedRetainedEvidence(boolean changeSignature, @TempDir Path root) throws Exception {
@@ -300,6 +358,13 @@ class FilesystemSignScopeAcceptanceTest {
         assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
     }
 
+    /**
+     * Legacy intermediate subject cannot select unrelated or permuted scope.
+     *
+     * @param subject distinguished-name subject selected for the issuance case
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"CN=Unrelated,O=ZeroEcho,C=CZ", "O=ZeroEcho,CN=Legacy Child,C=CZ"})
     void legacyIntermediateSubjectCannotSelectUnrelatedOrPermutedScope(String subject, @TempDir Path root) throws Exception {
@@ -349,6 +414,12 @@ class FilesystemSignScopeAcceptanceTest {
                 SignWorkflowStore.Mode.NORMAL, Optional.empty());
     }
 
+    /**
+     * Extra integer inside canonical tbs rejects without any claim.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void extraIntegerInsideCanonicalTbsRejectsWithoutAnyClaim(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             SignWorkflowStore.AcceptanceCommand valid = rootCommand(store, 9);
@@ -373,6 +444,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Root rollover retains scope authority and rejects substitution.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rootRolloverRetainsScopeAuthorityAndRejectsSubstitution(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Credential issuer = SemanticIssuanceFixture.issuer(store, 1);
@@ -405,6 +482,14 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Stages the root fixture and builds its serial-bound durable acceptance command.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param serial positive certificate serial number chosen for the fixture
+     * @return root signing acceptance command with its staged candidate content
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static SignWorkflowStore.AcceptanceCommand rootCommand(FilesystemPkiStore store, int serial) throws Exception {
         Instant now = store.signingNow();
         String namespace = store.signingNamespace() + ".scope-test";
@@ -448,6 +533,14 @@ class FilesystemSignScopeAcceptanceTest {
                 zeroecho.pki.testkit.IssuerBindingFixture.BINDING_SET_COMMITMENT).encodeForSubject();
     }
 
+    /**
+     * Derives the CRL namespace bound to the candidate acceptance command.
+     *
+     * @param command semantic command commitment or typed command bound to the fixture
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return candidate CRL scope
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static CrlScope candidateScope(SignWorkflowStore.AcceptanceCommand command, FilesystemPkiStore store) throws Exception {
         org.bouncycastle.asn1.x509.TBSCertificate candidate = org.bouncycastle.asn1.x509.TBSCertificate.getInstance(
                 PkiTestRuntime.readContent(store, command.candidate()));
@@ -462,6 +555,12 @@ class FilesystemSignScopeAcceptanceTest {
                 SignWorkflowStore.Mode.NORMAL, java.util.Optional.empty());
     }
 
+    /**
+     * Mismatched frozen coordinates reject without any acceptance or reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void mismatchedFrozenCoordinatesRejectWithoutAnyAcceptanceOrReservation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Credential issuer = SemanticIssuanceFixture.issuer(store, 1);
@@ -478,6 +577,12 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Malformed and trailing candidate reject without reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedAndTrailingCandidateRejectWithoutReservation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Credential issuer = SemanticIssuanceFixture.issuer(store, 1);
@@ -492,6 +597,18 @@ class FilesystemSignScopeAcceptanceTest {
         }
     }
 
+    /**
+     * Creates the fixture command with the selected authority, key, and profile bindings.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param generation generation selector used to derive stable fixture identifiers
+     * @param serial positive certificate serial number chosen for the fixture
+     * @param changedField zero-based template field to replace, or a negative value for no replacement
+     * @param changed replacement encoded field value used by the negative acceptance case
+     * @param candidate replacement encoded candidate bytes, or null to generate the normal fixture
+     * @return typed command ready for the test preparation or acceptance path
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static SignWorkflowStore.AcceptanceCommand command(FilesystemPkiStore store, int generation, int serial,
             int changedField, String changed, byte[] candidate) throws Exception {
         Credential issuer = SemanticIssuanceFixture.issuer(store, generation);
@@ -519,10 +636,24 @@ class FilesystemSignScopeAcceptanceTest {
                         SignWorkflowStore.Mode.NORMAL, java.util.Optional.empty());
     }
 
+    /**
+     * Creates a scope/serial-reservation facade over the fixture metadata store.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return reservation facade borrowing the open metadata store
+     */
     static CrlScopeReservationStore reservations(FilesystemPkiStore store) {
         return new CrlScopeReservationStore(store.metadataStore(), BigInteger.ONE, result -> { });
     }
 
+    /**
+     * Derives the canonical CRL scope from the issuer certificate subject and public key.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param issuer issuer authority, key pair, or credential selected by the fixture
+     * @return issuer-bound CRL scope
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static CrlScope scope(FilesystemPkiStore store, Credential issuer) throws Exception {
         java.security.cert.X509Certificate certificate = store.certificateHolder(issuer);
         return CrlScope.of(certificate.getSubjectX500Principal().getEncoded(), certificate.getPublicKey().getEncoded());

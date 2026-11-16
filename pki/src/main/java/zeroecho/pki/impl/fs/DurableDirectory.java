@@ -85,11 +85,15 @@ import java.util.Set;
 interface DurableDirectory extends Closeable {
 
     /**
+     * Returns the directory bound to this filesystem operation session.
+     *
      * @return the directory this session operates within (never {@code null})
      */
     Path directory();
 
     /**
+     * Reports whether resolution is bound to an open directory descriptor.
+     *
      * @return {@code true} when name resolution is bound to an open directory
      *         descriptor and therefore immune to concurrent ancestor renames
      *         (POSIX); {@code false} when names are resolved against the path
@@ -145,6 +149,7 @@ interface DurableDirectory extends Closeable {
      * @param directory an existing directory
      * @return an open session (caller closes it)
      * @throws IOException if the directory cannot be opened
+     * @throws NullPointerException if directory is null
      */
     // A secure stream is intentionally transferred into the returned closeable directory session.
     @SuppressWarnings("PMD.CloseResource")
@@ -160,7 +165,9 @@ interface DurableDirectory extends Closeable {
         return new PathResolved(directory);
     }
 
-    /** POSIX descriptor-relative backend over a {@link SecureDirectoryStream}. */
+    /**
+     * POSIX descriptor-relative backend over a {@link SecureDirectoryStream}.
+     */
     final class DescriptorRelative implements DurableDirectory {
         private final Path directory;
         private final SecureDirectoryStream<Path> stream;
@@ -170,33 +177,51 @@ interface DurableDirectory extends Closeable {
             this.stream = stream;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Path directory() {
             return directory;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean descriptorRelative() {
             return true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SeekableByteChannel newByteChannel(Path name, Set<? extends OpenOption> options,
                 FileAttribute<?>... attributes) throws IOException {
             return stream.newByteChannel(name, options, attributes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void deleteFile(Path name) throws IOException {
             stream.deleteFile(name);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public <V extends FileAttributeView> V getFileAttributeView(Path name, Class<V> type,
                 LinkOption... options) {
             return stream.getFileAttributeView(name, type, options);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<Path> listNames() throws IOException {
             List<Path> names = new ArrayList<>();
@@ -209,13 +234,18 @@ interface DurableDirectory extends Closeable {
             return names;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             stream.close();
         }
     }
 
-    /** Path-resolved backend for filesystems without a {@link SecureDirectoryStream}. */
+    /**
+     * Path-resolved backend for filesystems without a {@link SecureDirectoryStream}.
+     */
     final class PathResolved implements DurableDirectory {
         private final Path directory;
 
@@ -223,33 +253,51 @@ interface DurableDirectory extends Closeable {
             this.directory = directory;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Path directory() {
             return directory;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean descriptorRelative() {
             return false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SeekableByteChannel newByteChannel(Path name, Set<? extends OpenOption> options,
                 FileAttribute<?>... attributes) throws IOException {
             return Files.newByteChannel(directory.resolve(name), options, attributes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void deleteFile(Path name) throws IOException {
             Files.delete(directory.resolve(name));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public <V extends FileAttributeView> V getFileAttributeView(Path name, Class<V> type,
                 LinkOption... options) {
             return Files.getFileAttributeView(directory.resolve(name), type, options);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<Path> listNames() throws IOException {
             List<Path> names = new ArrayList<>();
@@ -264,6 +312,9 @@ interface DurableDirectory extends Closeable {
             return names;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // No descriptor is retained by the path-resolved backend.

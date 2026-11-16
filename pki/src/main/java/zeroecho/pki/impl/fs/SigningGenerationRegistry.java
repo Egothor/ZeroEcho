@@ -67,6 +67,13 @@ final class SigningGenerationRegistry implements AutoCloseable {
     private final NavigableSet<Long> reclaimable = new TreeSet<>();
     private boolean closed;
 
+    /**
+     * Registers a previously absent nonnegative artifact generation in CREATED state.
+     *
+     * @param generationId exact nonnegative artifact generation identity
+     * @throws IllegalArgumentException if the identity is negative
+     * @throws IllegalStateException if the registry is closed or the generation is already registered
+     */
     /* default */ void create(long generationId) {
         requireGenerationId(generationId);
         lock.lock();
@@ -81,6 +88,13 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Makes one CREATED artifact generation available for exact current references and snapshot pins.
+     *
+     * @param generationId exact nonnegative artifact generation identity
+     * @throws IllegalArgumentException if the identity is negative
+     * @throws IllegalStateException if the registry is closed, identity is unregistered or state is not CREATED
+     */
     /* default */ void publish(long generationId) {
         lock.lock();
         try {
@@ -95,6 +109,13 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Marks one published generation superseded and updates its exact reclaim eligibility.
+     *
+     * @param generationId exact nonnegative artifact generation identity
+     * @throws IllegalArgumentException if the identity is negative
+     * @throws IllegalStateException if the registry is closed, identity is unregistered or state is not PUBLISHED
+     */
     /* default */ void supersede(long generationId) {
         lock.lock();
         try {
@@ -110,7 +131,12 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Removes one unpublished-authority candidate after all of its references close. */
+    /**
+     * Removes one unpublished-authority candidate after all of its references close.
+     * @param generationId exact registered PUBLISHED generation being discarded
+     * @throws IllegalArgumentException if the identity is negative
+     * @throws IllegalStateException if the registry is closed, state differs or any current reference or snapshot pin remains
+     */
     /* default */ void discardPublished(long generationId) {
         lock.lock();
         try {
@@ -127,15 +153,38 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Closed internal owners of current-pointer references. */
+    /**
+     * Closed internal owners of current-pointer references.
+     */
     /* default */ enum Owner {
+        /**
+         * Ownership retained by the multiversion metadata index.
+         */
         MVCC,
+        /**
+         * Ownership retained by the due-work index.
+         */
         DUE,
+        /**
+         * Ownership retained by the content-owner projection.
+         */
         OWNER,
+        /**
+         * Temporary ownership retained while recovery reconstructs projections.
+         */
         RECOVERY_TEMPORARY
     }
 
-    /** Acquires one owner-scoped current-pointer reference per identity, atomically. */
+    /**
+     * Acquires one owner-scoped current-pointer reference per identity, atomically.
+     * @param owner fixed reference-owner bucket
+     * @param generationIds nonnegative generation identities; duplicate occurrences acquire repeated references
+     * @return rollback token; close it or transfer exact reference-release responsibility
+     * @throws NullPointerException if an input or identity is null
+     * @throws IllegalArgumentException if an identity is negative
+     * @throws IllegalStateException if the registry is closed or any generation is not PUBLISHED
+     * @throws ArithmeticException if aggregation or reference counters overflow
+     */
     /* default */ CurrentReferences acquireCurrent(Owner owner,
             Collection<Long> generationIds) {
         Objects.requireNonNull(owner, "owner");
@@ -143,7 +192,16 @@ final class SigningGenerationRegistry implements AutoCloseable {
         return acquireCurrentCounts(owner, countIdentities(generationIds));
     }
 
-    /** Acquires owner-scoped aggregated generation-reference counts atomically in O(G). */
+    /**
+     * Acquires owner-scoped aggregated generation-reference counts atomically in O(G).
+     * @param owner fixed reference-owner bucket
+     * @param referenceCounts nonnegative generation identities mapped to positive reference counts
+     * @return rollback token retaining the exact acquired owner counts
+     * @throws NullPointerException if an input, identity or count is null
+     * @throws IllegalArgumentException if an identity is negative or a count is not positive
+     * @throws IllegalStateException if the registry is closed or any generation is not PUBLISHED
+     * @throws ArithmeticException if owner or total reference counters overflow
+     */
     /* default */ CurrentReferences acquireCurrentCounts(Owner owner,
             Map<Long, Integer> referenceCounts) {
         Objects.requireNonNull(owner, "owner");
@@ -178,6 +236,14 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Tests exact generation registration while requiring the registry to remain open.
+     *
+     * @param generationId nonnegative generation identity
+     * @return true if that identity is currently registered
+     * @throws IllegalArgumentException if the identity is negative
+     * @throws IllegalStateException if the registry is closed
+     */
     /* default */ boolean contains(long generationId) {
         requireGenerationId(generationId);
         lock.lock();
@@ -189,6 +255,16 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Atomically releases one owner-scoped current reference for every supplied identity occurrence.
+     *
+     * @param owner exact fixed owner bucket from which references are released
+     * @param generationIds nonnegative generation identities; repeated identities release repeated references
+     * @throws NullPointerException if an input or identity is null
+     * @throws IllegalArgumentException if an identity is negative
+     * @throws IllegalStateException if registration or exact owner-reference accounting is inconsistent
+     * @throws ArithmeticException if aggregation of repeated identity counts overflows
+     */
     /* default */ void releaseCurrent(Owner owner, Collection<Long> generationIds) {
         Objects.requireNonNull(owner, "owner");
         releaseCurrentCounts(owner, countIdentities(generationIds));
@@ -197,6 +273,11 @@ final class SigningGenerationRegistry implements AutoCloseable {
     /**
      * Pins each distinct generation. Published generations are pinnable; a
      * superseded generation remains pinnable only while a current pointer owns it.
+     * @param generationIds distinct exact generation identities to pin atomically
+     * @return owned idempotent pin set; caller closes it after snapshot reads finish
+     * @throws NullPointerException if the collection or an identity is null
+     * @throws IllegalArgumentException if an identity is negative or repeated
+     * @throws IllegalStateException if the registry is closed or a generation is unavailable or its pin count is exhausted
      */
     /* default */ SnapshotPins pinSnapshot(Collection<Long> generationIds) {
         Objects.requireNonNull(generationIds, "generationIds");
@@ -227,7 +308,13 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Claims at most {@code maximumActions} eligible identities in deterministic order. */
+    /**
+     * Claims at most {@code maximumActions} eligible identities in deterministic order.
+     * @param maximumActions positive maximum number of identities claimed
+     * @return immutable ascending-identity reclaim claims; filesystem deletion remains the caller's responsibility
+     * @throws IllegalArgumentException if the limit is not positive
+     * @throws IllegalStateException if the registry is closed or reclaim eligibility accounting is inconsistent
+     */
     /* default */ List<ReclaimAction> claimReclaimable(int maximumActions) {
         if (maximumActions <= 0) {
             throw new IllegalArgumentException("signing generation reclaim bound is invalid");
@@ -253,7 +340,12 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Returns a failed external deletion claim to the ordered retry set. */
+    /**
+     * Returns a failed external deletion claim to the ordered retry set.
+     * @param action exact previously claimed generation whose external deletion failed
+     * @throws NullPointerException if the action is null
+     * @throws IllegalStateException if the registry is closed or the generation is not RECLAIMING
+     */
     /* default */ void reclaimFailed(ReclaimAction action) {
         Objects.requireNonNull(action, "action");
         lock.lock();
@@ -270,7 +362,12 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Completes external deletion and removes all registry state for the identity. */
+    /**
+     * Completes external deletion and removes all registry state for the identity.
+     * @param action exact previously claimed generation whose external deletion completed
+     * @throws NullPointerException if the action is null
+     * @throws IllegalStateException if the registry is closed, state is not RECLAIMING or references remain
+     */
     /* default */ void reclaimCompleted(ReclaimAction action) {
         Objects.requireNonNull(action, "action");
         lock.lock();
@@ -287,6 +384,12 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures registration, lifecycle, owner-reference and snapshot-pin counters under one registry lock.
+     *
+     * @return new immutable constant-size statistics snapshot
+     * @throws ArithmeticException if aggregated reference totals cannot fit a signed long
+     */
     /* default */ Snapshot statistics() {
         lock.lock();
         try {
@@ -325,6 +428,13 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Closes registration admission only after every owner reference and snapshot pin is released.
+     *
+     * <p>Successful closure is idempotent. A rejected close leaves the registry open for cleanup.</p>
+     *
+     * @throws IllegalStateException if any generation still has current references or snapshot pins
+     */
     @Override
     public void close() {
         lock.lock();
@@ -355,6 +465,15 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Atomically releases exact aggregated current-reference counts from one fixed owner bucket.
+     *
+     * @param owner exact fixed bucket owning the references
+     * @param counts generation-to-positive-count mapping validated completely before accounting changes
+     * @throws NullPointerException if the owner, map or generation identity is null
+     * @throws IllegalArgumentException if an identity is negative or a count is null or not positive
+     * @throws IllegalStateException if registration or exact owner-reference accounting is inconsistent
+     */
     /* default */ void releaseCurrentCounts(Owner owner, Map<Long, Integer> counts) {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(counts, "counts");
@@ -453,7 +572,9 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Closed in-memory lifecycle states. */
+    /**
+     * Closed in-memory lifecycle states.
+     */
     private enum State {
         CREATED,
         PUBLISHED,
@@ -461,7 +582,9 @@ final class SigningGenerationRegistry implements AutoCloseable {
         RECLAIMING
     }
 
-    /** Mutable generation state owned by the registry lock. */
+    /**
+     * Mutable generation state owned by the registry lock.
+     */
     private static final class Generation {
         private final long identity;
         private State state;
@@ -510,7 +633,9 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Rollback token for a batch of newly acquired current references. */
+    /**
+     * Rollback token for a batch of newly acquired current references.
+     */
     /* default */ static final class CurrentReferences implements AutoCloseable {
         private final SigningGenerationRegistry owner;
         private final Owner referenceOwner;
@@ -524,10 +649,19 @@ final class SigningGenerationRegistry implements AutoCloseable {
             this.counts = counts;
         }
 
+        /**
+         * Transfers current-reference ownership out of this rollback token without releasing references.
+         *
+         * <p>Transfer is idempotent; the receiving owner later releases the exact bucket counts.</p>
+         *
+         */
         /* default */ void transfer() {
             rollback.set(false);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (rollback.compareAndSet(true, false)) {
@@ -536,7 +670,9 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
-    /** Idempotent snapshot-generation pin set. */
+    /**
+     * Idempotent snapshot-generation pin set.
+     */
     /* default */ static final class SnapshotPins implements AutoCloseable {
         private final SigningGenerationRegistry owner;
         private final List<Long> identities;
@@ -547,6 +683,9 @@ final class SigningGenerationRegistry implements AutoCloseable {
             this.identities = identities;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
@@ -555,12 +694,37 @@ final class SigningGenerationRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * One generation selected for reclamation after its retained references have drained.
+     *
+     * @param generationId exact generation identity
+     */
     /* default */ record ReclaimAction(long generationId) {
+        /**
+         * Creates one generation selected for reclamation after its retained references have drained.
+         *
+         * @param generationId exact generation identity
+         */
         ReclaimAction {
             requireGenerationId(generationId);
         }
     }
 
+    /**
+     * Constant-size generation ownership and reclamation counters captured by the registry.
+     *
+     * @param registered number of registered generations
+     * @param published number of published generations
+     * @param superseded number of generations superseded by newer publication
+     * @param reclaiming number of generations currently being reclaimed
+     * @param reclaimable number of superseded generations with no retained references
+     * @param currentReferences references retained by the current generation view
+     * @param snapshotPins generation pins retained by open snapshots
+     * @param mvccReferences references retained by the multiversion metadata index
+     * @param dueReferences references retained by the due-work index
+     * @param ownerReferences references retained by the content-owner projection
+     * @param recoveryTemporaryReferences temporary references retained during recovery
+     */
     /* default */ record Snapshot(int registered, int published, int superseded,
             int reclaiming, int reclaimable, long currentReferences, long snapshotPins,
             long mvccReferences, long dueReferences, long ownerReferences,

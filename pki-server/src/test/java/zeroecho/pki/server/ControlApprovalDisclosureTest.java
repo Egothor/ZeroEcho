@@ -58,10 +58,20 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
-/** Durable control, approval, break-glass, audit-view and disclosure tests. */
+/**
+ * Durable control, approval, break-glass, audit-view and disclosure tests.
+ */
 class ControlApprovalDisclosureTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks principal identity, role assignments and explicit grants survive durable control-store reopen.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void persistsPrincipalsAssignmentsAndGrantsAcrossRestart() throws Exception {
         System.out.println("persistsPrincipalsAssignmentsAndGrantsAcrossRestart");
@@ -87,6 +97,11 @@ class ControlApprovalDisclosureTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks requester separation, exact operation commitment, rejection and one-time execution claiming under two-party approval.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void enforcesTwoPartyApprovalCommitmentAndExactOnceExecution() throws Exception {
         System.out.println("enforcesTwoPartyApprovalCommitmentAndExactOnceExecution");
@@ -132,6 +147,11 @@ class ControlApprovalDisclosureTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks explicit break-glass activation yields scoped grants, emits safe audit and ceases to authorize after expiry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void breakGlassIsScopedAuditedAndExpires() throws Exception {
         System.out.println("breakGlassIsScopedAuditedAndExpires");
@@ -179,6 +199,11 @@ class ControlApprovalDisclosureTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks disclosure defaults and decisions distinguish object kind, explicit ownership, publication and bearer capability authority.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void disclosureSeparatesIdentityOwnershipPublicationAndCapability() throws Exception {
         System.out.println("disclosureSeparatesIdentityOwnershipPublicationAndCapability");
@@ -237,6 +262,9 @@ class ControlApprovalDisclosureTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks redacted metadata, full content and PII access remain separately authorized and PII access is audited.
+     */
     @Test
     void auditorViewsKeepMetadataContentAndPiiSeparate() {
         System.out.println("auditorViewsKeepMetadataContentAndPiiSeparate");

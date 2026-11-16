@@ -52,20 +52,34 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Production HTTP-01 validator using policy-checked, IP-pinned port-80 sockets. */
-@SuppressWarnings("PMD")
+/**
+ * Production HTTP-01 validator using policy-checked, IP-pinned port-80 sockets.
+ */
 public final class Http01ChallengeProvider implements AcmeChallengeProvider {
     private static final int HTTP_PORT = 80;
-    /** Stable built-in provider identity. */
+    /**
+     * Stable built-in provider identity.
+     */
     public static final String ID = "zeroecho.http-01.v1";
 
-    /** Creates the stateless built-in HTTP-01 challenge provider. */
+    /**
+     * Creates the stateless built-in HTTP-01 challenge provider.
+     */
     public Http01ChallengeProvider() {
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String id() { return ID; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Set<AcmeState.ChallengeType> challengeTypes() { return Set.of(AcmeState.ChallengeType.HTTP_01); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Result validate(Context context, ProviderConfig configuration, CancellationSignal cancellation) {
         if (context.challengeType() != AcmeState.ChallengeType.HTTP_01 || context.identifier().wildcard()) {

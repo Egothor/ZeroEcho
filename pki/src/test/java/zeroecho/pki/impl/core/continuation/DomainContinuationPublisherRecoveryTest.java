@@ -81,6 +81,9 @@ import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for domain continuation publisher recovery.
+ */
 final class DomainContinuationPublisherRecoveryTest {
     private static final Instant NOT_BEFORE = Instant.parse("2026-08-20T10:00:00Z");
     private static final Instant NOT_AFTER = Instant.parse("2027-08-20T10:00:00Z");
@@ -89,6 +92,12 @@ final class DomainContinuationPublisherRecoveryTest {
     private static final String EMPTY_EVIDENCE = DomainAttributeEncoding.encode(
             zeroecho.pki.impl.core.attr.SimpleAttributeSet.builder().build());
 
+    /**
+     * Status publication crash reuses exact durable object.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusPublicationCrashReusesExactDurableObject(@TempDir Path temporary) throws Exception {
         KeyPair issuerKey = rsa();
@@ -127,6 +136,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * OCSP reconstruction reassembles byte identical durable response.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ocspReconstructionReassemblesByteIdenticalDurableResponse(@TempDir Path temporary) throws Exception {
         KeyPair issuerKey = rsa();
@@ -169,6 +184,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Root rollover continuation advances existing ca and resumes after crash.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rootRolloverContinuationAdvancesExistingCaAndResumesAfterCrash(@TempDir Path temporary) throws Exception {
         KeyPair key = rsa();
@@ -215,6 +236,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Issuance publication crash reuses exact durable credential.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuancePublicationCrashReusesExactDurableCredential(@TempDir Path temporary) throws Exception {
         KeyPair issuerKey = rsa();
@@ -283,6 +310,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Root publication resumes every exact durable prefix.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rootPublicationResumesEveryExactDurablePrefix(@TempDir Path temporary) throws Exception {
         for (DomainContinuationPublisher.PublicationFaultPoint point : new DomainContinuationPublisher.PublicationFaultPoint[] {
@@ -321,6 +354,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Signing owner rejects changed certificate commitment and operation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signingOwnerRejectsChangedCertificateCommitmentAndOperation(@TempDir Path root) throws Exception {
         KeyPair key = rsa();
@@ -358,6 +397,12 @@ final class DomainContinuationPublisherRecoveryTest {
         return publishing(store, template, operationId, new byte[] { 1 });
     }
 
+    /**
+     * Old ca command without captured binding is rejected before publication.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oldCaCommandWithoutCapturedBindingIsRejectedBeforePublication(@TempDir Path root) throws Exception {
         KeyPair key = rsa();
@@ -381,6 +426,12 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Signed reservation survives purge snapshot reminting and reexport.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signedReservationSurvivesPurgeSnapshotRemintingAndReexport(@TempDir Path root) throws Exception {
         java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(NOT_BEFORE);
@@ -430,11 +481,32 @@ final class DomainContinuationPublisherRecoveryTest {
         }
     }
 
+    /**
+     * Stages a certificate and creates its retained publishing continuation.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param template exact domain continuation template retained for publication
+     * @param correlation stable fixture correlation identity
+     * @param certificate certificate value selected for the retained publication candidate
+     * @return durable certificate continuation in publishing state
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static DomainContinuationStore.Record publishingCertificate(FilesystemPkiStore store,
             DomainContinuationTemplate template, String correlation, X509CertificateHolder certificate) throws Exception {
         return publishingCertificate(store, template, correlation, certificate, "SHA256withRSA");
     }
 
+    /**
+     * Stages a certificate and creates its retained publishing continuation.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param template exact domain continuation template retained for publication
+     * @param correlation stable fixture correlation identity
+     * @param certificate certificate value selected for the retained publication candidate
+     * @param algorithm algorithm identifier selected by this cryptographic fixture
+     * @return durable certificate continuation in publishing state
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static DomainContinuationStore.Record publishingCertificate(FilesystemPkiStore store,
             DomainContinuationTemplate template, String correlation, X509CertificateHolder certificate, String algorithm)
             throws Exception {
@@ -540,12 +612,27 @@ final class DomainContinuationPublisherRecoveryTest {
                 Optional.of(content), Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Generates the real RSA key pair used by certificate publication fixtures.
+     *
+     * @return new RSA key pair
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static KeyPair rsa() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         return generator.generateKeyPair();
     }
 
+    /**
+     * Builds and signs a real X.509 certificate for the selected subject, serial, and validity.
+     *
+     * @param key real key pair used to sign the fixture certificate
+     * @param name fixture alias or subject label used to identify the created value
+     * @param serial positive certificate serial number chosen for the fixture
+     * @return new signed certificate holder
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static X509CertificateHolder certificate(KeyPair key, String name, BigInteger serial) throws Exception {
         X500Name subject = new X500Name(name);
         return new JcaX509v3CertificateBuilder(subject, serial, Date.from(NOT_BEFORE), Date.from(NOT_AFTER),

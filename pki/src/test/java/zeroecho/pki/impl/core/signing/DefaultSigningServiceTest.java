@@ -91,6 +91,9 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
+/**
+ * Contract and regression tests for default signing service.
+ */
 @SuppressWarnings({ "PMD.UnitTestAssertionsShouldIncludeMessage",
         "PMD.UnitTestContainsTooManyAsserts" })
 final class DefaultSigningServiceTest {
@@ -99,6 +102,12 @@ final class DefaultSigningServiceTest {
             new Principal("TEST", "signer"), new Purpose("SIGN"),
             Optional.empty(), Optional.empty());
 
+    /**
+     * Raw limit rejects before custody and any durable acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rawLimitRejectsBeforeCustodyAndAnyDurableAcceptance(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 4, new MutableClock(NOW));
@@ -121,6 +130,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Request specific input limit accepts RSA digest but rejects nondefault pure ed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void requestSpecificInputLimitAcceptsRsaDigestButRejectsNondefaultPureEd(@TempDir Path root) throws Exception {
         String rsa = zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm();
@@ -141,6 +156,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Nondefault algorithm is frozen in preparation envelope and receipt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void nondefaultAlgorithmIsFrozenInPreparationEnvelopeAndReceipt(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 4, new MutableClock(NOW));
@@ -161,6 +182,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Unsupported wrong kind and security floor fail before candidate staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unsupportedWrongKindAndSecurityFloorFailBeforeCandidateStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = FilesystemPkiStoreTestAccess.open(root, 4, new MutableClock(NOW));
@@ -187,6 +214,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Domain adoption retains supported frozen algorithm and requires lifetime.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void domainAdoptionRetainsSupportedFrozenAlgorithmAndRequiresLifetime(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 4, new MutableClock(NOW));
@@ -215,6 +248,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Two phase custody accept resolve and discard are exact.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void twoPhaseCustodyAcceptResolveAndDiscardAreExact(@TempDir Path root)
             throws Exception {
@@ -254,6 +293,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Uncertain acceptance remains recoverable by receipt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainAcceptanceRemainsRecoverableByReceipt(@TempDir Path root)
             throws Exception {
@@ -287,6 +332,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Service rejects non binary signature contract before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void serviceRejectsNonBinarySignatureContractBeforeStaging(@TempDir Path root)
             throws Exception {
@@ -301,6 +352,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Oversized acceptance metadata is rejected before candidate open.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oversizedAcceptanceMetadataIsRejectedBeforeCandidateOpen(@TempDir Path root)
             throws Exception {
@@ -320,6 +377,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Transient discard failure leaves prepared request retryable.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void transientDiscardFailureLeavesPreparedRequestRetryable(@TempDir Path root)
             throws Exception {
@@ -345,6 +408,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Discard excludes concurrent acceptance until cleanup completes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void discardExcludesConcurrentAcceptanceUntilCleanupCompletes(@TempDir Path root)
             throws Exception {
@@ -395,6 +464,12 @@ final class DefaultSigningServiceTest {
         }
     }
 
+    /**
+     * Bounded dispatch rechecks deadline after opening candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedDispatchRechecksDeadlineAfterOpeningCandidate(@TempDir Path root) throws Exception {
         AtomicReference<Instant> now = new AtomicReference<>(NOW);

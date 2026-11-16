@@ -57,11 +57,17 @@ public final class Pkcs11SigningProviderFactoryTest {
 
     private final Pkcs11SigningProviderFactory factory = new Pkcs11SigningProviderFactory();
 
+    /**
+     * Id returns correct identifier.
+     */
     @Test
     public void id_returnsCorrectIdentifier() {
         assertEquals("pkcs11", factory.id());
     }
 
+    /**
+     * Supported keys contains expected keys.
+     */
     @Test
     public void supportedKeys_containsExpectedKeys() {
         Set<String> keys = factory.supportedKeys();
@@ -72,6 +78,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertTrue(keys.contains("supportedAlgorithms"), "supportedAlgorithms must be a supported key");
     }
 
+    /**
+     * Validate config missing pkcs11 config file throws.
+     */
     @Test
     public void validateConfig_missingPkcs11ConfigFile_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -79,6 +88,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config missing pin variable throws.
+     */
     @Test
     public void validateConfig_missingPinVariable_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -86,6 +98,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config blank pkcs11 config file throws.
+     */
     @Test
     public void validateConfig_blankPkcs11ConfigFile_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -94,6 +109,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config invalid slot throws.
+     */
     @Test
     public void validateConfig_invalidSlot_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -103,6 +121,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config negative slot throws.
+     */
     @Test
     public void validateConfig_negativeSlot_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -112,6 +133,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config invalid session pool size throws.
+     */
     @Test
     public void validateConfig_invalidSessionPoolSize_throws() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -121,6 +145,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         assertThrows(IllegalArgumentException.class, () -> factory.validateConfig(config));
     }
 
+    /**
+     * Validate config valid minimal config passes.
+     */
     @Test
     public void validateConfig_validMinimalConfig_passes() {
         ProviderConfig config = new ProviderConfig("pkcs11", Map.of(
@@ -130,6 +157,9 @@ public final class Pkcs11SigningProviderFactoryTest {
         factory.validateConfig(config);
     }
 
+    /**
+     * Read pin from env env var not set throws PKI exception.
+     */
     @Test
     public void readPinFromEnv_envVarNotSet_throwsPkiException() {
         // Use a variable name that is extremely unlikely to be set in any environment.
@@ -138,6 +168,9 @@ public final class Pkcs11SigningProviderFactoryTest {
                 () -> Pkcs11SigningProviderFactory.readPinFromEnv(absurdVarName));
     }
 
+    /**
+     * Compute commitment produces deterministic result.
+     */
     @Test
     public void computeCommitment_producesDeterministicResult() {
         Set<String> algorithms = Set.of("SHA256withECDSA", "SHA384withECDSA");
@@ -151,6 +184,9 @@ public final class Pkcs11SigningProviderFactoryTest {
                 "Identical inputs must produce identical commitments");
     }
 
+    /**
+     * Compute commitment different slot produces different result.
+     */
     @Test
     public void computeCommitment_differentSlotProducesDifferentResult() {
         Set<String> algorithms = Set.of("SHA256withECDSA");
@@ -165,6 +201,9 @@ public final class Pkcs11SigningProviderFactoryTest {
                 "Different slot indices must produce different commitments");
     }
 
+    /**
+     * Default algorithms contains expected JCA names.
+     */
     @Test
     public void defaultAlgorithms_containsExpectedJcaNames() {
         assertTrue(Pkcs11SigningProviderFactory.DEFAULT_ALGORITHMS.contains("SHA256withECDSA"));

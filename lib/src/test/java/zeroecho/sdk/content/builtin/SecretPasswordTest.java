@@ -46,7 +46,13 @@ import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for secret password.
+ */
 class SecretPasswordTest {
+    /**
+     * Redacts diagnostics and owns password characters.
+     */
     @Test
     void redactsDiagnosticsAndOwnsPasswordCharacters() {
         System.out.print("SecretPassword/redaction...");
@@ -64,6 +70,11 @@ class SecretPasswordTest {
         System.out.println("ok");
     }
 
+    /**
+     * Destroys owned characters and rejects secret access.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void destroysOwnedCharactersAndRejectsSecretAccess() throws Exception {
         System.out.print("SecretPassword/destroy...");
@@ -84,6 +95,11 @@ class SecretPasswordTest {
         System.out.println("ok");
     }
 
+    /**
+     * Stream owns and wipes its UTF-8 buffer on close.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void streamOwnsAndWipesItsUtf8BufferOnClose() throws Exception {
         System.out.print("SecretPassword/stream...");

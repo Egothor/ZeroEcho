@@ -62,13 +62,16 @@ import zeroecho.pki.spi.store.CrlHybridNativeChildVerifier;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 
-/** Configured public-only authority for exact streamed hybrid CRL child adoption. */
+/**
+ * Configured public-only authority for exact streamed hybrid CRL child adoption.
+ */
 public final class CrlHybridPublicVerifier implements CrlHybridNativeChildVerifier {
     private final X509AuthoritySnapshot authority;
 
     /**
      * Captures immutable configured public rules, including contributed OIDs and parameters.
      * @param authority exact session public verification authority; no private provider
+     * @throws NullPointerException if authority is null
      */
     public CrlHybridPublicVerifier(X509AuthoritySnapshot authority) { this.authority = Objects.requireNonNull(authority, "authority"); }
 
@@ -134,9 +137,12 @@ public final class CrlHybridPublicVerifier implements CrlHybridNativeChildVerifi
 
     /**
      * Validates inherited execution authority, actual alternative signature and exact native TBS bytes.
-     * @param binding exact frozen generation roles @param issuerCertificate bounded issuer DER
-     * @param parent retained successful alternative workflow @param alternativeTranscript borrowed accepted ALT input
-     * @param nativeChild exact proposed raw child @param nativeTbs borrowed final native TBS
+     * @param binding exact frozen generation roles
+     * @param issuerCertificate bounded issuer DER
+     * @param parent retained successful alternative workflow
+     * @param alternativeTranscript borrowed accepted ALT input
+     * @param nativeChild exact proposed raw child
+     * @param nativeTbs borrowed final native TBS
      * @param cancellation cooperative streamed cancellation
      * @throws GeneralSecurityException if either role or the actual ALT signature is invalid
      * @throws IOException if committed content or exact native reconstruction differs

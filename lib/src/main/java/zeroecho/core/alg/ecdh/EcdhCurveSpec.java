@@ -73,17 +73,30 @@ import zeroecho.core.spec.ContextSpec;
  * @since 1.0
  */
 public enum EcdhCurveSpec implements ContextSpec, AlgorithmKeySpec {
-    /** NIST P-256 (secp256r1), approx. 128-bit security. */
+    /**
+     * NIST P-256 (secp256r1), approx. 128-bit security.
+     */
     P256("secp256r1", "SHA256withECDSAinP1363Format", 64),
-    /** NIST P-384 (secp384r1), approx. 192-bit security. */
+    /**
+     * NIST P-384 (secp384r1), approx. 192-bit security.
+     */
     P384("secp384r1", "SHA384withECDSAinP1363Format", 96),
-    /** NIST P-521 (secp521r1), approx. 256-bit security. */
+    /**
+     * NIST P-521 (secp521r1), approx. 256-bit security.
+     */
     P512("secp521r1", "SHA512withECDSAinP1363Format", 132);
 
     private final String curveName;
     private final String jca;
     private final int tagLen;
 
+    /**
+     * Associates curve selection with the matching ECDSA metadata.
+     *
+     * @param curveName JCA named curve
+     * @param jca JCA signature algorithm in P1363 format
+     * @param tagLen fixed signature length in bytes
+     */
     EcdhCurveSpec(String curveName, String jca, int tagLen) {
         this.curveName = curveName;
         this.jca = jca;

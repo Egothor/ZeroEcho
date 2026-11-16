@@ -63,6 +63,7 @@ public interface StatusObjectGenerator {
      * @param crlEntries stable streamed CRL entries
      * @param cancellation originating cooperative cancellation signal
      * @return generated signed status object
+     * @throws NullPointerException if cancellation is null
      */
     default SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries,
             CancellationSignal cancellation) {

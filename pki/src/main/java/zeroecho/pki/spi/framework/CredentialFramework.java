@@ -79,7 +79,15 @@ public interface CredentialFramework {
      * @param pattern optional coarse syntax hint, at most 1024 characters
      */
     record SubjectInput(String label, String help, String placeholder, Optional<String> pattern) {
-        /** Validates finite metadata and retains no provider instance. */
+        /**
+         * Validates finite metadata and retains no provider instance.
+         * @param label field label, at most 128 characters
+         * @param help usage explanation, at most 2048 characters
+         * @param placeholder format-specific example, at most 512 characters
+         * @param pattern optional coarse syntax hint, at most 1024 characters
+         * @throws NullPointerException if label, help, placeholder, pattern is null
+         * @throws IllegalArgumentException if label is blank or text/pattern metadata exceeds its finite character bound
+         */
         public SubjectInput {
             Objects.requireNonNull(label, "label");
             Objects.requireNonNull(help, "help");
@@ -119,6 +127,7 @@ public interface CredentialFramework {
      * @return exact original or format-owned converted public content
      * @throws java.io.IOException if validation, conversion or cancellation fails
      * @throws UnsupportedOperationException if the representation is unsupported
+     * @throws NullPointerException if stored, representation, cancellation is null
      */
     default zeroecho.pki.api.EncodedObject exportCredential(zeroecho.pki.api.EncodedObject stored,
             String representation, zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
@@ -139,7 +148,16 @@ public interface CredentialFramework {
      */
     record CredentialRepresentation(String id, String label, String mediaType, String fileExtension,
             zeroecho.pki.api.Encoding encoding) {
-        /** Validates all metadata before it can reach UI or HTTP headers. */
+        /**
+         * Validates all metadata before it can reach UI or HTTP headers.
+         * @param id stable lower-case representation identity
+         * @param label user-facing representation label
+         * @param mediaType safe MIME type without parameters
+         * @param fileExtension safe filename extension without a dot
+         * @param encoding exact representation encoding
+         * @throws NullPointerException if id, label, mediaType, fileExtension, encoding is null
+         * @throws IllegalArgumentException if representation identifiers or metadata are empty, malformed or exceed their finite bounds
+         */
         public CredentialRepresentation {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(label, "label");
             Objects.requireNonNull(mediaType, "mediaType"); Objects.requireNonNull(fileExtension, "fileExtension");
@@ -177,6 +195,7 @@ public interface CredentialFramework {
      * @param type exact stored status kind
      * @param storedEncoding native stored encoding
      * @return immutable metadata; generic formats expose original bytes only
+     * @throws NullPointerException if type is null
      */
     default java.util.List<CredentialRepresentation> statusRepresentations(zeroecho.pki.api.status.StatusObjectType type,
             zeroecho.pki.api.Encoding storedEncoding) {
@@ -194,6 +213,7 @@ public interface CredentialFramework {
      * @return content owning the source, with an exact output length
      * @throws java.io.IOException if format validation or cancellation fails
      * @throws UnsupportedOperationException if the representation is unsupported
+     * @throws NullPointerException if cancellation is null
      */
     default zeroecho.core.io.RepeatableContent exportStatusContent(zeroecho.pki.api.status.StatusObjectType type,
             zeroecho.pki.api.Encoding storedEncoding,zeroecho.core.io.RepeatableContent content,String representation,

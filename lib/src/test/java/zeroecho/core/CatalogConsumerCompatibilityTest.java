@@ -50,10 +50,21 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for catalog consumer compatibility.
+ */
 class CatalogConsumerCompatibilityTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Classpath and named module consumers compile and discover providers.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void classpathAndNamedModuleConsumersCompileAndDiscoverProviders() throws Exception {
         String dependencies = StreamPaths.of(CryptoAlgorithm.class, org.bouncycastle.jce.spec.ElGamalParameterSpec.class,

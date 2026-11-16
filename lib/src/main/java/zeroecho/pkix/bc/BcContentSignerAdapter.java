@@ -48,20 +48,35 @@ final class BcContentSignerAdapter implements org.bouncycastle.operator.ContentS
 
     private final zeroecho.pkix.sign.ContentSigner delegate;
 
+    /**
+     * Adapts a borrowed PKIX signer to the Bouncy Castle streaming interface.
+     *
+     * @param delegate signer that retains ownership of its stream and signing lifecycle
+     * @throws NullPointerException if the signer is null
+     */
     /* default */ BcContentSignerAdapter(zeroecho.pkix.sign.ContentSigner delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AlgorithmIdentifier getAlgorithmIdentifier() {
         return BcAlgorithmIdentifiers.toBc(delegate.algorithm());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OutputStream getOutputStream() {
         return delegate.contentStream();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] getSignature() {
         return delegate.signature();

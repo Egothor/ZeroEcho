@@ -36,9 +36,22 @@ package zeroecho.pki.server.acme;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
-/** Package-local constant-time comparison helpers for sensitive ACME values. */
+/**
+ * Package-local constant-time comparison helpers for sensitive ACME values.
+ */
 /* default */ final class MessageDigestSupport {
     private MessageDigestSupport() { }
+    /**
+     * Compares the US-ASCII encodings without an early exit on differing byte values.
+     *
+     * <p>Inputs must already have passed ASCII validation: the charset encoder replaces
+     * unrepresentable characters. Temporary comparison buffers are erased before return.</p>
+     *
+     * @param first first validated ASCII value; must not be null
+     * @param second second validated ASCII value; must not be null
+     * @return whether both encoded byte sequences are equal
+     * @throws NullPointerException if either value is null
+     */
     /* default */ static boolean equalAscii(String first, String second) {
         byte[] left = first.getBytes(StandardCharsets.US_ASCII);
         byte[] right = second.getBytes(StandardCharsets.US_ASCII);

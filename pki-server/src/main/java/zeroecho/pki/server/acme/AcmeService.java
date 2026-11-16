@@ -108,7 +108,6 @@ import zeroecho.pki.spi.ProviderConfig;
  * one exact authority, profile, issuer generation, chain path, provider set, and
  * profile-owned confirmation policy. External validators return evidence only.</p>
  */
-@SuppressWarnings("PMD")
 public final class AcmeService {
     private static final String ZERO = "0".repeat(64);
     private static final CredentialPublicationGate.AuditActor PUBLICATION_AUDIT_ACTOR =
@@ -141,16 +140,22 @@ public final class AcmeService {
     public Set<String> configuredEabProviders() { return Set.copyOf(eabProviders.keySet()); }
 
     /**
-     * Creates a realm-bound ACME service from explicitly enabled providers.
+     * Creates a realm-bound ACME service from explicitly enabled provider capabilities.
+     *
+     * <p>Provider maps are copied and must match their configuration identities exactly.
+     * Retained directory state is validated before this service becomes available.</p>
      *
      * @param realm realm context owning all ACME state
      * @param clock authoritative server clock
      * @param random cryptographically secure identifier source
-     * @param providers explicitly enabled challenge providers keyed by identifier
-     * @param providerConfigurations validated configuration for each challenge provider
+     * @param providers explicitly enabled challenge providers keyed by stable identity
+     * @param providerConfigurations exact configuration keyed by challenge-provider identity
      * @param eabProviders explicitly enabled external-account-binding providers
-     * @param eabProviderConfigurations validated configuration for each EAB provider
+     * @param eabProviderConfigurations exact configuration keyed by EAB-provider identity
      * @param reconciliationWake callback that promptly wakes durable signing reconciliation
+     * @throws NullPointerException if a required collaborator, provider map key or map value is null
+     * @throws IllegalArgumentException if configured provider identities and configuration keys are inconsistent
+     * @throws IllegalStateException if realm recovery or retained directory dependencies are unavailable
      */
     public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
             Map<String, AcmeChallengeProvider> providers,
@@ -189,6 +194,10 @@ public final class AcmeService {
      * @param providerConfigurations validated configuration for each challenge provider
      * @param eabProviders explicitly enabled external-account-binding providers
      * @param eabProviderConfigurations validated configuration for each EAB provider
+     * @throws NullPointerException if a required collaborator, map key or map value is null
+     * @throws IllegalArgumentException if configured provider identities and configuration keys are
+     *         inconsistent
+     * @throws IllegalStateException if realm recovery or retained directory dependencies are unavailable
      */
     public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
             Map<String, AcmeChallengeProvider> providers,
@@ -207,6 +216,10 @@ public final class AcmeService {
      * @param random cryptographically secure identifier source
      * @param providers explicitly enabled challenge providers keyed by identifier
      * @param providerConfigurations validated configuration for each challenge provider
+     * @throws NullPointerException if a required collaborator, map key or map value is null
+     * @throws IllegalArgumentException if configured provider identities and configuration keys are
+     *         inconsistent
+     * @throws IllegalStateException if realm recovery or retained directory dependencies are unavailable
      */
     public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
             Map<String, AcmeChallengeProvider> providers,
@@ -248,7 +261,23 @@ public final class AcmeService {
             Set<String> dnsNamespaces, Duration maximumValidity, Set<String> publicKeyAlgorithms,
             Set<String> x509BindingPolicies, Set<AcmeState.ChallengeType> challengeTypes,
             Set<String> challengeProviderIds, Optional<String> eabProviderId, boolean eabRequired) {
-        /** Validates required registration input before PKI resolution. */
+        /**
+         * Validates required registration input before PKI resolution.
+         * @param alias unique public directory alias
+         * @param authorityId exact logical authority identifier
+         * @param profileId active end-entity profile identifier
+         * @param enrollmentProfileId mandatory enrollment admission policy identity
+         * @param dnsNamespaces permitted DNS namespace suffixes
+         * @param maximumValidity maximum issued credential validity
+         * @param publicKeyAlgorithms accepted public-key algorithm identifiers
+         * @param x509BindingPolicies accepted X.509 binding-policy identifiers
+         * @param challengeTypes enabled challenge types
+         * @param challengeProviderIds enabled challenge-provider identifiers
+         * @param eabProviderId optional external-account-binding provider
+         * @param eabRequired whether external account binding is mandatory
+         * @throws NullPointerException if a required component, collection or collection element is null
+         * @throws IllegalArgumentException if the enrollment-profile identity is noncanonical
+         */
         public DirectoryRegistration {
             Objects.requireNonNull(alias, "alias"); Objects.requireNonNull(authorityId, "authorityId");
             Objects.requireNonNull(profileId, "profileId"); dnsNamespaces = Set.copyOf(dnsNamespaces);
@@ -265,6 +294,8 @@ public final class AcmeService {
      *
      * @param registration validated directory registration input
      * @return authoritative profile and policy precondition
+     * @throws NullPointerException if {@code registration} is null
+     * @throws IllegalArgumentException if the selected certificate profile is not an active end-entity profile
      */
     public ServerControlOperation.AcmeDirectoryProfilePrecondition resolveDirectoryProfilePrecondition(
             DirectoryRegistration registration) {
@@ -413,6 +444,7 @@ public final class AcmeService {
      *
      * @param alias public directory alias
      * @return sole active directory revision
+     * @throws IllegalArgumentException if the selected directory is unavailable or inactive
      */
     public AcmeState.Directory activeDirectory(String alias) {
         List<AcmeState.Directory> active = directoriesForAlias(alias).stream()
@@ -426,6 +458,7 @@ public final class AcmeService {
      *
      * @param alias public directory alias
      * @return canonical nonce scope
+     * @throws IllegalArgumentException if the selected directory alias is unavailable
      */
     public String nonceScope(String alias) {
         List<AcmeState.Directory> known = directoriesForAlias(alias);
@@ -507,6 +540,8 @@ public final class AcmeService {
      * @param eabPolicyCommitment optional external-account-binding policy commitment
      * @param onlyReturnExisting whether account creation must be refused
      * @return existing or newly created account
+     * @throws IllegalArgumentException if only-existing-account mode selects no retained account or directory
+     *         policy requires an external-account binding that is absent
      */
     public synchronized AcmeState.Account createAccount(AcmeState.Directory directory, String keyThumbprint,
             byte[] publicKeySpki, List<String> contacts, boolean termsAgreed,
@@ -545,6 +580,12 @@ public final class AcmeService {
      * @param keyThumbprint authenticated account-key thumbprint
      * @param nestedJws optional nested EAB JWS document
      * @return safe policy commitment, or empty when EAB is unused
+     * @throws NullPointerException if {@code nestedJws} is null
+     * @throws IllegalArgumentException if external-account binding is supplied for a directory without that
+     *         capability or required external-account binding is absent
+     * @throws SecurityException if the verified binding is unconsumed, expired or does not cover the directory
+     *         namespaces
+     * @throws IllegalStateException if the configured external-account provider is unavailable
      */
     public Optional<String> verifyExternalAccountBinding(AcmeState.Directory directory, String keyThumbprint,
             Optional<byte[]> nestedJws) {
@@ -580,6 +621,8 @@ public final class AcmeService {
      * @param accountId stable account identifier
      * @param kid exact account key identifier
      * @return validated account key and record commitment
+     * @throws IllegalArgumentException if the selected account is unavailable
+     * @throws IllegalStateException if the retained account public key cannot be reconstructed
      */
     public AcmeJwsVerifier.AccountKey accountKey(String accountId, String kid) {
         AcmeState.Account account = requireAccount(accountId);
@@ -617,6 +660,10 @@ public final class AcmeService {
      * @param accountId stable account identifier
      * @param expectedCommitment expected current account-record commitment
      * @return durably deactivated account
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
+     * @throws NullPointerException if the expected account commitment is null
+     * @throws IllegalArgumentException if the retained account identity is unavailable
      */
     public synchronized AcmeState.Account deactivateAccount(String accountId, String expectedCommitment) {
         return deactivateAccount(requireAuthenticatedAccount(accountId, expectedCommitment));
@@ -640,6 +687,11 @@ public final class AcmeService {
      * @param expectedCommitment expected current account-record commitment
      * @param contacts bounded account contact URIs
      * @return durably updated account
+     * @throws IllegalStateException if the selected account is unavailable in its current lifecycle state
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
+     * @throws NullPointerException if the expected account commitment is null
+     * @throws IllegalArgumentException if the retained account identity is unavailable
      */
     public synchronized AcmeState.Account updateAccountContacts(String accountId, String expectedCommitment,
             List<String> contacts) {
@@ -664,6 +716,7 @@ public final class AcmeService {
      * @param replacementThumbprint replacement account-key thumbprint
      * @param replacementSpki canonical replacement public key
      * @return account with the replacement key
+     * @throws SecurityException if the current account or replacement-key binding does not permit rollover
      */
     public synchronized AcmeState.Account rolloverAccount(String accountId, String expectedCommitment,
             String replacementThumbprint, byte[] replacementSpki) {
@@ -705,6 +758,12 @@ public final class AcmeService {
      * @param notAfter optional requested validity end
      * @param orderLifetime positive order lifetime
      * @return durably created order
+     * @throws IllegalArgumentException if none of the configured challenge types supports a requested
+     *         identifier
+     * @throws NullPointerException if a required reference, identifier entry or expected account commitment is
+     *         null
+     * @throws SecurityException if the authenticated account snapshot has changed
+     * @throws IllegalStateException if current issuer/profile/provider admission dependencies are unavailable
      */
     public synchronized AcmeState.Order createOrder(String accountId, String expectedAccountCommitment,
             AcmeState.Directory directory,
@@ -751,6 +810,7 @@ public final class AcmeService {
      * @param accountId stable account identifier
      * @param stopAt positive early-stop bound
      * @return number of pending orders, capped by the supplied bound
+     * @throws IllegalArgumentException if the pending-order scan bound is outside the supported range
      */
     public int pendingOrderCount(String accountId, int stopAt) {
         if (stopAt <= 0) throw new IllegalArgumentException("ACME pending-order bound is invalid");
@@ -776,6 +836,11 @@ public final class AcmeService {
      * @param reason permanent revocation reason
      * @param requestId stable request correlation identifier
      * @return committed revocation record
+     * @throws NullPointerException if any of {@code certificateDer}, {@code reason} is null
+     * @throws SecurityException if the certificate cannot be associated with the authenticated account and
+     *         permitted revocation target
+     * @throws IllegalStateException if the domain revocation outcome did not confirm a committed transition
+     * @throws IllegalArgumentException if the retained account identity is unavailable
      */
     public synchronized RevocationRecord revokeCertificate(String accountId, String expectedAccountCommitment,
             AcmeState.Directory directory, byte[] certificateDer, RevocationReason reason, String requestId) {
@@ -823,6 +888,12 @@ public final class AcmeService {
      * @param deadline absolute validation deadline
      * @param cancellation cooperative cancellation signal
      * @return durably completed challenge attempt
+     * @throws IllegalArgumentException if the selected challenge is unavailable
+     * @throws IllegalStateException if the challenge already has an active validation attempt or challenge
+     *         validation was cancelled before completion
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
+     * @throws NullPointerException if the expected account commitment is null
      */
     public AcmeState.Challenge validateChallenge(String accountId, String expectedAccountCommitment,
             String challengeId, String accountKeyThumbprint, Instant deadline, CancellationSignal cancellation) {
@@ -878,6 +949,12 @@ public final class AcmeService {
      * @param orderId stable order identifier
      * @param csrDer canonical PKCS#10 request DER
      * @return current durable order after finalization processing
+     * @throws NullPointerException if the CSR or expected account commitment is null
+     * @throws IllegalArgumentException if the account, order, directory or CSR is unavailable or invalid
+     * @throws IllegalStateException if the order is not ready, repeated CSR differs or retained enrollment
+     *         linkage is unavailable
+     * @throws SecurityException if the authenticated account snapshot has changed
+     * @throws PkiException if domain finalization rejects the request
      */
     public synchronized AcmeState.Order finalizeOrder(String accountId, String expectedAccountCommitment,
             String orderId, byte[] csrDer) {
@@ -893,6 +970,14 @@ public final class AcmeService {
      * @param csrDer canonical PKCS#10 request DER
      * @param cancellation cooperative cancellation signal
      * @return current durable order after finalization processing
+     * @throws NullPointerException if any of {@code cancellation}, {@code csrDer} is null
+     * @throws IllegalArgumentException if the selected order is unavailable to the authenticated account
+     * @throws IllegalStateException if the retained order has not reached an executable finalization state or
+     *         the repeated finalization CSR differs from its retained original or the order lacks the retained
+     *         enrollment reference required for its current state
+     * @throws PkiException if cooperative finalization cancellation is observed
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
      */
     public synchronized AcmeState.Order finalizeOrder(String accountId, String expectedAccountCommitment,
             String orderId, byte[] csrDer, CancellationSignal cancellation) {
@@ -939,6 +1024,11 @@ public final class AcmeService {
      * @param expectedAccountCommitment current account commitment verified by JWS authentication
      * @param orderId stable order identifier
      * @return account-owned order after durable continuation
+     * @throws NullPointerException if the expected account commitment is null
+     * @throws IllegalArgumentException if the account, order or retained directory is unavailable
+     * @throws IllegalStateException if retained enrollment continuation linkage is unavailable
+     * @throws SecurityException if the authenticated account snapshot has changed
+     * @throws PkiException if domain enrollment continuation fails
      */
     public synchronized AcmeState.Order order(String accountId, String expectedAccountCommitment, String orderId) {
         return order(accountId, expectedAccountCommitment, orderId, CancellationSignal.NONE);
@@ -951,6 +1041,12 @@ public final class AcmeService {
      * @param orderId stable order identifier
      * @param cancellation transport cancellation signal
      * @return account-owned order after durable continuation
+     * @throws NullPointerException if {@code cancellation} is null
+     * @throws IllegalArgumentException if the selected order is unavailable to the authenticated account
+     * @throws IllegalStateException if the order lacks the retained enrollment reference required for its
+     *         current state
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
      */
     public synchronized AcmeState.Order order(String accountId, String expectedAccountCommitment, String orderId,
             CancellationSignal cancellation) {
@@ -998,6 +1094,10 @@ public final class AcmeService {
      * @param clientNonce exact client nonce
      * @param canonicalOrigin configured listener origin
      * @return retained server challenge
+     * @throws IllegalArgumentException if the selected order is unavailable to the authenticated account
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
+     * @throws NullPointerException if the expected account commitment is null
      */
     public synchronized zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(String accountId,
             String expectedAccountCommitment, String orderId, byte[] csrDer, byte[] clientNonce, String canonicalOrigin) {
@@ -1020,6 +1120,11 @@ public final class AcmeService {
      * @param canonicalOrigin configured listener origin
      * @param cancellation transport cancellation
      * @return normal retained ACME order response
+     * @throws IllegalArgumentException if the selected order is unavailable to the authenticated account or the
+     *         repeated SDK acceptance selects an order other than the retained original
+     * @throws SecurityException if the authenticated account is inactive or its exact expected commitment
+     *         changed
+     * @throws NullPointerException if the expected account commitment is null
      */
     public synchronized AcmeState.Order acceptSdk(String accountId, String expectedAccountCommitment, String orderId,
             byte[] csrDer, String intentId, String sdkRequestId, byte[] primaryProof, byte[] alternativeProof,
@@ -1245,6 +1350,7 @@ public final class AcmeService {
      * @param accountId stable account identifier
      * @param authorizationId stable authorization identifier
      * @return account-owned authorization
+     * @throws IllegalArgumentException if the selected authorization is unavailable to the account
      */
     public AcmeState.Authorization authorization(String accountId, String authorizationId) {
         AcmeState.Authorization value = requireAuthorization(authorizationId);
@@ -1272,6 +1378,7 @@ public final class AcmeService {
      * @param expectedAccountCommitment expected current account-record commitment
      * @param orderId stable order identifier
      * @return issued or replayed confirmation challenge
+     * @throws IllegalStateException if the credential confirmation lifecycle is not pending
      */
     public CredentialConfirmationProofChallenge issueCredentialConfirmationChallenge(
             String accountId, String expectedAccountCommitment, String orderId) {
@@ -1622,10 +1729,19 @@ public final class AcmeService {
         }
     }
 
+    /**
+     * Installs the finalization fault injector for the current test thread.
+     *
+     * @param faults injector invoked at deterministic finalization boundaries; must not be null
+     * @throws NullPointerException if the injector is null
+     */
     /* default */ static void installFinalizeFault(FinalizeFaultInjector faults) {
         FINALIZE_FAULTS.set(Objects.requireNonNull(faults, "faults"));
     }
 
+    /**
+     * Removes the finalization fault injector from the current thread.
+     */
     /* default */ static void clearFinalizeFault() {
         FINALIZE_FAULTS.remove();
     }
@@ -1639,12 +1755,28 @@ public final class AcmeService {
 
     private record ConfirmationOrder(AcmeState.Directory directory, PkiId credentialId) { }
 
-    /** Deterministic finalization crash boundary. */
-    /* default */ enum FinalizeFaultPoint { BEFORE_SIGNING_ATTACHMENT }
+    /**
+     * Deterministic finalization crash boundary.
+     */
+    /* default */ enum FinalizeFaultPoint {
+        /**
+         * Finalization has resolved its intent but has not attached the signing operation.
+         */
+        BEFORE_SIGNING_ATTACHMENT
+    }
 
-    /** Package-local deterministic finalization failure seam. */
+    /**
+     * Package-local deterministic finalization failure seam.
+     */
     @FunctionalInterface
-    /* default */ interface FinalizeFaultInjector { void fail(FinalizeFaultPoint point); }
+    /* default */ interface FinalizeFaultInjector {
+        /**
+         * Injects a test failure at the supplied finalization boundary.
+         *
+         * @param point boundary reached by the current finalization attempt
+         */
+        void fail(FinalizeFaultPoint point);
+    }
     private static String digest(String value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
     private static String digestBytes(byte[] value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
     private static String accountKeyAuthorizationThumbprint(String commitment) {

@@ -94,6 +94,15 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 final class PqcCertificateIssuanceTest {
 
+    /**
+     * Persisted classical and PQC roots verify after restart.
+     *
+     * @param jca JCA algorithm name used to construct the fixture key
+     * @param family canonical algorithm-family identifier
+     * @param identity canonical algorithm identity under test
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
             "RSA,RSA,RSA_PKCS1_SHA256", "EC,ECDSA,ECDSA_SHA256",
@@ -125,17 +134,26 @@ final class PqcCertificateIssuanceTest {
     private static final KeyRef ROOT_KEY = new KeyRef("zeroecho-lib:root.prv");
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Registers the cryptographic providers required by the test cases.
+     */
     @BeforeAll
     static void registerBouncyCastle() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Ml dsa65 algorithm is available in session.
+     */
     @Test
     void mlDsa65AlgorithmIsAvailableInSession() {
         assertTrue(new ZeroEchoSession().available().contains("ML-DSA"),
                 "ML-DSA must appear in the ZeroEchoSession algorithm catalog");
     }
 
+    /**
+     * Ml dsa65 signature identity has correct canonical form.
+     */
     @Test
     void mlDsa65SignatureIdentityHasCorrectCanonicalForm() {
         String canonical = ML_DSA_65_ALGORITHM;
@@ -145,6 +163,9 @@ final class PqcCertificateIssuanceTest {
 
     /**
      * Verifies synchronous completion through the configured local PKI session.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @throws Exception if fixture setup, execution, or cleanup fails
      */
     @Test
     void mlDsa65RootCaCreationIsAccepted(@TempDir Path root) throws Exception {
@@ -219,7 +240,9 @@ final class PqcCertificateIssuanceTest {
                 X509AlgorithmBindingPolicy.standardOnly());
     }
 
-    /** Minimal bootstrap that installs the PQC profile on first store open. */
+    /**
+     * Minimal bootstrap that installs the PQC profile on first store open.
+     */
     private static final class PqcBootstrap implements DefaultPkiSession.Bootstrap {
         private final Path root;
 

@@ -56,7 +56,13 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.server.http.StrictJson;
 import zeroecho.pki.server.http.TestTlsProvider;
 
+/**
+ * Checks authenticated HTTP streaming backup boundaries and retained transfer/workflow observations.
+ */
 class BackupTransferHttpTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
     private void seed(PkiServerConfiguration configuration) throws Exception {
@@ -116,6 +122,11 @@ class BackupTransferHttpTest {
     }
     private static String handleArguments(String handle) { return "{\"artifactHandle\":\"" + handle + "\"}"; }
 
+    /**
+     * Checks authenticated binary transfers enforce exact origin, single-use export and high-risk restore approval before cold-activation observation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void binaryRoutesEnforceOriginSingleUseAndHighRiskApprovalThenReportColdActivation() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
         PkiServerConfiguration configuration = HttpServerTestSupport.configuration(directory, tls.clientCertificate());
@@ -216,6 +227,11 @@ class BackupTransferHttpTest {
         }
     }
 
+    /**
+     * Checks a server without transfer custody omits streaming operations from schema and returns not found for direct reservation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void disabledServerHidesStreamingCatalogAndRejectsDirectReservation() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
         PkiServerConfiguration configuration = HttpServerTestSupport.configuration(directory, tls.clientCertificate());
@@ -233,6 +249,11 @@ class BackupTransferHttpTest {
         }
     }
 
+    /**
+     * Checks a stalled real TLS upload is closed at its deadline, releases its lease and leaves no partial archive.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void stalledTlsUploadIsInterruptedAndReleasesArtifactLease() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
         PkiServerConfiguration configuration = HttpServerTestSupport.configuration(directory, tls.clientCertificate());
@@ -272,6 +293,11 @@ class BackupTransferHttpTest {
         }
     }
 
+    /**
+     * Checks a stalled real TLS download releases job capacity and consumes/removes archive bytes before the client closes its connection.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void stalledTlsDownloadReleasesJobBeforeClientCloses() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
         PkiServerConfiguration configuration = HttpServerTestSupport.configuration(directory, tls.clientCertificate());

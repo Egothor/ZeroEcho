@@ -151,6 +151,7 @@ public interface CredentialIssuerBackend {
      * @param serial positive issuer-controlled serial
      * @param cancellation originating cooperative cancellation signal
      * @return issued credential bundle
+     * @throws NullPointerException if cancellation is null
      */
     default CredentialBundle issueEndEntity(ValidatedLeafRequest request,
             DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial,
@@ -198,6 +199,7 @@ public interface CredentialIssuerBackend {
      * @param issuerKeyRef trusted issuer signing-key reference
      * @param cancellation originating cooperative cancellation signal
      * @return issued CA credential
+     * @throws NullPointerException if cancellation is null
      */
     default Credential issueIntermediateCertificate(ValidatedCaRequest request,
             DurableContentReference issuerCertificate, KeyRef issuerKeyRef, CancellationSignal cancellation) {

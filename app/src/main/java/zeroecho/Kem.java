@@ -112,91 +112,135 @@ public final class Kem { // NOPMD
     // CLI option constants
     // ---------------------------------------------------------------------
 
-    /** Encrypt mode: -e|--encrypt &lt;input&gt; */
+    /**
+     * Encrypt mode: -e|--encrypt &lt;input&gt;
+     */
     public static final Option OPT_ENCRYPT = Option.builder("e").longOpt("encrypt").hasArg().argName("input")
             .desc("Encrypt the input file").get();
 
-    /** Decrypt mode: -d|--decrypt &lt;input&gt; */
+    /**
+     * Decrypt mode: -d|--decrypt &lt;input&gt;
+     */
     public static final Option OPT_DECRYPT = Option.builder("d").longOpt("decrypt").hasArg().argName("input")
             .desc("Decrypt the input file").get();
 
-    /** Output path: -o|--output &lt;file&gt; */
+    /**
+     * Output path: -o|--output &lt;file&gt;
+     */
     public static final Option OPT_OUTPUT = Option.builder("o").longOpt("output").hasArg().argName("file")
             .desc("Output file path (default: &lt;input&gt;.enc for encrypt, &lt;input&gt;.dec for decrypt)").get();
 
-    /** Keyring path: -K|--keyring &lt;file&gt; */
+    /**
+     * Keyring path: -K|--keyring &lt;file&gt;
+     */
     public static final Option OPT_KEYRING = Option.builder("K").longOpt("keyring").hasArg().argName("file")
             .desc("Path to KeyringStore file").get();
 
-    /** Recipient public alias (encrypt): --pub &lt;alias&gt; */
+    /**
+     * Recipient public alias (encrypt): --pub &lt;alias&gt;
+     */
     public static final Option OPT_PUB = Option.builder().longOpt("pub").hasArg().argName("alias")
             .desc("Recipient public key alias (encryption)").get();
 
-    /** Recipient private alias (decrypt): --priv &lt;alias&gt; */
+    /**
+     * Recipient private alias (decrypt): --priv &lt;alias&gt;
+     */
     public static final Option OPT_PRIV = Option.builder().longOpt("priv").hasArg().argName("alias")
             .desc("Recipient private key alias (decryption)").get();
 
-    /** KEM id: --kem &lt;id&gt; */
+    /**
+     * KEM id: --kem &lt;id&gt;
+     */
     public static final Option OPT_KEM = Option.builder().longOpt("kem").hasArg().argName("id")
             .desc("KEM algorithm id (see --list-kems)").get();
 
-    /** Discovery: --list-kems */
+    /**
+     * Discovery: --list-kems
+     */
     public static final Option OPT_LIST_KEMS = Option.builder().longOpt("list-kems")
             .desc("List KEM algorithms that support ENCAPSULATE and DECAPSULATE and exit").get();
 
-    /** Payload switch: --aes */
+    /**
+     * Payload switch: --aes
+     */
     public static final Option OPT_AES = Option.builder().longOpt("aes")
             .desc("Use AES payload (select mode via --aes-cipher)").get();
 
-    /** Payload switch: --chacha */
+    /**
+     * Payload switch: --chacha
+     */
     public static final Option OPT_CHACHA = Option.builder().longOpt("chacha")
             .desc("Use ChaCha payload (AEAD if --aad is provided, otherwise stream)").get();
 
-    /** AAD (hex): --aad &lt;hex&gt; */
+    /**
+     * AAD (hex): --aad &lt;hex&gt;
+     */
     public static final Option OPT_AAD = Option.builder().longOpt("aad").hasArg().argName("hex")
             .desc("Additional Authenticated Data (hex)").get();
 
-    /** Header toggle: --header */
+    /**
+     * Header toggle: --header
+     */
     public static final Option OPT_HEADER = Option.builder().longOpt("header")
             .desc("Write/read a compact symmetric header (IV/AAD/params) when supported").get();
 
-    /** HKDF: --hkdf [infoHex] */
+    /**
+     * HKDF: --hkdf [infoHex]
+     */
     public static final Option OPT_HKDF = Option.builder().longOpt("hkdf").optionalArg(true).hasArg().argName("infoHex")
             .desc("Use HKDF-SHA256 for KEM secret; optional info as hex (default internal info)").get();
 
-    /** Direct secret: --direct */
+    /**
+     * Direct secret: --direct
+     */
     public static final Option OPT_DIRECT = Option.builder().longOpt("direct")
             .desc("Use the raw KEM shared secret directly (disable HKDF)").get();
 
-    /** Derived key bytes: --key-bytes &lt;int&gt; */
+    /**
+     * Derived key bytes: --key-bytes &lt;int&gt;
+     */
     public static final Option OPT_KEY_BYTES = Option.builder().longOpt("key-bytes").hasArg().argName("int")
             .type(Number.class).desc("Derived symmetric key length in bytes (default 32)").get();
 
-    /** Max KEM ciphertext len: --max-kem-ct &lt;int&gt; */
+    /**
+     * Max KEM ciphertext len: --max-kem-ct &lt;int&gt;
+     */
     public static final Option OPT_MAX_KEM_CT = Option.builder().longOpt("max-kem-ct").hasArg().argName("int")
             .type(Number.class).desc("Maximum accepted KEM ciphertext length in bytes (default 65536)").get();
 
-    /** AES mode: --aes-cipher gcm|ctr|cbc */
+    /**
+     * AES mode: --aes-cipher gcm|ctr|cbc
+     */
     public static final Option OPT_AES_CIPHER = Option.builder().longOpt("aes-cipher").hasArg().argName("gcm|ctr|cbc")
             .desc("AES cipher variant for payload (default gcm)").get();
 
-    /** AES IV: --aes-iv &lt;hex&gt; */
+    /**
+     * AES IV: --aes-iv &lt;hex&gt;
+     */
     public static final Option OPT_AES_IV = Option.builder().longOpt("aes-iv").hasArg().argName("hex")
             .desc("AES decryption IV/nonce (hex; rejected for encryption)").get();
 
-    /** AES tag bits: --aes-tag-bits &lt;int&gt; */
+    /**
+     * AES tag bits: --aes-tag-bits &lt;int&gt;
+     */
     public static final Option OPT_AES_TAG_BITS = Option.builder().longOpt("aes-tag-bits").hasArg().argName("int")
             .type(Number.class).desc("AES-GCM authentication tag length in bits (default 128)").get();
 
-    /** ChaCha nonce: --chacha-nonce &lt;hex&gt; */
+    /**
+     * ChaCha nonce: --chacha-nonce &lt;hex&gt;
+     */
     public static final Option OPT_CHACHA_NONCE = Option.builder().longOpt("chacha-nonce").hasArg().argName("hex")
             .desc("ChaCha decryption nonce (hex, usually 12 bytes; rejected for encryption)").get();
 
-    /** ChaCha counter value: --chacha-counter &lt;int&gt; */
+    /**
+     * ChaCha counter value: --chacha-counter &lt;int&gt;
+     */
     public static final Option OPT_CHACHA_COUNTER = Option.builder().longOpt("chacha-counter").hasArg().argName("int")
             .type(Number.class).desc("ChaCha counter value for stream mode (integer)").get();
 
-    /** ChaCha initial counter: --chacha-initial &lt;int&gt; */
+    /**
+     * ChaCha initial counter: --chacha-initial &lt;int&gt;
+     */
     public static final Option OPT_CHACHA_INITIAL = Option.builder().longOpt("chacha-initial").hasArg().argName("int")
             .type(Number.class).desc("ChaCha initial counter (integer)").get();
 

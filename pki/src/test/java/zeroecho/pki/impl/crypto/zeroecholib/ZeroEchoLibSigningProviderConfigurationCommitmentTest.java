@@ -51,12 +51,23 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
 
+/**
+ * Contract and regression tests for zero echo lib signing provider configuration commitment.
+ */
 final class ZeroEchoLibSigningProviderConfigurationCommitmentTest {
     private static final String PROVIDER_ID = "zeroecho-lib";
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Allocated commitment uses resolved defaults and changes with effective configuration.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void allocatedCommitmentUsesResolvedDefaultsAndChangesWithEffectiveConfiguration() throws Exception {
         Path first = temporaryDirectory.resolve("first.zek");
@@ -76,6 +87,11 @@ final class ZeroEchoLibSigningProviderConfigurationCommitmentTest {
         assertFalse(baseline.matches(commitment(second, Map.of())));
     }
 
+    /**
+     * Commitment changes on actual key replacement and is stable after reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void commitmentChangesOnActualKeyReplacementAndIsStableAfterReopen() throws Exception {
         Path keyring = temporaryDirectory.resolve("replacement.zek");

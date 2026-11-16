@@ -59,6 +59,8 @@ public final class ContentDigests {
      * @return lowercase hexadecimal SHA-256 fingerprint
      * @throws IOException if the content cannot be read or cancellation is
      *                     requested
+     * @throws NullPointerException if any of {@code content}, {@code cancellation} is null
+     * @throws IllegalStateException if SHA-256 is unavailable
      */
     public static String sha256(RepeatableContent content, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(content, "content");

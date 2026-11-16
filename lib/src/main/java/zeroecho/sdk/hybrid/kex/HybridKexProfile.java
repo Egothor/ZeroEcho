@@ -96,6 +96,7 @@ public record HybridKexProfile(byte[] hkdfSalt, byte[] hkdfInfo, int outLenBytes
      * @param hkdfSalt    optional HKDF salt
      * @param hkdfInfo    optional HKDF info/label
      * @param outLenBytes output length in bytes
+     * @throws IllegalArgumentException if the requested HKDF output length is outside one through 8160 bytes
      */
     public HybridKexProfile {
         if (outLenBytes < 1 || outLenBytes > 255 * 32) {

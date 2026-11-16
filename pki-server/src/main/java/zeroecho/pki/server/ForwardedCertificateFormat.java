@@ -33,10 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
-/** Closed forwarding representation selected explicitly by server configuration. */
+/**
+ * Closed forwarding representation selected explicitly by server configuration.
+ */
 public enum ForwardedCertificateFormat {
-    /** RFC 9440 structured-field byte-sequence headers. */
+    /**
+     * RFC 9440 structured-field byte-sequence headers.
+     */
     RFC9440,
-    /** Strict URL-escaped single-certificate PEM emitted by NGINX. */
+    /**
+     * Strict URL-escaped single-certificate PEM emitted by NGINX.
+     */
     NGINX_ESCAPED_PEM_V1
 }

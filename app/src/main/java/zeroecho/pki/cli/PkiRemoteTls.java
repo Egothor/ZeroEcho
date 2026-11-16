@@ -85,6 +85,7 @@ final class PkiRemoteTls {
      * @return an initialized TLS context
      * @throws IOException on unreadable material or a missing password variable
      * @throws GeneralSecurityException on invalid key, certificate, or store material
+     * @throws NullPointerException if target or environment is null
      */
     /* default */ static SSLContext createContext(PkiRemoteTarget target, Function<String, String> environment)
             throws IOException, GeneralSecurityException {

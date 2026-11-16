@@ -66,7 +66,17 @@ import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.cert.CertificateBuilder;
 
+/**
+ * Contract and regression tests for alternative root publication.
+ */
 final class AlternativeRootPublicationTest {
+    /**
+     * Valid primary cannot publish invalid alternative.
+     *
+     * @param fault named failure injected at the selected lifecycle boundary
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = {"missing", "partial", "empty", "changed-signature", "wrong-key", "changed-algorithm", "changed-spki", "changed-native-algorithm"})
     void validPrimaryCannotPublishInvalidAlternative(String fault, @TempDir Path root) throws Exception {

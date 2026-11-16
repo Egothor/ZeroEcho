@@ -66,9 +66,10 @@ import javax.imageio.ImageIO;
  * <p>
  * Embedding proceeds left-to-right, top-to-bottom across pixels. The message is
  * prefixed with a 4-byte length header (big-endian) and then written bit-by-bit
- * into the LSB of each pixel's grayscale value. During embedding the image
- * content is converted to grayscale and written back to all color channels,
- * which discards original chroma.
+ * into the LSB of each visited pixel's low blue-channel byte. For those visited
+ * pixels, the modified byte is written into all RGB channels, discarding their
+ * original chroma. Pixels beyond the complete framed payload are not modified
+ * by the embedding loop.
  * </p>
  * <p>
  * Extraction reads the first 32 bits to recover the message length and then
@@ -77,10 +78,11 @@ import javax.imageio.ImageIO;
  *
  * <h2>Capacity</h2>
  * <p>
- * Effective capacity is {@code width * height - 32} bits, where 32 bits are
- * reserved for the length header. The caller must ensure that the message
- * length in bits does not exceed the available capacity; otherwise the embedded
- * payload will be incomplete.
+ * The byte capacity check uses {@code floor((width * height - 32) / 8)}, with
+ * 32 bits reserved for the length header. Embedding rejects a carrier smaller
+ * than that header and reads at most one byte beyond the computed message
+ * ceiling to reject an oversized input. Extraction rejects a negative declared
+ * length or a payload whose framed bits exceed the decoded carrier.
  * </p>
  *
  * <h2>Format support</h2>
@@ -109,7 +111,9 @@ public class LSBSteganographyMethod implements SteganographyMethod {
     private static final int BITS_PER_PAYLOAD_BYTE = Byte.SIZE;
     private static final Logger LOG = Logger.getLogger(LSBSteganographyMethod.class.getName());
 
-    /** Creates a stateless least-significant-bit steganography processor. */
+    /**
+     * Creates a stateless least-significant-bit steganography processor.
+     */
     public LSBSteganographyMethod() {
         // Stateless implementation.
     }
@@ -119,11 +123,16 @@ public class LSBSteganographyMethod implements SteganographyMethod {
      * returns a new image stream in the requested lossless format.
      *
      * <p>
-     * The output image is grayscale and may differ visually from the input because
-     * the algorithm writes identical gray values to all RGB channels. The message
-     * is stored as a 4-byte big-endian length prefix followed by the raw message
-     * bytes.
+     * Pixels used for the framed payload may differ visually because the algorithm
+     * writes the modified blue-channel byte to all RGB channels. The message is
+     * stored as a 4-byte big-endian length prefix followed by raw bytes. This
+     * framing provides no cryptographic confidentiality or integrity.
      * </p>
+     *
+     * <p>The input image and message streams are borrowed and are not closed.
+     * The returned in-memory stream is independently owned by the caller. The
+     * complete decoded image and encoded output are buffered; this is not a
+     * constant-memory streaming image transform.</p>
      *
      * @param inputImage   the source image stream to use as the cover image
      * @param outputFormat the desired output format; must be lossless (for example,
@@ -194,6 +203,10 @@ public class LSBSteganographyMethod implements SteganographyMethod {
      * {@link #embed(InputStream, ImageFormat, InputStream)} or an equivalent LSB
      * spatial-domain encoder.
      * </p>
+     *
+     * <p>The source stream is borrowed and not closed. A new caller-owned memory
+     * stream contains the extracted bytes; length consistency is not a message
+     * authenticity check.</p>
      *
      * @param inputImage the stego image stream that contains an embedded message
      * @return an {@code InputStream} of the extracted message bytes

@@ -46,14 +46,25 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract tests for signing due selection benchmark.
+ */
 final class SigningDueSelectionBenchmarkTest {
 
+    /**
+     * Fixed selection axis includes required4096 without executing it.
+     */
     @Test
     void fixedSelectionAxisIncludesRequired4096WithoutExecutingIt() {
         assertEquals(List.of(1, 64, 1_024, 4_096),
                 SigningDueSelectionBenchmark.SELECTION_AXIS);
     }
 
+    /**
+     * Configuration is strict bounded and fingerprint is stable.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void configurationIsStrictBoundedAndFingerprintIsStable(@TempDir Path temporary) {
         SigningDueSelectionBenchmark.Configuration configuration =
@@ -94,6 +105,9 @@ final class SigningDueSelectionBenchmarkTest {
                 rejected("--activePopulation=10", "--selectionBound=1", "--unknown=value"));
     }
 
+    /**
+     * Primitive subsequent summary uses nearest rank percentiles.
+     */
     @Test
     void primitiveSubsequentSummaryUsesNearestRankPercentiles() {
         SigningDueSelectionBenchmark.SubsequentInProcessSummary summary =
@@ -107,6 +121,11 @@ final class SigningDueSelectionBenchmarkTest {
         assertEquals(100L, summary.maxNanos());
     }
 
+    /**
+     * Schema reports exact configuration and no acceptance verdict.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void schemaReportsExactConfigurationAndNoAcceptanceVerdict(@TempDir Path temporary) {
         SigningDueSelectionBenchmark.Configuration configuration =
@@ -136,6 +155,12 @@ final class SigningDueSelectionBenchmarkTest {
         assertFalse(json.contains("warm"));
     }
 
+    /**
+     * Small real recovered ledger returns exact due selection.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void smallRealRecoveredLedgerReturnsExactDueSelection(@TempDir Path temporary)
             throws IOException {
@@ -151,6 +176,12 @@ final class SigningDueSelectionBenchmarkTest {
         assertTrue(Files.exists(temporary.resolve("work")));
     }
 
+    /**
+     * Second run rejects existing root before mutation and preserves first artifact.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void secondRunRejectsExistingRootBeforeMutationAndPreservesFirstArtifact(
             @TempDir Path temporary) throws IOException {
@@ -172,6 +203,12 @@ final class SigningDueSelectionBenchmarkTest {
         assertArrayEquals(before, Files.readAllBytes(manifest));
     }
 
+    /**
+     * Count mismatch and fixture failure use stable reasons.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void countMismatchAndFixtureFailureUseStableReasons(@TempDir Path temporary)
             throws IOException {

@@ -53,6 +53,8 @@ public record ConfirmationProofSuiteRef(String suiteId, String configurationComm
      *
      * @throws NullPointerException if either component is {@code null}
      * @throws IllegalArgumentException if either component is not canonical
+     * @param suiteId lowercase ASCII suite identifier ending in a positive {@code .vN} version, at most 128 characters
+     * @param configurationCommitment lowercase hexadecimal SHA-256 commitment of the suite configuration
      */
     public ConfirmationProofSuiteRef {
         Objects.requireNonNull(suiteId, "suiteId");

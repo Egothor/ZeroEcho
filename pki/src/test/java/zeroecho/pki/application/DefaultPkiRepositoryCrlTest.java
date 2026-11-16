@@ -80,11 +80,20 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
+/**
+ * Contract and regression tests for default PKI repository CRL.
+ */
 class DefaultPkiRepositoryCrlTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final PkiId STATUS = new PkiId("crl:repository-test");
     private static final PkiId CA = new PkiId("ca:repository-test");
 
+    /**
+     * Validates before returning repeatable caller owned content.
+     *
+     * @param type status-object kind selected for the test case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(value = StatusObjectType.class, names = {"CRL", "DELTA_CRL"})
     void validatesBeforeReturningRepeatableCallerOwnedContent(StatusObjectType type) throws Exception {
@@ -107,6 +116,12 @@ class DefaultPkiRepositoryCrlTest {
         assertEquals(source.opened, source.closedStreams);
     }
 
+    /**
+     * Opens file CRL above one mi b with buffered validation and without aggregate reads.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void opensFileCrlAboveOneMiBWithBufferedValidationAndWithoutAggregateReads(@TempDir Path directory)
             throws Exception {
         byte[] bytes = crl(40_000);
@@ -128,6 +143,11 @@ class DefaultPkiRepositoryCrlTest {
         assertTrue(source.closed);
     }
 
+    /**
+     * Rejects non canonical truncated trailing and wrong structure before return.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsNonCanonicalTruncatedTrailingAndWrongStructureBeforeReturn() throws Exception {
         byte[] valid = crl(1);
         int lengthOctets = (valid[1] & 0x80) == 0 ? 0 : valid[1] & 0x7f;
@@ -150,6 +170,11 @@ class DefaultPkiRepositoryCrlTest {
         }
     }
 
+    /**
+     * Rejects durable length and digest mismatch with unknown source length.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsDurableLengthAndDigestMismatchWithUnknownSourceLength() throws Exception {
         byte[] bytes = crl(1);
         for (long expectedLength : new long[] {bytes.length - 1L, bytes.length + 1L, bytes.length}) {
@@ -162,6 +187,11 @@ class DefaultPkiRepositoryCrlTest {
         }
     }
 
+    /**
+     * Preserves cleanup failure as suppressed on validation failure.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preservesCleanupFailureAsSuppressedOnValidationFailure() throws Exception {
         ObservedContent source = new ObservedContent(new byte[] {0x30, 0});
         source.closeFailure = new IOException("test cleanup failure");
@@ -174,6 +204,11 @@ class DefaultPkiRepositoryCrlTest {
         assertEquals(source.opened, source.closedStreams);
     }
 
+    /**
+     * Leaves non CRL status content unparsed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void leavesNonCrlStatusContentUnparsed() throws Exception {
         ObservedContent source = new ObservedContent(new byte[] {1, 2, 3});
         try (PkiRepositoryContent result = repository(StatusObjectType.OCSP, source, 3, sha256(source.bytes))

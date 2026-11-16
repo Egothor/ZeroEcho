@@ -41,6 +41,11 @@ import zeroecho.pki.api.PkiId;
 /**
  * Strict lifecycle extension of existing F7 field 17. The values are public
  * commitments, not possession evidence; both operation-bound proofs remain required.
+ *
+ * <p>Construction checks syntax and the closed operation names, without loading the
+ * predecessor or proving either key. A permitted name in this carrier does not
+ * establish that a particular server or native enrollment path supports it.</p>
+ *
  * @param version payload version, exactly one
  * @param operation exact existing credential.renew/credential.reissue/credential.replace name
  * @param predecessorId retained predecessor credential identity
@@ -53,7 +58,18 @@ public record SdkLifecycleTarget(int version, String operation, PkiId predecesso
     private static final Set<String> FIELDS = Set.of("version", "operation", "predecessorId", "predecessorSha256",
             "subjectPrimarySpkiSha512", "subjectAlternativeSpkiSha512");
 
-    /** Rejects unsupported operations, missing coordinates and malformed exact digests. */
+    /**
+     * Checks the closed lifecycle schema and prefixed digest spellings.
+     *
+     * @param version payload version, exactly one
+     * @param operation exact existing credential.renew/credential.reissue/credential.replace name
+     * @param predecessorId retained predecessor credential identity
+     * @param predecessorSha256 prefixed exact predecessor DER SHA-256
+     * @param subjectPrimarySpkiSha512 prefixed requested primary SPKI SHA-512
+     * @param subjectAlternativeSpkiSha512 prefixed requested alternative SPKI SHA-512
+     * @throws NullPointerException if the predecessor identifier is null, or the operation is null when tested
+     * @throws IllegalArgumentException if the version, operation name or digest syntax is invalid
+     */
     public SdkLifecycleTarget {
         Objects.requireNonNull(predecessorId, "predecessorId");
         if (version != 1 || !Set.of("credential.renew", "credential.reissue", "credential.replace").contains(operation)
@@ -64,7 +80,12 @@ public record SdkLifecycleTarget(int version, String operation, PkiId predecesso
         }
     }
 
-    /** @return canonical typed object for the existing F7 field 17 */
+    /**
+     * Encodes these coordinates as the closed version-one lifecycle object.
+     *
+     * @return immutable canonical typed value for direct F7 lifecycle use or its enrollment wrapper
+     * @throws IllegalArgumentException if the predecessor identifier exceeds typed-text encoding bounds
+     */
     public HybridSdkValue value() {
         return HybridSdkValue.object(Map.of("version", HybridSdkValue.integer(1),
                 "operation", HybridSdkValue.text(operation), "predecessorId", HybridSdkValue.text(predecessorId.value()),
@@ -75,9 +96,11 @@ public record SdkLifecycleTarget(int version, String operation, PkiId predecesso
 
     /**
      * Decodes the exact lifecycle object without accepting unknown or missing fields.
+     *
      * @param value canonical typed F7 extension object
      * @return checked lifecycle coordinates
-     * @throws IllegalArgumentException if fields, types, version or commitments are invalid
+     * @throws NullPointerException if the value is null
+     * @throws IllegalArgumentException if fields, types, version, identifier or commitments are invalid
      */
     public static SdkLifecycleTarget decode(HybridSdkValue value) {
         var fields = Objects.requireNonNull(value, "value").objectFields();

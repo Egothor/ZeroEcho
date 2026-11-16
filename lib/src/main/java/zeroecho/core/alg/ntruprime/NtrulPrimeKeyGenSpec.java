@@ -74,17 +74,29 @@ public final class NtrulPrimeKeyGenSpec implements AlgorithmKeySpec, Describable
      * Enumeration of supported NTRU LPRime parameter sets.
      */
     public enum Variant {
-        /** Variant with ~128-bit classical security. */
+        /**
+         * Variant with ~128-bit classical security.
+         */
         NTRULPR653,
-        /** Variant with ~192-bit classical security. */
+        /**
+         * Variant with ~192-bit classical security.
+         */
         NTRULPR761,
-        /** Variant with ~256-bit classical security. */
+        /**
+         * Variant with ~256-bit classical security.
+         */
         NTRULPR857,
-        /** Variant beyond 256-bit, with larger parameters. */
+        /**
+         * Variant beyond 256-bit, with larger parameters.
+         */
         NTRULPR953,
-        /** Variant beyond 256-bit, with larger parameters. */
+        /**
+         * Variant beyond 256-bit, with larger parameters.
+         */
         NTRULPR1013,
-        /** Highest-strength standardized variant. */
+        /**
+         * Highest-strength standardized variant.
+         */
         NTRULPR1277
     }
 

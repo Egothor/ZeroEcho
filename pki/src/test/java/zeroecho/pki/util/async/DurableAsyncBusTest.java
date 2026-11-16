@@ -51,11 +51,20 @@ import zeroecho.pki.util.async.codec.ResultCodec;
 import zeroecho.pki.util.async.impl.AppendOnlyLineStore;
 import zeroecho.pki.util.async.impl.DurableAsyncBus;
 
+/**
+ * Contract and regression tests for durable async bus.
+ */
 public class DurableAsyncBusTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tempDir;
 
+    /**
+     * Submit update consume removes result and operation.
+     */
     @Test
     public void submitUpdateConsume_removesResultAndOperation() {
         System.out.println("submitUpdateConsume_removesResultAndOperation");
@@ -126,6 +135,9 @@ public class DurableAsyncBusTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Failed status remains visible until explicit purge.
+     */
     @Test
     public void failedStatus_remainsVisibleUntilExplicitPurge() {
         System.out.println("failedStatus_remainsVisibleUntilExplicitPurge");
@@ -176,6 +188,9 @@ public class DurableAsyncBusTest {
         System.out.println("failedStatus_remainsVisibleUntilExplicitPurge...ok");
     }
 
+    /**
+     * Replay restores snapshot and status.
+     */
     @Test
     public void replay_restoresSnapshotAndStatus() {
         System.out.println("replay_restoresSnapshotAndStatus");
@@ -215,6 +230,9 @@ public class DurableAsyncBusTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Terminal and retired operations do not reactivate on replay.
+     */
     @Test
     public void terminalAndRetiredOperations_doNotReactivateOnReplay() {
         Principal owner = new Principal("SERVICE", "issuer");

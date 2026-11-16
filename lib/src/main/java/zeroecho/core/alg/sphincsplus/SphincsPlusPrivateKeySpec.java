@@ -217,6 +217,9 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destro
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -230,6 +233,9 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destro
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

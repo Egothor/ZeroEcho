@@ -49,6 +49,8 @@ public record RevocationRecord(PkiId credentialId, RevocationTransition transiti
      * Creates a current-state record.
      *
      * @throws NullPointerException if either value is {@code null}
+     * @param credentialId exact credential identity
+     * @param transition latest committed transition
      */
     public RevocationRecord {
         Objects.requireNonNull(credentialId, "credentialId");

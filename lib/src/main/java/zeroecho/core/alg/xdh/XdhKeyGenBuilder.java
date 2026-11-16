@@ -70,7 +70,9 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * @since 1.0
  */
 public final class XdhKeyGenBuilder implements AsymmetricKeyPairGenerator<XdhSpec> {
-    /** Creates a stateless XDH key-pair generator. */
+    /**
+     * Creates a stateless XDH key-pair generator.
+     */
     public XdhKeyGenBuilder() {
         // Stateless generator.
     }

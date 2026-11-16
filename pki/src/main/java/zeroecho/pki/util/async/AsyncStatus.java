@@ -59,6 +59,11 @@ public record AsyncStatus(AsyncState state, Instant updatedAt, Optional<String> 
      * Creates a status record and validates invariants.
      *
      * @throws IllegalArgumentException if any mandatory field is null
+     * @param state lifecycle state (never {@code null})
+     * @param updatedAt last update time (never {@code null})
+     * @param detailCode optional stable, non-sensitive code suitable for audit and transport
+     * @param details optional key/value details; values MUST NOT contain secrets
+     * @throws NullPointerException if {@code state}, {@code updatedAt}, {@code detailCode} or {@code details} is null
      */
     public AsyncStatus {
         Objects.requireNonNull(state, "state");

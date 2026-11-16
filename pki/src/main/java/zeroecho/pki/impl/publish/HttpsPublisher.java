@@ -51,7 +51,9 @@ import zeroecho.pki.spi.publish.PublicationAttempt;
 import zeroecho.pki.spi.publish.PublicationOutcome;
 import zeroecho.pki.spi.publish.Publisher;
 
-/** Bounded-timeout HTTPS publication endpoint. */
+/**
+ * Bounded-timeout HTTPS publication endpoint.
+ */
 final class HttpsPublisher implements Publisher {
     private static final int HTTP_SERVER_ERROR = 500;
     private static final Logger LOG = Logger.getLogger(HttpsPublisher.class.getName());
@@ -63,6 +65,15 @@ final class HttpsPublisher implements Publisher {
     private final String method;
     private final HttpClient client;
 
+    /**
+     * Binds an HTTPS publication endpoint and creates its bounded-timeout HTTP client.
+     *
+     * @param target exact configured publication destination
+     * @param uri validated HTTPS endpoint; transport validation belongs to the provider factory
+     * @param credentials optional authorization header value, or null for no authorization header
+     * @param method configured HTTP publication method
+     * @throws NullPointerException if target, URI or method is null
+     */
     /* default */ HttpsPublisher(PublicationTarget target, URI uri, String credentials, String method) {
         this.target = Objects.requireNonNull(target, "target");
         this.uri = Objects.requireNonNull(uri, "uri");
@@ -71,11 +82,17 @@ final class HttpsPublisher implements Publisher {
         this.client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationTarget target() {
         return target;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationOutcome publish(PublicationAttempt attempt, RepeatableContent payload) {
         Objects.requireNonNull(attempt, "attempt");

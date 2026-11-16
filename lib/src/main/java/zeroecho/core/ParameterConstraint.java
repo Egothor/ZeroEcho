@@ -56,19 +56,46 @@ public record ParameterConstraint(String name, ValueKind kind, boolean required,
         Object defaultValue, List<?> allowedValues, Long minimum, Long maximum,
         long step, long remainder) {
 
-    /** Machine-readable scalar kind; legacy types retain their presentation type. */
+    /**
+     * Machine-readable scalar kind; legacy types retain their presentation type.
+     */
     public enum ValueKind {
-        /** Nonblank string. */ STRING,
-        /** Exactly a boxed Java integer. */ INTEGER,
-        /** Exactly a boxed Java long. */ LONG,
-        /** Boolean. */ BOOLEAN,
-        /** Legacy constructor metadata with no inferred domain constraints. */ LEGACY
+        /**
+         * Nonblank string.
+         */
+        STRING,
+        /**
+         * Exactly a boxed Java integer.
+         */
+        INTEGER,
+        /**
+         * Exactly a boxed Java long.
+         */
+        LONG,
+        /**
+         * Boolean.
+         */
+        BOOLEAN,
+        /**
+         * Legacy constructor metadata with no inferred domain constraints.
+         */
+        LEGACY
     }
 
     /**
      * Validates and snapshots the constraint.
-     * @throws IllegalArgumentException if the definition is inconsistent
-     * @throws NullPointerException if name, kind or choices is null
+     *
+     * @param name nonblank parameter name; must not be null
+     * @param kind scalar kind; must not be null
+     * @param required whether omission without a default is rejected
+     * @param defaultValue default scalar, or null when no default is defined
+     * @param allowedValues allowed scalars, copied immutably; empty means unrestricted
+     * @param minimum inclusive lower bound, or null when absent
+     * @param maximum inclusive upper bound, or null when absent
+     * @param step positive integer modulus; one for nonnumeric kinds
+     * @param remainder required remainder in the range zero through step minus one
+     * @throws IllegalArgumentException if the definition, choices, or default is inconsistent
+     * @throws NullPointerException if name, kind, choices, or any choice is null
      */
     public ParameterConstraint {
         Objects.requireNonNull(name, "name");
@@ -94,6 +121,12 @@ public record ParameterConstraint(String name, ValueKind kind, boolean required,
         }
     }
 
+    /**
+     * Checks one supplied scalar against this constraint without modifying it.
+     *
+     * @param value candidate scalar; must not be null and must match the declared kind
+     * @throws IllegalArgumentException if the type, bounds, modulus, or choices reject the value
+     */
     /* default */ void validate(Object value) {
         validateValue(name, kind, value, minimum, maximum, step, remainder);
         if (!allowedValues.isEmpty() && !allowedValues.contains(value)) {

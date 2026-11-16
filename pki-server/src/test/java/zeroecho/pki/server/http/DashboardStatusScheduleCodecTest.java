@@ -42,9 +42,15 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.RealmId;
 
+/**
+ * Checks realm-wide versus authority-scoped dashboard metrics and status-schedule request decoding.
+ */
 class DashboardStatusScheduleCodecTest {
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks realm metrics/schedule-list requests omit authority scope and reject caller-added CA coordinates.
+     */
     @Test void realmMetricsAndScheduleListingRejectAuthorityScopes() {
         for (String operation : new String[]{"dashboard.server", "status.schedule.list"}) {
             String arguments = operation.equals("dashboard.server") ? "{}" : "{\"limit\":10}";
@@ -54,6 +60,9 @@ class DashboardStatusScheduleCodecTest {
         }
     }
 
+    /**
+     * Checks authority metrics/schedules require matching outer and typed authority coordinates.
+     */
     @Test void authorityMetricsAndSchedulesRequireMatchingAuthority() {
         for (String operation : new String[]{"dashboard.authority", "dashboard.certificate", "dashboard.revocation",
                 "dashboard.publication", "status.schedule.inspect", "status.schedule.set"}) {

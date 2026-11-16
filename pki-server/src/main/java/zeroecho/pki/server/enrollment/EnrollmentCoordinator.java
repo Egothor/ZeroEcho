@@ -133,6 +133,9 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param runtime installed enrollment budgets and credential custody
      * @param aliases trusted configured administrative mapping exclusions
      * @param clock authoritative clock
+     * @throws NullPointerException if any of {@code control}, {@code realm}, {@code session}, {@code
+     *         endpoints}, {@code profiles}, {@code acme}, {@code runtime}, {@code aliases}, {@code clock} is
+     *         null
      */
     public EnrollmentCoordinator(ServerControlStore control, ServerRealmConfiguration realm, PkiSession session,
             EnrollmentEndpointRegistry endpoints, EnrollmentProfileService profiles, AcmeControlStore acme,
@@ -241,6 +244,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param prior expected previous account, empty only for creation
      * @param proposed authenticated account update
      * @return durably sealed account with append-only exclusion history
+     * @throws NullPointerException if any of {@code prior}, {@code proposed} is null
      */
     public AcmeState.Account storeAcmeAccount(Optional<AcmeState.Account> prior, AcmeState.Account proposed) {
         Objects.requireNonNull(prior, "prior"); Objects.requireNonNull(proposed, "proposed");
@@ -303,6 +307,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * coordinates. Unknown persistence outcomes fence the whole coordinator.
      * @param supplied authenticated, bounded original request and credential selection
      * @return durably reserved manifest including all currently known requester aliases
+     * @throws NullPointerException if {@code supplied} is null
      */
     public CmpTransaction reserveCmp(CmpTransaction.Frozen supplied) {
         Objects.requireNonNull(supplied, "frozen");
@@ -389,6 +394,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param response bounded complete protected response
      * @param metadata exact response and triggering request commitments
      * @return acknowledged next manifest
+     * @throws NullPointerException if any of {@code response}, {@code metadata}, {@code expected} is null
      */
     public CmpTransaction storeCmpResponse(CmpTransaction expected, byte[] response, CmpTransaction.Response metadata) {
         Objects.requireNonNull(response, "response"); Objects.requireNonNull(metadata, "metadata");
@@ -562,7 +568,20 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
                 Optional<Validity> validity, Optional<PkiId> predecessorId) {
             this(protocol, endpointId, requester, transactionId, operation, payload, validity, predecessorId, Optional.empty());
         }
-        /** Validates bounded, non-null adapter input without retaining mutable data. */
+        /**
+         * Validates bounded, non-null adapter input without retaining mutable data.
+         * @param protocol protocol family
+         * @param endpointId configured label, or exact ACME directory ID
+         * @param requester authenticated protocol requester
+         * @param transactionId SHA-256 of the protocol transaction coordinate
+         * @param operation operation replay domain
+         * @param payload exact proved request
+         * @param validity optional requested validity
+         * @param predecessorId authoritative renewal predecessor
+         * @param protocolDeadline additional immutable protocol expiry, mandatory for ACME orders
+         * @throws NullPointerException if any of {@code protocol}, {@code requester}, {@code operation}, {@code
+         *         payload}, {@code validity}, {@code predecessorId}, {@code protocolDeadline} is null
+         */
         public Admission {
             Objects.requireNonNull(protocol, "protocol"); EnrollmentTransaction.id(endpointId); Objects.requireNonNull(requester, "requester");
             EnrollmentTransaction.digest(transactionId); Objects.requireNonNull(operation, "operation"); Objects.requireNonNull(payload, "payload");
@@ -581,7 +600,11 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
                 throw EnrollmentTransaction.invalid();
             }
         }
-        /** @return redacted admission description */
+        /**
+         * Returns a diagnostic representation with sensitive identity and custody details redacted.
+         *
+         * @return redacted admission description
+         */
         @Override public String toString() { return "EnrollmentCoordinator.Admission[redacted]"; }
     }
 
@@ -624,6 +647,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param admission authenticated original issuance or replacement request
      * @param expected exact unlinked or identically linked wire manifest
      * @return durable linked enrollment transaction
+     * @throws NullPointerException if any of {@code admission}, {@code expected} is null
      */
     public EnrollmentTransaction admitCmp(Admission admission, CmpTransaction expected) {
         Objects.requireNonNull(admission, "admission"); Objects.requireNonNull(expected, "expected");
@@ -778,7 +802,9 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         private boolean attached;
         private boolean released;
         private KeygenGeneration(EnrollmentKeygenArtifact reserved) { this.reserved = reserved; }
-        /** {@return immutable original template, policy and resource reservation} */
+        /**
+         * {@return immutable original template, policy and resource reservation}
+         */
         public EnrollmentKeygenArtifact descriptor() { return reserved; }
 
         /**
@@ -999,12 +1025,16 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         }
     }
 
-    /** Bounded ciphertext borrower; the caller must close it on every HTTP outcome. */
+    /**
+     * Bounded ciphertext borrower; the caller must close it on every HTTP outcome.
+     */
     public static final class KeygenDelivery implements AutoCloseable {
         private final EnrollmentKeygenSpool.Lease lease;
         private final long length;
         private KeygenDelivery(EnrollmentKeygenSpool.Lease lease, long length) { this.lease = lease; this.length = length; }
-        /** {@return exact encrypted body length} */
+        /**
+         * {@return exact encrypted body length}
+         */
         public long length() { return length; }
         /**
          * Opens the sole bounded body stream. Closing it also releases this lease.
@@ -1012,7 +1042,11 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
          * @throws java.io.IOException if the lease was released or already opened
          */
         public java.io.InputStream openStream() throws java.io.IOException { return lease.openStream(); }
-        /** @throws java.io.IOException if the owned file cannot be closed */
+        /**
+         * Releases the owned encrypted-body lease.
+         *
+         * @throws java.io.IOException if the owned file cannot be closed
+         */
         @Override public void close() throws java.io.IOException { lease.close(); }
     }
 
@@ -1153,6 +1187,8 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param supplied trusted native authentication, policy/source and exact protected-wire context
      * @param clientNonce exactly 32 client-selected bytes
      * @return retained identical challenge on exact context/nonce replay
+     * @throws NullPointerException if {@code supplied} is null
+     * @throws IllegalStateException if the retained open SDK challenge-intent capacity is exhausted
      */
     public EnrollmentSdkAdmission.Challenge challengeSdk(EnrollmentSdkAdmission supplied, byte[] clientNonce) {
         Objects.requireNonNull(supplied, "supplied");
@@ -1214,6 +1250,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param primaryProof primary client signature of F1
      * @param alternativeProof alternative client signature of F2
      * @return exact native retained enrollment receipt
+     * @throws NullPointerException if {@code supplied} is null
      */
     public EnrollmentTransaction admitSdk(EnrollmentSdkAdmission supplied, String intentId, String sdkRequestId,
             byte[] primaryProof, byte[] alternativeProof) {
@@ -1262,6 +1299,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param requester genuinely authenticated native requester
      * @return requester carrying the current exclusion-only snapshot
      * @throws IllegalStateException if this coordinator is closed or durability is uncertain
+     * @throws NullPointerException if {@code requester} is null
      */
     public EnrollmentTransaction.Requester freezeRequesterExclusions(EnrollmentTransaction.Requester requester) {
         synchronized (control) { requireOpen(); return withCurrentAliases(Objects.requireNonNull(requester, "requester")); }
@@ -1687,6 +1725,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param transactionId exact protocol transaction SHA-256
      * @param operation exact operation replay domain
      * @return retained transaction or empty
+     * @throws NullPointerException if any of {@code protocol}, {@code actorType}, {@code operation} is null
      */
     public Optional<EnrollmentTransaction> find(EnrollmentTransaction.Protocol protocol, String label,
             IssuanceExecutionEvidence.ActorType actorType, String actorId, String transactionId, EnrollmentTransaction.Operation operation) {
@@ -1829,6 +1868,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @param cancellation caller cancellation signal
      * @param beforeClaim validator that throws on loss of transport authorization
      * @return latest durable transaction state
+     * @throws NullPointerException if any of {@code cancellation}, {@code beforeClaim} is null
      */
     public EnrollmentTransaction dispatch(String id, CancellationSignal cancellation, Runnable beforeClaim) {
         Objects.requireNonNull(cancellation, "cancellation");
@@ -1959,7 +1999,10 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
                 Optional.of(value.intent().issuerId()), Optional.of(value.intent().profile().profileId()));
     }
 
-    /** Fences new work; active callers must drain before realm dependencies close. */
+    /**
+     * Fences new work; active callers must drain before realm dependencies close.
+     * @throws IllegalStateException if enrollment work still owns active runtime resources
+     */
     @Override public void close() {
         synchronized (control) { // NOPMD AvoidSynchronizedStatement - Shares the authoritative control-store monitor across admission and durable state transitions.
             closed = true;

@@ -36,7 +36,9 @@ package zeroecho.pki.application;
 import java.util.function.Predicate;
 import zeroecho.core.io.CancellationSignal;
 
-/** Authorization-aware selection execution; the predicate is invoked synchronously and never retained. */
+/**
+ * Authorization-aware selection execution; the predicate is invoked synchronously and never retained.
+ */
 @FunctionalInterface
 public interface PkiSelectionExecutor {
     /**

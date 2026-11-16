@@ -61,7 +61,9 @@ import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.ocsp.CertId;
 import zeroecho.pkix.sign.ContentVerifier;
 
-/** BouncyCastle-backed parsed {@link zeroecho.pkix.ocsp.OcspRequest}. */
+/**
+ * BouncyCastle-backed parsed {@link zeroecho.pkix.ocsp.OcspRequest}.
+ */
 // Immutable provider adapter exposes the parsed OCSP request contract without additional domain behavior.
 @SuppressWarnings("PMD.DataClass")
 final class BcOcspRequest implements zeroecho.pkix.ocsp.OcspRequest {
@@ -74,6 +76,13 @@ final class BcOcspRequest implements zeroecho.pkix.ocsp.OcspRequest {
     private final Optional<byte[]> signature;
     private final List<X509Certificate> signerCertificates = new ArrayList<>();
 
+    /**
+     * Parses a OCSP request without establishing signature validity or trust.
+     *
+     * @param der complete encoded OCSP request; must not be null
+     * @throws IllegalArgumentException if the encoding cannot be parsed
+     * @throws NullPointerException if the encoding is null
+     */
     /* default */ BcOcspRequest(byte[] der) {
         OCSPRequest request = OCSPRequest.getInstance(der);
         TBSRequest tbs = request.getTbsRequest();
@@ -135,41 +144,65 @@ final class BcOcspRequest implements zeroecho.pkix.ocsp.OcspRequest {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CertId> requestedCertificates() {
         return List.copyOf(requested);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<byte[]> nonce() {
         return nonce.map(byte[]::clone);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isSigned() {
         return signed;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<AlgorithmIdentifier> signatureAlgorithm() {
         return signatureAlgorithm;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<byte[]> toBeSigned() {
         return toBeSigned.map(byte[]::clone);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<byte[]> signature() {
         return signature.map(byte[]::clone);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<X509Certificate> signerCertificates() {
         return List.copyOf(signerCertificates);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verifySignature(PublicKey signerKey) {
         if (!signed) {

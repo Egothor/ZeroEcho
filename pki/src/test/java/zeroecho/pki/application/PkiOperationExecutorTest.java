@@ -51,8 +51,17 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for PKI operation executor.
+ */
 final class PkiOperationExecutorTest {
 
+    /**
+     * Executes retained configuration profile and binding operations.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void executesRetainedConfigurationProfileAndBindingOperations(@TempDir Path temporary) throws Exception {
         try (PkiSession session = PkiSession.open(configuration(temporary))) {
@@ -76,6 +85,12 @@ final class PkiOperationExecutorTest {
         }
     }
 
+    /**
+     * Classifies missing publication and cancellation without throwable details.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void classifiesMissingPublicationAndCancellationWithoutThrowableDetails(@TempDir Path temporary)
             throws Exception {
@@ -94,6 +109,9 @@ final class PkiOperationExecutorTest {
         }
     }
 
+    /**
+     * Validates and defensively copies operation input.
+     */
     @Test
     void validatesAndDefensivelyCopiesOperationInput() {
         byte[] document = new byte[] { 1, 2, 3 };

@@ -55,11 +55,25 @@ public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal, L
         boolean allowDnsWildcard, Set<String> allowedUriSchemes, boolean criticalWithNonemptySubject,
         boolean requireServiceIdentity, boolean requireEmailIdentity) {
 
-    /** Maximum number of SAN entries. */
+    /**
+     * Maximum number of SAN entries.
+     */
     public static final int HARD_MAXIMUM_COUNT = 64;
 
     /**
      * Validates and constructs the policy.
+     * @param minimumTotal minimum total SAN count
+     * @param maximumTotal maximum total SAN count
+     * @param rules permitted SAN type rules
+     * @param allowDnsWildcard whether a complete leftmost DNS wildcard is permitted
+     * @param allowedUriSchemes exact lowercase allowed URI schemes
+     * @param criticalWithNonemptySubject SAN criticality for a nonempty subject
+     * @param requireServiceIdentity whether DNS, IP, or URI identity is required
+     * @param requireEmailIdentity whether an RFC822 identity is required
+     * @throws IllegalArgumentException if total bounds are invalid, a policy collection is null, type rules are
+     *     duplicated or exceed bounds, URI schemes are invalid or case-insensitively duplicated, or
+     *     identity/count requirements cannot be satisfied
+     * @throws NullPointerException if rules contains a null entry
      */
     public SubjectAlternativeNamePolicy {
         if (minimumTotal < 0 || maximumTotal < minimumTotal || maximumTotal > HARD_MAXIMUM_COUNT) {

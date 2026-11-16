@@ -70,6 +70,9 @@ import zeroecho.core.alg.slhdsa.SlhDsaPrivateKeySpec;
 import zeroecho.core.alg.sphincsplus.SphincsPlusPrivateKeySpec;
 import zeroecho.core.marshal.PairSeq;
 
+/**
+ * Contract and regression tests for secret spec lifecycle.
+ */
 class SecretSpecLifecycleTest {
     private static final List<SpecCase> SPECS = List.of(
             new SpecCase("zeroecho.core.alg.aes.AesKeyImportSpec", "key", 16, Factory.STATIC_RAW),
@@ -95,6 +98,11 @@ class SecretSpecLifecycleTest {
             new SpecCase("zeroecho.core.alg.sphincsplus.SphincsPlusPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.xdh.XdhPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR));
 
+    /**
+     * All secret specifications own and destroy their byte arrays.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void allSecretSpecificationsOwnAndDestroyTheirByteArrays() throws Exception {
         System.out.print("SecretSpec/lifecycle...");
@@ -129,6 +137,9 @@ class SecretSpecLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Validates null and boundary key material.
+     */
     @Test
     void validatesNullAndBoundaryKeyMaterial() {
         System.out.print("SecretSpec/boundaries...");
@@ -146,6 +157,9 @@ class SecretSpecLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Unmarshal cleans up when malformed data follows valid secret material.
+     */
     @Test
     void unmarshalCleansUpWhenMalformedDataFollowsValidSecretMaterial() {
         System.out.println("unmarshalCleansUpWhenMalformedDataFollowsValidSecretMaterial");
@@ -169,6 +183,11 @@ class SecretSpecLifecycleTest {
         System.out.println("unmarshalCleansUpWhenMalformedDataFollowsValidSecretMaterial...ok");
     }
 
+    /**
+     * Access and destroy are linearizable.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void accessAndDestroyAreLinearizable() throws Exception {
         System.out.print("SecretSpec/concurrent...");
@@ -206,6 +225,11 @@ class SecretSpecLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Importers do not destroy caller owned specifications.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void importersDoNotDestroyCallerOwnedSpecifications() throws Exception {
         System.out.print("SecretSpec/import...");

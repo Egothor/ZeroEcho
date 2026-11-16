@@ -48,7 +48,9 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
-/** Strict length-framed encoding for frozen outer-operation command fields. */
+/**
+ * Strict length-framed encoding for frozen outer-operation command fields.
+ */
 public final class DomainCommandEncoding {
     private static final int MAGIC = 0x5A45444F;
     private static final int VERSION = 1;
@@ -61,6 +63,7 @@ public final class DomainCommandEncoding {
      * The identity is frozen before acceptance and does not depend on a signature.
      * @param operationId exact signing submission identifier
      * @return domain-separated deterministic root authority identity
+     * @throws IllegalStateException if the runtime does not provide SHA-256
      */
     public static zeroecho.pki.api.PkiId rootAuthorityId(zeroecho.pki.api.PkiId operationId) {
         zeroecho.pki.api.orch.SigningSubmissionId.parse(operationId);
@@ -96,6 +99,7 @@ public final class DomainCommandEncoding {
      * @param operation nonblank schema discriminator
      * @param fields ordered canonical command fields
      * @return immutable correlated continuation template
+     * @throws NullPointerException if correlationId is null
      */
     public static DomainContinuationTemplate correlatedTemplate(DomainContinuationStore.Kind kind,
             String correlationId, String operation, String... fields) {
@@ -148,6 +152,8 @@ public final class DomainCommandEncoding {
      *
      * @param command bounded binary command encoding
      * @return immutable decoded discriminator and fields
+     * @throws NullPointerException if command is null
+     * @throws IllegalArgumentException if encoding, header, field count or exact payload boundary is invalid or truncated
      */
     public static Decoded decode(EncodedObject command) {
         Objects.requireNonNull(command, "command");
@@ -184,7 +190,13 @@ public final class DomainCommandEncoding {
      * @param fields immutable ordered command fields
      */
     public record Decoded(String operation, List<String> fields) {
-        /** Snapshots decoded values. */
+        /**
+         * Snapshots decoded values.
+         * @param operation nonblank operation discriminator
+         * @param fields immutable ordered command fields
+         * @throws IllegalArgumentException if operation is null, blank or exceeds its finite bound
+         * @throws NullPointerException if fields is null or a supplied collection contains a null member
+         */
         public Decoded {
             if (operation == null || operation.isBlank()) {
                 throw new IllegalArgumentException("Domain command operation is invalid");
@@ -197,6 +209,7 @@ public final class DomainCommandEncoding {
          *
          * @param index zero-based field index
          * @return exact field at {@code index}
+         * @throws IllegalArgumentException if index does not identify an available field
          */
         public String field(int index) {
             if (index < 0 || index >= fields.size()) {
@@ -210,6 +223,7 @@ public final class DomainCommandEncoding {
          *
          * @param expected required nonnegative field count
          * @return this decoded command after validation
+         * @throws IllegalArgumentException if the actual field count differs from the required count
          */
         public Decoded requireFields(int expected) {
             if (fields.size() != expected) {

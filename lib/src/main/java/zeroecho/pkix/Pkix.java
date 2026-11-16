@@ -84,7 +84,9 @@ public final class Pkix {
     private static final String DEFAULT_PROVIDER = "zeroecho.pkix.bc.BcPkixProvider";
     private static final String DER_PARAMETER = "der";
 
-    /** Holds the lazily resolved process-wide provider. */
+    /**
+     * Holds the lazily resolved process-wide provider.
+     */
     private static final class Holder {
         private static final PkixProvider PROVIDER = resolve();
 
@@ -132,6 +134,7 @@ public final class Pkix {
      * explicitly trusted issuer alternative key. The subject alternative key
      * extension does not establish issuer trust. No primary signature, validity
      * interval or certification path is validated by this method.
+     *
      * @param certificate nonnull certificate with all three alternative extensions
      * @param issuerAlternativeKey nonnull expected issuer alternative public key
      * @return false for absent, malformed or invalid alternative signatures
@@ -147,6 +150,7 @@ public final class Pkix {
      * Verifies the X.509 Cor.3 defect 450 transcript using a trusted issuer key.
      * Retains both native algorithm identifiers and omits only altSignatureValue
      * and the outer signature bits. Performs no primary/path/time verification.
+     *
      * @param certificate nonnull certificate containing all alternative extensions
      * @param issuerAlternativeKey nonnull trusted issuer alternative public key
      * @return false for missing, malformed or invalid alternative signatures
@@ -163,6 +167,7 @@ public final class Pkix {
      *
      * @param der the certificate DER
      * @return the parsed certificate
+     * @throws NullPointerException if {@code der} is null
      */
     public static X509Certificate parseCertificate(byte[] der) {
         return provider().parseCertificate(Objects.requireNonNull(der, DER_PARAMETER));
@@ -182,6 +187,7 @@ public final class Pkix {
      *
      * @param der the request DER
      * @return the parsed request
+     * @throws NullPointerException if {@code der} is null
      */
     public static CertificationRequest parseCertificationRequest(byte[] der) {
         return provider().parseCertificationRequest(Objects.requireNonNull(der, DER_PARAMETER));
@@ -201,6 +207,7 @@ public final class Pkix {
      *
      * @param der the CRL DER
      * @return the parsed CRL
+     * @throws NullPointerException if {@code der} is null
      */
     public static X509CRL parseCrl(byte[] der) {
         return provider().parseCrl(Objects.requireNonNull(der, DER_PARAMETER));
@@ -220,6 +227,7 @@ public final class Pkix {
      *
      * @param der the request DER
      * @return the parsed request
+     * @throws NullPointerException if {@code der} is null
      */
     public static OcspRequest parseOcspRequest(byte[] der) {
         return provider().parseOcspRequest(Objects.requireNonNull(der, DER_PARAMETER));
@@ -233,6 +241,7 @@ public final class Pkix {
      * @return a content signer
      * @throws zeroecho.core.err.UnsupportedRoleException if LMS/XMSS signing is
      *         requested; rejection precedes provider invocation
+     * @throws NullPointerException if any of {@code algorithm}, {@code privateKey} is null
      */
     public static ContentSigner signer(PrivateKey privateKey, AlgorithmIdentifier algorithm) {
         zeroecho.core.alg.common.sig.StatefulSigningGuard.requireStateless(
@@ -247,6 +256,7 @@ public final class Pkix {
      * @param publicKey the verifying public key
      * @param algorithm the signature algorithm identifier
      * @return a content verifier
+     * @throws NullPointerException if any of {@code publicKey}, {@code algorithm} is null
      */
     public static ContentVerifier verifier(PublicKey publicKey, AlgorithmIdentifier algorithm) {
         return provider().verifier(Objects.requireNonNull(publicKey, "publicKey"),
@@ -261,6 +271,7 @@ public final class Pkix {
      * @param subjectPublicKeyInfoDer the SPKI DER of the verifying key
      * @param algorithm the signature algorithm identifier
      * @return a content verifier
+     * @throws NullPointerException if any of {@code subjectPublicKeyInfoDer}, {@code algorithm} is null
      */
     public static ContentVerifier verifier(byte[] subjectPublicKeyInfoDer, AlgorithmIdentifier algorithm) {
         return provider().verifier(Objects.requireNonNull(subjectPublicKeyInfoDer, "spki"),
@@ -272,6 +283,7 @@ public final class Pkix {
      *
      * @param publicKey the public key
      * @return the subject key identifier bytes
+     * @throws NullPointerException if {@code publicKey} is null
      */
     public static byte[] subjectKeyIdentifier(PublicKey publicKey) {
         return provider().subjectKeyIdentifier(Objects.requireNonNull(publicKey, "publicKey"));
@@ -284,6 +296,7 @@ public final class Pkix {
      * @param serialNumber the subject certificate serial number
      * @param digestAlgorithmOid the digest algorithm OID
      * @return the computed cert id
+     * @throws NullPointerException if any of {@code issuer}, {@code serialNumber}, {@code digestAlgorithmOid} is null
      */
     public static CertId computeCertId(X509Certificate issuer, BigInteger serialNumber,
             String digestAlgorithmOid) {
@@ -307,6 +320,7 @@ public final class Pkix {
      *
      * @param der the algorithm-identifier DER
      * @return the parsed algorithm identifier
+     * @throws NullPointerException if {@code der} is null
      */
     public static AlgorithmIdentifier parseAlgorithmIdentifier(byte[] der) {
         return provider().parseAlgorithmIdentifier(Objects.requireNonNull(der, DER_PARAMETER));
@@ -317,6 +331,7 @@ public final class Pkix {
      *
      * @param subjectPublicKeyInfoDer the SPKI DER
      * @return the subject public key algorithm identifier
+     * @throws NullPointerException if {@code subjectPublicKeyInfoDer} is null
      */
     public static AlgorithmIdentifier subjectPublicKeyAlgorithm(byte[] subjectPublicKeyInfoDer) {
         return provider().subjectPublicKeyAlgorithm(Objects.requireNonNull(subjectPublicKeyInfoDer, "spki"));
@@ -327,6 +342,7 @@ public final class Pkix {
      *
      * @param subjectPublicKeyInfoDer the SPKI DER
      * @return the public key
+     * @throws NullPointerException if {@code subjectPublicKeyInfoDer} is null
      */
     public static PublicKey publicKeyFromSubjectPublicKeyInfo(byte[] subjectPublicKeyInfoDer) {
         return provider().publicKeyFromSubjectPublicKeyInfo(Objects.requireNonNull(subjectPublicKeyInfoDer, "spki"));
@@ -337,6 +353,7 @@ public final class Pkix {
      *
      * @param der the response DER
      * @return the parsed response
+     * @throws NullPointerException if {@code der} is null
      */
     public static OcspResponse parseOcspResponse(byte[] der) {
         return provider().parseOcspResponse(Objects.requireNonNull(der, DER_PARAMETER));
@@ -348,6 +365,7 @@ public final class Pkix {
      *
      * @param nameDer the DER of an X.500 {@code Name}
      * @return the ordered relative distinguished names
+     * @throws NullPointerException if {@code nameDer} is null
      */
     public static List<RelativeDistinguishedName> parseDistinguishedName(byte[] nameDer) {
         return provider().parseDistinguishedName(Objects.requireNonNull(nameDer, "nameDer"));
@@ -359,6 +377,7 @@ public final class Pkix {
      *
      * @param name the distinguished-name string
      * @return the ordered relative distinguished names
+     * @throws NullPointerException if {@code name} is null
      */
     public static List<RelativeDistinguishedName> parseDistinguishedNameString(String name) {
         return provider().parseDistinguishedNameString(Objects.requireNonNull(name, "name"));
@@ -370,6 +389,7 @@ public final class Pkix {
      *
      * @param subjectPublicKeyInfoDer the SPKI DER
      * @return the public-key bit-string content bytes
+     * @throws NullPointerException if {@code subjectPublicKeyInfoDer} is null
      */
     public static byte[] subjectPublicKeyBytes(byte[] subjectPublicKeyInfoDer) {
         return provider().subjectPublicKeyBytes(Objects.requireNonNull(subjectPublicKeyInfoDer, "spki"));
@@ -381,6 +401,7 @@ public final class Pkix {
      *
      * @param certificate the certificate
      * @return the exact SPKI DER
+     * @throws NullPointerException if {@code certificate} is null
      */
     public static byte[] subjectPublicKeyInfo(X509Certificate certificate) {
         return provider().subjectPublicKeyInfo(Objects.requireNonNull(certificate, "certificate"));
@@ -393,6 +414,7 @@ public final class Pkix {
      * @param algorithm the subject public-key algorithm identifier
      * @param publicKeyBits the raw public-key bit-string content bytes
      * @return the SPKI DER
+     * @throws NullPointerException if any of {@code algorithm}, {@code publicKeyBits} is null
      */
     public static byte[] buildSubjectPublicKeyInfo(AlgorithmIdentifier algorithm, byte[] publicKeyBits) {
         return provider().buildSubjectPublicKeyInfo(Objects.requireNonNull(algorithm, TEXT_ALGORITHM),
@@ -404,6 +426,7 @@ public final class Pkix {
      *
      * @param der the DER of an {@code Extensions} sequence
      * @return the parsed extensions in order
+     * @throws NullPointerException if {@code der} is null
      */
     public static List<CertificateExtension> parseExtensions(byte[] der) {
         return provider().parseExtensions(Objects.requireNonNull(der, DER_PARAMETER));
@@ -414,6 +437,7 @@ public final class Pkix {
      *
      * @param der the DER of a {@code GeneralNames} sequence
      * @return the parsed general names in order
+     * @throws NullPointerException if {@code der} is null
      */
     public static List<GeneralName> parseGeneralNames(byte[] der) {
         return provider().parseGeneralNames(Objects.requireNonNull(der, DER_PARAMETER));
@@ -427,6 +451,7 @@ public final class Pkix {
      * @param signature the raw signature bytes
      * @param crl {@code true} for a CRL, {@code false} for a certificate
      * @return the DER of the assembled signed object
+     * @throws NullPointerException if any of {@code tbs}, {@code signature} is null
      */
     public static byte[] assembleCertificateOrCrl(byte[] tbs, byte[] signature, boolean crl) {
         return provider().assembleCertificateOrCrl(Objects.requireNonNull(tbs, "tbs"),
@@ -441,6 +466,7 @@ public final class Pkix {
      * @param signatureAlgorithmDer the DER of the signature {@code AlgorithmIdentifier}
      * @param signature the raw signature bytes
      * @return the DER of the assembled OCSP response
+     * @throws NullPointerException if any of {@code tbsResponseData}, {@code signatureAlgorithmDer}, {@code signature} is null
      */
     public static byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer,
             byte[] signature) {
@@ -482,6 +508,7 @@ public final class Pkix {
      *
      * @param algorithm the algorithm identifier
      * @return the DER encoding
+     * @throws NullPointerException if {@code algorithm} is null
      */
     public static byte[] encodeAlgorithmIdentifier(AlgorithmIdentifier algorithm) {
         return provider().encodeAlgorithmIdentifier(Objects.requireNonNull(algorithm, TEXT_ALGORITHM));
@@ -493,6 +520,7 @@ public final class Pkix {
      *
      * @param relativeNames the ordered relative distinguished names
      * @return the string form of the distinguished name
+     * @throws NullPointerException if {@code relativeNames} is null
      */
     public static String distinguishedNameString(List<RelativeDistinguishedName> relativeNames) {
         return provider().distinguishedNameString(Objects.requireNonNull(relativeNames, "relativeNames"));
@@ -514,6 +542,7 @@ public final class Pkix {
      * @return the parsed and verified certification request
      * @throws CertificationRequestException if the CSR cannot be parsed or its
      *         self-signature fails verification
+     * @throws NullPointerException if {@code csrPemOrDer} is null
      */
     public static CertificationRequest parseCsr(byte[] csrPemOrDer) throws CertificationRequestException {
         Objects.requireNonNull(csrPemOrDer, "csrPemOrDer");
@@ -550,6 +579,7 @@ public final class Pkix {
      * @param chain ordered certificate list; must not be null or empty
      * @return DER-encoded CMS {@code ContentInfo} wrapping {@code SignedData}
      * @throws IllegalArgumentException if encoding fails
+     * @throws NullPointerException if {@code chain} is null
      */
     public static byte[] encodeCertsOnly(List<X509Certificate> chain) {
         return provider().encodeCertsOnly(Objects.requireNonNull(chain, "chain"));
@@ -562,6 +592,7 @@ public final class Pkix {
      * @param attributes the CSR attributes to encode; must not be null
      * @return DER-encoded {@code CsrAttrs} sequence
      * @throws IllegalArgumentException if encoding fails
+     * @throws NullPointerException if {@code attributes} is null
      */
     public static byte[] encodeCsrAttrs(List<CsrAttribute> attributes) {
         return provider().encodeCsrAttrs(Objects.requireNonNull(attributes, "attributes"));
@@ -578,6 +609,7 @@ public final class Pkix {
      * @throws IllegalArgumentException if CSR construction or signing fails
      * @throws zeroecho.core.err.UnsupportedRoleException if the private key uses
      *         LMS/XMSS; rejection precedes provider invocation
+     * @throws NullPointerException if any of {@code originalCsrDer}, {@code generatedPublicKey}, {@code generatedPrivateKey} is null
      */
     public static byte[] buildServerKeygenCsr(byte[] originalCsrDer, PublicKey generatedPublicKey,
             PrivateKey generatedPrivateKey) {
@@ -597,6 +629,7 @@ public final class Pkix {
      * @param recipientCertificate the recipient's certificate (public key used for wrap)
      * @return DER-encoded CMS {@code ContentInfo} wrapping the {@code EnvelopedData}
      * @throws IllegalArgumentException if encryption fails
+     * @throws NullPointerException if any of {@code pkcs8PrivateKeyDer}, {@code recipientCertificate} is null
      */
     public static byte[] encryptPrivateKeyForRecipient(byte[] pkcs8PrivateKeyDer,
             X509Certificate recipientCertificate) {
@@ -618,6 +651,7 @@ public final class Pkix {
      * @param signer            configured signer for the issuing CA key
      * @return pre-certificate DER and its chain
      * @throws IllegalArgumentException if pre-certificate construction or signing fails
+     * @throws NullPointerException if any of {@code tbsCertificateDer}, {@code issuerChainDer}, {@code signer} is null
      */
     public static PreCertificateResult buildPreCertificate(byte[] tbsCertificateDer,
             List<byte[]> issuerChainDer, ContentSigner signer) {
@@ -636,6 +670,7 @@ public final class Pkix {
      * @param scts              verified SCTs to embed; must contain at least one entry
      * @return modified DER-encoded {@code TBSCertificate} with the SCT list extension
      * @throws IllegalArgumentException if embedding fails
+     * @throws NullPointerException if any of {@code tbsCertificateDer}, {@code scts} is null
      */
     public static byte[] embedScts(byte[] tbsCertificateDer,
             List<SignedCertificateTimestamp> scts) {
@@ -651,6 +686,7 @@ public final class Pkix {
      * @param jsonResponseBody raw response body bytes from the CT log; must not be {@code null}
      * @return the parsed SCT
      * @throws IllegalArgumentException if the JSON is malformed or the SCT structure is invalid
+     * @throws NullPointerException if {@code jsonResponseBody} is null
      */
     public static SignedCertificateTimestamp parseSct(byte[] jsonResponseBody) {
         return provider().parseSct(Objects.requireNonNull(jsonResponseBody, "jsonResponseBody"));
@@ -664,6 +700,7 @@ public final class Pkix {
      * @param preCertDer     DER-encoded pre-certificate that was submitted; must not be {@code null}
      * @return {@code true} if the signature is valid, {@code false} otherwise
      * @throws IllegalArgumentException if the algorithm is unsupported or the key is invalid
+     * @throws NullPointerException if any of {@code sct}, {@code ctLogPublicKey}, {@code preCertDer} is null
      */
     public static boolean verifySct(SignedCertificateTimestamp sct,
             PublicKey ctLogPublicKey, byte[] preCertDer) {

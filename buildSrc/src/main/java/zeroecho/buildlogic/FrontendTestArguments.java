@@ -39,7 +39,9 @@ import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.process.CommandLineArgumentProvider;
 
-/** Supplies the configured Node executable to JVM frontend fixtures without execution-time Project access. */
+/**
+ * Supplies the configured Node executable to JVM frontend fixtures without execution-time Project access.
+ */
 public abstract class FrontendTestArguments implements CommandLineArgumentProvider {
     /**
      * Returns the resolved executable path or the explicitly configured frontendNode override.

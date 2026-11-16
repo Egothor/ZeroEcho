@@ -49,20 +49,48 @@ final class JcaAgreementEngine {
     private final String provider;
     private PublicKey peer;
 
+    /**
+     * Creates a stateful agreement engine borrowing the supplied private key.
+     *
+     * @param privateKey local private key; must not be null
+     * @param jcaName JCA key-agreement algorithm; must not be null
+     * @param provider provider name, or null to use normal JCA provider selection
+     * @throws NullPointerException if the private key or algorithm name is null
+     */
     /* default */ JcaAgreementEngine(PrivateKey privateKey, String jcaName, String provider) {
         this.privateKey = Objects.requireNonNull(privateKey, "privateKey must not be null");
         this.jcaName = Objects.requireNonNull(jcaName, "jcaName must not be null");
         this.provider = provider;
     }
 
+    /**
+     * Returns the borrowed local private key without exporting key material.
+     *
+     * @return the key supplied at construction
+     */
     /* default */ PrivateKey privateKey() {
         return privateKey;
     }
 
+    /**
+     * Replaces the peer key used by subsequent derivations.
+     *
+     * @param peer peer public key, or null to clear the selection
+     */
     /* default */ void setPeerPublic(PublicKey peer) {
         this.peer = peer;
     }
 
+    /**
+     * Performs one JCA agreement with the selected peer key.
+     *
+     * <p>The result is raw shared-secret material; the caller must apply the
+     * protocol's KDF and clear the returned array when no longer needed.
+     *
+     * @return a newly allocated raw shared secret
+     * @throws IllegalStateException if no peer key is selected
+     * @throws IllegalArgumentException if JCA initialization or agreement fails
+     */
     /* default */ byte[] deriveSecret() {
         if (peer == null) {
             throw new IllegalStateException("Peer public key not set");

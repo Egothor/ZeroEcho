@@ -71,11 +71,17 @@ public final class KyberKeyGenSpec implements AlgorithmKeySpec, Describable {
      * Enumerates the supported Kyber parameter sets.
      */
     public enum Variant {
-        /** Kyber-512, NIST level 1 security strength. */
+        /**
+         * Kyber-512, NIST level 1 security strength.
+         */
         KYBER512,
-        /** Kyber-768, NIST level 3 security strength. */
+        /**
+         * Kyber-768, NIST level 3 security strength.
+         */
         KYBER768,
-        /** Kyber-1024, NIST level 5 security strength. */
+        /**
+         * Kyber-1024, NIST level 5 security strength.
+         */
         KYBER1024
     }
 

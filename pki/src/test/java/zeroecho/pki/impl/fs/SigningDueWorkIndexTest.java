@@ -49,9 +49,15 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
+/**
+ * Contract and regression tests for signing due work index.
+ */
 final class SigningDueWorkIndexTest {
     private static final Instant BASE = Instant.parse("2026-08-12T12:00:00Z");
 
+    /**
+     * One due slot transfers both directions and rollback keeps donor.
+     */
     @Test
     @SuppressWarnings("try") // Closing the uncommitted handoff is the rollback under test.
     void oneDueSlotTransfersBothDirectionsAndRollbackKeepsDonor() {
@@ -88,6 +94,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Selection orders by time then canonical operation id and honors cutoff.
+     */
     @Test
     void selectionOrdersByTimeThenCanonicalOperationIdAndHonorsCutoff() {
         try (SigningDueWorkIndex index = index(10)) {
@@ -110,6 +119,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Bulk recovery builds due and identity order without incremental insertion.
+     */
     @Test
     void bulkRecoveryBuildsDueAndIdentityOrderWithoutIncrementalInsertion() {
         try (SigningDueWorkIndex index = index(8)) {
@@ -137,6 +149,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * One admitted identity is reused for update remove and retire.
+     */
     @Test
     void oneAdmittedIdentityIsReusedForUpdateRemoveAndRetire() {
         try (SigningDueWorkIndex index = index(10)) {
@@ -157,6 +172,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Equivalent but readmitted object cannot replace current identity.
+     */
     @Test
     void equivalentButReadmittedObjectCannotReplaceCurrentIdentity() {
         try (SigningDueWorkIndex index = index(10)) {
@@ -170,6 +188,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Capacity rejects new work but allows replacement and retirement.
+     */
     @Test
     void capacityRejectsNewWorkButAllowsReplacementAndRetirement() {
         try (SigningDueWorkIndex index = index(2)) {
@@ -190,6 +211,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Admission exhaustion close and reuse are exact.
+     */
     @Test
     void admissionExhaustionCloseAndReuseAreExact() {
         try (SigningDueWorkIndex index = index(1)) {
@@ -208,6 +232,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Published admission transfers capacity until retirement.
+     */
     @Test
     void publishedAdmissionTransfersCapacityUntilRetirement() {
         try (SigningDueWorkIndex index = index(1)) {
@@ -234,6 +261,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Prepared admission rollback releases its one shot capacity.
+     */
     @Test
     void preparedAdmissionRollbackReleasesItsOneShotCapacity() {
         try (SigningDueWorkIndex index = index(1)) {
@@ -260,6 +290,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Unreserved preparation cannot steal outstanding admission.
+     */
     @Test
     void unreservedPreparationCannotStealOutstandingAdmission() {
         try (SigningDueWorkIndex index = index(1);
@@ -279,6 +312,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Admission rejects foreign mismatched rebound and consumed use.
+     */
     @Test
     void admissionRejectsForeignMismatchedReboundAndConsumedUse() {
         try (SigningDueWorkIndex owner = index(2);
@@ -306,6 +342,11 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Concurrent admissions have exactly maximum work winners.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentAdmissionsHaveExactlyMaximumWorkWinners() throws Exception {
         int maximum = 8;
@@ -353,6 +394,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Invalid bounds canonical identifiers and byte budget are rejected atomically.
+     */
     @Test
     void invalidBoundsCanonicalIdentifiersAndByteBudgetAreRejectedAtomically() {
         SigningIndexCapacityBudget small = new SigningIndexCapacityBudget(300L);
@@ -375,6 +419,9 @@ final class SigningDueWorkIndexTest {
         assertEquals(0L, small.snapshot().reservedBytes());
     }
 
+    /**
+     * Substantial bounded population selects only due prefix.
+     */
     @Test
     void substantialBoundedPopulationSelectsOnlyDuePrefix() {
         try (SigningDueWorkIndex index = index(20_000)) {
@@ -394,6 +441,9 @@ final class SigningDueWorkIndexTest {
         }
     }
 
+    /**
+     * Identity page prunes non due subtrees and preserves exclusive continuation.
+     */
     @Test
     void identityPagePrunesNonDueSubtreesAndPreservesExclusiveContinuation() {
         try (SigningDueWorkIndex index = index(20_000)) {

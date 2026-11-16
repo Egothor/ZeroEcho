@@ -62,7 +62,17 @@ import zeroecho.pkix.PublicKeyIdentity;
  */
 public record CertificateIdentityEvidence(RealmId realmId, String certificateSha256, String canonicalKeySha256,
         Set<String> legacySpkiSha256, String issuerSerialSha256) {
-    /** Validates fixed-size commitments and snapshots at most three SPKI hashes. */
+    /**
+     * Validates fixed-size commitments and snapshots at most three SPKI hashes.
+     * @param realmId authentication realm
+     * @param certificateSha256 exact certificate DER commitment
+     * @param canonicalKeySha256 mathematical key commitment, distinct from mapping hashes
+     * @param legacySpkiSha256 finite supported equivalent SPKI commitments plus actual provider encoding
+     * @param issuerSerialSha256 existing issuer-DER/positive-serial mapping commitment
+     * @throws NullPointerException if any of {@code realmId}, {@code legacySpkiSha256} is null
+     * @throws IllegalArgumentException if certificate/key identity commitments are noncanonical or mutually
+     *         inconsistent
+     */
     public CertificateIdentityEvidence {
         Objects.requireNonNull(realmId, "realmId");
         requireDigest(certificateSha256);
@@ -86,6 +96,7 @@ public record CertificateIdentityEvidence(RealmId realmId, String certificateSha
      * @return immutable, redacted credential evidence
      * @throws CertificateEncodingException if certificate encoding is unavailable
      * @throws IllegalArgumentException if the key representation or serial is unsupported
+     * @throws NullPointerException if {@code certificate} is null
      */
     public static CertificateIdentityEvidence fromCertificate(RealmId realmId, X509Certificate certificate)
             throws CertificateEncodingException {
@@ -109,6 +120,7 @@ public record CertificateIdentityEvidence(RealmId realmId, String certificateSha
      * Compares exact certificates or mathematical keys within the same realm.
      * @param other verified credential evidence
      * @return whether both represent one known requester credential relationship
+     * @throws NullPointerException if {@code other} is null
      */
     public boolean sameCredential(CertificateIdentityEvidence other) {
         Objects.requireNonNull(other, "other");
@@ -116,7 +128,11 @@ public record CertificateIdentityEvidence(RealmId realmId, String certificateSha
                 || canonicalKeySha256.equals(other.canonicalKeySha256));
     }
 
-    /** @return redacted diagnostic description without credential commitments */
+    /**
+     * Returns a diagnostic representation with sensitive identity and custody details redacted.
+     *
+     * @return redacted diagnostic description without credential commitments
+     */
     @Override public String toString() { return "CertificateIdentityEvidence[redacted]"; }
 
     private static void requireDigest(String value) {

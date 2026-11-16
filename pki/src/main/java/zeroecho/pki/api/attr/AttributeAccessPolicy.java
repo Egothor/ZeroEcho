@@ -55,6 +55,9 @@ public record AttributeAccessPolicy(boolean auditOnAllow, boolean auditOnDeny,
      * Creates an access policy.
      *
      * @throws IllegalArgumentException if {@code exportTargets} is null
+     * @param auditOnAllow if true, successful accesses should be audited
+     * @param auditOnDeny if true, denied accesses should be audited
+     * @param exportTargets allowed export targets
      */
     public AttributeAccessPolicy {
         if (exportTargets == null) {

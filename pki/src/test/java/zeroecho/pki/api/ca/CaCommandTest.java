@@ -57,6 +57,9 @@ import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.content.DurableContentReference;
 
+/**
+ * Contract and regression tests for ca command.
+ */
 final class CaCommandTest {
     private static final String SENTINEL = "privileged-sentinel";
     private static final FormatId FORMAT = new FormatId(SENTINEL);
@@ -68,6 +71,9 @@ final class CaCommandTest {
     private static final AttributeSet ATTRIBUTES = untouched(AttributeSet.class);
     private static final DurableContentReference CREDENTIAL = untouched(DurableContentReference.class);
 
+    /**
+     * All concrete commands preserve inputs and redact diagnostics without reading dependencies.
+     */
     @Test void allConcreteCommandsPreserveInputsAndRedactDiagnosticsWithoutReadingDependencies() {
         List<Record> commands = commands();
         assertEquals(8, commands.size());
@@ -91,6 +97,11 @@ final class CaCommandTest {
         assertSame(KEY, ((CaKeyRotationCommand.Intermediate) commands.get(7)).newKeyRef());
     }
 
+    /**
+     * Every null component including optional containers is rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void everyNullComponentIncludingOptionalContainersIsRejected() throws Exception {
         for (Record command : commands()) {
             for (RecordComponent component : command.getClass().getRecordComponents()) {
@@ -99,6 +110,11 @@ final class CaCommandTest {
         }
     }
 
+    /**
+     * Strict UTF-8 limits are inclusive for every applicable component.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void strictUtf8LimitsAreInclusiveForEveryApplicableComponent() throws Exception {
         String maximumId = "\u00e9".repeat(2048);
         String maximumProfile = "\u20ac".repeat(85) + "x";
@@ -127,6 +143,11 @@ final class CaCommandTest {
         assertThrows(IllegalArgumentException.class, () -> new KeyRef(" "));
     }
 
+    /**
+     * Proof ids are bounded before parsing and malformed ids have safe diagnostics.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void proofIdsAreBoundedBeforeParsingAndMalformedIdsHaveSafeDiagnostics() throws Exception {
         for (Record command : commands()) {
             if (!componentNames(command.getClass()).contains("proofId")) { continue; }
@@ -141,6 +162,11 @@ final class CaCommandTest {
         }
     }
 
+    /**
+     * Roots and intermediates have closed distinct mandatory shapes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rootsAndIntermediatesHaveClosedDistinctMandatoryShapes() throws Exception {
         assertTrue(CaRolloverCommand.class.isSealed());
         assertTrue(CaKeyRotationCommand.class.isSealed());
@@ -164,6 +190,9 @@ final class CaCommandTest {
         assertFalse(componentNames(CaKeyRotationCommand.Intermediate.class).contains("profileId"));
     }
 
+    /**
+     * Format and subject retain their existing invariants without new bounds.
+     */
     @Test void formatAndSubjectRetainTheirExistingInvariantsWithoutNewBounds() {
         FormatId format = new FormatId("x".repeat(4097));
         SubjectRef subject = new SubjectRef("x".repeat(4097));

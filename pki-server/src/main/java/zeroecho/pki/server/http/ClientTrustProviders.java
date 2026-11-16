@@ -46,12 +46,24 @@ import javax.net.ssl.X509TrustManager;
 import zeroecho.pki.server.spi.PkiServerClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Deterministic explicit provider resolver for forwarded-client trust. */
+/**
+ * Deterministic explicit provider resolver for forwarded-client trust.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
 final class ClientTrustProviders {
     private ClientTrustProviders() {
     }
 
+    /**
+     * Loads the exact configured administrative-client trust provider across supported SPI versions.
+     *
+     * @param configuration exact provider identity and initialization configuration
+     * @param loader service-provider discovery class loader
+     * @return initialized non-null client trust manager
+     * @throws NullPointerException if an argument or provider result is null
+     * @throws IllegalArgumentException if the configured provider is unavailable
+     * @throws IllegalStateException if provider identities are ambiguous or initialization fails
+     */
     /* default */ static X509TrustManager create(ProviderConfig configuration, ClassLoader loader) {
         ProviderConfig exact = Objects.requireNonNull(configuration, "configuration");
         List<PkiServerClientTrustProvider> providers = new ArrayList<>();

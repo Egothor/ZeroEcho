@@ -68,6 +68,8 @@ public record ProviderConfig(String backendId, Map<String, String> properties) {
      *
      * @param backendId  backend id (never blank)
      * @param properties properties (never {@code null})
+     * @throws NullPointerException if backendId, properties or a property key/value is null
+     * @throws IllegalArgumentException if backendId is blank
      */
     public ProviderConfig {
         Objects.requireNonNull(backendId, "backendId");
@@ -83,6 +85,7 @@ public record ProviderConfig(String backendId, Map<String, String> properties) {
      *
      * @param key key (never {@code null})
      * @return optional value (never {@code null})
+     * @throws NullPointerException if key is null
      */
     public Optional<String> get(String key) {
         Objects.requireNonNull(key, "key");
@@ -95,6 +98,7 @@ public record ProviderConfig(String backendId, Map<String, String> properties) {
      * @param key key (never {@code null})
      * @return value (never {@code null}, never blank)
      * @throws IllegalArgumentException if missing or blank
+     * @throws NullPointerException if key is null
      */
     public String require(String key) {
         Objects.requireNonNull(key, "key");

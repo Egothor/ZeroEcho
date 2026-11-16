@@ -74,7 +74,32 @@ public record ServerRealmConfiguration(RealmId realmId, String displayName,
         Map<ApprovalCategory, ApprovalService.Policy> approvalPolicies,
         java.util.Optional<String> initialAdministratorPrincipalId) {
 
-    /** Validates and snapshots the complete configuration before allocation. */
+    /**
+     * Validates and snapshots the complete configuration before allocation.
+     * @param realmId canonical realm identity
+     * @param displayName safe finite administrative display name
+     * @param confirmationProofPolicy immutable credential-confirmation proof policy
+     * @param pkiSessionConfiguration shared PKI session configuration
+     * @param authorityExposure explicit process authority-exposure policy
+     * @param authorizationCommitment SHA-256 commitment to authorization configuration
+     * @param approvalCommitment SHA-256 commitment to the HIGH_RISK approval policy
+     * @param extendedApprovalCommitment SHA-256 commitment to all non-HIGH_RISK approval policies
+     * @param disclosureCommitment SHA-256 commitment to disclosure defaults
+     * @param disclosureDefaults safe object-disclosure defaults
+     * @param controlLogPath dedicated server-control metadata log
+     * @param controlStoreId explicit durable server-control identity
+     * @param approvalPolicies closed approval policies by operation category
+     * @param initialAdministratorPrincipalId protected identity of the first deployment administrator; empty disables managed generation
+     * @throws NullPointerException if any of {@code realmId}, {@code initialAdministratorPrincipalId}, {@code
+     *         confirmationProofPolicy}, {@code pkiSessionConfiguration}, {@code authorityExposure}, {@code
+     *         disclosureDefaults}, {@code controlLogPath}, {@code controlStoreId}, {@code approvalPolicies} is
+     *         null
+     * @throws IllegalArgumentException if the control-log path has no parent directory or the high-risk
+     *         approval policy commitment differs from its canonical policy or an ordinary operation carries an
+     *         implicit approval policy or single-approval issuance is configured with a threshold other than
+     *         one or threshold approval requires fewer than two approvals or an extended approval-policy
+     *         commitment differs from its canonical policy
+     */
     public ServerRealmConfiguration {
         Objects.requireNonNull(realmId, "realmId");
         initialAdministratorPrincipalId = Objects.requireNonNull(initialAdministratorPrincipalId,

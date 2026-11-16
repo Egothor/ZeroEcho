@@ -44,7 +44,9 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 
-/** Emits minimal best-effort credential-confirmation proof outcomes. */
+/**
+ * Emits minimal best-effort credential-confirmation proof outcomes.
+ */
 final class CredentialConfirmationAudit {
     private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
     private static final Purpose CONFIRMATION_PURPOSE = new Purpose("CREDENTIAL_CONFIRMATION");
@@ -53,15 +55,33 @@ final class CredentialConfirmationAudit {
     private final Optional<AuditSink> sink;
     private final Clock clock;
 
+    /**
+     * Creates a best-effort audit emitter using the session clock.
+     *
+     * @param sink optional borrowed audit sink; must not be null
+     * @param clock authoritative event clock; must not be null
+     * @throws NullPointerException if either collaborator is null
+     */
     /* default */ CredentialConfirmationAudit(Optional<AuditSink> sink, Clock clock) {
         this.sink = Objects.requireNonNull(sink, "auditSink");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Reports availability of a persisted confirmation challenge without changing confirmation state.
+     *
+     * @param credentialId credential identity attached to the audit event
+     */
     /* default */ void challengeAvailable(PkiId credentialId) {
         emit(credentialId, "PROOF_CHALLENGE", "AVAILABLE");
     }
 
+    /**
+     * Reports a confirmation proof submission outcome without changing confirmation state.
+     *
+     * @param credentialId credential identity attached to the audit event
+     * @param result minimal outcome classification; must not be null
+     */
     /* default */ void submission(PkiId credentialId, String result) {
         emit(credentialId, "PROOF_SUBMISSION", result);
     }

@@ -73,16 +73,34 @@ import zeroecho.pki.server.http.TestClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Shared deterministic TLS, realm and server configuration fixtures. */
+/**
+ * Shared deterministic TLS, realm and server configuration fixtures.
+ */
 public final class HttpServerTestSupport {
+    /**
+     * Shared test-only password used to create ephemeral PKCS #12 fixtures.
+     */
     static final char[] PASSWORD = "test-password".toCharArray();
 
     private HttpServerTestSupport() { }
 
+    /**
+     * Creates deterministic RSA TLS fixtures and installs the test TLS/trust provider contexts.
+     *
+     * @return client, anonymous and proxy contexts with their public certificate identities
+     * @throws Exception if test key, certificate or TLS initialization fails
+     */
     public static Fixture tls() throws Exception {
         return tls(null);
     }
 
+    /**
+     * Creates TLS fixtures while additionally trusting an explicit client-certificate root on the server.
+     *
+     * @param additionalClientRoot extra server-side client trust anchor, or null for only the fixture root
+     * @return deterministic fixture contexts and certificate identities
+     * @throws Exception if test key, certificate or TLS initialization fails
+     */
     static Fixture tls(X509Certificate additionalClientRoot) throws Exception {
         KeyPair rootKey = keyPair((byte) 1);
         X509Certificate root = certificate(rootKey, rootKey, "CN=ZeroEcho Test Root", "CN=ZeroEcho Test Root",
@@ -108,6 +126,13 @@ public final class HttpServerTestSupport {
         return new Fixture(client, clientContext, anonymousContext, proxy, proxyContext, forwarded, root);
     }
 
+    /**
+     * Writes standalone server-key and trust PKCS #12 files for packaged-process fixtures.
+     *
+     * @param directory isolated output directory, created if necessary
+     * @return store paths and public client-side TLS fixture
+     * @throws Exception if key/certificate generation, store writing or TLS initialization fails
+     */
     static PackagedTls packagedTls(java.nio.file.Path directory) throws Exception {
         java.nio.file.Files.createDirectories(directory);
         KeyPair rootKey = keyPair((byte) 31);
@@ -137,11 +162,28 @@ public final class HttpServerTestSupport {
         return new PackagedTls(keys, trust, context(clientKey, client, root, false), client);
     }
 
+    /**
+     * Creates an isolated loopback server configuration using direct certificate authentication.
+     *
+     * @param directory fresh realm/control filesystem root
+     * @param client certificate mapped to the fixture administrator
+     * @return immutable server configuration with ephemeral listener port and test providers
+     * @throws Exception if certificate mapping, directory setup or configuration construction fails
+     */
     public static PkiServerConfiguration configuration(java.nio.file.Path directory, X509Certificate client)
             throws Exception {
         return configuration(directory, directAuthentication(client));
     }
 
+    /**
+     * Creates an isolated listener with explicit trusted-proxy and forwarded-client mappings.
+     *
+     * @param directory fresh realm/control filesystem root
+     * @param fixture proxy and forwarded-client public TLS identities
+     * @param format exact forwarded certificate representation to enable
+     * @return immutable trusted-reverse-proxy server configuration
+     * @throws Exception if certificate mapping, directory setup or configuration construction fails
+     */
     public static PkiServerConfiguration proxyConfiguration(java.nio.file.Path directory, Fixture fixture,
             ForwardedCertificateFormat format) throws Exception {
         PkiServerConfiguration.ClientCertificateMapping proxy = mapping("proxy-map", "trusted-proxy",
@@ -159,6 +201,14 @@ public final class HttpServerTestSupport {
         return configuration(directory, authentication);
     }
 
+    /**
+     * Copies a server configuration with a separately budgeted loopback public listener.
+     *
+     * @param source base server configuration
+     * @param authentication explicit public-listener transport authentication policy
+     * @return replacement with an ephemeral public-listener port and test TLS provider
+     * @throws Exception if loopback-address resolution or listener configuration fails
+     */
     public static PkiServerConfiguration withPublicListener(PkiServerConfiguration source,
             PkiServerConfiguration.Authentication authentication) throws Exception {
         PkiServerConfiguration.Execution publicExecution = new PkiServerConfiguration.Execution(2, 4, 2, 4, 4,
@@ -216,12 +266,25 @@ public final class HttpServerTestSupport {
                 Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Creates the deterministic SHA1PRNG source used exclusively by test fixtures.
+     *
+     * @return freshly seeded repeatable entropy source
+     * @throws Exception if the test PRNG algorithm is unavailable
+     */
     public static SecureRandom random() throws Exception {
         SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
         random.setSeed(new byte[] { 1, 3, 5, 7, 9 });
         return random;
     }
 
+    /**
+     * Generates a deterministic 2,048-bit RSA fixture key pair under the selected identity seed.
+     *
+     * @param identity seed discriminator separating fixture key identities
+     * @return reproducible fixture RSA key pair
+     * @throws Exception if RSA or test PRNG initialization fails
+     */
     static KeyPair keyPair(byte identity) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         SecureRandom deterministic = SecureRandom.getInstance("SHA1PRNG");
@@ -249,11 +312,32 @@ public final class HttpServerTestSupport {
         return result;
     }
 
+    /**
+     * Builds a TLS fixture context trusting only the primary fixture root.
+     *
+     * @param identity key pair used when identity presentation is enabled
+     * @param certificate public identity certificate
+     * @param root sole fixture trust anchor
+     * @param includeIdentity whether to present the configured identity
+     * @return initialized fixture TLS context
+     * @throws Exception if key-store, trust-store or TLS initialization fails
+     */
     private static SSLContext context(KeyPair identity, X509Certificate certificate, X509Certificate root,
             boolean includeIdentity) throws Exception {
         return context(identity, certificate, root, includeIdentity, null);
     }
 
+    /**
+     * Builds a TLS 1.3 fixture context with explicit trust roots and optional identity presentation.
+     *
+     * @param identity key pair used when identity presentation is enabled
+     * @param certificate public identity certificate
+     * @param root primary trust anchor
+     * @param includeIdentity whether to install the identity key and certificate chain
+     * @param additionalTrustRoot additional trust anchor, or null
+     * @return initialized fixture TLS context
+     * @throws Exception if key-store, trust-store or TLS initialization fails
+     */
     static SSLContext context(KeyPair identity, X509Certificate certificate, X509Certificate root,
             boolean includeIdentity, X509Certificate additionalTrustRoot) throws Exception {
         KeyStore keys = KeyStore.getInstance("PKCS12");
@@ -290,10 +374,29 @@ public final class HttpServerTestSupport {
         throw new IllegalStateException("Test trust manager unavailable");
     }
 
+    /**
+     * Public certificate identities and initialized TLS contexts for loopback protocol fixtures.
+     *
+     * @param clientCertificate direct administrator certificate
+     * @param clientContext TLS context presenting the administrator identity
+     * @param anonymousContext TLS context trusting the server without presenting a client identity
+     * @param proxyCertificate trusted forwarding-proxy certificate
+     * @param proxyContext TLS context presenting the proxy identity
+     * @param forwardedCertificate original client identity carried by the proxy
+     * @param rootCertificate fixture trust anchor
+     */
     public record Fixture(X509Certificate clientCertificate, SSLContext clientContext, SSLContext anonymousContext,
             X509Certificate proxyCertificate, SSLContext proxyContext, X509Certificate forwardedCertificate,
             X509Certificate rootCertificate) { }
 
+    /**
+     * On-disk TLS provider inputs for isolated packaged-server process tests.
+     *
+     * @param keyStore server private-key PKCS #12 path
+     * @param trustStore server/client trust-anchor PKCS #12 path
+     * @param anonymousContext client context trusting the server without a presented identity
+     * @param clientCertificate public administrator certificate for configuration mapping
+     */
     record PackagedTls(java.nio.file.Path keyStore, java.nio.file.Path trustStore, SSLContext anonymousContext,
             X509Certificate clientCertificate) { }
 }

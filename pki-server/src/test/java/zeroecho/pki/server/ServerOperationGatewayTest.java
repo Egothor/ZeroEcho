@@ -85,10 +85,20 @@ import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.server.acme.AcmeState;
 import zeroecho.pki.spi.audit.AuditSink;
 
-/** Gateway descriptor, multi-authority and approval enforcement coverage. */
+/**
+ * Gateway descriptor, multi-authority and approval enforcement coverage.
+ */
 class ServerOperationGatewayTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks retained-target observation preserves original operation/resource coordinates without renormalization or redispatch, while fresh admission still checks current authority.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void retainedTargetReadUsesCurrentAuthorityWithoutRenormalizingCompletedMutation() throws Exception {
         try(var opened=ServerTestSupport.open(temporaryDirectory)) {
@@ -137,6 +147,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks authoritative stored scope is resolved before control authorization and explicit foreign scope/type is denied without execution.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void persistedControlCoordinatesBindBeforeAuthorizationAndRejectExplicitForeignScope() throws Exception {
         try(var opened=ServerTestSupport.open(temporaryDirectory)) {
@@ -190,6 +205,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks trusted certificate evidence survives authoritative scope resolution into the typed actor, while embedded callers retain no fabricated evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void authoritativeScopeResolutionPreservesCredentialEvidenceIntoTypedControlActor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -241,6 +261,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks one allowed dispatch and denial of a cross-authority request without invoking the backend again.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void delegatesAllowedOperationAndDeniesCrossAuthorityWithoutExecution() throws Exception {
         System.out.println("delegatesAllowedOperationAndDeniesCrossAuthorityWithoutExecution");
@@ -268,6 +293,11 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a pending-confirmation query dispatches only under its authoritative authority scope.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void authorizesPendingConfirmationQueryOnlyForItsExactAuthorityScope() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -296,6 +326,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks challenge resource resolution precedes authorization and rejects forged coordinates, mismatched profile grants and unavailable scope resolution.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void resolvesChallengeResourceBeforeAuthorizationAndExecutesOnlyForExactGrant() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -361,6 +396,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks proof completion resolves authoritative scope once and rejects forged/profile-mismatched or unavailable authorization coordinates.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void completesProofOnlyAfterExactAuthoritativeScopeAuthorization() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -437,6 +477,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks exact high-risk commitment approval permits one dispatch and cannot be consumed again.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void requiresExactApprovalForHighRiskOperationAndExecutesOnce() throws Exception {
         System.out.println("requiresExactApprovalForHighRiskOperationAndExecutesOnce");
@@ -477,6 +522,11 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks renewal carries authoritative actor, issuer, profile and ordinary-grant authorization evidence into issuance.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void renewCredentialCoCommitsResolvedIssuanceEvidence() throws Exception {
         System.out.println("renewCredentialCoCommitsResolvedIssuanceEvidence");
@@ -511,6 +561,11 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks active certificate-profile drift invalidates the approved directory target before execution and changes its commitment.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void acmeDirectoryApprovalRejectsActiveProfileDriftBeforeExecution() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -565,6 +620,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks changing revocation justification changes the approval commitment and prevents reuse of an unrelated decision.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void conditionalRevocationApprovalBindsJustificationAndCannotBeReused() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -632,6 +692,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks an unconditional revocation grant cannot manufacture a conditional approval request or retained approval record.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsApprovalRequestForUnconditionalRevocationGrant() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -653,6 +718,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks an unsatisfied reason condition prevents approval admission and leaves no retained approval record.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsApprovalRequestWhenJustificationConditionRemainsUnsatisfied() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -675,6 +745,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks foreign or unresolved credential ownership prevents approval creation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsApprovalRequestForWrongOrUnresolvedCredentialAuthority() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -709,6 +784,9 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks credential identity, reason and both justification presence/value participate in the exact revocation commitment.
+     */
     @Test
     void revocationCommitmentBindsCredentialReasonAndJustificationPresenceAndValue() {
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
@@ -733,6 +811,11 @@ class ServerOperationGatewayTest {
                         Optional.of("ticket-100")), credentialResource(otherCredential)));
     }
 
+    /**
+     * Checks a typed revocation reason alone cannot satisfy the separate operator-justification condition.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void revocationReasonDoesNotReplaceRequiredOperatorJustification() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -762,6 +845,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks ordinary authorized revocation dispatches once with committed actor/request evidence and a single reconciliation wake.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void revocationWithoutApprovalConditionExecutesDirectly() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -788,6 +876,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks pending-confirmation revocation resolves scope once and binds ordinary authorization plus justification evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void pendingConfirmationRevocationUsesExactScopeRevokePermissionAndBoundEvidence()
             throws Exception {
@@ -835,6 +928,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks approval admission and execution each resolve the pending-confirmation profile exactly once before the single dispatch.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void pendingConfirmationApprovalReconstructsNestedAndExecutionScopesWithOneLookupEach()
             throws Exception {
@@ -895,6 +993,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks denied, unrelated, failed and pending operation outcomes do not emit a committed-revocation wake.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void revocationWakeIgnoresDeniedUnrelatedAndNoncompletedOutcomes() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -940,6 +1043,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks best-effort audit failure cannot replace a completed authoritative revocation result or its committed evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void throwingImmediateAuditCannotChangeCommittedAdministrativeRevocationOutcome() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -965,6 +1073,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks break-glass use is preserved as the revocation evidence authorization path.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void classifiesBreakGlassBeforeOtherAdministrativePaths() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -990,6 +1103,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks the gateway refuses revocation when the backend cannot co-commit required evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void failsClosedWhenRevocationEvidenceIsUnsupported() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -1025,6 +1143,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks backend recovery-required classifications survive gateway result adaptation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void preservesRecoveryAndExternalOutcomeClassifications() throws Exception {
         System.out.println("preservesRecoveryAndExternalOutcomeClassifications");
@@ -1048,6 +1171,11 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks mismatched authoritative issuer scope is denied before backend invocation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsCredentialWhoseAuthoritativeIssuerDiffersFromClaimedScope() throws Exception {
         System.out.println("rejectsCredentialWhoseAuthoritativeIssuerDiffersFromClaimedScope");
@@ -1079,6 +1207,9 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the closed descriptor catalog count/family mappings and rejects unsupported or duplicated operation identities.
+     */
     @Test
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
@@ -1128,6 +1259,11 @@ class ServerOperationGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks publication retry/registration use resolved owner authority and reject foreign or unresolved ownership.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void enforcesResolvedOwningAuthorityForPublicationOperations() throws Exception {
         System.out.println("enforcesResolvedOwningAuthorityForPublicationOperations");
@@ -1351,6 +1487,11 @@ class ServerOperationGatewayTest {
                 ServerTestSupport.CLOCK, auditSink, wake, () -> { });
     }
 
+    /**
+     * Checks hold/unhold require distinct actions and exact authoritative profile scope while retaining justification evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void holdAndReleaseRequireTheirOwnPermissionsAndAuthoritativeProfile() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -1396,6 +1537,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks hold approval binds action, credential, justification and resolved profile before its one permitted execution.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void holdApprovalBindsActionTargetJustificationAndResolvedProfile() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -1430,6 +1576,11 @@ class ServerOperationGatewayTest {
         }
     }
 
+    /**
+     * Checks a legacy executor lacking hold support cannot consume approval that a capable executor can subsequently use.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void legacyEvidenceExecutorCannotConsumeHoldApproval() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -1476,22 +1627,40 @@ class ServerOperationGatewayTest {
             AtomicReference<RevocationExecutionEvidence> evidence,
             AtomicReference<zeroecho.pki.api.attr.AttributeSet> issuanceEvidence)
             implements zeroecho.pki.application.PkiOperationExecutor, RevocationEvidenceExecutor {
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean supportsHoldTransitions() { return true; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
                 RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
             evidence.set(exactEvidence); calls.incrementAndGet(); return result;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
                 RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
             evidence.set(exactEvidence); calls.incrementAndGet(); return result;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
             calls.incrementAndGet(); return result;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
                 RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
             evidence.set(exactEvidence); calls.incrementAndGet(); return result;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome executePendingConfirmationRevocation(
                 PkiOperation.RevokePendingCredentialConfirmation operation,
                 RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
@@ -1570,12 +1739,21 @@ class ServerOperationGatewayTest {
     }
 
     private static class TestScopeResolver implements zeroecho.pki.application.PkiResourceScopeResolver {
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<CredentialScope> credentialScope(PkiId credentialId) {
             return Optional.of(new CredentialScope(ServerTestSupport.AUTHORITY, "profile-a"));
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<PkiId> statusObjectAuthority(PkiId statusObjectId) {
             return Optional.of(ServerTestSupport.AUTHORITY);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<PkiId> publicationAuthority(PkiId publicationId) {
             return Optional.of(ServerTestSupport.AUTHORITY);
         }

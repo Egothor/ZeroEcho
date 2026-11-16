@@ -44,8 +44,20 @@ import zeroecho.pki.impl.core.CrlScope;
  * retention purge and generation retirement never recycle its serial. The
  * owner must match exactly on replay; a digest lookup is not structural proof.
  * This immutable record performs no store operation.
+ * @param scope exact structural CRL scope, checked independently of its digest
+ * @param serial reserved positive certificate serial
+ * @param issuanceOwner exact signing or imported-certificate reservation owner
  */
 record ScopeSerialReservation(CrlScope scope, BigInteger serial, IssuanceOwner issuanceOwner) {
+    /**
+     * Creates the permanent scope-wide serial reservation.
+     *
+     * @param scope exact structural CRL scope, checked independently of its digest
+     * @param serial reserved positive certificate serial
+     * @param issuanceOwner exact signing or imported-certificate reservation owner
+     * @throws NullPointerException if {@code scope} is null; or if {@code serial} is null; or if {@code issuanceOwner} is null
+     * @throws IllegalArgumentException if {@code (serial.signum() <= 0 || serial.bitLength() > 159)}
+     */
     ScopeSerialReservation {
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(serial, "serial");
@@ -55,19 +67,39 @@ record ScopeSerialReservation(CrlScope scope, BigInteger serial, IssuanceOwner i
         }
     }
 
-    /** Closed reservation authority; neither an arbitrary label nor an authorization token. */
+    /**
+     * Closed reservation authority; neither an arbitrary label nor an authorization token.
+     */
     /* default */ sealed interface IssuanceOwner permits SigningOwner, ImportedCertificateOwner { }
 
-    /** Exact operation and canonical command SHA-256 commitment. */
+    /**
+     * Exact operation and canonical command SHA-256 commitment.
+     * @param operationId exact signing operation identity
+     * @param commandCommitment canonical SHA-256 commitment of the exact signing command
+     */
     /* default */ record SigningOwner(PkiId operationId, String commandCommitment) implements IssuanceOwner {
+        /**
+         * Creates the exact operation and canonical command SHA-256 commitment.
+         *
+         * @param operationId exact signing operation identity
+         * @param commandCommitment canonical SHA-256 commitment of the exact signing command
+         */
         SigningOwner {
             CrlScopeMetadataCodec.requireId(operationId);
             CrlScopeMetadataCodec.requireHash(commandCommitment);
         }
     }
 
-    /** Exact SHA-256 commitment to an imported certificate's canonical DER. */
+    /**
+     * Exact SHA-256 commitment to an imported certificate's canonical DER.
+     * @param certificateCommitment canonical SHA-256 commitment of the imported certificate DER
+     */
     /* default */ record ImportedCertificateOwner(String certificateCommitment) implements IssuanceOwner {
+        /**
+         * Creates the exact SHA-256 commitment to an imported certificate's canonical DER.
+         *
+         * @param certificateCommitment canonical SHA-256 commitment of the imported certificate DER
+         */
         ImportedCertificateOwner {
             CrlScopeMetadataCodec.requireHash(certificateCommitment);
         }

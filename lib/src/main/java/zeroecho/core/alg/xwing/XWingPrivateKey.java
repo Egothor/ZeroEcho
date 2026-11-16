@@ -65,6 +65,13 @@ final class XWingPrivateKey implements PrivateKey, Destroyable {
     private byte[] seed;
     private boolean destroyed;
 
+    /**
+     * Copies a raw X-Wing private seed into this destroyable key.
+     *
+     * @param seed exactly 32 seed bytes; must not be null
+     * @throws NullPointerException if the seed is null
+     * @throws IllegalArgumentException if the seed length is invalid
+     */
     /* default */ XWingPrivateKey(byte[] seed) {
         java.util.Objects.requireNonNull(seed, "seed");
         if (seed.length != XWingPrivateKeySpec.SEED_LENGTH) {
@@ -73,27 +80,45 @@ final class XWingPrivateKey implements PrivateKey, Destroyable {
         this.seed = seed.clone();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String getAlgorithm() {
         return "X-Wing";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String getFormat() {
         return "RAW";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] getEncoded() {
         checkAlive();
         return seed.clone();
     }
 
+    /**
+     * Returns an independently owned copy of the active private seed.
+     *
+     * @return a new array of 32 seed bytes; the caller must clear it after use
+     * @throws IllegalStateException if this key has been destroyed
+     */
     /* default */ byte[] rawSeed() {
         checkAlive();
         return seed.clone();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         if (!destroyed) {
@@ -103,6 +128,9 @@ final class XWingPrivateKey implements PrivateKey, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         return destroyed;

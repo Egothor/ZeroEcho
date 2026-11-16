@@ -57,12 +57,27 @@ final class BackupTransferService implements AutoCloseable {
     private final BackupService backup;
     private final BackupArtifactRepository repository;
     private final RestorePreflight preflight;
-    /** Checks whether a cold restore may be staged in the current server state. */
+    /**
+     * Checks whether a cold restore may be staged in the current server state.
+     */
     /* default */ @FunctionalInterface interface RestorePreflight {
-        /** @throws IOException if the server cannot safely stage a restore */
+        /**
+         * Checks that the server can safely stage a restore without mutating domain state.
+         *
+         * @throws IOException if runtime prerequisites do not permit safe staging
+         */
         void check() throws IOException;
     }
 
+    /**
+     * Composes backup transfer ownership and reconciles unresolved retained restores on open.
+     *
+     * @param backup authoritative domain backup/restore service
+     * @param repository realm-owned durable artifact spool
+     * @param preflight runtime prerequisite check performed before restore staging
+     * @throws NullPointerException if a collaborator is null
+     * @throws IOException if cold-start restore reconciliation or spool cleanup fails
+     */
     /* default */ BackupTransferService(BackupService backup, BackupArtifactRepository repository, RestorePreflight preflight) throws IOException {
         this.backup = java.util.Objects.requireNonNull(backup);
         this.repository = java.util.Objects.requireNonNull(repository);
@@ -89,15 +104,41 @@ final class BackupTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Reserves an owner-bound import artifact before receiving any archive bytes.
+     *
+     * @param owner authenticated principal owning the transfer
+     * @param backupId expected source backup identity
+     * @param length expected archive size, in bytes
+     * @param archiveSha256 expected lowercase hexadecimal archive SHA-256
+     * @return durably reserved import descriptor
+     * @throws IOException if capacity is exhausted or durable reservation fails
+     */
     /* default */ BackupArtifactRepository.Descriptor reserveUpload(String owner, PkiId backupId,
             long length, String archiveSha256) throws IOException {
         return repository.reserve(owner, BackupArtifactRepository.Purpose.IMPORT, backupId, length, archiveSha256);
     }
 
+    /**
+     * Resolves an owner-bound, unexpired artifact with retained archive bytes.
+     *
+     * @param owner authenticated principal owning the artifact
+     * @param handle opaque transfer handle
+     * @return exact current artifact descriptor
+     * @throws IOException if the artifact is unavailable, expired or owned by another principal
+     */
     /* default */ BackupArtifactRepository.Descriptor bind(String owner, String handle) throws IOException {
         return repository.inspect(owner, handle);
     }
 
+    /**
+     * Resolves the exact artifact/workflow snapshot required by a backup command.
+     *
+     * @param owner authenticated principal owning the transfer
+     * @param command command selecting the artifact and required lifecycle view
+     * @return workflow metadata for status/acknowledgement, otherwise a live artifact descriptor
+     * @throws IOException if the required artifact or workflow is unavailable
+     */
     /* default */ BackupArtifactRepository.Descriptor bind(String owner, ServerControlOperation.BackupArtifactCommand command)
             throws IOException {
         return command.action() == ServerControlOperation.BackupArtifactCommand.Action.STATUS
@@ -105,11 +146,29 @@ final class BackupTransferService implements AutoCloseable {
                 ? repository.workflow(owner, command.artifactHandle()) : bind(owner, command.artifactHandle());
     }
 
+    /**
+     * Commits the exact descriptor used for operation approval and execution binding.
+     *
+     * @param descriptor selected immutable artifact snapshot
+     * @return lowercase hexadecimal descriptor SHA-256
+     * @throws IOException if descriptor encoding fails
+     */
     /* default */ String commitment(BackupArtifactRepository.Descriptor descriptor) throws IOException {
         return repository.commitment(descriptor);
     }
 
     // Source and verification close before the lease releases its byte budget; pre-handoff failures close the source once.
+    /**
+     * Creates a verified domain backup and durably spools it as an owner-bound export artifact.
+     *
+     * <p>All domain sources and verification resources close before the artifact lease
+     * releases its byte budget. The returned handle has not yet been consumed by download.</p>
+     *
+     * @param owner authenticated principal owning the export
+     * @param request authorized domain backup request
+     * @return live ready-to-download artifact descriptor
+     * @throws IOException if capacity, backup preparation, copying, verification or publication fails
+     */
     @SuppressWarnings("PMD.UseTryWithResources")
     /* default */ BackupArtifactRepository.Descriptor export(String owner, BackupRequest request) throws IOException {
         try (BackupArtifactRepository.PreparationJob job = repository.prepare()) {
@@ -140,6 +199,15 @@ final class BackupTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Receives the exact reserved import artifact and verifies its archive size and SHA-256.
+     *
+     * @param owner authenticated principal owning the import
+     * @param expected exact previously bound import descriptor
+     * @param input caller-owned archive stream; remains open
+     * @throws IOException if purpose, identity or state changed, capacity is unavailable,
+     *         input fails or the archive commitment differs
+     */
     /* default */ void upload(String owner, BackupArtifactRepository.Descriptor expected, InputStream input) throws IOException {
         requirePurpose(expected, BackupArtifactRepository.Purpose.IMPORT);
         try (BackupArtifactRepository.Lease lease = repository.source(owner, expected.handle(),
@@ -149,11 +217,21 @@ final class BackupTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Consumes an export handle and copies its archive to an already opened destination.
+     *
+     * @param owner authenticated principal owning the export
+     * @param expected exact previously bound ready export descriptor
+     * @param output transport-owned destination; flushed but not closed
+     * @throws IOException if identity/state differs, copying is interrupted or I/O/cleanup fails
+     */
     /* default */ void download(String owner, BackupArtifactRepository.Descriptor expected, OutputStream output) throws IOException {
         download(owner, expected, length -> output);
     }
 
-    /** Opens the response body only after the artifact length has been validated. */
+    /**
+     * Opens the response body only after the artifact length has been validated.
+     */
     /* default */ @FunctionalInterface interface DownloadOutput {
         /**
          * Opens the destination owned by the surrounding transport lifecycle.
@@ -164,6 +242,17 @@ final class BackupTransferService implements AutoCloseable {
         OutputStream open(long length) throws IOException;
     }
 
+    /**
+     * Durably consumes an export before opening the destination or releasing archive bytes.
+     *
+     * <p>An interrupted download requires a new authorized export. This handle cannot be
+     * replayed. The surrounding transport owns and closes the destination stream.</p>
+     *
+     * @param owner authenticated principal owning the export
+     * @param expected exact previously bound ready export descriptor
+     * @param destination opens the destination after validated content length is known
+     * @throws IOException if identity/state differs, copying is interrupted or I/O/cleanup fails
+     */
     /* default */ void download(String owner, BackupArtifactRepository.Descriptor expected, DownloadOutput destination) throws IOException {
         requirePurpose(expected, BackupArtifactRepository.Purpose.EXPORT);
         try (BackupArtifactRepository.Lease lease = repository.source(owner, expected.handle(),
@@ -189,6 +278,15 @@ final class BackupTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Verifies a ready import through the domain backup service under a workspace lease.
+     *
+     * @param owner authenticated principal owning the import
+     * @param expected exact previously bound ready import descriptor
+     * @return descriptor retaining the verified manifest commitment
+     * @throws IOException if identity/state differs, workspace is unavailable,
+     *         verification fails or the verified backup identity differs
+     */
     /* default */ BackupArtifactRepository.Descriptor verify(String owner,
             BackupArtifactRepository.Descriptor expected) throws IOException {
         requirePurpose(expected, BackupArtifactRepository.Purpose.IMPORT);
@@ -209,6 +307,17 @@ final class BackupTransferService implements AutoCloseable {
         return repository.inspect(owner, expected.handle());
     }
 
+    /**
+     * Stages a verified import after runtime preflight and binds a unique domain restore identity.
+     *
+     * <p>Definite rejection is returned as retained rejected metadata. An ambiguous failure
+     * is retained as uncertain and must be reconciled before another restore.</p>
+     *
+     * @param owner authenticated principal owning the import
+     * @param expected exact previously bound verified import descriptor
+     * @return staged or definitely rejected restore-workflow descriptor
+     * @throws IOException if prerequisites, identity/state, workspace, staging or publication fails
+     */
     /* default */ BackupArtifactRepository.Descriptor restore(String owner,
             BackupArtifactRepository.Descriptor expected) throws IOException {
         requirePurpose(expected, BackupArtifactRepository.Purpose.IMPORT);
@@ -236,6 +345,14 @@ final class BackupTransferService implements AutoCloseable {
         return repository.workflow(owner, expected.handle());
     }
 
+    /**
+     * Reconciles retained workflow metadata with the latest authoritative restore result.
+     *
+     * @param owner authenticated principal owning the workflow
+     * @param workflowId opaque retained artifact/workflow handle
+     * @return reconciled workflow descriptor
+     * @throws IOException if the workflow is unavailable, reconciliation or cleanup fails
+     */
     /* default */ BackupArtifactRepository.Descriptor status(String owner, String workflowId) throws IOException {
         BackupArtifactRepository.Descriptor descriptor = repository.workflow(owner, workflowId);
         Optional<RestoreIdentity> identity = backup.latestRestoreIdentity();
@@ -246,6 +363,13 @@ final class BackupTransferService implements AutoCloseable {
         return descriptor;
     }
 
+    /**
+     * Reconciles and acknowledges a resolved restore workflow so retained resources can be cleaned.
+     *
+     * @param owner authenticated principal owning the workflow
+     * @param workflowId opaque retained artifact/workflow handle
+     * @throws IOException if the outcome remains unresolved or reconciliation/consumption fails
+     */
     /* default */ void acknowledge(String owner, String workflowId) throws IOException {
         status(owner, workflowId);
         repository.acknowledge(owner, workflowId);
@@ -265,5 +389,10 @@ final class BackupTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Closes the owned durable transfer repository after all transfer jobs and leases have drained.
+     *
+     * @throws IOException if repository work remains active or spool-lock/channel closure fails
+     */
     @Override public void close() throws IOException { repository.close(); }
 }

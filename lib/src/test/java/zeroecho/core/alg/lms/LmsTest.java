@@ -58,13 +58,23 @@ import zeroecho.sdk.hybrid.signature.HybridSignatureContexts;
 import zeroecho.sdk.hybrid.signature.HybridSignatureProfile;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Stateful signing containment, retained key import, and provider-independent verification. */
+/**
+ * Stateful signing containment, retained key import, and provider-independent verification.
+ */
 public final class LmsTest {
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Signing boundaries reject without changing private state or invoking callbacks.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signingBoundariesRejectWithoutChangingPrivateStateOrInvokingCallbacks() throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();
@@ -101,6 +111,11 @@ public final class LmsTest {
         assertArrayEquals(before, key.getEncoded());
     }
 
+    /**
+     * Imported key and verification retain compatibility without advancing state.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void importedKeyAndVerificationRetainCompatibilityWithoutAdvancingState() throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();

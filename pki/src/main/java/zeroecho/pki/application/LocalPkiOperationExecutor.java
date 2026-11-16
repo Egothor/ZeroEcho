@@ -38,13 +38,23 @@ import java.util.Objects;
 import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
 
-/** Borrowed synchronous core executor with configured local-operator audit attribution. */
+/**
+ * Borrowed synchronous core executor with configured local-operator audit attribution.
+ */
 final class LocalPkiOperationExecutor implements PkiOperationExecutor, PkiConfigurationChoicesSource {
     private final PkiOperationExecutor delegate;
     private final PkiConfigurationChoicesSource choices;
     private final LocalInvocationAudit audit;
     private final Runnable requireOpen;
 
+    /**
+     * Binds local audit attribution around an existing synchronous operation executor.
+     *
+     * @param delegate borrowed core operation executor; must remain available
+     * @param choices borrowed configuration choice source
+     * @param audit best-effort local invocation attribution
+     * @param requireOpen session lifecycle guard; references are retained without validation
+     */
     /* default */ LocalPkiOperationExecutor(PkiOperationExecutor delegate, PkiConfigurationChoicesSource choices,
             LocalInvocationAudit audit, Runnable requireOpen) {
         this.delegate = delegate;
@@ -53,6 +63,9 @@ final class LocalPkiOperationExecutor implements PkiOperationExecutor, PkiConfig
         this.requireOpen = requireOpen;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
         requireOpen.run();
         Objects.requireNonNull(operation, "operation");
@@ -67,6 +80,9 @@ final class LocalPkiOperationExecutor implements PkiOperationExecutor, PkiConfig
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Choices configurationChoices(int limit, Optional<String> after, CancellationSignal cancellation) {
         return choices.configurationChoices(limit, after, cancellation);
     }

@@ -53,7 +53,15 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 public record DomainContinuationTemplate(DomainContinuationStore.Kind kind,
         Optional<String> correlationId, EncodedObject command, String commandCommitment) {
 
-    /** Validates and defensively snapshots the exact command. */
+    /**
+     * Validates and defensively snapshots the exact command.
+     * @param kind durable outer-operation kind
+     * @param correlationId optional stable restart idempotency identity
+     * @param command nonempty bounded encoded command, defensively copied
+     * @param commandCommitment canonical versioned SHA-256 command commitment
+     * @throws NullPointerException if kind, correlationId, command is null
+     * @throws IllegalArgumentException if correlation identity is malformed or command encoding violates the required bounded binary contract
+     */
     public DomainContinuationTemplate {
         Objects.requireNonNull(kind, "kind");
         correlationId = Objects.requireNonNull(correlationId, "correlationId");
@@ -97,6 +105,7 @@ public record DomainContinuationTemplate(DomainContinuationStore.Kind kind,
      * Returns the canonical versioned commitment for exact command bytes.
      * @param command exact encoded command
      * @return {@code domain:v1:} followed by lowercase SHA-256 hexadecimal
+     * @throws IllegalStateException if the runtime does not provide SHA-256
      */
     public static String commitment(EncodedObject command) {
         try {

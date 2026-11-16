@@ -55,6 +55,8 @@ public record BackupRequest(String label, AttributeSet attributes) {
      *
      * @throws IllegalArgumentException if {@code label} is null/blank or
      *                                  {@code attributes} is null
+     * @param label operator-provided label for human identification
+     * @param attributes optional backup metadata (may be empty but not null)
      */
     public BackupRequest {
         if (label == null || label.isBlank()) {

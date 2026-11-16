@@ -282,7 +282,9 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable, D
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -296,7 +298,9 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable, D
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

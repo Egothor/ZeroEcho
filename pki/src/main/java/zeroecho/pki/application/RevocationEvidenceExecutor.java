@@ -37,7 +37,9 @@ import java.util.Objects;
 
 import zeroecho.core.io.CancellationSignal;
 
-/** Narrow application seam for revocations that require authoritative evidence. */
+/**
+ * Narrow application seam for revocations that require authoritative evidence.
+ */
 @FunctionalInterface
 public interface RevocationEvidenceExecutor {
 
@@ -66,6 +68,7 @@ public interface RevocationEvidenceExecutor {
      * @param evidence authenticated server-derived evidence
      * @param cancellation originating cancellation signal
      * @return completed, durable-pending, or safely classified outcome
+     * @throws IllegalStateException always in this default implementation, which does not support hold evidence
      */
     default PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
@@ -79,6 +82,7 @@ public interface RevocationEvidenceExecutor {
      * @param evidence authenticated server-derived evidence
      * @param cancellation originating cancellation signal
      * @return completed, durable-pending, or safely classified outcome
+     * @throws IllegalStateException always in this default implementation, which does not support hold-release evidence
      */
     default PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
@@ -91,6 +95,7 @@ public interface RevocationEvidenceExecutor {
      * @param evidence authenticated server-derived evidence
      * @param cancellation originating cooperative cancellation signal
      * @return completed, durable-pending, or safely classified outcome
+     * @throws IllegalStateException always in this default implementation, which does not support pending-confirmation revocation evidence
      */
     default PkiOperationOutcome executePendingConfirmationRevocation(
             PkiOperation.RevokePendingCredentialConfirmation operation,
@@ -103,6 +108,8 @@ public interface RevocationEvidenceExecutor {
      * Resolves the evidence-aware capability or fails closed.
      * @param executor typed PKI operation executor
      * @return same executor narrowed to the evidence-aware seam
+     * @throws NullPointerException if executor is null
+     * @throws IllegalStateException if executor does not implement authoritative revocation evidence
      */
     static RevocationEvidenceExecutor require(PkiOperationExecutor executor) {
         Objects.requireNonNull(executor, "executor");

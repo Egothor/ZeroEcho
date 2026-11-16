@@ -83,6 +83,9 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for keyring filesystem security.
+ */
 class KeyringFilesystemSecurityTest {
     private static final char[] PASSWORD = { 'f', 'i', 'l', 'e', 's', 'y', 's' };
     private static final byte[] CHILD_PASSWORD = { 'f', 'i', 'l', 'e', 's', 'y', 's' };
@@ -92,9 +95,17 @@ class KeyringFilesystemSecurityTest {
     private static final Set<PosixFilePermission> FILE_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Secure creation and unsafe permissions matrix.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void secureCreationAndUnsafePermissionsMatrix() throws Exception {
         // This matrix asserts rejection of unsafe POSIX permission bits; owner-only
@@ -134,6 +145,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Non posix and ownership mismatch fail closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void nonPosixAndOwnershipMismatchFailClosed() throws Exception {
         start("nonPosixAndOwnershipMismatchFailClosed");
@@ -162,6 +178,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Windows owner only acl established for keyring artifacts.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void windowsOwnerOnlyAclEstablishedForKeyringArtifacts() throws Exception {
         // The Windows analogue of the POSIX 0700/0600 matrix: creating a keyring
@@ -192,6 +213,11 @@ class KeyringFilesystemSecurityTest {
         }
     }
 
+    /**
+     * Symlink and hard link matrix fails closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void symlinkAndHardLinkMatrixFailsClosed() throws Exception {
         // Symbolic and hard link creation, and the POSIX nlink==1 defence, are
@@ -213,6 +239,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Same JVM ownership and independent stores.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sameJvmOwnershipAndIndependentStores() throws Exception {
         start("sameJvmOwnershipAndIndependentStores");
@@ -246,6 +277,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Forked JVM ownership releases gracefully and after termination.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void forkedJvmOwnershipReleasesGracefullyAndAfterTermination() throws Exception {
         start("forkedJvmOwnershipReleasesGracefullyAndAfterTermination");
@@ -276,6 +312,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Concurrent reads and serialized mutations remain consistent.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentReadsAndSerializedMutationsRemainConsistent() throws Exception {
         start("concurrentReadsAndSerializedMutationsRemainConsistent");
@@ -297,6 +338,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Close waits for admitted operations and clears keys once.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void closeWaitsForAdmittedOperationsAndClearsKeysOnce() throws Exception {
         start("closeWaitsForAdmittedOperationsAndClearsKeysOnce");
@@ -333,6 +379,11 @@ class KeyringFilesystemSecurityTest {
         ok();
     }
 
+    /**
+     * Admitted mutation completes before close and later mutation fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void admittedMutationCompletesBeforeCloseAndLaterMutationFails() throws Exception {
         start("admittedMutationCompletesBeforeCloseAndLaterMutationFails");
@@ -837,10 +888,18 @@ class KeyringFilesystemSecurityTest {
     }
 }
 
+/**
+ * Forked-JVM fixture that holds a keyring open until its standard input closes.
+ */
 final class KeyringStoreLockProcess {
     private KeyringStoreLockProcess() {
     }
 
+    /**
+     * Holds a keyring open in a separate JVM to exercise cross-process ownership.
+     *
+     * @param args keyring path and fixture coordination arguments
+     */
     public static void main(String[] args) {
         if (args.length != 1) {
             System.out.println("SETUP_FAILED");

@@ -52,7 +52,13 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for filesystem PKI store provider.
+ */
 final class FilesystemPkiStoreProviderTest {
+    /**
+     * Credential search requires explicit activation and every resource bound.
+     */
     @Test
     void credentialSearchRequiresExplicitActivationAndEveryResourceBound() {
         Map<String, String> properties = Map.of("root", "unused", "credentialSearch", "h2",
@@ -84,6 +90,12 @@ final class FilesystemPkiStoreProviderTest {
         assertThrows(IllegalArgumentException.class, () -> new FsPkiStoreOptions.CredentialSearch(16384, 5000, 1048577));
     }
 
+    /**
+     * Defaults and canonical values flow through shared allocation options.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void defaultsAndCanonicalValuesFlowThroughSharedAllocationOptions(@TempDir Path directory) throws Exception {
         FilesystemPkiStoreProvider provider = new FilesystemPkiStoreProvider();
@@ -101,6 +113,11 @@ final class FilesystemPkiStoreProviderTest {
         }
     }
 
+    /**
+     * Validation and allocation reject noncanonical or out of range before creating store.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     */
     @Test
     void validationAndAllocationRejectNoncanonicalOrOutOfRangeBeforeCreatingStore(@TempDir Path directory) {
         FilesystemPkiStoreProvider provider = new FilesystemPkiStoreProvider();

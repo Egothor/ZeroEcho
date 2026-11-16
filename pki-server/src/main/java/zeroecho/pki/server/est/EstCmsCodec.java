@@ -51,8 +51,17 @@ import zeroecho.pkix.csr.CsrAttribute;
  */
 final class EstCmsCodec {
 
+    /**
+     * EST media type for a PKCS #10 certificate-signing request.
+     */
     /* default */ static final String CONTENT_TYPE_PKCS10 = "application/pkcs10";
+    /**
+     * EST media type for a degenerate certs-only CMS response.
+     */
     /* default */ static final String CONTENT_TYPE_CERTS_ONLY = "application/pkcs7-mime; smime-type=certs-only";
+    /**
+     * EST media type for the supported CSR-attributes response.
+     */
     /* default */ static final String CONTENT_TYPE_CSRATTRS = "application/csrattrs";
 
     private static final Base64.Encoder MIME_B64 =

@@ -49,6 +49,7 @@ public record Purpose(String value) {
      * Creates a purpose.
      *
      * @throws IllegalArgumentException if {@code value} is null/blank
+     * @param value non-empty purpose string
      */
     public Purpose {
         if (value == null || value.isBlank()) {

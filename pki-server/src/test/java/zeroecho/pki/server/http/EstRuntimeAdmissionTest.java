@@ -64,7 +64,15 @@ import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.server.est.EstService;
 import zeroecho.pki.server.est.KeygenPolicy;
 
+/**
+ * Checks bounded EST admission and key-delivery cancellation without late transport writes.
+ */
 class EstRuntimeAdmissionTest {
+    /**
+     * Blocks encrypted delivery, checks cancellation closes the lease without a late error body, then confirms another delivery attempt remains available.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void keygenBlockedDeliveryIsCancelledClosedAndRetryRemainsAvailable() throws Exception {
         EstService service = service();
         zeroecho.pki.server.est.EstServerKeygenResponse response = mock(zeroecho.pki.server.est.EstServerKeygenResponse.class);
@@ -112,6 +120,11 @@ class EstRuntimeAdmissionTest {
         }
     }
 
+    /**
+     * Delays lease acquisition beyond transport cancellation and checks that its later expired result cannot write response headers.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void cancelledDeliveryAcquisitionCannotEmitLateErrorHeaders() throws Exception {
         EstService service = service();
         zeroecho.pki.server.est.EstServerKeygenResponse response = mock(zeroecho.pki.server.est.EstServerKeygenResponse.class);
@@ -138,6 +151,11 @@ class EstRuntimeAdmissionTest {
         }
         verify(request, never()).sendResponseHeaders(org.mockito.ArgumentMatchers.anyInt(), anyLong());
     }
+    /**
+     * Checks HTTP 413 for an oversized EST entity before simple enrollment is invoked.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void registeredAdapterEnforcesConfiguredBodyBoundBeforeService() throws Exception {
         EstService service = service();
         try (ServerRuntime runtime = new ServerRuntime(execution(), ServerRuntime.Lane.EST)) {
@@ -149,6 +167,11 @@ class EstRuntimeAdmissionTest {
         }
     }
 
+    /**
+     * Checks EST busy status 429, deadline status 504, worker cancellation and correct admission-permit release.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void registeredAdapterRejectsBusyAndCancelsOwnedWorkAtDeadline() throws Exception {
         EstService service = service();
         CountDownLatch cancelled = new CountDownLatch(1);

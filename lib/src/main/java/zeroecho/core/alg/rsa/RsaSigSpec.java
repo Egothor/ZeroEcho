@@ -84,9 +84,13 @@ public final class RsaSigSpec implements ContextSpec, Describable {
      * Signature padding modes supported by RSA.
      */
     public enum Mode {
-        /** Legacy PKCS#1 v1.5 signature scheme. */
+        /**
+         * Legacy PKCS#1 v1.5 signature scheme.
+         */
         PKCS1V15,
-        /** Probabilistic Signature Scheme (PSS), recommended for new systems. */
+        /**
+         * Probabilistic Signature Scheme (PSS), recommended for new systems.
+         */
         PSS
     }
 
@@ -98,11 +102,17 @@ public final class RsaSigSpec implements ContextSpec, Describable {
      * </p>
      */
     public enum Hash {
-        /** SHA-256 digest. */
+        /**
+         * SHA-256 digest.
+         */
         SHA256,
-        /** SHA-384 digest. */
+        /**
+         * SHA-384 digest.
+         */
         SHA384,
-        /** SHA-512 digest. */
+        /**
+         * SHA-512 digest.
+         */
         SHA512
     } // common secure choices
 

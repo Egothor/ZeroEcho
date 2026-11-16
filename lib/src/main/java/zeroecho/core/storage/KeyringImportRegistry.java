@@ -128,7 +128,22 @@ final class KeyringImportRegistry {
      */
     /* default */
     enum HmacVariant {
-        NONE(0, null), SHA256(1, "HmacSHA256"), SHA384(2, "HmacSHA384"), SHA512(3, "HmacSHA512");
+        /**
+         * No HMAC variant; used by keys from other algorithm families.
+         */
+        NONE(0, null),
+        /**
+         * HMAC with SHA-256.
+         */
+        SHA256(1, "HmacSHA256"),
+        /**
+         * HMAC with SHA-384.
+         */
+        SHA384(2, "HmacSHA384"),
+        /**
+         * HMAC with SHA-512.
+         */
+        SHA512(3, "HmacSHA512");
 
         private final int code;
         private final String jcaName;
@@ -138,14 +153,33 @@ final class KeyringImportRegistry {
             this.jcaName = jcaName;
         }
 
+        /**
+         * Returns the closed persistent-format variant identifier.
+         *
+         *
+         * @return encoded numeric variant identifier
+         */
         /* default */ int code() {
             return code;
         }
 
+        /**
+         * Returns the JCA algorithm associated with this HMAC variant.
+         *
+         *
+         * @return JCA name, or null for NONE
+         */
         /* default */ String jcaName() {
             return jcaName;
         }
 
+        /**
+         * Decodes a closed HMAC variant identifier.
+         *
+         * @param code persistent-format variant identifier
+         * @return matching HMAC variant
+         * @throws KeyringException if the code is not admitted by the format
+         */
         /* default */ static HmacVariant fromCode(int code) throws KeyringException {
             for (HmacVariant value : values()) {
                 if (value.code == code) {
@@ -155,6 +189,14 @@ final class KeyringImportRegistry {
             throw new KeyringException(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID);
         }
 
+        /**
+         * Selects the HMAC variant from a stored key when its family is HMAC.
+         *
+         * @param algorithmId canonical ZeroEcho algorithm identifier
+         * @param key key whose JCA algorithm identifies the HMAC variant
+         * @return matching variant, or NONE for a non-HMAC algorithm
+         * @throws KeyringException if an HMAC key uses an unsupported algorithm
+         */
         /* default */ static HmacVariant forStoredKey(String algorithmId, Key key) throws KeyringException {
             if (!ALGORITHM_HMAC.equals(algorithmId)) {
                 return NONE;
@@ -183,6 +225,18 @@ final class KeyringImportRegistry {
             HmacVariant hmacVariant, Class<? extends AlgorithmKeySpec> specType) {
     }
 
+    /**
+     * Reconstructs a canonical JCA key using the finite persistent importer mapping.
+     *
+     * @param algorithmId canonical ZeroEcho algorithm identifier
+     * @param kind required key classification
+     * @param encoding persistent encoded form
+     * @param hmacVariant required HMAC variant, or NONE
+     * @param encoded borrowed encoded key material
+     * @return newly imported JCA key; temporary destroyable specifications are cleared
+     * @throws GeneralSecurityException if the importer or temporary-specification cleanup fails
+     * @throws KeyringException if metadata or importer mapping is unsupported
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     /* default */ static Key importKey(String algorithmId, KeyringStore.Kind kind, KeyringStore.Encoding encoding,
             HmacVariant hmacVariant, byte[] encoded) throws GeneralSecurityException, KeyringException {
@@ -200,6 +254,15 @@ final class KeyringImportRegistry {
         }
     }
 
+    /**
+     * Checks that the runtime exposes exactly the importer required by persisted metadata.
+     *
+     * @param algorithmId canonical ZeroEcho algorithm identifier
+     * @param kind required key classification
+     * @param encoding persistent encoded form
+     * @param hmacVariant required HMAC variant, or NONE
+     * @throws KeyringException if the finite mapping or runtime importer does not match
+     */
     /* default */ static void validateMapping(String algorithmId, KeyringStore.Kind kind,
             KeyringStore.Encoding encoding, HmacVariant hmacVariant) throws KeyringException {
         PersistentMapping mapping = requireMapping(algorithmId, kind, encoding, hmacVariant);
@@ -210,6 +273,17 @@ final class KeyringImportRegistry {
         }
     }
 
+    /**
+     * Imports key bytes and requires a byte-exact canonical encoding round trip.
+     *
+     * @param algorithmId canonical ZeroEcho algorithm identifier
+     * @param kind key classification
+     * @param encoding persistent encoded form
+     * @param hmacVariant required HMAC variant, or NONE
+     * @param source borrowed original key whose algorithm must match
+     * @param encoded borrowed canonical bytes to validate
+     * @throws KeyringException if import, algorithm matching, or byte-exact canonicalization fails
+     */
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException" })
     /* default */ static void validateCanonical(String algorithmId, KeyringStore.Kind kind,
             KeyringStore.Encoding encoding, HmacVariant hmacVariant, Key source, byte[] encoded)
@@ -237,10 +311,24 @@ final class KeyringImportRegistry {
         }
     }
 
+    /**
+     * Returns a snapshot of the finite persistent importer matrix.
+     *
+     *
+     * @return immutable list of admitted mappings
+     */
     /* default */ static List<PersistentMapping> mappings() {
         return List.copyOf(MAPPINGS.values());
     }
 
+    /**
+     * Finds the persistent encoding for a non-HMAC key classification.
+     *
+     * @param algorithmId canonical ZeroEcho algorithm identifier
+     * @param kind key classification
+     * @return encoding from the finite mapping
+     * @throws KeyringException if no mapping with variant NONE exists
+     */
     /* default */ static KeyringStore.Encoding encodingFor(String algorithmId, KeyringStore.Kind kind)
             throws KeyringException {
         return MAPPINGS.values().stream()

@@ -59,6 +59,13 @@ public record CredentialQuery(Optional<FormatId> formatId, Optional<PkiId> issue
      * Creates a credential query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param formatId optional framework filter
+     * @param issuerCaId optional issuer CA filter
+     * @param subjectRef optional subject filter
+     * @param profileId optional profile filter
+     * @param status optional status filter
+     * @param publicKeyId optional public key grouping filter
+     * @param validAt optional evaluation time for validity-based filtering
      */
     public CredentialQuery {
         if (formatId == null || issuerCaId == null || subjectRef == null || profileId == null || status == null

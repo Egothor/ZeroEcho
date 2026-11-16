@@ -34,12 +34,26 @@
 
 package zeroecho.pki.api.signing;
 
-/** Public signing lifecycle projection. */
+/**
+ * Public signing lifecycle projection.
+ */
 public enum SigningOperationState {
-    /** Accepted or provider-pending work. */ PENDING,
-    /** Cancellation is durably requested. */ CANCELLING,
-    /** A BINARY signature is retained. */ SUCCEEDED,
-    /** The operation failed terminally. */ FAILED,
-    /** Provider cancellation completed. */ CANCELLED,
-    /** The authoritative deadline elapsed. */ EXPIRED
+    /**
+     * Accepted or provider-pending work.
+     */ PENDING,
+    /**
+     * Cancellation is durably requested.
+     */ CANCELLING,
+    /**
+     * A BINARY signature is retained.
+     */ SUCCEEDED,
+    /**
+     * The operation failed terminally.
+     */ FAILED,
+    /**
+     * Provider cancellation completed.
+     */ CANCELLED,
+    /**
+     * The authoritative deadline elapsed.
+     */ EXPIRED
 }

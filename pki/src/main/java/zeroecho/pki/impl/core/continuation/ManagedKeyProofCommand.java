@@ -71,15 +71,25 @@ public final class ManagedKeyProofCommand {
     private static final int MAX_INT_DIGITS = 10;
     private static final int UTF8_TWO_BYTE_START = 0x80;
     private static final int UTF8_THREE_BYTE_START = 0x800;
-    /** Discriminator shared by the closed managed key proof purposes. */
+    /**
+     * Discriminator shared by the closed managed key proof purposes.
+     */
     public static final String OPERATION = "PROVE_MANAGED_KEY";
-    /** Inclusive aggregate encoded command bound, in bytes. */
+    /**
+     * Inclusive aggregate encoded command bound, in bytes.
+     */
     public static final int MAX_COMMAND_BYTES = 1_048_576;
-    /** Inclusive canonical SubjectPublicKeyInfo bound, in bytes. */
+    /**
+     * Inclusive canonical SubjectPublicKeyInfo bound, in bytes.
+     */
     public static final int MAX_SPKI_BYTES = 1_048_576;
-    /** Inclusive complete challenge bound, in bytes. */
+    /**
+     * Inclusive complete challenge bound, in bytes.
+     */
     public static final int MAX_CHALLENGE_BYTES = MAX_COMMAND_BYTES + MAX_SPKI_BYTES + 8192;
-    /** Inclusive AlgorithmIdentifier DER bound, in bytes. */
+    /**
+     * Inclusive AlgorithmIdentifier DER bound, in bytes.
+     */
     public static final int MAX_ALGORITHM_DER_BYTES = 16_384;
 
     private ManagedKeyProofCommand() { }
@@ -175,6 +185,7 @@ public final class ManagedKeyProofCommand {
      * This coordinate grants no authorization and performs no lookup.
      * @param request bounded request
      * @return logical CA authority, never the responder or subject authority
+     * @throws NullPointerException if request is null
      */
     public static PkiId authorityId(ManagedKeyProofRequest request) {
         return switch (Objects.requireNonNull(request, "request")) {
@@ -207,6 +218,12 @@ public final class ManagedKeyProofCommand {
         }
     }
 
+    /**
+     * Requires canonical bounded proof metadata, namespace, configuration digest, and algorithm DER.
+     *
+     * @param command canonical decoded domain command; must not be null
+     * @throws IllegalArgumentException if metadata, UTF-8 bounds, or algorithm framing is invalid
+     */
     /* default */ static void validateMetadata(DomainCommandEncoding.Decoded command) {
         decodePrefix(command);
         String namespace = command.field(6);
@@ -235,6 +252,7 @@ public final class ManagedKeyProofCommand {
      * @param command structurally validated metadata or complete command
      * @param authority selected immutable identity and binding authority
      * @return exact canonical signature identity
+     * @throws NullPointerException if authority is null
      */
     public static AlgorithmIdentity validateAlgorithm(DomainCommandEncoding.Decoded command,
             X509AuthoritySnapshot authority) {
@@ -254,6 +272,15 @@ public final class ManagedKeyProofCommand {
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Decodes a canonical positive decimal length within the supplied byte bound.
+                   *
+                   * @param value canonical decimal length text; must not be null
+                   * @param maximum inclusive positive upper bound
+                   * @return validated positive length
+                   * @throws NullPointerException if value is null
+                   * @throws IllegalArgumentException if the spelling, range, or digit bound is invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static int positiveLength(String value, int maximum) {
         if (value.length() > MAX_INT_DIGITS) { throw invalid(); }
@@ -266,6 +293,16 @@ public final class ManagedKeyProofCommand {
         }
     }
 
+    /**
+     * Decodes canonical lowercase hexadecimal within inclusive decoded-byte bounds.
+     *
+     * @param value even-length lowercase hexadecimal text; must not be null
+     * @param minimum minimum decoded length in bytes
+     * @param maximum maximum decoded length in bytes
+     * @return new decoded byte array
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if spelling or decoded length violates the bounds
+     */
     /* default */ static byte[] hex(String value, int minimum, int maximum) {
         if (value.length() < 2L * minimum || value.length() > 2L * maximum || (value.length() & 1) != 0) {
             throw invalid();
@@ -279,6 +316,15 @@ public final class ManagedKeyProofCommand {
         return HexFormat.of().parseHex(value);
     }
 
+    /**
+     * Measures strict UTF-8 length without allocating an encoded buffer.
+     *
+     * @param value text with no unpaired surrogates; must not be null
+     * @param maximum inclusive encoded byte limit
+     * @return encoded UTF-8 length in bytes
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if surrogates are malformed or the byte limit is exceeded
+     */
     /* default */ static int utf8Length(String value, int maximum) {
         Objects.requireNonNull(value, "value");
         if (value.length() > maximum) { throw invalid(); }

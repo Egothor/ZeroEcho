@@ -76,11 +76,20 @@ import zeroecho.pki.spi.crypto.SigningProvider.OperationObservation;
 import zeroecho.pki.spi.crypto.SigningProvider.SignRequest;
 import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
 
+/**
+ * Contract and regression tests for zero echo lib signing provider.
+ */
 final class ZeroEchoLibSigningProviderTest {
     private static final String NAMESPACE = "0123456789abcdef0123456789abcdef.zeroecho-lib";
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "owner"),
             new Purpose("TEST"), Optional.empty(), Optional.empty());
 
+    /**
+     * Enumerates only known private aliases without key material.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void enumeratesOnlyKnownPrivateAliasesWithoutKeyMaterial(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -95,6 +104,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Signs inline without retained operation state and never replays on reconcile.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signsInlineWithoutRetainedOperationStateAndNeverReplaysOnReconcile(@TempDir Path root)
             throws Exception {
@@ -121,6 +136,12 @@ final class ZeroEchoLibSigningProviderTest {
                 "local provider must retain no per-operation maps");
     }
 
+    /**
+     * Rejects namespace and configuration mismatch before content or crypto.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsNamespaceAndConfigurationMismatchBeforeContentOrCrypto(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -143,6 +164,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Maps invalid key reference to finite safe detail.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mapsInvalidKeyReferenceToFiniteSafeDetail(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -159,6 +186,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Binary DER and PEM encodings produce cryptographically equivalent signatures.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void binaryDerAndPemEncodingsProduceCryptographicallyEquivalentSignatures(@TempDir Path root)
             throws Exception {
@@ -183,6 +216,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Content mismatch consumes one pass and returns finite integrity failure.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void contentMismatchConsumesOnePassAndReturnsFiniteIntegrityFailure(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -203,6 +242,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Invalid algorithm missing key and key mismatch use finite safe details.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidAlgorithmMissingKeyAndKeyMismatchUseFiniteSafeDetails(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -219,6 +264,12 @@ final class ZeroEchoLibSigningProviderTest {
         }
     }
 
+    /**
+     * Request cancellation produces only finite cancelled observation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void requestCancellationProducesOnlyFiniteCancelledObservation(@TempDir Path root) throws Exception {
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();

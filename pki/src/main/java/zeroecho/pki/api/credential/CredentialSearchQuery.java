@@ -58,7 +58,18 @@ import zeroecho.pki.api.request.SubjectAlternativeName;
 public record CredentialSearchQuery(PkiId authorityId, Optional<String> subjectFilter, Optional<String> serialFilter,
         Optional<String> fingerprintFilter, Optional<String> statusFilter, Optional<String> profileIdFilter,
         Optional<SubjectAlternativeName> sanFilter) {
-    /** Creates a query without interpreting SQL or wildcard characters. */
+    /**
+     * Creates a query without interpreting SQL or wildcard characters.
+     * @param authorityId exact issuing authority
+     * @param subjectFilter optional subject substring
+     * @param serialFilter optional serial substring
+     * @param fingerprintFilter optional credential-ID prefix
+     * @param statusFilter optional exact inventory status
+     * @param profileIdFilter optional exact logical profile ID
+     * @param sanFilter optional exact canonical typed issued-certificate SAN
+     * @throws NullPointerException if authorityId, subjectFilter, serialFilter, fingerprintFilter,
+     *     statusFilter, profileIdFilter, sanFilter is null
+     */
     public CredentialSearchQuery {
         Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(subjectFilter, "subjectFilter");

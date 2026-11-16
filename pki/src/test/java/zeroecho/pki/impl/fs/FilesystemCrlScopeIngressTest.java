@@ -91,6 +91,9 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.api.content.DurableContentOwner;
 
+/**
+ * Contract and regression tests for filesystem CRL scope ingress.
+ */
 class FilesystemCrlScopeIngressTest {
     private static final Instant BEFORE = Instant.parse("2025-01-01T00:00:00Z");
     private static final Instant AFTER = Instant.parse("2030-01-01T00:00:00Z");
@@ -99,6 +102,11 @@ class FilesystemCrlScopeIngressTest {
     private static KeyPair rootKey;
     private static KeyPair subjectKey;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -106,6 +114,12 @@ class FilesystemCrlScopeIngressTest {
         subjectKey = generator.generateKeyPair();
     }
 
+    /**
+     * Same scope rollover keeps permanent serial uniqueness and exact replay.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sameScopeRolloverKeepsPermanentSerialUniquenessAndExactReplay(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority first = root(store, AUTHORITY, 1);
@@ -122,6 +136,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Scope cannot be claimed by another logical authority.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void scopeCannotBeClaimedByAnotherLogicalAuthority(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             root(store, AUTHORITY, 1);
@@ -129,6 +149,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Unresolved issuer and changed metadata cannot bypass ingress.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unresolvedIssuerAndChangedMetadataCannotBypassIngress(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority authority = root(store, AUTHORITY, 1);
@@ -141,6 +167,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Intermediate serial belongs to parent and subject scope to child.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void intermediateSerialBelongsToParentAndSubjectScopeToChild(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority parent = root(store, AUTHORITY, 1);
@@ -167,6 +199,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Concurrent direct imports have one serial winner.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void concurrentDirectImportsHaveOneSerialWinner(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); java.util.concurrent.ExecutorService workers = Executors.newFixedThreadPool(2)) {
             Authority authority = root(store, AUTHORITY, 1);
@@ -190,6 +228,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Snapshot restore uses the same issuer and serial ingress.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotRestoreUsesTheSameIssuerAndSerialIngress(@TempDir Path root) throws Exception {
         Path snapshot = root.resolve("snapshot");
         Authority authority;
@@ -208,6 +252,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Committed reservation survives publication interruption and unknown commit.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void committedReservationSurvivesPublicationInterruptionAndUnknownCommit(@TempDir Path root) throws Exception {
         for (FilesystemPkiStore.CredentialReservationFault fault : List.of(
                 FilesystemPkiStore.CredentialReservationFault.BEFORE_CREDENTIAL,
@@ -239,6 +289,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Snapshot keeps unpublished and post at reservations without historical ca.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotKeepsUnpublishedAndPostAtReservationsWithoutHistoricalCa(@TempDir Path root) throws Exception {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
         FsPkiStoreOptions options = new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
@@ -270,6 +326,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Snapshot restores intermediate and same scope generations.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotRestoresIntermediateAndSameScopeGenerations(@TempDir Path root) throws Exception {
         Path snapshot = root.resolve("snapshot");
         PkiId childLeafId;
@@ -302,6 +364,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Conflicting imported snapshot authority aborts without target.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void conflictingImportedSnapshotAuthorityAbortsWithoutTarget(@TempDir Path root) throws Exception {
         Path snapshot = root.resolve("snapshot");
         try (FilesystemPkiStore store = open(root.resolve("source"))) {
@@ -330,6 +398,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Issuer path accepts original and alternate parent generation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void issuerPathAcceptsOriginalAndAlternateParentGeneration(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority original = rootWithoutCaRecord(store, AUTHORITY, 1);
@@ -343,6 +417,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Issuer path rejects missing parent generation wrong authority name and signature.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void issuerPathRejectsMissingParentGenerationWrongAuthorityNameAndSignature(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority original = rootWithoutCaRecord(store, AUTHORITY, 1);
@@ -360,6 +440,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Issuer generation reads for two certificate ingress do not scale with population.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void issuerGenerationReadsForTwoCertificateIngressDoNotScaleWithPopulation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority parent = rootWithoutCaRecord(store, AUTHORITY, 1);
@@ -392,6 +478,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Metadata force failure requires recovery before exact replay.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void metadataForceFailureRequiresRecoveryBeforeExactReplay(@TempDir Path root) throws Exception {
         Credential leaf;
         CredentialCommitOperations operations = new CredentialCommitOperations(true, false);
@@ -416,6 +508,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Metadata commit lost before force restores neither record nor owner.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void metadataCommitLostBeforeForceRestoresNeitherRecordNorOwner(@TempDir Path root) throws Exception {
         Credential leaf;
         Authority authority;
@@ -441,6 +539,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Metadata concurrent exact replay cannot pass unconfirmed publisher.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void metadataConcurrentExactReplayCannotPassUnconfirmedPublisher(@TempDir Path root) throws Exception {
         CredentialCommitOperations operations = new CredentialCommitOperations(true, true);
         try (FilesystemPkiStore store = open(root, operations); java.util.concurrent.ExecutorService workers = Executors.newFixedThreadPool(2)) {
@@ -473,6 +577,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Handoff confirmed replay finishes serial index and issuance evidence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void handoffConfirmedReplayFinishesSerialIndexAndIssuanceEvidence(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority authority = rootWithoutCaRecord(store, AUTHORITY, 1);
@@ -496,6 +606,12 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Handoff committed replay rejects changed metadata and certificate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void handoffCommittedReplayRejectsChangedMetadataAndCertificate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Authority authority = rootWithoutCaRecord(store, AUTHORITY, 1);
@@ -512,14 +628,32 @@ class FilesystemCrlScopeIngressTest {
         }
     }
 
+    /**
+     * Published credential serial index read I/O fences until reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publishedCredentialSerialIndexReadIoFencesUntilReopen(@TempDir Path root) throws Exception {
         assertPostPublicationIoRecovery(root, FilesystemPkiStore.CredentialReservationFault.SERIAL_INDEX_READ_IO);
     }
 
+    /**
+     * Published credential serial index write I/O fences until reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publishedCredentialSerialIndexWriteIoFencesUntilReopen(@TempDir Path root) throws Exception {
         assertPostPublicationIoRecovery(root, FilesystemPkiStore.CredentialReservationFault.SERIAL_INDEX_WRITE_IO);
     }
 
+    /**
+     * Published credential issuance evidence I/O fences until reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publishedCredentialIssuanceEvidenceIoFencesUntilReopen(@TempDir Path root) throws Exception {
         assertPostPublicationIoRecovery(root, FilesystemPkiStore.CredentialReservationFault.ISSUANCE_EVIDENCE_IO);
     }
@@ -629,7 +763,9 @@ class FilesystemCrlScopeIngressTest {
         throw new AssertionError("Exact replay did not reach the held credential lock");
     }
 
-    /** Existing WAL seam, armed only after the credential's serial reservation. */
+    /**
+     * Existing WAL seam, armed only after the credential's serial reservation.
+     */
     private static final class CredentialCommitOperations implements SigningActiveWal.Operations {
         private final AtomicBoolean armed = new AtomicBoolean();
         private final CountDownLatch entered = new CountDownLatch(1);

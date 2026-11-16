@@ -65,7 +65,9 @@ import zeroecho.pki.impl.core.signing.DefaultSemanticSigningService;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Session-owned orchestration; persistent store fences all acceptance and effect races. */
+/**
+ * Session-owned orchestration; persistent store fences all acceptance and effect races.
+ */
 final class DefaultStatusScheduleCoordinator implements StatusScheduleCoordinator {
     private static final AccessContext ACCESS = new AccessContext(new Principal("SYSTEM", "status-schedule"),
             new Purpose("STATUS_GENERATE"), Optional.empty(), Optional.empty());
@@ -76,17 +78,32 @@ final class DefaultStatusScheduleCoordinator implements StatusScheduleCoordinato
     private final Optional<PublicationService> publications;
     private final Runnable requireOpen;
 
+    /**
+     * Binds schedule reconciliation to session-owned store, signing and publication services.
+     *
+     * @param store authoritative schedule and workflow store
+     * @param signing semantic signing coordinator
+     * @param local optional local signing executor
+     * @param publications optional publication service
+     * @param requireOpen session lifecycle guard; collaborators are borrowed without local validation
+     */
     /* default */ DefaultStatusScheduleCoordinator(PkiStore store, DefaultSemanticSigningService signing,
             Optional<LocalSigningExecutor> local, Optional<PublicationService> publications, Runnable requireOpen) {
         this.store = store; this.signing = signing; this.local = local;
         this.publications = publications; this.requireOpen = requireOpen;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<StatusScheduleState> listWork(Optional<String> after, int limit, CancellationSignal cancellation) {
         requireOpen.run();
         return store.listStatusScheduleWork(after, limit, cancellation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public StatusScheduleState reconcile(StatusScheduleState observed, CancellationSignal cancellation) {
         requireOpen.run();
         StatusScheduleState current = refresh(observed.configuration());
@@ -122,7 +139,9 @@ final class DefaultStatusScheduleCoordinator implements StatusScheduleCoordinato
         return refresh(current.configuration());
     }
 
-    /** Preserves the original pass boundary when a claim requires another reconciliation. */
+    /**
+     * Preserves the original pass boundary when a claim requires another reconciliation.
+     */
     private record ClaimProgress(StatusScheduleState state, boolean continueEffect) { }
 
     private ClaimProgress reconcileClaimed(StatusScheduleState observed, CancellationSignal cancellation) {

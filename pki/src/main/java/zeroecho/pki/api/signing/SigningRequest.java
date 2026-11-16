@@ -63,6 +63,13 @@ public record SigningRequest(SigningSubmissionId submissionId,
      * Provider support and the PKI security floor are checked by preparation.
      * @throws NullPointerException if a component is null
      * @throws IllegalArgumentException if the identity is not a signature or the signature encoding is not BINARY
+     * @param submissionId caller-reserved operation identity
+     * @param accessContext trusted authorization and audit context
+     * @param keyRef authorized provider key reference
+     * @param fairnessAuthorityId durable scheduling authority identity
+     * @param signatureAlgorithm exact signature identity; the service enforces its security floor and provider support before staging
+     * @param candidateEncoding encoding of staged candidate bytes
+     * @param signatureEncoding requested signature encoding; currently BINARY
      */
     public SigningRequest {
         Objects.requireNonNull(submissionId, "submissionId");
@@ -80,6 +87,9 @@ public record SigningRequest(SigningSubmissionId submissionId,
         }
     }
 
-    /** Returns a representation that omits privileged request metadata. */
+    /**
+     * Returns a representation that omits privileged request metadata.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "SigningRequest[redacted]"; }
 }

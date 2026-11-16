@@ -48,24 +48,44 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 
-/** Test-only access to the filesystem store's existing cleanup fault boundary. */
+/**
+ * Test-only access to the filesystem store's existing cleanup fault boundary.
+ */
 public final class FullCrlRecoveryFaults {
     private FullCrlRecoveryFaults() { }
 
-    /** Opens a store that fails physical cleanup after durable signing retirement. */
+    /**
+     * Opens a store that fails physical cleanup after durable signing retirement.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @param clock authoritative fixture clock
+     * @return open filesystem store whose next selected retirement fails
+     */
     public static FilesystemPkiStore failRetirement(Path root, Clock clock) {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock,
                 FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE,
                 reference -> { throw new IOException("Simulated cleanup failure"); });
     }
 
-    /** Removes both sides of a status publication to simulate lost metadata. */
+    /**
+     * Removes both sides of a status publication to simulate lost metadata.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param status status object whose metadata is removed or replaced for the recovery case
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static void removeStatus(FilesystemPkiStore store, StatusObject status) throws IOException {
         mutate(store, new MetadataKey("io.zeroecho.pki.status-object-record", status.statusObjectId().value()), null);
         mutate(store, new MetadataKey("io.zeroecho.pki.status-object-owner", status.statusObjectId().value()), null);
     }
 
-    /** Replaces status metadata while retaining its valid content and ownership. */
+    /**
+     * Replaces status metadata while retaining its valid content and ownership.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param status status object whose metadata is removed or replaced for the recovery case
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     public static void replaceStatus(FilesystemPkiStore store, StatusObject status) throws IOException {
         mutate(store, new MetadataKey("io.zeroecho.pki.status-object-record", status.statusObjectId().value()),
                 FsCodec.encode(FsCodec.STATUS_OBJECT, status));

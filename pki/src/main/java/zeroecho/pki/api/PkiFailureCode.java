@@ -47,43 +47,69 @@ import java.util.Objects;
  */
 public enum PkiFailureCode {
 
-    /** Generic invalid-input failure. */
+    /**
+     * Generic invalid-input failure.
+     */
     VALIDATION_FAILURE(PkiFailureClassification.VALIDATION_FAILURE),
 
-    /** Generic failure to establish the caller's identity. */
+    /**
+     * Generic failure to establish the caller's identity.
+     */
     AUTHENTICATION_FAILURE(PkiFailureClassification.AUTHENTICATION_FAILURE),
 
-    /** Generic denial of an operation to an authenticated caller. */
+    /**
+     * Generic denial of an operation to an authenticated caller.
+     */
     AUTHORIZATION_DENIED(PkiFailureClassification.AUTHORIZATION_DENIED),
 
-    /** Generic rejection by an applicable PKI policy. */
+    /**
+     * Generic rejection by an applicable PKI policy.
+     */
     POLICY_REJECTION(PkiFailureClassification.POLICY_REJECTION),
 
-    /** Generic absence of a requested authoritative object. */
+    /**
+     * Generic absence of a requested authoritative object.
+     */
     NOT_FOUND(PkiFailureClassification.NOT_FOUND),
 
-    /** Generic conflict with authoritative state. */
+    /**
+     * Generic conflict with authoritative state.
+     */
     CONFLICT(PkiFailureClassification.CONFLICT),
 
-    /** Authoritative recovery is required before processing may continue. */
+    /**
+     * Authoritative recovery is required before processing may continue.
+     */
     RECOVERY_REQUIRED(PkiFailureClassification.RECOVERY_REQUIRED),
 
-    /** An external operation has no safely established authoritative outcome. */
+    /**
+     * An external operation has no safely established authoritative outcome.
+     */
     EXTERNAL_OUTCOME_UNKNOWN(PkiFailureClassification.EXTERNAL_OUTCOME_UNKNOWN),
 
-    /** Generic failure of a required finite or system resource. */
+    /**
+     * Generic failure of a required finite or system resource.
+     */
     RESOURCE_FAILURE(PkiFailureClassification.RESOURCE_FAILURE),
 
-    /** Generic cooperative cancellation outcome. */
+    /**
+     * Generic cooperative cancellation outcome.
+     */
     CANCELLED(PkiFailureClassification.CANCELLED),
 
-    /** Generic failure to establish success before the operation deadline. */
+    /**
+     * Generic failure to establish success before the operation deadline.
+     */
     DEADLINE_EXCEEDED(PkiFailureClassification.DEADLINE_EXCEEDED),
 
-    /** Generic temporary admission or processing-capacity exhaustion. */
+    /**
+     * Generic temporary admission or processing-capacity exhaustion.
+     */
     OVERLOADED(PkiFailureClassification.OVERLOADED),
 
-    /** Generic internal implementation failure. */
+    /**
+     * Generic internal implementation failure.
+     */
     INTERNAL_FAILURE(PkiFailureClassification.INTERNAL_FAILURE),
 
     /**
@@ -95,6 +121,12 @@ public enum PkiFailureCode {
 
     private final PkiFailureClassification classification;
 
+    /**
+     * Associates this closed failure code with its protocol-independent classification.
+     *
+     * @param classification classification assigned by the enum declaration
+     * @throws NullPointerException if the classification is null
+     */
     PkiFailureCode(PkiFailureClassification classification) {
         this.classification = Objects.requireNonNull(classification, "classification");
     }

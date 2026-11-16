@@ -41,10 +41,23 @@ import java.util.Objects;
  * Immutable next-number authority for one canonical CRL scope locator.
  * The inclusive upper value {@code 2^159} represents exhaustion and must never
  * be issued. No allocation or persistence occurs in this bounded value type.
+ * @param scopeDigest canonical SHA-256 digest of the structural CRL scope
+ * @param nextNumber next unissued CRL number; 2^159 is the exhausted sentinel
  */
 record CrlScopeCounter(String scopeDigest, BigInteger nextNumber) {
+    /**
+     * Exclusive CRL allocation ceiling, 2^159; retained as the exhausted next-number sentinel.
+     */
     /* default */ static final BigInteger EXHAUSTED = BigInteger.ONE.shiftLeft(159);
 
+    /**
+     * Creates an immutable next-number authority for one canonical CRL scope locator.
+     *
+     * @param scopeDigest canonical SHA-256 digest of the structural CRL scope
+     * @param nextNumber next unissued CRL number; 2^159 is the exhausted sentinel
+     * @throws NullPointerException if {@code nextNumber} is null
+     * @throws IllegalArgumentException if {@code (nextNumber.signum() < 0 || nextNumber.compareTo(EXHAUSTED) > 0)}
+     */
     CrlScopeCounter {
         CrlScopeMetadataCodec.requireHash(scopeDigest);
         Objects.requireNonNull(nextNumber, "nextNumber");

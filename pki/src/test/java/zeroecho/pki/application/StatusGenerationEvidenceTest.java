@@ -44,9 +44,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Closed round-trip of the system status-generation evidence vocabulary. */
+/**
+ * Closed round-trip of the system status-generation evidence vocabulary.
+ */
 class StatusGenerationEvidenceTest {
 
+    /**
+     * Round-trips status-generation evidence including its next-update boundary.
+     */
     @Test
     void roundTripsWithNextUpdate() {
         StatusGenerationEvidence evidence = StatusGenerationEvidence.system("CRL", "ca-a", "x509",
@@ -59,6 +64,9 @@ class StatusGenerationEvidenceTest {
         assertEquals(StatusGenerationEvidence.Outcome.GENERATED, decoded.outcome());
     }
 
+    /**
+     * Round trips without next update.
+     */
     @Test
     void roundTripsWithoutNextUpdate() {
         StatusGenerationEvidence evidence = StatusGenerationEvidence.system("OCSP", "ca-a", "x509",
@@ -68,12 +76,18 @@ class StatusGenerationEvidenceTest {
         assertEquals(Optional.empty(), decoded.nextUpdate());
     }
 
+    /**
+     * Decode returns empty when no evidence present.
+     */
     @Test
     void decodeReturnsEmptyWhenNoEvidencePresent() {
         AttributeSet empty = SimpleAttributeSet.builder().build();
         assertTrue(StatusGenerationEvidence.decode(empty).isEmpty());
     }
 
+    /**
+     * Decode rejects partial evidence.
+     */
     @Test
     void decodeRejectsPartialEvidence() {
         AttributeSet partial = SimpleAttributeSet.builder()

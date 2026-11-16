@@ -40,13 +40,26 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Objects;
 
-/** Computes SHA-256 commitments without retaining a complete file image. */
+/**
+ * Computes SHA-256 commitments without retaining a complete file image.
+ */
 final class SigningFileCommitment {
 
     private SigningFileCommitment() {
         // utility class
     }
 
+    /**
+     * Hashes bytes from the channel's current position through end of input using bounded workspace.
+     *
+     * <p>The temporary transfer buffer is cleared before returning or propagating failure.</p>
+     *
+     * @param channel borrowed source channel; its position advances and it remains open
+     * @return new independent 32-byte SHA-256 commitment
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if reading fails or a read makes no progress
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static byte[] sha256(ReadableByteChannel channel) throws IOException {
         Objects.requireNonNull(channel, "channel");
         MessageDigest digest = SigningFormatSupport.sha256();

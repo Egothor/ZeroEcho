@@ -72,6 +72,7 @@ public interface PkixProvider {
      * Verifies only the legacy BC pre-TBS alternative signature using an explicit
      * issuer alternative key. Missing or malformed alternative extensions fail
      * closed. This operation performs no path, time or primary-signature checks.
+     *
      * @param certificate nonnull certificate with all three alternative extensions
      * @param issuerAlternativeKey nonnull trusted issuer alternative public key
      * @return whether the alternative signature is valid
@@ -85,6 +86,7 @@ public interface PkixProvider {
      * Verifies the X.509 Cor.3 defect 450 transcript using a trusted issuer key.
      * Retains both native algorithm identifiers and omits only altSignatureValue
      * and the outer signature bits. Performs no primary/path/time verification.
+     *
      * @param certificate nonnull certificate containing all alternative extensions
      * @param issuerAlternativeKey nonnull trusted issuer alternative public key
      * @return false for missing, malformed or invalid alternative signatures

@@ -123,6 +123,10 @@ public record ParsedCertificationRequest(PkiId requestId, FormatId formatId, Sub
      * @param attributes         extracted attributes
      * @throws IllegalArgumentException if mandatory inputs are null or optional
      *                                  containers are null
+     * @param subjectRdns ordered typed single-valued subject components
+     * @param subjectAlternativeNames ordered typed SAN entries
+     * @param subjectAlternativeNamePresent whether one valid SAN extension was present
+     * @throws NullPointerException if subjectRdns or subjectAlternativeNames contains a null entry
      */
     public ParsedCertificationRequest {
         if (requestId == null) {

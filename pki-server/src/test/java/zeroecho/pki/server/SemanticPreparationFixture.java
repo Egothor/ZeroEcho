@@ -63,7 +63,9 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Actual unused opaque custody for transport unit tests; no signing admission occurs. */
+/**
+ * Real opaque signing custody for transport tests, initially unaccepted until explicit fixture acceptance.
+ */
 public final class SemanticPreparationFixture implements AutoCloseable {
     private static final char[] PASSWORD = "test-only-preparation-password".toCharArray();
     private PkiSession session;
@@ -80,10 +82,31 @@ public final class SemanticPreparationFixture implements AutoCloseable {
         this.clock = clock;
     }
 
+    /**
+     * Creates a real encrypted keyring, activates the built-in root profile, and prepares one root request.
+     *
+     * <p>The caller owns the fixture. Failed preparation closes the opened session before
+     * propagating the original failure.</p>
+     *
+     * @param root isolated fixture root for keyring and persistent PKI storage
+     * @return owned fixture retaining one unaccepted semantic preparation
+     * @throws Exception if key generation, keyring/store initialization, profile activation, or preparation fails
+     */
     public static SemanticPreparationFixture open(Path root) throws Exception {
         return open(root, ServerTestSupport.CLOCK);
     }
 
+    /**
+     * Creates a real encrypted keyring, activates the built-in root profile, and prepares one root request.
+     *
+     * <p>The caller owns the fixture. Failed preparation closes the opened session before
+     * propagating the original failure.</p>
+     *
+     * @param root isolated fixture root for keyring and persistent PKI storage
+     * @param clock authoritative fixture clock; must not be null
+     * @return owned fixture retaining one unaccepted semantic preparation
+     * @throws Exception if key generation, keyring/store initialization, profile activation, or preparation fails
+     */
     static SemanticPreparationFixture open(Path root, Clock clock) throws Exception {
         Files.createDirectories(root);
         try {
@@ -134,16 +157,37 @@ public final class SemanticPreparationFixture implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the sole root preparation retained by this fixture.
+     *
+     * @return retained preparation; fixture close discards it unless acceptRoot recorded acceptance
+     */
     public PreparedSemanticSigningRequest prepared() { return prepared; }
 
+    /**
+     * Returns the currently open session owned by this fixture.
+     *
+     * @return borrowed fixture session; reopening may replace this instance
+     */
     PkiSession session() { return session; }
 
+    /**
+     * Accepts the fixture preparation and records custody transfer for fixture cleanup.
+     *
+     * @return acceptance receipt returned by the semantic signing service
+     */
     zeroecho.pki.api.signing.SigningAcceptanceReceipt acceptRoot() {
         zeroecho.pki.api.signing.SigningAcceptanceResult result = session.semanticSigning().orElseThrow().accept(prepared);
         accepted = true;
         return result.receipt();
     }
 
+    /**
+     * Closes and reopens the same persistent session after fixture acceptance has transferred custody.
+     *
+     * @throws Exception if session close or reopening fails
+     * @throws IllegalStateException if the fixture still owns an unaccepted preparation
+     */
     void reopenSession() throws Exception {
         if (!accepted) throw new IllegalStateException("Fixture still owns unused preparation");
         session.close();
@@ -151,6 +195,12 @@ public final class SemanticPreparationFixture implements AutoCloseable {
                 PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword(PASSWORD.clone())), clock);
     }
 
+    /**
+     * Discards the still-owned preparation, then closes the fixture session even if discard fails.
+     *
+     * @throws java.io.IOException if session cleanup fails
+     * @throws IllegalStateException if an unrecorded external custody transfer prevents discard
+     */
     @Override public void close() throws java.io.IOException {
         try {
             if (!accepted) session.semanticSigning().orElseThrow().discard(prepared);

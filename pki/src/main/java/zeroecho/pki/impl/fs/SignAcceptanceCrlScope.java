@@ -59,7 +59,11 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 
-/** Bounded reservation coordinates, derived from the exact accepted TBS and frozen command. */
+/**
+ * Bounded reservation coordinates, derived from the exact accepted TBS and frozen command.
+ * @param owners bounded immutable CRL scope ownership claims
+ * @param reservation permanent scope-wide serial reservation
+ */
 record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation reservation) {
     private static final int EXTENSIONS_POSITION = 3;
     private static final int HIGH_TAG_NUMBER = 0x1f;
@@ -67,10 +71,30 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
 
     private static final int MAXIMUM_TBS_BYTES = 1_048_576;
 
+    /**
+     * Creates the bounded reservation coordinates, derived from the exact accepted TBS and frozen command.
+     *
+     * @param owners bounded immutable CRL scope ownership claims
+     * @param reservation permanent scope-wide serial reservation
+     * @throws NullPointerException if owners or one of its elements is null
+     */
     SignAcceptanceCrlScope {
         owners = List.copyOf(owners);
     }
 
+    /**
+     * Derives exact structural CRL ownership and serial reservation coordinates from a frozen certificate acceptance.
+     *
+     * <p>Derivation neither reserves a serial nor mutates scope ownership; the enclosing acceptance transaction performs those changes.</p>
+     *
+     * @param store borrowed authoritative store used to resolve exact issuer and generation evidence
+     * @param accepted frozen certificate acceptance envelope with its canonical outer command
+     * @param content borrowed bounded candidate TBS content; opened readers are closed before return
+     * @return exact scope and serial claims, or an empty optional for noncertificate or non-X.509 work
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if candidate content cannot be read or exact scope and issuer evidence are inconsistent
+     * @throws IllegalArgumentException if canonical command coordinates are malformed
+     */
     /* default */ static Optional<SignAcceptanceCrlScope> derive(FilesystemPkiStore store,
             SignWorkflowStore.AcceptanceCommand accepted, RepeatableContent content) throws IOException {
         if (accepted.outer().isEmpty()) { return Optional.empty(); }
@@ -196,7 +220,9 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
         field(validity, tag);
     }
 
-    /** Returns a zero-copy value slice from the already validated bounded DER. */
+    /**
+     * Returns a zero-copy value slice from the already validated bounded DER.
+     */
     private static ByteBuffer field(ByteBuffer input, int expectedTag) {
         require(input.hasRemaining());
         int tag = Byte.toUnsignedInt(input.get());

@@ -50,11 +50,16 @@ import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Maps issuance-evidence feed entries to payload-free audit events through the issuance adapter. */
+/**
+ * Maps issuance-evidence feed entries to payload-free audit events through the issuance adapter.
+ */
 class IssuanceAuditProjectionTest {
     private static final String COMMITMENT = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * Checks administrative issuance projection preserves evidence time, actor, credential and issuing-authority attribution under the issuance event category.
+     */
     @Test
     void projectsAdministrativeIssuanceEvidence() {
         IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.administrative("operator-a", "production",
@@ -80,6 +85,9 @@ class IssuanceAuditProjectionTest {
         assertFalse(event.details().containsKey("csr"));
     }
 
+    /**
+     * Checks an entry without recognized issuance evidence produces no fabricated audit event.
+     */
     @Test
     void skipsCredentialsWithoutIssuanceEvidence() {
         byte[] payload = DomainAttributeEncoding.encode(SimpleAttributeSet.builder().build())
@@ -88,6 +96,9 @@ class IssuanceAuditProjectionTest {
         assertTrue(IssuanceAuditProjection.toEvent(entry).isEmpty());
     }
 
+    /**
+     * Checks repeated projection of the same authoritative issuance entry produces an equal deterministic event identity.
+     */
     @Test
     void deterministicEventIdIsStableAcrossReprojection() {
         IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.acme("acct-1", "production", "corr-2",

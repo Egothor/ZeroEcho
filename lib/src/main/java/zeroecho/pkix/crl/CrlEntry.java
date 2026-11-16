@@ -46,7 +46,15 @@ import java.util.Objects;
  */
 public record CrlEntry(BigInteger serialNumber, Instant revocationTime, CrlReason reason) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Retains validated components and defensively copies mutable inputs.
+     *
+     * @param serialNumber the revoked certificate serial number (positive)
+     * @param revocationTime the revocation time
+     * @param reason the revocation reason
+     * @throws NullPointerException if any of {@code serialNumber}, {@code revocationTime}, {@code reason} is null
+     * @throws IllegalArgumentException if the certificate serial number is not positive
+     */
     public CrlEntry {
         Objects.requireNonNull(serialNumber, "serialNumber");
         Objects.requireNonNull(revocationTime, "revocationTime");

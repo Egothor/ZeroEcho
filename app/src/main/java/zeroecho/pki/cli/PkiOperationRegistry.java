@@ -62,7 +62,9 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission;
 import zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Explicit stable operation-name to typed-request binding registry. */
+/**
+ * Explicit stable operation-name to typed-request binding registry.
+ */
 // A single closed registry keeps every stable external operation name visibly bound to its typed parser.
 @SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.TooManyMethods", "PMD.UnusedFormalParameter"})
 final class PkiOperationRegistry {
@@ -91,6 +93,9 @@ final class PkiOperationRegistry {
 
     private final Map<String, Binding> bindings;
 
+    /**
+     * Creates the immutable local operation catalogue, including signing inspection and completion bindings.
+     */
     /* default */ PkiOperationRegistry() {
         Map<String, Binding> configured = new LinkedHashMap<>();
         registerAuthorityBindings(configured);
@@ -184,16 +189,39 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.QueryServerMetrics.NAME, this::queryServerMetrics);
     }
 
+    /**
+     * Returns the names bound to locally executable typed commands.
+     *
+     * @return immutable operation-name set; excludes server-only operations
+     */
     /* default */ Set<String> names() {
         return bindings.keySet();
     }
 
     // These shared typed selectors require the server's canonical claim and approval
     // transaction. They must never be advertised as locally executable bindings.
+    /**
+     * Returns operations that require the server's authenticated claim and approval transaction.
+     *
+     * @return immutable set of operation names unavailable to local execution
+     */
     /* default */ Set<String> serverOnlyNames() {
         return Set.of(PkiSigningOperation.IssueOcspResponderCertificate.NAME);
     }
 
+    /**
+     * Validates an operation's closed argument schema and binds its typed local command.
+     *
+     * <p>Referenced files are read relative to the supplied base directory. Binding does
+     * not execute the command or authorize its effects.</p>
+     *
+     * @param name registered local operation name
+     * @param arguments operation-specific JSON fields; must not be null
+     * @param baseDirectory base for relative input files; must not be null when a file is resolved
+     * @return typed command ready for local execution
+     * @throws IOException if a referenced bounded input file cannot be read
+     * @throws IllegalArgumentException if the name is unknown or server-only, or arguments are invalid
+     */
     /* default */ PkiLocalCommand bind(String name, PkiOperationValue.ObjectValue arguments, Path baseDirectory)
             throws IOException {
         if (serverOnlyNames().contains(name)) {
@@ -566,6 +594,13 @@ final class PkiOperationRegistry {
         }
     }
 
+    /**
+     * Tests whether a semantic operation has a local typed binding.
+     *
+     * @param name operation name to look up
+     * @return true if the immutable local registry contains that name
+     * @throws NullPointerException if name is null
+     */
     /* default */ boolean executable(String name) {
         return bindings.containsKey(name);
     }
@@ -670,17 +705,25 @@ final class PkiOperationRegistry {
         }
     }
 
-    /** Binds validated CLI arguments to a synchronous core operation. */
+    /**
+     * Binds validated CLI arguments to a synchronous core operation.
+     */
     @FunctionalInterface
     private interface CoreBinding {
-        /** Resolves arguments and bounded file inputs relative to the plan directory. */
+        /**
+         * Resolves arguments and bounded file inputs relative to the plan directory.
+         */
         PkiOperation bind(PkiOperationValue.ObjectValue arguments, Path baseDirectory) throws IOException;
     }
 
-    /** Binds validated CLI arguments to a signing operation. */
+    /**
+     * Binds validated CLI arguments to a signing operation.
+     */
     @FunctionalInterface
     private interface SigningBinding {
-        /** Resolves arguments and bounded file inputs relative to the plan directory. */
+        /**
+         * Resolves arguments and bounded file inputs relative to the plan directory.
+         */
         PkiSigningOperation bind(PkiOperationValue.ObjectValue arguments, Path baseDirectory) throws IOException;
     }
 
@@ -720,10 +763,14 @@ final class PkiOperationRegistry {
         return (supplied.isAbsolute() ? supplied : baseDirectory.resolve(supplied)).toAbsolutePath().normalize();
     }
 
-    /** One explicit typed binding. */
+    /**
+     * One explicit typed binding.
+     */
     @FunctionalInterface
     private interface Binding {
-        /** Binds validated structured arguments to one typed operation. */
+        /**
+         * Binds validated structured arguments to one typed operation.
+         */
         PkiLocalCommand bind(PkiOperationValue.ObjectValue arguments, Path baseDirectory) throws IOException;
     }
 }

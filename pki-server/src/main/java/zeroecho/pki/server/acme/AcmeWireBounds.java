@@ -38,9 +38,13 @@ import java.util.Objects;
 
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
-/** Exact bounded ACME wire-size calculations shared by configuration and transport. */
+/**
+ * Exact bounded ACME wire-size calculations shared by configuration and transport.
+ */
 public final class AcmeWireBounds {
-    /** Maximum canonical unpadded Base64url proof-response characters. */
+    /**
+     * Maximum canonical unpadded Base64url proof-response characters.
+     */
     public static final int MAX_PROOF_B64URL_CHARS =
             base64UrlLength(KeyPossessionProofResponse.MAXIMUM_BYTES);
 

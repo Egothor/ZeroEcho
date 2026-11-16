@@ -11,9 +11,18 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-/** Runs the real external Python scenario and installed crypto helper against localhost HTTPS, never Podman. */
+/**
+ * Runs the real external Python scenario and installed crypto helper against localhost HTTPS, never Podman.
+ */
 @Tag("certificate-scenario")
 class CertificateScenarioHttpTest {
+    /**
+     * Runs the independent external client scenario against localhost HTTPS and checks verified certificate output.
+     *
+     * @param variant selected supported certificate scenario variant
+     * @param root isolated JUnit-managed server/client fixture root
+     * @throws Exception if fixture startup, external client execution or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings={"p384", "rsa4096", "mldsa87", "hybrid"})
     void externalClientIssuesAndVerifiesApprovedHierarchy(String variant, @TempDir Path root) throws Exception {
         var original = ManagedKeyGenerationIntegrationTest.configuration(root);

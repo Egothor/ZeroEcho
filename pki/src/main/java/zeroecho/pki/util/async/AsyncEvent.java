@@ -55,6 +55,10 @@ public record AsyncEvent<OpId, Owner, Eid, Result>(AsyncOperationSnapshot<OpId, 
      * Creates an event.
      *
      * @throws IllegalArgumentException if any required field is null
+     * @param snapshot immutable operation metadata (never {@code null})
+     * @param status new status (never {@code null})
+     * @param result optional result; present only when {@link AsyncStatus#state()} is {@link AsyncState#SUCCEEDED}
+     * @throws NullPointerException if {@code snapshot}, {@code status} or {@code result} is null
      */
     public AsyncEvent {
         Objects.requireNonNull(snapshot, "snapshot");

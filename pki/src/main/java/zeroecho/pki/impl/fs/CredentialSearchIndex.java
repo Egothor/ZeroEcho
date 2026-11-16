@@ -66,7 +66,9 @@ import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 
-/** Derived, disposable search projection; the filesystem credential authority remains authoritative. */
+/**
+ * Derived, disposable search projection; the filesystem credential authority remains authoritative.
+ */
 final class CredentialSearchIndex implements AutoCloseable { // NOPMD CyclomaticComplexity - One JDBC index owns visibility, reconciliation and query bounds; individual methods remain checked.
     private static final int EXPECTED_INSERTED_ROW_COUNT = 1;
     private static final int BATCH = 128;
@@ -77,7 +79,9 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
     private final CertificateReader certificates;
     private volatile boolean available; // NOPMD AvoidUsingVolatile - Publishes index failure to discovery readers that do not acquire the visibility lock.
 
-    /** Reads an integrity-checked certificate from authoritative credential storage. */
+    /**
+     * Reads an integrity-checked certificate from authoritative credential storage.
+     */
     /* default */ @FunctionalInterface
     interface CertificateReader {
         /**
@@ -89,6 +93,17 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         X509Certificate read(Credential credential) throws IOException;
     }
 
+    /**
+     * Discards any previous derived search database and creates a fresh bounded embedded index.
+     *
+     * <p>The owner must hold authoritative store process ownership before construction and close this derived index with the store.</p>
+     *
+     * @param root authoritative store root containing the derived credential-search directory
+     * @param options explicit cache, query timeout and certificate-size limits
+     * @param certificates borrowed bounded reader for authoritative certificate evidence
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if derived paths are unsafe, old index removal fails or database initialization fails
+     */
     /* default */ CredentialSearchIndex(Path root, FsPkiStoreOptions.CredentialSearch options,
             CertificateReader certificates) throws IOException {
         this.options = Objects.requireNonNull(options, "options");
@@ -144,6 +159,16 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
+    /**
+     * Rebuilds the derived index from validated authoritative credentials and enables it only after success.
+     *
+     * <p>Failure fences the derived index until another successful rebuild.</p>
+     *
+     * @param authority borrowed authoritative credential inventory
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if authoritative validation, certificate reading or index commit fails
+     * @throws RuntimeException if authoritative row validation or derived indexing rejects a credential
+     */
     /* default */ void rebuild(CredentialMetadataAuthority authority) throws IOException {
         int[] pending = {0};
         try {
@@ -162,13 +187,34 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
+    /**
+     * Returns the documented diagnostic value.
+     *
+     * @return true while the derived search index is available for queries
+     */
     /* default */ boolean available() { return available; }
 
+    /**
+     * Acquires the visibility lock excluding search while primary and derived publication are coordinated.
+     *
+     * <p>The acquiring thread must invoke unlockPublication after its publication boundary.</p>
+     *
+     */
     /* default */ void lockPublication() { visibility.lock(); }
 
+    /**
+     * Releases the publication visibility lock on its acquiring thread.
+     *
+     * @throws IllegalMonitorStateException if the current thread does not own the publication lock
+     */
     /* default */ void unlockPublication() { visibility.unlock(); }
 
-    /** Called only after primary publication; never propagates derivative failure as an issuance failure. */
+    /**
+     * Called only after primary publication; never propagates derivative failure as an issuance failure.
+     *
+     * @param credential authoritative credential whose primary publication already committed
+     * @implNote The caller coordinates the publication visibility lock. A derivative update failure fences search and is suppressed.
+     */
     /* default */ void published(Credential credential) {
         if (!available) {
             return;
@@ -185,8 +231,17 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
+    /**
+     * Marks the derived search index unavailable until a successful rebuild.
+     *
+     */
     /* default */ void fence() { available = false; }
 
+    /**
+     * Controls deterministic derivative-publication failure for the current thread.
+     *
+     * @param fail true to arm the fault; false to remove it
+     */
     /* default */ static void failPublicationForTest(boolean fail) {
         if (fail) {
             PUBLICATION_FAULT.set(Boolean.TRUE);
@@ -233,6 +288,25 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         catch (SQLException failure) { throw new IOException("Search index commit failed"); } // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
     }
 
+    /**
+     * Returns a bounded derived-index page after authoritative reloading and caller filtering.
+     *
+     * <p>The publication visibility lock prevents observing a partially coordinated derivative update.</p>
+     *
+     * @param query canonical structured credential search filters
+     * @param after exclusive operation-independent credential identity cursor, or empty for the first page
+     * @param limit maximum accepted results from one through 1,001 inclusive
+     * @param load authoritative credential loader invoked for each derived candidate
+     * @param include caller predicate deciding whether a reloaded credential is visible
+     * @param cancellation cooperative cancellation checked during waits and query traversal
+     * @param deadline absolute monotonic deadline using the System.nanoTime coordinate space
+     * @return immutable accepted credentials in indexed identity order
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the result limit or supported search filters are invalid
+     * @throws java.util.concurrent.CancellationException if interrupted or cooperative cancellation is requested
+     * @throws IllegalStateException if the deadline expires, search is fenced or database and authoritative evidence disagree
+     * @throws RuntimeException if the authoritative loader or caller predicate fails
+     */
     /* default */ List<Credential> search(CredentialSearchQuery query, Optional<String> after, int limit,
             Function<PkiId, Optional<Credential>> load, Predicate<Credential> include, CancellationSignal cancellation,
             long deadline) {
@@ -434,6 +508,9 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         visibility.lock();

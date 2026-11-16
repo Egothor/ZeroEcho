@@ -110,6 +110,9 @@ import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for full CRL tbs preparation.
+ */
 class FullCrlTbsPreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final Instant BEFORE = Instant.parse("2026-01-01T00:00:00Z");
@@ -118,6 +121,11 @@ class FullCrlTbsPreparationTest {
     private static byte[] issuerDer;
     private static KeyPair key;
 
+    /**
+     * Builds the real issuer certificate material shared by the CRL preparation cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void certificate() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -143,6 +151,11 @@ class FullCrlTbsPreparationTest {
         return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(key.getPrivate())).getEncoded();
     }
 
+    /**
+     * Stages empty and nonempty tbs after one complete pass and returns only frozen resource free evidence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void stagesEmptyAndNonemptyTbsAfterOneCompletePassAndReturnsOnlyFrozenResourceFreeEvidence() throws Exception {
         for (int count : new int[] {0, 2}) {
             Fixture fixture = new Fixture(count);
@@ -198,6 +211,11 @@ class FullCrlTbsPreparationTest {
         }
     }
 
+    /**
+     * Hybrid staging streams alternative transcript and preserves two pass custody.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void hybridStagingStreamsAlternativeTranscriptAndPreservesTwoPassCustody() throws Exception {
         Fixture fixture = new Fixture(2, certificateWithSki(null, true), true);
         PreparedFullCrlTbs staged = fixture.run();
@@ -223,6 +241,11 @@ class FullCrlTbsPreparationTest {
         assertEquals(1, cancelled.aborts);
     }
 
+    /**
+     * First pass read close and cancellation failures do not reserve or open sink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void firstPassReadCloseAndCancellationFailuresDoNotReserveOrOpenSink() throws Exception {
         for (Cut cut : List.of(Cut.FIRST_READ, Cut.FIRST_CLOSE, Cut.CANCEL_FIRST)) {
             Fixture fixture = new Fixture(2);
@@ -241,6 +264,11 @@ class FullCrlTbsPreparationTest {
         assertEquals(0, cancelled.reservations);
     }
 
+    /**
+     * Reservation failure closes snapshot without opening sink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reservationFailureClosesSnapshotWithoutOpeningSink() throws Exception {
         Fixture fixture = new Fixture(2);
         fixture.cut = Cut.RESERVE;
@@ -250,6 +278,11 @@ class FullCrlTbsPreparationTest {
         assertEquals(1, fixture.snapshotCloses);
     }
 
+    /**
+     * Post reservation failures leave gap and abort every incomplete sink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void postReservationFailuresLeaveGapAndAbortEveryIncompleteSink() throws Exception {
         for (Cut cut : List.of(Cut.CANCEL_RESERVED, Cut.SINK_OPEN, Cut.OUTPUT_OPEN, Cut.WRITE,
                 Cut.CANCEL_WRITE, Cut.SECOND_READ, Cut.SECOND_CLOSE, Cut.COMPLETE, Cut.LENGTH,
@@ -266,6 +299,11 @@ class FullCrlTbsPreparationTest {
         }
     }
 
+    /**
+     * Post completion failures retire unowned content and keep cleanup failures suppressed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void postCompletionFailuresRetireUnownedContentAndKeepCleanupFailuresSuppressed() throws Exception {
         for (Cut cut : List.of(Cut.CANCEL_COMPLETE, Cut.COMPLETED_LENGTH, Cut.OUTPUT_CLOSE, Cut.SINK_CLOSE, Cut.SNAPSHOT_CLOSE)) {
             Fixture fixture = new Fixture(2);
@@ -286,6 +324,11 @@ class FullCrlTbsPreparationTest {
         assertEquals("retirement", failure.getSuppressed()[0].getMessage());
     }
 
+    /**
+     * Completion attributes and authoritative restore are checked without foreign cleanup.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void completionAttributesAndAuthoritativeRestoreAreCheckedWithoutForeignCleanup() throws Exception {
         for (Cut cut : List.of(Cut.NULL_REFERENCE, Cut.FOREIGN_REFERENCE, Cut.NULL_STORE, Cut.ENCODING,
                 Cut.LIFECYCLE, Cut.EMPTY_ID, Cut.NULL_ID, Cut.INVALID_ID, Cut.NULL_HASH, Cut.UPPER_HASH,
@@ -306,6 +349,11 @@ class FullCrlTbsPreparationTest {
         assertEquals("retirement", failure.getSuppressed()[0].getMessage());
     }
 
+    /**
+     * Present alternate and absent ski produce exact noncritical aki.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void presentAlternateAndAbsentSkiProduceExactNoncriticalAki() throws Exception {
         byte[] defaultId = Pkix.subjectKeyIdentifier(key.getPublic());
         byte[] alternate = new byte[] {9, 8, 7, 6};
@@ -320,6 +368,11 @@ class FullCrlTbsPreparationTest {
         }
     }
 
+    /**
+     * Malformed present ski has no fallback and strict wrapper parser rejects trailing and empty.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedPresentSkiHasNoFallbackAndStrictWrapperParserRejectsTrailingAndEmpty() throws Exception {
         for (byte[] malformed : new byte[][] {{0x04, 0}, {0x05, 0}, {0x04, 1}, {0x04, 1, 1, 0}, {0x04, (byte) 0x81, 1, 1}}) {
             assertThrows(IOException.class, () -> FullCrlTbsPreparation.decodeKeyIdentifier(new DEROctetString(malformed).getEncoded()));

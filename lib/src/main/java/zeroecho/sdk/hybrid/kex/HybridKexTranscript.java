@@ -112,6 +112,7 @@ public final class HybridKexTranscript {
      * @return this transcript
      * @throws NullPointerException     if tag or value is null
      * @throws IllegalArgumentException if tag is empty
+     * @throws IllegalStateException if the transcript entry cannot be encoded
      */
     public HybridKexTranscript addBytes(String tag, byte[] value) {
         Objects.requireNonNull(tag, "tag");

@@ -56,7 +56,15 @@ import zeroecho.pki.server.RealmId;
  */
 public record CmpTransaction(String id, long revision, Frozen frozen, Optional<String> enrollmentId,
         Optional<Response> response) {
-    /** Validates identity, state and allocation bounds without trusting persisted data. */
+    /**
+     * Validates identity, state and allocation bounds without trusting persisted data.
+     * @param id stable realm, endpoint and transaction identity
+     * @param revision positive compare-and-set revision
+     * @param frozen immutable authenticated original request coordinates
+     * @param enrollmentId atomically attached enrollment, absent before admission or for non-issuance
+     * @param response latest durably published response metadata
+     * @throws NullPointerException if any of {@code frozen}, {@code enrollmentId}, {@code response} is null
+     */
     public CmpTransaction {
         EnrollmentTransaction.id(id); Objects.requireNonNull(frozen, "frozen");
         Objects.requireNonNull(enrollmentId, "enrollmentId").ifPresent(EnrollmentTransaction::id);
@@ -69,13 +77,30 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
         }
     }
 
-    /** Durable protocol confirmation, independent of domain credential confirmation. */
+    /**
+     * Durable protocol confirmation, independent of domain credential confirmation.
+     */
     public enum Confirmation {
-        /** No certificate confirmation is outstanding. */ NONE,
-        /** The returned certificate awaits authenticated certConf. */ AWAITING,
-        /** Explicit or requested implicit confirmation accepted the certificate. */ ACCEPTED,
-        /** The authenticated requester rejected the certificate. */ REJECTED,
-        /** The explicit confirmation deadline elapsed. */ EXPIRED
+        /**
+         * No certificate confirmation is outstanding.
+         */
+        NONE,
+        /**
+         * The returned certificate awaits authenticated certConf.
+         */
+        AWAITING,
+        /**
+         * Explicit or requested implicit confirmation accepted the certificate.
+         */
+        ACCEPTED,
+        /**
+         * The authenticated requester rejected the certificate.
+         */
+        REJECTED,
+        /**
+         * The explicit confirmation deadline elapsed.
+         */
+        EXPIRED
     }
 
     /**
@@ -103,7 +128,29 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
             PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId pathId, String pathCommitment, String transactionSha256,
             String originalWireSha256, int originalType, BigInteger requestId, Optional<String> requestSha256,
             boolean implicitConfirmation, Instant createdAt, Instant expiresAt, int maximumResponseBytes) {
-        /** Rejects mechanism, authority, request and response-capacity inconsistencies. */
+        /**
+         * Rejects mechanism, authority, request and response-capacity inconsistencies.
+         * @param realmId owning realm
+         * @param source exact endpoint and credential selection
+         * @param requester authenticated original actor and frozen alias exclusions
+         * @param authorityId logical authority
+         * @param profile exact frozen certificate profile version and commitment
+         * @param issuerId selected issuer generation
+         * @param pathId selected issuer path
+         * @param pathCommitment exact path commitment
+         * @param transactionSha256 transaction identifier commitment
+         * @param originalWireSha256 exact authenticated original message commitment
+         * @param originalType original ir, cr, kur, rr or genm body tag
+         * @param requestId original nonnegative certificate request identifier
+         * @param requestSha256 exact original CRMF digest for issuance, otherwise absent
+         * @param implicitConfirmation whether the original protected request asked for implicit confirmation
+         * @param createdAt reservation time
+         * @param expiresAt latest unclaimed admission time
+         * @param maximumResponseBytes conservative complete protected-response bound, reserved before side effects
+         * @throws NullPointerException if any of {@code realmId}, {@code source}, {@code requester}, {@code
+         *         authorityId}, {@code profile}, {@code issuerId}, {@code pathId}, {@code requestId}, {@code
+         *         requestSha256}, {@code createdAt}, {@code expiresAt} is null
+         */
         public Frozen {
             Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(source, "source");
             Objects.requireNonNull(requester, "requester"); Objects.requireNonNull(authorityId, "authorityId");
@@ -127,9 +174,13 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
                 throw invalid();
             }
         }
-        /** {@return whether the transaction requires an attached issuance workflow} */
+        /**
+         * {@return whether the transaction requires an attached issuance workflow}
+         */
         public boolean enrollment() { return originalType == 0 || originalType == 2 || originalType == 7; }
-        /** {@return a redacted description} */
+        /**
+         * {@return a redacted description}
+         */
         @Override public String toString() { return "CmpTransaction.Frozen[redacted]"; }
     }
 
@@ -146,7 +197,18 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
      */
     public record Response(String requestSha256, String responseSha256, int length, String senderNonce,
             String recipientNonce, Optional<Instant> confirmationDeadline, Confirmation confirmation, boolean terminal) {
-        /** Validates bounded metadata without exposing wire bytes in diagnostics. */
+        /**
+         * Validates bounded metadata without exposing wire bytes in diagnostics.
+         * @param requestSha256 exact authenticated triggering wire request
+         * @param responseSha256 exact complete protected response
+         * @param length complete response length in bytes
+         * @param senderNonce lowercase hexadecimal response nonce, 16 to 32 bytes
+         * @param recipientNonce lowercase hexadecimal triggering request nonce, 16 to 32 bytes
+         * @param confirmationDeadline explicit certificate confirmation deadline, if awaiting confirmation
+         * @param confirmation durable protocol confirmation status and final verdict
+         * @param terminal whether further state changes are forbidden
+         * @throws NullPointerException if any of {@code confirmationDeadline}, {@code confirmation} is null
+         */
         public Response {
             EnrollmentTransaction.digest(requestSha256); EnrollmentTransaction.digest(responseSha256);
             nonce(senderNonce); nonce(recipientNonce); Objects.requireNonNull(confirmationDeadline, "confirmationDeadline");
@@ -157,7 +219,9 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
                 throw invalid();
             }
         }
-        /** {@return a redacted description} */
+        /**
+         * {@return a redacted description}
+         */
         @Override public String toString() { return "CmpTransaction.Response[redacted]"; }
     }
 
@@ -172,9 +236,13 @@ public record CmpTransaction(String id, long revision, Frozen frozen, Optional<S
                 1, frozen, Optional.empty(), Optional.empty());
     }
 
-    /** {@return the complete versioned manifest commitment} */
+    /**
+     * {@return the complete versioned manifest commitment}
+     */
     public String commitment() { return EnrollmentTransactionCodec.sha256(CmpTransactionCodec.encode(this)); }
-    /** {@return a redacted description} */
+    /**
+     * {@return a redacted description}
+     */
     @Override public String toString() { return "CmpTransaction[redacted]"; }
 
     private static void nonce(String value) {

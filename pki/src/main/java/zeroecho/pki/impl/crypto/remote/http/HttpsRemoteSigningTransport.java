@@ -92,7 +92,9 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
     private static final int MAXIMUM_STATUS_RESPONSE_BYTES = MAXIMUM_SIGNATURE_BASE64_CHARACTERS + 64 * 1024;
     private static final int MAXIMUM_PUBLIC_KEY_RESPONSE_BYTES = base64Characters(MAXIMUM_PUBLIC_KEY_BYTES) + 4096;
     private static final int READ_BUFFER_BYTES = 8192;
-    /** Delimiter joining advertised algorithm identities in the capabilities message. */
+    /**
+     * Delimiter joining advertised algorithm identities in the capabilities message.
+     */
     /* default */ static final String ALGORITHM_SEPARATOR = "\u001f";
 
     private final HttpClient client;
@@ -119,6 +121,7 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
      * @return an open transport with capabilities captured
      * @throws IllegalArgumentException if the endpoint is not absolute {@code https}
      * @throws RemoteSigningException if the capability handshake fails
+     * @throws NullPointerException if {@code endpoint}, {@code sslContext}, {@code connectTimeout} or {@code callTimeout} is null
      */
     // The construction guard owns and closes the client for every failed handshake runtime subtype.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
@@ -146,6 +149,9 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RemoteSigningStatus submit(RemoteSignRequest request, RemoteCallControl control) {
         Objects.requireNonNull(request, "request");
@@ -173,6 +179,9 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         return decodeStatus(call(body, control));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RemoteSigningStatus status(String operationId, RemoteCallControl control) {
         Objects.requireNonNull(operationId, "operationId");
@@ -180,6 +189,9 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         return decodeStatus(call(Map.of("op", "status", "operationId", operationId), control));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RemoteSigningStatus cancel(String operationId, long fencingToken, String reason,
             RemoteCallControl control) {
@@ -194,6 +206,9 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         return decodeStatus(call(body, control));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] publicKeyInfo(String keyHandle, RemoteCallControl control) {
         Objects.requireNonNull(keyHandle, "keyHandle");
@@ -205,11 +220,17 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         return decodeBase64(encoded, "public key info", MAXIMUM_PUBLIC_KEY_BYTES);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RemoteCapabilities capabilities() {
         return capabilities;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         client.close();

@@ -55,7 +55,13 @@ import javax.crypto.spec.SecretKeySpec;
 
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Narrow wire-level ACME test client exercising the real HTTPS/JWS boundary. */
+/**
+ * Wire-level ACME fixture exercising real HTTPS and ES256 JWS authentication.
+ *
+ * <p>The caller owns the supplied HTTP client. This stateful fixture retains the
+ * account key, account KID and latest replay nonce; callers serialize requests.
+ * Closing clears local KID/nonce state without closing the borrowed HTTP client.</p>
+ */
 public final class AcmeTestClient implements AutoCloseable {
     private static final String JOSE = "application/jose+json";
     private static final int MAXIMUM_RESPONSE = 2_097_152;
@@ -65,35 +71,75 @@ public final class AcmeTestClient implements AutoCloseable {
     private String accountKid;
     private String nonce;
 
-    /** Creates a client for one exact ACME directory URL and ES256 account key. */
+    /**
+     * Creates a client for one exact ACME directory URL and ES256 account key.
+     *
+     * @param client caller-owned HTTPS client with test trust configuration
+     * @param directoryUri exact public directory URL
+     * @param accountKey P-256 account signing key pair
+     * @throws NullPointerException if any argument is null
+     */
     public AcmeTestClient(HttpClient client, URI directoryUri, KeyPair accountKey) {
         this.client = Objects.requireNonNull(client, "client");
         this.directoryUri = Objects.requireNonNull(directoryUri, "directoryUri");
         this.accountKey = Objects.requireNonNull(accountKey, "accountKey");
     }
 
-    /** Fetches the directory object and captures its response nonce. */
+    /**
+     * Fetches the public directory and captures its response replay nonce.
+     *
+     * @return bounded actual HTTPS directory response
+     * @throws Exception if request construction, HTTPS exchange or bounded response reading fails
+     */
     public Response directory() throws Exception { return send(HttpRequest.newBuilder(directoryUri).GET().build()); }
 
-    /** Obtains a fresh replay nonce using the advertised endpoint. */
+    /**
+     * Requests a fresh replay nonce using the advertised endpoint's HEAD operation.
+     *
+     * @param endpoint exact advertised new-nonce URL
+     * @return actual HTTPS response whose nonce is retained by this fixture
+     * @throws Exception if request construction or HTTPS exchange fails
+     */
     public Response nonce(URI endpoint) throws Exception {
         return send(HttpRequest.newBuilder(endpoint).method("HEAD", HttpRequest.BodyPublishers.noBody()).build());
     }
 
-    /** Creates an account using JWK authentication and retains its exact KID. */
+    /**
+     * Submits JWK-authenticated account registration and retains the returned exact Location KID.
+     *
+     * @param endpoint exact advertised new-account URL
+     * @param payload original account-registration JSON
+     * @return actual registration response
+     * @throws Exception if signing/HTTPS fails or the response lacks a Location field
+     */
     public Response createAccount(URI endpoint, String payload) throws Exception {
         Response response = jwk(endpoint, payload);
         accountKid = response.header("Location").orElseThrow();
         return response;
     }
 
-    /** Sends one JWK-authenticated ACME request. */
+    /**
+     * Signs one JWK-authenticated request with the current account key and replay nonce.
+     *
+     * @param endpoint exact external URL bound into the protected JWS header
+     * @param payload original JSON payload
+     * @return actual HTTPS protocol response
+     * @throws Exception if signing, request construction or HTTPS exchange fails
+     */
     public Response jwk(URI endpoint, String payload) throws Exception {
         return post(endpoint, flattened(endpoint, payload.getBytes(StandardCharsets.UTF_8), accountKey,
                 Optional.of(jwk(accountKey)), Optional.empty(), true));
     }
 
-    /** Sends one KID-authenticated ACME request. */
+    /**
+     * Signs one account-KID-authenticated request with the current key and replay nonce.
+     *
+     * @param endpoint exact external URL bound into the protected JWS header
+     * @param payload original JSON payload, or empty for POST-as-GET
+     * @return actual HTTPS protocol response
+     * @throws IllegalStateException if no account KID has been adopted
+     * @throws Exception if signing, request construction or HTTPS exchange fails
+     */
     public Response kid(URI endpoint, String payload) throws Exception {
         if (accountKid == null) throw new IllegalStateException("ACME account has not been created");
         return post(endpoint, flattened(endpoint, payload.getBytes(StandardCharsets.UTF_8), accountKey,
@@ -101,9 +147,18 @@ public final class AcmeTestClient implements AutoCloseable {
     }
 
     /**
-     * Sends a genuine KID JWS with an explicitly selected nonce for replay-negative tests.
-     * @param endpoint exact configured URL @param payload original JSON @param selectedNonce test nonce
+     * Sends a real KID JWS using an explicit nonce for replay-negative tests.
+     *
+     * <p>The previously retained nonce is restored before transport; the response may
+     * subsequently replace it with a fresh server nonce.</p>
+     *
+     * @param endpoint exact external URL bound into the JWS
+     * @param payload original JSON payload
+     * @param selectedNonce explicit nonce to use for this signature
      * @return actual HTTPS protocol response
+     * @throws IllegalStateException if no account KID has been adopted
+     * @throws NullPointerException if the selected nonce is null
+     * @throws Exception if signing, request construction or HTTPS exchange fails
      */
     public Response kidWithNonce(URI endpoint, String payload, String selectedNonce) throws Exception {
         if (accountKid == null) throw new IllegalStateException("ACME account has not been created");
@@ -115,7 +170,14 @@ public final class AcmeTestClient implements AutoCloseable {
         return post(endpoint, body);
     }
 
-    /** Performs strict nested-JWS account-key rollover and adopts the replacement key. */
+    /**
+     * Performs nested-JWS account-key rollover and adopts the replacement only after a 2xx response.
+     *
+     * @param endpoint exact advertised key-change URL
+     * @param replacement P-256 replacement account key pair
+     * @return actual HTTPS key-change response
+     * @throws Exception if nested signing, request construction or HTTPS exchange fails
+     */
     public Response rollover(URI endpoint, KeyPair replacement) throws Exception {
         String innerClaims = "{\"account\":\"" + accountKid + "\",\"oldKey\":" + jwk(accountKey) + "}";
         byte[] inner = flattened(endpoint, innerClaims.getBytes(StandardCharsets.UTF_8), replacement,
@@ -126,13 +188,29 @@ public final class AcmeTestClient implements AutoCloseable {
         return response;
     }
 
-    /** Sends an authenticated POST-as-GET request. */
+    /**
+     * Sends authenticated POST-as-GET using a zero-length JWS payload.
+     *
+     * @param endpoint exact account-owned resource URL
+     * @return actual HTTPS resource response
+     * @throws IllegalStateException if no account KID has been adopted
+     * @throws Exception if signing, request construction or HTTPS exchange fails
+     */
     public Response postAsGet(URI endpoint) throws Exception { return kid(endpoint, ""); }
 
-    /** Returns the current exact account KID. */
+    /**
+     * Returns the exact adopted account KID without synthesizing a URL.
+     *
+     * @return current account KID, or null before account creation/adoption
+     */
     public String accountKid() { return accountKid; }
 
-    /** Adopts an existing account URL for restart and superseded-key checks. */
+    /**
+     * Adopts an existing HTTPS account KID for restart and superseded-key fixtures.
+     *
+     * @param kid existing account URL; must begin with the HTTPS scheme
+     * @throws IllegalArgumentException if the KID is null or is not an HTTPS URL
+     */
     public void useAccount(String kid) {
         if (kid == null || !kid.startsWith("https://")) {
             throw new IllegalArgumentException("ACME account KID is invalid");
@@ -140,10 +218,20 @@ public final class AcmeTestClient implements AutoCloseable {
         accountKid = kid;
     }
 
-    /** Returns the current replay nonce, if one has been received. */
+    /**
+     * Returns the latest nonce captured from an actual server response.
+     *
+     * @return retained nonce, or empty before any nonce-bearing response
+     */
     public Optional<String> replayNonce() { return Optional.ofNullable(nonce); }
 
-    /** Returns the RFC 8555 key authorization for one challenge token. */
+    /**
+     * Builds RFC 8555 key authorization using the canonical P-256 account JWK thumbprint.
+     *
+     * @param token server-issued challenge token
+     * @return token followed by the unpadded base64url JWK SHA-256 thumbprint
+     * @throws Exception if account JWK construction or SHA-256 initialization fails
+     */
     public String keyAuthorization(String token) throws Exception {
         String value = jwk(accountKey);
         PkiOperationValue.ObjectValue parsed = (PkiOperationValue.ObjectValue) StrictJson.parse(
@@ -155,7 +243,15 @@ public final class AcmeTestClient implements AutoCloseable {
                 .digest(canonical.getBytes(StandardCharsets.US_ASCII)));
     }
 
-    /** Constructs the strict nested HS256 EAB JWS used by the deterministic test provider. */
+    /**
+     * Builds a nested HS256 external-account JWS for the deterministic test provider.
+     *
+     * @param newAccount exact new-account URL bound into the protected header
+     * @param keyId configured external-account key identity
+     * @param secret caller-owned MAC key bytes; copied for MAC initialization
+     * @return flattened nested JWS JSON string
+     * @throws Exception if MAC initialization, JWK construction or signing fails
+     */
     public String externalAccountBinding(URI newAccount, String keyId, byte[] secret) throws Exception {
         String protectedValue = encode(("{\"alg\":\"HS256\",\"kid\":\"" + keyId
                 + "\",\"url\":\"" + newAccount.toASCIIString() + "\"}").getBytes(StandardCharsets.UTF_8));
@@ -168,14 +264,28 @@ public final class AcmeTestClient implements AutoCloseable {
                 + "\",\"signature\":\"" + signature + "\"}";
     }
 
-    /** Extracts a required text property from a strict JSON response. */
+    /**
+     * Requires a textual property in a bounded strict JSON response object.
+     *
+     * @param response actual captured protocol response
+     * @param field required JSON property name
+     * @return exact response text value
+     * @throws IllegalArgumentException if the response object or required text field is invalid
+     */
     public static String text(Response response, String field) {
         PkiOperationValue value = response.json().fields().get(field);
         if (value instanceof PkiOperationValue.Text text) return text.value();
         throw new IllegalArgumentException("Missing ACME response field: " + field);
     }
 
-    /** Extracts a required list of text values from a strict JSON response. */
+    /**
+     * Requires a list consisting only of text values in a strict response object.
+     *
+     * @param response actual captured protocol response
+     * @param field required JSON property name
+     * @return immutable ordered response text values
+     * @throws IllegalArgumentException if the object, list field or any element has another shape
+     */
     public static List<String> textList(Response response, String field) {
         PkiOperationValue value = response.json().fields().get(field);
         if (!(value instanceof PkiOperationValue.ListValue list)) {
@@ -187,7 +297,13 @@ public final class AcmeTestClient implements AutoCloseable {
         }).toList();
     }
 
-    /** Extracts one challenge object from an authorization response. */
+    /**
+     * Requires the fixture's single-challenge authorization-response projection.
+     *
+     * @param response actual captured authorization response
+     * @return sole challenge URL selected from the text-valued challenges array
+     * @throws IllegalArgumentException if there is no exact single text URL or its URI is invalid
+     */
     public static Challenge challenge(Response response) {
         PkiOperationValue value = response.json().fields().get("challenges");
         if (!(value instanceof PkiOperationValue.ListValue list) || list.values().size() != 1
@@ -250,28 +366,67 @@ public final class AcmeTestClient implements AutoCloseable {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() { nonce = null; accountKid = null; }
 
-    /** Immutable bounded HTTP response captured by the test client. */
+    /**
+     * Captured bounded response with a copied entity and a shallow immutable header-map snapshot.
+     *
+     * @param status actual HTTP response status
+     * @param headers actual response fields; map copied, value lists retained
+     * @param body actual entity bytes; copied on construction and access
+     */
     public record Response(int status, Map<String, List<String>> headers, byte[] body) {
-        /** Defensively snapshots response data. */
+        /**
+         * Copies response entity bytes and snapshots the header map.
+         *
+         * @param status actual HTTP response status
+         * @param headers response header map; value lists retained
+         * @param body response entity bytes; copied
+         * @throws NullPointerException if the map, a map entry or body is null
+         */
         public Response { headers = Map.copyOf(headers); body = body.clone(); }
+        /**
+         * Copies the captured protocol entity for independent caller ownership.
+         *
+         * @return newly allocated response body bytes
+         */
         @Override public byte[] body() { return body.clone(); }
-        /** Returns one header without relying on implementation-specific casing. */
+        /**
+         * Finds the first header value using case-insensitive field-name matching.
+         *
+         * @param name requested HTTP field name
+         * @return first matching field value, or empty when absent
+         */
         public Optional<String> header(String name) {
             return headers.entrySet().stream().filter(entry -> entry.getKey().equalsIgnoreCase(name))
                     .flatMap(entry -> entry.getValue().stream()).findFirst();
         }
-        /** Decodes a strict JSON object response. */
+        /**
+         * Decodes the captured entity as one strict bounded JSON object.
+         *
+         * @return closed operation-value object model
+         * @throws IllegalArgumentException if the entity is malformed, oversized or has another root type
+         */
         public PkiOperationValue.ObjectValue json() {
             PkiOperationValue value = StrictJson.parse(body, MAXIMUM_RESPONSE);
             if (value instanceof PkiOperationValue.ObjectValue object) return object;
             throw new IllegalArgumentException("ACME response is not an object");
         }
-        /** Returns the UTF-8 response body for safe assertions. */
+        /**
+         * Decodes the captured entity as UTF-8 for test assertions.
+         *
+         * @return response text using the standard replacement behavior for malformed UTF-8
+         */
         public String bodyText() { return new String(body, StandardCharsets.UTF_8); }
     }
 
-    /** One challenge URL selected from an authorization resource. */
+    /**
+     * Single challenge location selected from the fixture authorization response.
+     *
+     * @param url exact challenge URI; retained without additional validation
+     */
     public record Challenge(URI url) { }
 }

@@ -56,19 +56,33 @@ import java.util.Optional;
 public record AuditIntegrityReport(Status status, long recordCount, Optional<Long> firstBrokenSequence,
         AuditChainHead head) {
 
-    /** Closed classification of an audit integrity verification. */
+    /**
+     * Closed classification of an audit integrity verification.
+     */
     public enum Status {
-        /** The chain is contiguous, correctly linked, and matches the expected head. */
+        /**
+         * The chain is contiguous, correctly linked, and matches the expected head.
+         */
         INTACT,
-        /** A record's recomputed hash does not match its stored hash (content altered). */
+        /**
+         * A record's recomputed hash does not match its stored hash (content altered).
+         */
         RECORD_MUTATED,
-        /** A record's stored previous-hash does not link to the prior record (insertion/reorder). */
+        /**
+         * A record's stored previous-hash does not link to the prior record (insertion/reorder).
+         */
         CHAIN_BROKEN,
-        /** The sequence is not contiguous from zero (a record was deleted). */
+        /**
+         * The sequence is not contiguous from zero (a record was deleted).
+         */
         SEQUENCE_GAP,
-        /** The same sequence appears more than once (a record was duplicated). */
+        /**
+         * The same sequence appears more than once (a record was duplicated).
+         */
         DUPLICATE_SEQUENCE,
-        /** The chain is internally consistent but the head differs from the trusted anchor (truncation). */
+        /**
+         * The chain is internally consistent but the head differs from the trusted anchor (truncation).
+         */
         HEAD_MISMATCH
     }
 
@@ -76,6 +90,10 @@ public record AuditIntegrityReport(Status status, long recordCount, Optional<Lon
      * Validates the report.
      *
      * @throws IllegalArgumentException if required values are absent or inconsistent
+     * @param status closed outcome classification
+     * @param recordCount number of chained records inspected
+     * @param firstBrokenSequence sequence at which verification first failed; empty when {@link Status#INTACT}
+     * @param head observed head recomputed from the log
      */
     public AuditIntegrityReport {
         if (status == null) {

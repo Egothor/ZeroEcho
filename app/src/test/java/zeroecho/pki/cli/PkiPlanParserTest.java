@@ -43,11 +43,22 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Regression coverage for bounded plan parsing, closed schemas, and backward references.
+ */
 class PkiPlanParserTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Rejects plans without steps, with duplicate step identities, or with unregistered operations.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsEmptyDuplicateAndUnknownOperationPlans() throws IOException {
         System.out.println("rejectsEmptyDuplicateAndUnknownOperationPlans");
@@ -68,6 +79,11 @@ class PkiPlanParserTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects references to unknown or later steps and text interpolation inside literal values.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsUnknownFutureAndEmbeddedReferences() throws IOException {
         System.out.println("rejectsUnknownFutureAndEmbeddedReferences");
@@ -93,6 +109,11 @@ class PkiPlanParserTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects ambiguous duplicate keys and trailing JSON documents before a plan can execute.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsDuplicateJsonKeysAndTrailingDocuments() throws IOException {
         System.out.println("rejectsDuplicateJsonKeysAndTrailingDocuments");

@@ -46,15 +46,26 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests bounded durable metadata mutation and failure classification. */
+/**
+ * Tests bounded durable metadata mutation and failure classification.
+ */
 @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
 final class DurableMetadataFilesTest {
 
+    /**
+     * Clears the test-installed persistence fault or observation hook after each case.
+     */
     @AfterEach
     void clearFault() {
         DurableMetadataFiles.clearFault();
     }
 
+    /**
+     * Move and delete directory force failures are uncertain.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void moveAndDeleteDirectoryForceFailuresAreUncertain(@TempDir Path directory) throws Exception {
         System.out.println("moveAndDeleteDirectoryForceFailuresAreUncertain");
@@ -78,6 +89,12 @@ final class DurableMetadataFilesTest {
         System.out.println("moveAndDeleteDirectoryForceFailuresAreUncertain...ok");
     }
 
+    /**
+     * Pre move failure cleans temporary and bounded decode rejects oversize.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preMoveFailureCleansTemporaryAndBoundedDecodeRejectsOversize(@TempDir Path directory) throws Exception {
         System.out.println("preMoveFailureCleansTemporaryAndBoundedDecodeRejectsOversize");
@@ -94,6 +111,12 @@ final class DurableMetadataFilesTest {
         System.out.println("preMoveFailureCleansTemporaryAndBoundedDecodeRejectsOversize...ok");
     }
 
+    /**
+     * Secure open rejects symlink and faults explicitly.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void secureOpenRejectsSymlinkAndFaultsExplicitly(@TempDir Path directory) throws Exception {

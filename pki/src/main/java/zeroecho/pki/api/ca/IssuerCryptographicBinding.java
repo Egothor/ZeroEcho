@@ -43,6 +43,12 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * The certificate baseline describes this generation's own certificate, never the
  * baseline of certificates it will issue. Incoming certificate signatures belong
  * to the parent and do not determine either outgoing key binding.
+ *
+ * <p>Construction checks identity and representation consistency, not live managed
+ * key availability, possession or signature validity. Retaining this public evidence
+ * does not grant permission to sign. A certificate-baseline marker is not a store
+ * migration procedure; the supported deployment baseline remains a fresh empty store.
+ *
  * @param version binding model version, currently one
  * @param issuerId immutable generation identity
  * @param authorityId logical authority identity
@@ -61,13 +67,51 @@ public record IssuerCryptographicBinding(int version, PkiId issuerId, PkiId auth
         Optional<IssuerKeyBinding> alternative, String certificateSha256,
         CertificateProfileRef profile, String bindingSetCommitment,
         HybridSignatureBaseline certificateHybridBaseline, String evidenceSha256) {
-    /** Explicit encoding baseline of this CA's own retained certificate. */
+    /**
+     * Identifies the encoding recipe of this CA's own retained certificate.
+     *
+     * <p>The marker describes retained representation. It neither selects an outgoing
+     * issuer algorithm nor proves that the certificate or any historical store is valid.
+     */
     public enum HybridSignatureBaseline {
-        /** Certificate has no alternative signature. */ NONE,
-        /** Cor3 SIGNED wrapper with native inner and outer AlgorithmIdentifiers. */ COR3_SIGNED_WRAPPER,
-        /** Verified historical pre-TBS recipe; never selected for newly issued certificates. */ LEGACY_PRE_TBS
+        /**
+         * Identifies a retained certificate without an alternative signature.
+         */
+        NONE,
+        /**
+         * Identifies the Cor3 SIGNED wrapper with native inner and outer AlgorithmIdentifiers.
+         */
+        COR3_SIGNED_WRAPPER,
+        /**
+         * Identifies the historical pre-TBS recipe; it is not selected for new certificates
+         * and does not imply an implemented old-store migration path.
+         */
+        LEGACY_PRE_TBS
     }
-    /** Creates a complete generation-specific binding without algorithm inference. */
+    /**
+     * Validates the complete generation-specific public binding without algorithm inference.
+     *
+     * <p>The issuer identity must derive from the exact authority and credential.
+     * Alternative-role presence must agree with the retained certificate baseline,
+     * and all digest coordinates must be lowercase SHA-256 hexadecimal. The
+     * constructor does not open a store, resolve keys or verify certificate signatures.
+     *
+     * @throws NullPointerException if a required identity, role, profile, optional or baseline is null
+     * @throws IllegalArgumentException if the version, format bound, generation identity,
+     *         alternative/baseline relationship or a digest representation is invalid
+     * @param version binding model version, currently one
+     * @param issuerId immutable generation identity
+     * @param authorityId logical authority identity
+     * @param credentialId exact retained CA credential
+     * @param formatId credential format
+     * @param primary outgoing primary managed signing key
+     * @param alternative complete outgoing alternative managed signing key, if hybrid
+     * @param certificateSha256 exact retained certificate digest
+     * @param profile exact creation profile reference
+     * @param bindingSetCommitment exact X.509 algorithm binding-set digest
+     * @param certificateHybridBaseline encoding baseline of the retained certificate
+     * @param evidenceSha256 verified creation evidence digest
+     */
     public IssuerCryptographicBinding {
         Objects.requireNonNull(issuerId, "issuerId");
         Objects.requireNonNull(authorityId, "authorityId");
@@ -86,7 +130,16 @@ public record IssuerCryptographicBinding(int version, PkiId issuerId, PkiId auth
         requireDigest(evidenceSha256, "evidenceSha256");
     }
 
-    /** @return canonical domain-separated SHA-256 commitment to all binding fields */
+    /**
+     * Commits all binding fields using the canonical versioned public-evidence encoding.
+     *
+     * <p>The codec's ZICB magic, version and ordered framing supply domain separation.
+     * Hashing does not validate a managed key or prove that evidence was authorized.
+     *
+     * @return the SHA-256 commitment as 64 lowercase hexadecimal characters
+     * @throws IllegalArgumentException if the complete binding cannot fit the codec's bounds
+     * @throws IllegalStateException if the required SHA-256 implementation is unavailable
+     */
     public String commitment() {
         try {
             return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
@@ -96,6 +149,13 @@ public record IssuerCryptographicBinding(int version, PkiId issuerId, PkiId auth
         }
     }
 
+    /**
+     * Checks the canonical lowercase hexadecimal representation of a SHA-256 digest.
+     *
+     * @param value candidate digest text
+     * @param field trusted field label included in the validation failure
+     * @throws IllegalArgumentException if the value is null or is not exactly 64 lowercase hexadecimal characters
+     */
     static void requireDigest(String value, String field) {
         if (value == null || !value.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException(field + " must be lowercase SHA-256 hexadecimal");

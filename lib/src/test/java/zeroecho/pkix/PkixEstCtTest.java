@@ -69,7 +69,9 @@ import zeroecho.pkix.ct.PreCertificateResult;
 import zeroecho.pkix.ct.SignedCertificateTimestamp;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** Tests for EST (RFC 7030) encoding and Certificate Transparency (RFC 9162) operations in the PKIX API. */
+/**
+ * Tests for EST (RFC 7030) encoding and Certificate Transparency (RFC 9162) operations in the PKIX API.
+ */
 class PkixEstCtTest {
 
     private static final AlgorithmIdentifier SHA256_RSA =
@@ -116,6 +118,11 @@ class PkixEstCtTest {
     // parseCsr
     // -------------------------------------------------------------------------
 
+    /**
+     * Parse CSR DER input round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void parseCsr_derInput_roundtrip() throws Exception {
         KeyPair leaf = rsa2048();
@@ -130,6 +137,11 @@ class PkixEstCtTest {
         assertEquals(leaf.getPublic(), parsed.publicKey());
     }
 
+    /**
+     * Parse CSR PEM input round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void parseCsr_pemInput_roundtrip() throws Exception {
         KeyPair leaf = ec256();
@@ -148,6 +160,11 @@ class PkixEstCtTest {
         assertEquals(leaf.getPublic(), parsed.publicKey());
     }
 
+    /**
+     * Parse CSR corrupted signature throws certification request exception.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void parseCsr_corruptedSignature_throwsCertificationRequestException() throws Exception {
         KeyPair leaf = rsa2048();
@@ -161,6 +178,9 @@ class PkixEstCtTest {
         assertThrows(CertificationRequestException.class, () -> Pkix.parseCsr(der));
     }
 
+    /**
+     * Parse CSR invalid DER throws certification request exception.
+     */
     @Test
     void parseCsr_invalidDer_throwsCertificationRequestException() {
         byte[] garbage = {0x00, 0x01, 0x02, 0x03, 0x04};
@@ -171,6 +191,11 @@ class PkixEstCtTest {
     // encodeCertsOnly
     // -------------------------------------------------------------------------
 
+    /**
+     * Encode certs only single cert decodes as expected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encodeCertsOnly_singleCert_decodesAsExpected() throws Exception {
         X509Certificate cert = selfSignedRsa();
@@ -181,6 +206,11 @@ class PkixEstCtTest {
         assertEquals(1, signedData.getCertificates().getMatches(null).size(), "one certificate");
     }
 
+    /**
+     * Encode certs only multiple chain preserves order.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encodeCertsOnly_multipleChain_preservesOrder() throws Exception {
         X509Certificate cert1 = selfSignedRsa();
@@ -195,6 +225,11 @@ class PkixEstCtTest {
     // encodeCsrAttrs
     // -------------------------------------------------------------------------
 
+    /**
+     * Encode CSR attrs oid only decodes correctly.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encodeCsrAttrs_oidOnly_decodesCorrectly() throws Exception {
         String rsaEncryptionOid = "1.2.840.113549.1.1.1";
@@ -212,6 +247,11 @@ class PkixEstCtTest {
                 org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(seq.getObjectAt(0)).getId());
     }
 
+    /**
+     * Encode CSR attrs empty encodes empty sequence.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encodeCsrAttrs_empty_encodesEmptySequence() throws Exception {
         byte[] encoded = Pkix.encodeCsrAttrs(List.of());
@@ -225,6 +265,11 @@ class PkixEstCtTest {
     // encryptPrivateKeyForRecipient
     // -------------------------------------------------------------------------
 
+    /**
+     * Encrypt private key for recipient RSA recipient decryption round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encryptPrivateKeyForRecipient_rsaRecipient_decryptionRoundtrip() throws Exception {
         KeyPair recipient = rsa2048();
@@ -250,6 +295,11 @@ class PkixEstCtTest {
         assertArrayEquals(pkcs8Bytes, decrypted);
     }
 
+    /**
+     * Encrypt private key for recipient ec recipient decryption round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encryptPrivateKeyForRecipient_ecRecipient_decryptionRoundtrip() throws Exception {
         KeyPair recipient = ec256();
@@ -277,6 +327,11 @@ class PkixEstCtTest {
     // buildPreCertificate
     // -------------------------------------------------------------------------
 
+    /**
+     * Build pre certificate poison extension present and critical.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildPreCertificate_poisonExtensionPresentAndCritical() throws Exception {
         KeyPair ca = rsa2048();
@@ -309,6 +364,11 @@ class PkixEstCtTest {
     // embedScts
     // -------------------------------------------------------------------------
 
+    /**
+     * Embed scts replaces poison with SCT list extension.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void embedScts_replacesPoisonWithSctListExtension() throws Exception {
         KeyPair ca = rsa2048();
@@ -352,6 +412,9 @@ class PkixEstCtTest {
     // SignedCertificateTimestamp record validation
     // -------------------------------------------------------------------------
 
+    /**
+     * Signed certificate timestamp defensive copies.
+     */
     @Test
     void signedCertificateTimestamp_defensiveCopies() {
         byte[] logId = new byte[SignedCertificateTimestamp.LOG_ID_LENGTH];
@@ -368,6 +431,9 @@ class PkixEstCtTest {
         assertEquals(1, sct.signature()[0], "signature() accessor returns a fresh copy");
     }
 
+    /**
+     * Signed certificate timestamp short log id throws illegal argument exception.
+     */
     @Test
     void signedCertificateTimestamp_shortLogId_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class,
@@ -375,6 +441,9 @@ class PkixEstCtTest {
                         new byte[0], "SHA256withECDSA", new byte[]{0x01}));
     }
 
+    /**
+     * Signed certificate timestamp empty signature throws illegal argument exception.
+     */
     @Test
     void signedCertificateTimestamp_emptySignature_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class,

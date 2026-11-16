@@ -102,6 +102,9 @@ final class FsCodecTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Approved schema round trip and type binding.
+     */
     @Test
     void approvedSchemaRoundTripAndTypeBinding() {
         System.out.println("approvedSchemaRoundTripAndTypeBinding");
@@ -116,6 +119,9 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Current envelope rejects unknown old and corrupted payloads.
+     */
     @Test
     void currentEnvelopeRejectsUnknownOldAndCorruptedPayloads() {
         System.out.println("currentEnvelopeRejectsUnknownOldAndCorruptedPayloads");
@@ -147,6 +153,9 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Attacker class names cannot select or initialize runtime types.
+     */
     @Test
     void attackerClassNamesCannotSelectOrInitializeRuntimeTypes() {
         System.out.println("attackerClassNamesCannotSelectOrInitializeRuntimeTypes");
@@ -164,6 +173,9 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Attribute sets persist structurally and decode canonically.
+     */
     @Test
     void attributeSetsPersistStructurallyAndDecodeCanonically() {
         System.out.println("attributeSetsPersistStructurallyAndDecodeCanonically");
@@ -206,6 +218,9 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Byte attribute values are defensively copied.
+     */
     @Test
     void byteAttributeValuesAreDefensivelyCopied() {
         System.out.println("byteAttributeValuesAreDefensivelyCopied");
@@ -226,6 +241,9 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed packed length and optional marker fail closed.
+     */
     @Test
     void malformedPackedLengthAndOptionalMarkerFailClosed() {
         System.out.println("malformedPackedLengthAndOptionalMarkerFailClosed");
@@ -239,6 +257,11 @@ final class FsCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Credential profile binding discriminator round trips exactly.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void credentialProfileBindingDiscriminatorRoundTripsExactly() throws Exception {
         FilesystemStagedContentStore staged = referenceStore("binding");
@@ -256,6 +279,11 @@ final class FsCodecTest {
         }
     }
 
+    /**
+     * Obsolete bare string ca binding fails strict decode.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void obsoleteBareStringCaBindingFailsStrictDecode() throws Exception {
         FilesystemStagedContentStore staged = referenceStore("obsolete-binding");
@@ -267,6 +295,9 @@ final class FsCodecTest {
         assertInvalid(encoded);
     }
 
+    /**
+     * Ca record round trips only ordered credential identifiers and rejects embedded value tag.
+     */
     @Test
     void caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag() {
         System.out.println("caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag");

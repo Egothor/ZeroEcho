@@ -43,8 +43,17 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
 
-/** Client custody uses its own secret; server unlock authority does not open it. */
+/**
+ * Client custody uses its own secret; server unlock authority does not open it.
+ */
 class ExerciseProtocolClientCustodyTest {
+    /**
+     * Checks canonical deployment publication identities pass stopped-seed guards while private-path and malformed identity attempts fail.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void deploymentPublicationIdsPassTheActualStoppedSeedIdentityGuard(@TempDir Path root) throws Exception {
         java.nio.file.Files.setPosixFilePermissions(root,java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
@@ -67,6 +76,13 @@ class ExerciseProtocolClientCustodyTest {
         org.junit.jupiter.api.Assertions.assertEquals("Invalid fixture identity or requested state",rejected.getMessage());
     }
 
+    /**
+     * Checks an authenticated copied client keyring preserves the actual signing key used by the independent client.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void copiedClientRingWithAuthenticatedNonceStillSignsWithOriginalKey(@TempDir Path root) throws Exception {
         var generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);
@@ -87,6 +103,13 @@ class ExerciseProtocolClientCustodyTest {
         }
     }
 
+    /**
+     * Checks client custody opens under its own password and rejects the independent server unlock password.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void clientRingCannotBeOpenedWithServerPassword(@TempDir Path root) throws Exception {
         var generator=KeyPairGenerator.getInstance("RSA");

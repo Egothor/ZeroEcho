@@ -68,11 +68,17 @@ public interface X509BindingRule {
      * Signature byte representation owned by a signature rule.
      */
     enum SignatureEncoding {
-        /** Algorithm-defined opaque signature bytes. */
+        /**
+         * Algorithm-defined opaque signature bytes.
+         */
         OPAQUE,
-        /** ASN.1 DER {@code SEQUENCE { r, s }}. */
+        /**
+         * ASN.1 DER {@code SEQUENCE { r, s }}.
+         */
         ECDSA_DER,
-        /** Not applicable to a public-key-only rule. */
+        /**
+         * Not applicable to a public-key-only rule.
+         */
         NOT_APPLICABLE
     }
 
@@ -80,15 +86,25 @@ public interface X509BindingRule {
      * Subject-public-key bit-string representation.
      */
     enum PublicKeyEncoding {
-        /** Algorithm-defined PKCS#1 RSA public-key structure. */
+        /**
+         * Algorithm-defined PKCS#1 RSA public-key structure.
+         */
         RSA_PKCS1_DER,
-        /** SEC1 encoded elliptic-curve point. */
+        /**
+         * SEC1 encoded elliptic-curve point.
+         */
         EC_POINT,
-        /** Algorithm-defined raw public-key bytes. */
+        /**
+         * Algorithm-defined raw public-key bytes.
+         */
         RAW,
-        /** Canonical native SubjectPublicKeyInfo DER nested in the BIT STRING. */
+        /**
+         * Canonical native SubjectPublicKeyInfo DER nested in the BIT STRING.
+         */
         NESTED_SPKI_DER,
-        /** Not applicable to a signature-only rule. */
+        /**
+         * Not applicable to a signature-only rule.
+         */
         NOT_APPLICABLE
     }
 

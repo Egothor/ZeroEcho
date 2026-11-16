@@ -70,6 +70,12 @@ final class FilesystemPkiStoreOwnershipTest {
     private static final String OWNERSHIP_CODE = "STORE_ALREADY_OPEN";
     private static final long PROCESS_TIMEOUT_SECONDS = 10L;
 
+    /**
+     * Same JVM owner excludes second store and releases on close.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sameJvmOwnerExcludesSecondStoreAndReleasesOnClose(@TempDir Path tempDir) throws Exception {
         System.out.println("sameJvmOwnerExcludesSecondStoreAndReleasesOnClose");
@@ -94,6 +100,12 @@ final class FilesystemPkiStoreOwnershipTest {
         System.out.println("sameJvmOwnerExcludesSecondStoreAndReleasesOnClose...ok");
     }
 
+    /**
+     * Separate store roots remain independent.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void separateStoreRootsRemainIndependent(@TempDir Path tempDir) throws Exception {
         System.out.println("separateStoreRootsRemainIndependent");
@@ -114,6 +126,12 @@ final class FilesystemPkiStoreOwnershipTest {
         System.out.println("separateStoreRootsRemainIndependent...ok");
     }
 
+    /**
+     * Constructor failure after acquisition releases ownership.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void constructorFailureAfterAcquisitionReleasesOwnership(@TempDir Path tempDir) throws Exception {
         System.out.println("constructorFailureAfterAcquisitionReleasesOwnership");
@@ -130,6 +148,12 @@ final class FilesystemPkiStoreOwnershipTest {
         System.out.println("constructorFailureAfterAcquisitionReleasesOwnership...ok");
     }
 
+    /**
+     * Forked JVM owner excludes parent and releases normally.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void forkedJvmOwnerExcludesParentAndReleasesNormally(@TempDir Path tempDir) throws Exception {
         System.out.println("forkedJvmOwnerExcludesParentAndReleasesNormally");
@@ -150,6 +174,12 @@ final class FilesystemPkiStoreOwnershipTest {
         System.out.println("forkedJvmOwnerExcludesParentAndReleasesNormally...ok");
     }
 
+    /**
+     * Forked JVM termination releases operating system lock.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void forkedJvmTerminationReleasesOperatingSystemLock(@TempDir Path tempDir) throws Exception {
         System.out.println("forkedJvmTerminationReleasesOperatingSystemLock");
@@ -296,7 +326,9 @@ final class FilesystemPkiStoreOwnershipTest {
             }
         }
 
-        /** Retains the primary cleanup failure and the original later failure objects. */
+        /**
+         * Retains the primary cleanup failure and the original later failure objects.
+         */
         private static Throwable appendCloseFailure(Throwable primary, Throwable later) {
             if (primary == null) { return later; }
             if (primary != later) { primary.addSuppressed(later); }

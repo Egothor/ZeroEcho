@@ -42,7 +42,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Checks strict independent backup-transfer configuration, storage budgets and permitted browser origins.
+ */
 class BackupTransferConfigurationTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
     private String document() {
@@ -58,6 +64,11 @@ class BackupTransferConfigurationTest {
         return BackupTransferConfiguration.decode(json.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Checks explicit archive/workspace reservations survive bounded configuration file decoding exactly.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void explicitBudgetsRoundTripThroughBoundedFile() throws Exception {
         Path file = directory.resolve("transfer.json");
         Files.writeString(file, document());
@@ -67,6 +78,11 @@ class BackupTransferConfigurationTest {
         assertEquals(decode(document()), configuration);
     }
 
+    /**
+     * Checks the committed example selects a 64-MiB archive bound and workspace capacity for its configured concurrency.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void committedExampleUsesSupportedVersionAndExplicitBudgets() throws Exception {
         BackupTransferConfiguration example = BackupTransferConfiguration.read(
                 Path.of("../documentation/examples/configuration/pki-backup-transfer-example.json"));
@@ -74,6 +90,9 @@ class BackupTransferConfigurationTest {
         assertEquals(2 * example.workspaceReservationBytes(), example.maximumWorkspaceBytes());
     }
 
+    /**
+     * Checks unsupported version, missing required fields, unknown fields and duplicate JSON fields are rejected.
+     */
     @Test void rejectsUnknownMissingDuplicateAndFutureFields() {
         assertThrows(IllegalArgumentException.class, () -> decode(document().replace("1,", "2,")));
         assertThrows(IllegalArgumentException.class, () -> decode(document().replace("\"version\":1,", "")));
@@ -81,6 +100,9 @@ class BackupTransferConfigurationTest {
         assertThrows(IllegalArgumentException.class, () -> decode(document().replace("{", "{\"version\":1,")));
     }
 
+    /**
+     * Checks inconsistent or overflowing storage/workspace/concurrency budgets fail validation.
+     */
     @Test void rejectsOverflowAndInsufficientBudgets() {
         for (String invalid : new String[] {
                 document().replace("1048576", "9223372036854775807"),
@@ -93,6 +115,9 @@ class BackupTransferConfigurationTest {
         }
     }
 
+    /**
+     * Checks permitted browser origins require exact secure or explicitly supported loopback origin syntax.
+     */
     @Test void acceptsOnlyExactSecureOrLoopbackOrigins() {
         for (String origin : new String[] {"http://admin.example", "http:/missing-host", "https://admin.example/",
                 "https://user@admin.example", "https://admin.example?x=1", "https://admin.example#fragment"}) {
@@ -102,6 +127,11 @@ class BackupTransferConfigurationTest {
         decode(document().replace("https://admin.example", "http://localhost:8080"));
     }
 
+    /**
+     * Checks file-size rejection occurs before the oversized transfer configuration is parsed.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsOversizedFileBeforeParsing() throws Exception {
         Path file = directory.resolve("oversized.json");
         Files.write(file, new byte[16385]);

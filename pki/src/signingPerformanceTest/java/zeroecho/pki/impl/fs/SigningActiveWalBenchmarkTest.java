@@ -41,8 +41,16 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Fast fake-force smoke coverage for the opt-in active-WAL characterization. */
+/**
+ * Fast fake-force smoke coverage for the opt-in active-WAL characterization.
+ */
 final class SigningActiveWalBenchmarkTest {
+    /**
+     * Fake force smoke produces bounded versioned report.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void fakeForceSmokeProducesBoundedVersionedReport(@TempDir Path temporary) throws Exception {
         Path output = temporary.resolve("result.json");

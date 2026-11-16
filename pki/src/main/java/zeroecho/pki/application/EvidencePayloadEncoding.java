@@ -38,12 +38,21 @@ import java.nio.charset.StandardCharsets;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 
-/** Bounded transport decoding shared only by typed evidence families. */
+/**
+ * Bounded transport decoding shared only by typed evidence families.
+ */
 final class EvidencePayloadEncoding {
     private static final int MAXIMUM_ENCODED_BYTES = (786_432 * 4 / 3) + 4;
 
     private EvidencePayloadEncoding() { }
 
+    /**
+     * Decodes canonical URL-safe base64 execution evidence after checking its encoded bound.
+     *
+     * @param payload ASCII base64url bytes without padding, bounded to 1,048,580 bytes
+     * @return decoded immutable domain attributes
+     * @throws IllegalArgumentException if the payload is null, oversized or contains invalid alphabet, framing or attribute data
+     */
     /* default */ static AttributeSet decode(byte[] payload) {
         if (payload == null || payload.length > MAXIMUM_ENCODED_BYTES) { throw invalid(); }
         for (byte value : payload) {

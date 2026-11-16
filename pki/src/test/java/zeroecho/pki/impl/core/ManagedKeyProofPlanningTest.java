@@ -53,8 +53,16 @@ import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 
-/** Shared planning freezes keys without consuming any separately accepted proof. */
+/**
+ * Shared planning freezes keys without consuming any separately accepted proof.
+ */
 final class ManagedKeyProofPlanningTest {
+    /**
+     * Exports once and binds fresh internal challenge to parent and deadline.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exportsOnceAndBindsFreshInternalChallengeToParentAndDeadline(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         try (FilesystemPkiStore store = open(root)) {
@@ -83,6 +91,12 @@ final class ManagedKeyProofPlanningTest {
         }
     }
 
+    /**
+     * Cancellation before planning or challenge never dispatches or admits.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationBeforePlanningOrChallengeNeverDispatchesOrAdmits(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         try (FilesystemPkiStore store = open(root)) {

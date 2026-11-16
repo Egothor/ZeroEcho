@@ -93,6 +93,7 @@ public final class DefaultRevocationService implements RevocationService {
      * @param store     authoritative store
      * @param clock     authoritative clock
      * @param auditSink best-effort audit sink
+     * @throws NullPointerException if store, clock, auditSink is null
      */
     public DefaultRevocationService(PkiStore store, Clock clock, AuditSink auditSink) {
         this.store = Objects.requireNonNull(store, "store");
@@ -100,21 +101,33 @@ public final class DefaultRevocationService implements RevocationService {
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationRecord hold(RevocationCommand.Hold command) {
         return transition(Objects.requireNonNull(command, "command"), "HOLD");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationRecord unhold(RevocationCommand.Unhold command) {
         return transition(Objects.requireNonNull(command, "command"), "UNHOLD");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationRecord revokePermanently(RevocationCommand.RevokePermanently command) {
         return transition(Objects.requireNonNull(command, "command"), "REVOKE_PERMANENTLY");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public RevocationRecord revokeOverduePendingConfirmation(
@@ -133,6 +146,9 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public Optional<RevocationRecord> get(PkiId credentialId) {
@@ -144,6 +160,9 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public RevocationHistory history(PkiId credentialId) {
@@ -155,6 +174,9 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public RevocationTransitionFeed feed(Optional<RevocationTransitionFeed.Position> afterExclusive) {
@@ -166,6 +188,9 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public RevocationSnapshot search(RevocationQuery query) {
@@ -274,7 +299,9 @@ public final class DefaultRevocationService implements RevocationService {
         return failure.failureReason().map(PkiFailureReason::name).orElse("REVOCATION_STATE_UPDATE_FAILED");
     }
 
-    /** Query-filtered ownership wrapper over one stable store snapshot. */
+    /**
+     * Query-filtered ownership wrapper over one stable store snapshot.
+     */
     private final class FilteredSnapshot implements RevocationSnapshot {
         private final RevocationSnapshot source;
         private final RevocationQuery query;
@@ -284,36 +311,57 @@ public final class DefaultRevocationService implements RevocationService {
             this.query = query;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String snapshotId() {
             return source.snapshotId();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() {
             return source.sourceStoreId();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long revision() {
             return source.revision();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long boundary() {
             return source.boundary();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String commitment() {
             return source.commitment();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong count() {
             return OptionalLong.empty();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         @SuppressWarnings("PMD.AvoidCatchingGenericException")
         public Cursor openCursor() throws IOException {
@@ -324,13 +372,18 @@ public final class DefaultRevocationService implements RevocationService {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             source.close();
         }
     }
 
-    /** Lazy query filter retaining only one current state. */
+    /**
+     * Lazy query filter retaining only one current state.
+     */
     private final class FilteredCursor implements RevocationSnapshot.Cursor {
         private final RevocationSnapshot.Cursor source;
         private final RevocationQuery query;
@@ -342,6 +395,9 @@ public final class DefaultRevocationService implements RevocationService {
             this.query = query;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         @SuppressWarnings({ "PMD.UnusedAssignment", "PMD.AvoidCatchingGenericException" })
         public boolean next(CancellationSignal cancellation) throws IOException {
@@ -361,6 +417,9 @@ public final class DefaultRevocationService implements RevocationService {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationRecord current() {
             if (current == null) {
@@ -369,6 +428,9 @@ public final class DefaultRevocationService implements RevocationService {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long currentGlobalRevision() {
             if (current == null) {
@@ -377,6 +439,9 @@ public final class DefaultRevocationService implements RevocationService {
             return source.currentGlobalRevision();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long ordinal() {
             if (current == null) {
@@ -385,6 +450,9 @@ public final class DefaultRevocationService implements RevocationService {
             return ordinal;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             current = null;

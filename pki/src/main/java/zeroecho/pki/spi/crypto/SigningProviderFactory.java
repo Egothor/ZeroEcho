@@ -39,7 +39,9 @@ import java.util.Objects;
 import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** ServiceLoader factory for a configured {@link SigningProvider}. */
+/**
+ * ServiceLoader factory for a configured {@link SigningProvider}.
+ */
 public interface SigningProviderFactory extends ConfigurableProvider<SigningProvider> {
     /**
      * Allocates a provider with explicit process-local runtime dependencies.
@@ -47,6 +49,7 @@ public interface SigningProviderFactory extends ConfigurableProvider<SigningProv
      * @param config validated persistent provider configuration
      * @param dependencies process-local security capabilities
      * @return opened signing provider owned by the caller
+     * @throws NullPointerException if dependencies is null
      */
     default SigningProvider allocate(ProviderConfig config, SigningProviderRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies must not be null");

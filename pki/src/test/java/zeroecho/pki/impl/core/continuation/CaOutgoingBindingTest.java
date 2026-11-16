@@ -43,8 +43,13 @@ import zeroecho.pki.api.ca.IssuerKeyBinding;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.AlgorithmIdentifier;
 
-/** Exact outgoing key selections survive durable encoding independently of incoming certificate algorithms. */
+/**
+ * Exact outgoing key selections survive durable encoding independently of incoming certificate algorithms.
+ */
 final class CaOutgoingBindingTest {
+    /**
+     * Round trips primary and alternative and rejects malformed or trailing evidence.
+     */
     @Test void roundTripsPrimaryAndAlternativeAndRejectsMalformedOrTrailingEvidence() {
         var primary = new IssuerKeyBinding(new KeyRef("managed:primary"), BootstrapAlgorithmIdentities.EC_P384_PUBLIC_KEY,
                 BootstrapAlgorithmIdentities.ECDSA_SHA384, new EncodedObject(Encoding.DER,

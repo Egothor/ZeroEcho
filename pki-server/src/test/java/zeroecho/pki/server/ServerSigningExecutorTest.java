@@ -77,10 +77,19 @@ import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.application.PkiSigningCommands;
 
+/**
+ * Checks authorized signing adaptation without transferring lifecycle ownership away from the realm session.
+ */
 class ServerSigningExecutorTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
     private static final KeyRef KEY = new KeyRef("key:subject");
 
+    /**
+     * Checks shared signing preparation policy rejection maps to the stable server policy failure before acceptance.
+     */
     @Test
     void sharedPreparationPolicyRejectionDoesNotReachAcceptance() {
         Fixture fixture = fixture();
@@ -93,6 +102,9 @@ class ServerSigningExecutorTest {
         verify(fixture.signing(), never()).accept(any());
     }
 
+    /**
+     * Checks wrapped cancellation maps to cancelled unless a durability failure requires the stronger recovery-required classification.
+     */
     @Test
     void wrappedPreparationCancellationIsCancelledButDurabilityRetainsPriority() {
         for (boolean durability : List.of(false, true)) {
@@ -112,6 +124,11 @@ class ServerSigningExecutorTest {
         }
     }
 
+    /**
+     * Checks cancellation after preparation discards the exact prepared custody once without acceptance.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cancellationAfterPreparationDiscardsOnceBeforeAcceptance() throws Exception {
         try (SemanticPreparationFixture custody = SemanticPreparationFixture.open(directory.resolve("cancel"))) {
@@ -129,6 +146,11 @@ class ServerSigningExecutorTest {
         }
     }
 
+    /**
+     * Checks once acceptance was invoked, cancellation does not discard custody or replace an uncertain retained signing admission.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cancellationAfterAcceptInvocationDoesNotDiscardOrReplaceUncertainAdmission() throws Exception {
         try (SemanticPreparationFixture custody = SemanticPreparationFixture.open(directory.resolve("accept"))) {
@@ -168,6 +190,11 @@ class ServerSigningExecutorTest {
         }
     }
 
+    /**
+     * Checks exact administrative principal, issuance evidence and cancellation reach shared signing commands and accepted-winner identity is returned.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void forwardsServerIdentityEvidenceAndCancellationAndReturnsAcceptedWinner() throws Exception {
         try (SemanticPreparationFixture custody = SemanticPreparationFixture.open(directory.resolve("forward"))) {
@@ -199,6 +226,9 @@ class ServerSigningExecutorTest {
         }
     }
 
+    /**
+     * Checks absent signing capability and untargeted OCSP generation preserve distinct safe server failure codes.
+     */
     @Test
     void missingCommandsAndOcspKeepTheirServerFailureCodes() {
         Fixture fixture = fixture();
@@ -216,6 +246,11 @@ class ServerSigningExecutorTest {
         verify(fixture.signing(), never()).accept(any());
     }
 
+    /**
+     * Checks a real reactive session accepts the shared command and completes through its existing reactor with retained administrative access context.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void realReactiveSessionAcceptsSharedCommandAndCompletesThroughExistingReactor() throws Exception {
         try (SemanticPreparationFixture fixture = SemanticPreparationFixture.open(directory.resolve("reactive"), Clock.systemUTC())) {

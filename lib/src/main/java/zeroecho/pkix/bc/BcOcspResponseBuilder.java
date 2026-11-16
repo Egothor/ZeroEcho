@@ -67,7 +67,9 @@ import zeroecho.pkix.ocsp.OcspResponseBuilder;
 import zeroecho.pkix.ocsp.ResponderId;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** BouncyCastle-backed {@link OcspResponseBuilder}. */
+/**
+ * BouncyCastle-backed {@link OcspResponseBuilder}.
+ */
 final class BcOcspResponseBuilder implements OcspResponseBuilder {
 
     private ResponderId responderId;
@@ -78,18 +80,27 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
     private record SingleResponse(CertId certId, CertStatus status, Instant thisUpdate, Instant nextUpdate) {
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspResponseBuilder responderId(ResponderId responderId) {
         this.responderId = responderId;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspResponseBuilder producedAt(Instant producedAt) {
         this.producedAt = producedAt;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspResponseBuilder addResponse(CertId certId, CertStatus status, Instant thisUpdate,
             Instant nextUpdate) {
@@ -97,12 +108,18 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspResponseBuilder nonce(byte[] nonce) {
         this.nonce = nonce == null ? null : nonce.clone();
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] buildTbs() {
         try {
@@ -112,6 +129,9 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] build(ContentSigner signer, List<X509Certificate> chain) {
         Objects.requireNonNull(responderId, "responderId");

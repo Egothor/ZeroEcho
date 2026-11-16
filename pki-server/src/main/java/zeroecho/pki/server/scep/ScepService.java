@@ -68,15 +68,22 @@ import zeroecho.pki.server.enrollment.EnrollmentTransaction;
  * enrollment continuation. CMS verification precedes credential selection and
  * decryption; the shared coordinator owns approval, signing and recovery.
  * No request, private key or transaction state is retained in this service.
+ *
+ * <p>The realm, registry and coordinators are borrowed. Each acquired native RA
+ * credential lease and repository content stream is closed by the call that opens
+ * it; private keys are used within the lease and are not exported by this adapter.
+ * Exact original request/wire evidence may contain confidential native attributes.
+ * CMS verification and request hashing do not sanitize those contents.</p>
  */
 public final class ScepService {
     private final ServerRealmContext realm;
     private final EnrollmentEndpointRegistry endpoints;
 
-    /** Creates a stateless adapter.
-
+    /**
+     * Creates a stateless adapter.
+     *
      * @param realm lifecycle-owned realm context
-
+     * @throws NullPointerException if the realm or its enrollment registry is null
      */
     public ScepService(ServerRealmContext realm) {
         this.realm = Objects.requireNonNull(realm, "realm");
@@ -85,20 +92,23 @@ public final class ScepService {
 
     /**
      * Checks endpoint policy and runtime bindings without registering it.
+     *
      * @param endpoint exact proposed endpoint
      * @throws IllegalStateException if policy or runtime credential bindings are unavailable
      */
     public void validateRegistration(ScepEndpoint endpoint) { endpoints.validateRegistration(endpoint); }
 
-    /** Registers or replaces an endpoint.
-
+    /**
+     * Registers or replaces an endpoint.
+     *
      * @param endpoint validated configuration
-
+     * @throws NullPointerException if the endpoint is null
      */
     public void register(ScepEndpoint endpoint) { endpoints.register(Objects.requireNonNull(endpoint, "endpoint")); }
 
-    /** Removes an endpoint.
-
+    /**
+     * Removes an endpoint.
+     *
      * @param label endpoint label
      * @return removed endpoint, if present
      */
@@ -106,8 +116,9 @@ public final class ScepService {
         return endpoints.deregister(EnrollmentEndpointRegistry.Protocol.SCEP, label).map(value -> (ScepEndpoint) value);
     }
 
-    /** Finds an endpoint.
-
+    /**
+     * Finds an endpoint.
+     *
      * @param label endpoint label
      * @return current endpoint, if present
      */
@@ -115,10 +126,10 @@ public final class ScepService {
         return endpoints.find(EnrollmentEndpointRegistry.Protocol.SCEP, label).map(value -> (ScepEndpoint) value);
     }
 
-    /** Collects current endpoints.
-
+    /**
+     * Collects current endpoints.
+     *
      * @return immutable endpoints from bounded store pages
-
      */
     public List<ScepEndpoint> list() {
         return endpoints.list(EnrollmentEndpointRegistry.Protocol.SCEP).stream().map(value -> (ScepEndpoint) value).toList();
@@ -126,24 +137,40 @@ public final class ScepService {
 
     /**
      * Public RA advertisement with explicit media type.
+     *
      * @param contentType RFC 8894 media type
      * @param body certificates-only CMS bytes
      */
     public record CaCertificateResponse(String contentType, byte[] body) {
-        /** Validates and copies the response body. */
+        /**
+         * Copies advertisement bytes while retaining the required media-type text.
+         *
+         * <p>The constructor does not validate a MIME type or parse CMS/certificates.</p>
+         *
+         * @param contentType supplied non-null media type
+         * @param body supplied advertisement bytes; cloned without parsing
+         * @throws NullPointerException if either argument is null
+         */
         public CaCertificateResponse {
             Objects.requireNonNull(contentType, "contentType"); body = body.clone();
         }
-        /** Copies the response.
+        /**
+         * Copies the response.
+         *
          * @return independent encoded certificate set
          */
         @Override public byte[] body() { return body.clone(); }
-        /** @return description without certificate data */
+        /**
+         * Returns description without certificate data.
+         *
+         * @return description without certificate data
+         */
         @Override public String toString() { return "CaCertificateResponse[certificates-only]"; }
     }
 
     /**
      * Advertises the actual active RA and its exact issuing CA chain.
+     *
      * @param endpoint current endpoint
      * @return typed degenerate CMS response
      * @throws ScepProtocolException if configuration or custody is unavailable
@@ -163,17 +190,19 @@ public final class ScepService {
         } catch (Exception unavailable) { throw new ScepProtocolException(503, "SCEP CA advertisement is unavailable"); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
-    /** Returns the same provisioned certificate set as GetCACert.
+    /**
+     * Returns the same provisioned certificate set as GetCACert.
+     *
      * @param endpoint current endpoint
      * @return certificates-only CMS
      * @throws ScepProtocolException if custody is unavailable
      */
     public byte[] getCaCertChain(ScepEndpoint endpoint) throws ScepProtocolException { return getCaCert(endpoint).body(); }
 
-    /** Advertises implemented capabilities.
-
+    /**
+     * Advertises implemented capabilities.
+     *
      * @return ASCII capability list
-
      */
     public byte[] getCaCaps() {
         return "POSTPKIOperation\nSHA-256\nAES\n".getBytes(StandardCharsets.US_ASCII);
@@ -182,6 +211,8 @@ public final class ScepService {
     /**
      * Processes authenticated PKCSReq or GetCertInitial with durable replay and
      * frozen credential selection. A retry may deliver a retained completed result.
+     * This overload observes interruption on the calling thread as cancellation.
+     *
      * @param endpoint routed endpoint
      * @param messageData bounded encoded CMS request
      * @return signed CertRep, pending, failure or encrypted completed certificate
@@ -192,12 +223,26 @@ public final class ScepService {
     }
 
     /**
-     * Processes a request with cancellation before durable signing admission.
+     * Processes a CMS request with cancellation before durable signing admission.
+     *
+     * <p>CMS verification precedes credential selection and decryption. Existing
+     * transactions use their retained response credential and requester binding;
+     * fresh initial requests check current endpoint/challenge policy before native
+     * admission. Polls validate original issuer/subject coordinates. These checks
+     * do not replace the coordinator's exact proof/policy/replay admission.</p>
+     *
+     * <p>A transport cancellation does not erase an accepted transaction. The
+     * borrowed credential lease covers decryption and protected CertRep signing
+     * and closes on all normal/exceptional paths of this operation.</p>
+     *
      * @param endpoint routed endpoint
      * @param messageData bounded encoded CMS request
      * @param cancellation request cancellation signal
      * @return signed CertRep
-     * @throws ScepProtocolException for invalid input or unavailable processing
+     * @throws NullPointerException if endpoint or cancellation is null
+     * @throws ScepProtocolException for invalid CMS/enrollment input (400) or unavailable processing (503)
+     * @throws IllegalArgumentException if the supplied SCEP SDK request differs from its original native
+     *         request
      */
     public byte[] processPkiOperation(ScepEndpoint endpoint, byte[] messageData, CancellationSignal cancellation)
             throws ScepProtocolException {
@@ -270,8 +315,11 @@ public final class ScepService {
 
     /**
      * Reports usable explicitly opted-in client-owned SDK enrollment.
+     *
      * @param endpoint registered endpoint
-     * @return whether current policies and native runtime support SDK issuance
+     * @return whether opted-in active policy/runtime and a request-owned AltSignature profile are present
+     * @throws NullPointerException if the endpoint is null
+     * @throws RuntimeException if required realm/profile state cannot be resolved
      */
     public boolean hybridSdkAvailable(ScepEndpoint endpoint) {
         var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
@@ -284,11 +332,21 @@ public final class ScepService {
     }
 
     /**
-     * Verifies/decrypts genuine original CMS and its native challenge policy without enrolling or signing.
-     * @param endpoint registered native endpoint @param messageDer exact original protected PKIMessage
-     * @param clientNonce exact client nonce @param canonicalOrigin configured listener origin
+     * Verifies/decrypts original CMS and checks native challenge policy without admitting enrollment.
+     *
+     * <p>The exact protected wire and decoded typed request are bound into the
+     * retained SDK context. Challenge policy binds the endpoint commitment and
+     * immutable response credential ID, without adding a password/secret digest
+     * field. The original inner request itself may still contain confidential
+     * challenge attributes and is not a public sanitized payload.</p>
+     *
+     * @param endpoint registered native endpoint
+     * @param messageDer exact original protected PKIMessage
+     * @param clientNonce exact client nonce
+     * @param canonicalOrigin configured listener origin
      * @return retained immutable SDK challenge
      * @throws ScepProtocolException for malformed, unauthorized or unavailable native input
+     * @throws IllegalArgumentException if the endpoint does not support the selected SCEP SDK profile
      */
     public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(ScepEndpoint endpoint, byte[] messageDer,
             byte[] clientNonce, String canonicalOrigin) throws ScepProtocolException {
@@ -306,12 +364,26 @@ public final class ScepService {
 
     /**
      * Admits dual proofs or reads the same consumed receipt with its retained native CMS owner/credential.
-     * @param endpoint registered endpoint @param messageDer exact original CMS bytes
-     * @param intentId retained SDK challenge @param sdkRequestId stable acceptance identity
-     * @param primaryProof primary client proof @param alternativeProof alternative client proof
-     * @param canonicalOrigin configured listener origin @param cancellation transport cancellation
+     *
+     * <p>Both calls still verify/decrypt the exact protected CMS using the selected
+     * credential. Consumed replay requires byte-identical original wire, owner,
+     * endpoint/origin and retained credential/authority/issuer/path; it avoids a
+     * fresh initial challenge-policy/admission attempt. OPEN acceptance checks
+     * current native policy and exact retained SDK proofs through the coordinator.
+     * No retry substitutes today's credential for an accepted receipt's selection.</p>
+     *
+     * @param endpoint registered endpoint
+     * @param messageDer exact original CMS bytes
+     * @param intentId retained SDK challenge
+     * @param sdkRequestId stable acceptance identity
+     * @param primaryProof primary client proof
+     * @param alternativeProof alternative client proof
+     * @param canonicalOrigin configured listener origin
+     * @param cancellation transport cancellation
      * @return ordinary protected SCEP CertRep, including pending and terminal outcomes
      * @throws ScepProtocolException for invalid proof/owner/wire or unavailable custody
+     * @throws IllegalArgumentException if the repeated SCEP wire bytes differ from the retained original or the
+     *         authenticated SCEP SDK owner differs from the retained owner
      */
     public byte[] acceptSdk(ScepEndpoint endpoint, byte[] messageDer, String intentId, String sdkRequestId,
             byte[] primaryProof, byte[] alternativeProof, String canonicalOrigin, CancellationSignal cancellation) throws ScepProtocolException {

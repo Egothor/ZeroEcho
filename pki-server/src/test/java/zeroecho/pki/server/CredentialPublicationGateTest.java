@@ -76,6 +76,9 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.application.PkiRepository;
 
+/**
+ * Checks correlation between authoritative confirmation lifecycle and explicit credential disclosure registration.
+ */
 class CredentialPublicationGateTest {
     private static final Instant NOW = Instant.parse("2026-08-29T10:15:30Z");
     private static final PkiId CREDENTIAL_ID = new PkiId("credential-publication-a");
@@ -84,6 +87,9 @@ class CredentialPublicationGateTest {
     private static final CredentialPublicationGate.AuditActor AUDIT_ACTOR =
             new CredentialPublicationGate.AuditActor("publication-operator");
 
+    /**
+     * Checks frozen confirmation policy initializes the lifecycle before disclosure registration without opening credential content.
+     */
     @Test
     void initializesConfirmationBeforeRegisteringDisclosureWithoutOpeningPayload() {
         Fixture fixture = fixture(ConfirmationDisclosurePolicy.OWNER_ONLY, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -113,6 +119,9 @@ class CredentialPublicationGateTest {
         verify(fixture.repository(), never()).openCredential(any());
     }
 
+    /**
+     * Checks an exact replay reuses retained lifecycle/disclosure and preserves a not-required confirmation state.
+     */
     @Test
     void exactReplayUsesFrozenLifecycleAndPublicPolicyIsNotRequired() {
         Fixture fixture = fixture(ConfirmationDisclosurePolicy.PUBLIC,
@@ -134,6 +143,9 @@ class CredentialPublicationGateTest {
         verify(fixture.confirmations(), never()).initialize(any());
     }
 
+    /**
+     * Checks lifecycle or frozen-profile conflicts fail before disclosure registration can occur.
+     */
     @Test
     void lifecycleOrProfileConflictFailsBeforeDisclosure() {
         Fixture fixture = fixture(ConfirmationDisclosurePolicy.OWNER_ONLY, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -162,6 +174,9 @@ class CredentialPublicationGateTest {
                 () -> fixture.gate().register(CREDENTIAL_ID, OPTIONAL_OWNER, AUDIT_ACTOR));
     }
 
+    /**
+     * Checks confirmation initialization failure or review-time overflow cannot register disclosure.
+     */
     @Test
     void confirmationFailureOrReviewTimeOverflowNeverRegistersDisclosure() {
         Fixture failure = fixture(ConfirmationDisclosurePolicy.OWNER_ONLY, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -182,6 +197,9 @@ class CredentialPublicationGateTest {
                 any(), any());
     }
 
+    /**
+     * Checks exact registration replays the same object while policy, owner and commitment mismatches are rejected and actor audit remains explicit.
+     */
     @Test
     void disclosureRegistrationIsExactReplayAndRejectsEveryCorrelationMismatch() {
         ServerControlStore store = mock(ServerControlStore.class);

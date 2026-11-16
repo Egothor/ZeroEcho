@@ -60,12 +60,23 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for keyring import registry.
+ */
 class KeyringImportRegistryTest {
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void initializeProviders() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Persistent importer matrix is closed unique and executable.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void persistentImporterMatrixIsClosedUniqueAndExecutable() throws Exception {
         start("persistentImporterMatrixIsClosedUniqueAndExecutable");
@@ -90,6 +101,12 @@ class KeyringImportRegistryTest {
         ok();
     }
 
+    /**
+     * Alternate provider standard encoding uses canonical importer.
+     *
+     * @param temporaryDirectory fixture value supplied for this test case
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void alternateProviderStandardEncodingUsesCanonicalImporter(@TempDir Path temporaryDirectory) throws Exception {
         start("alternateProviderStandardEncodingUsesCanonicalImporter");

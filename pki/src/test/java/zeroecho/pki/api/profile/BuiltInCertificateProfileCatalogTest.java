@@ -66,6 +66,9 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
 import zeroecho.pki.api.hybrid.HybridCertificateMode;
 
+/**
+ * Contract and regression tests for built in certificate profile catalog.
+ */
 final class BuiltInCertificateProfileCatalogTest {
 
     private static final String ROOT = "zeroecho/pki/profiles/v1/";
@@ -90,6 +93,11 @@ final class BuiltInCertificateProfileCatalogTest {
 
     private static boolean sentinelInitialized;
 
+    /**
+     * Production catalogue loads canonical immutable templates in deterministic order.
+     *
+     * @throws NoSuchAlgorithmException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void productionCatalogueLoadsCanonicalImmutableTemplatesInDeterministicOrder() throws NoSuchAlgorithmException {
         List<BuiltInCertificateProfileTemplate> first = BuiltInCertificateProfileCatalog
@@ -124,6 +132,9 @@ final class BuiltInCertificateProfileCatalogTest {
         }
     }
 
+    /**
+     * Server and vpn server templates have exact service identity policy.
+     */
     @Test
     void serverAndVpnServerTemplatesHaveExactServiceIdentityPolicy() {
         Map<String, CertificateProfileDefinition> profiles = productionDefinitions();
@@ -148,6 +159,9 @@ final class BuiltInCertificateProfileCatalogTest {
         }
     }
 
+    /**
+     * End entity templates pin enterprise confirmation policy.
+     */
     @Test
     void endEntityTemplatesPinEnterpriseConfirmationPolicy() {
         Map<String, CertificateProfileDefinition> profiles = productionDefinitions();
@@ -168,6 +182,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertTrue(profiles.get("pqc-intermediate-ca").confirmationPolicy().isEmpty());
     }
 
+    /**
+     * Vpn client template has only spiffe uri and rfc822 identity.
+     */
     @Test
     void vpnClientTemplateHasOnlySpiffeUriAndRfc822Identity() {
         CertificateProfileDefinition definition = productionDefinitions().get("vpn-client");
@@ -187,6 +204,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertLeafPolicy(leaf, Set.of(CLIENT_AUTH));
     }
 
+    /**
+     * Email template requires rfc822 san and does not enable subject email.
+     */
     @Test
     void emailTemplateRequiresRfc822SanAndDoesNotEnableSubjectEmail() {
         CertificateProfileDefinition definition = productionDefinitions().get("email-signing");
@@ -207,6 +227,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertLeafPolicy(leaf, Set.of(EMAIL_PROTECTION));
     }
 
+    /**
+     * Ca templates have exact kinds subject and certificate policies.
+     */
     @Test
     void caTemplatesHaveExactKindsSubjectAndCertificatePolicies() {
         Map<String, CertificateProfileDefinition> profiles = productionDefinitions();
@@ -225,6 +248,9 @@ final class BuiltInCertificateProfileCatalogTest {
                 "pqc-intermediate-ca must use TwinCertificate hybrid mode");
     }
 
+    /**
+     * Manifest rejects unknown duplicate missing invalid paths limits and trailing tokens.
+     */
     @Test
     void manifestRejectsUnknownDuplicateMissingInvalidPathsLimitsAndTrailingTokens() {
         List<String> invalidManifests = List.of("{\"schemaVersion\":1,\"unknown\":true,\"profiles\":[]}",
@@ -252,6 +278,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertCode(resources, "MANIFEST_LIMIT_EXCEEDED");
     }
 
+    /**
+     * Resources fail closed for missing duplicate empty oversize and noncanonical content.
+     */
     @Test
     void resourcesFailClosedForMissingDuplicateEmptyOversizeAndNoncanonicalContent() {
         Map<String, List<byte[]>> missing = baseResources();
@@ -278,6 +307,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertCode(noncanonical, "PROFILE_RESOURCE_NONCANONICAL");
     }
 
+    /**
+     * Profile documents fail closed for invalid schema fields encoding and class metadata.
+     */
     @Test
     void profileDocumentsFailClosedForInvalidSchemaFieldsEncodingAndClassMetadata() {
         List<byte[]> invalidDocuments = List.of(
@@ -294,6 +326,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertFalse(sentinelInitialized);
     }
 
+    /**
+     * Duplicate canonical hash identity and unexpected built in set fail closed.
+     */
     @Test
     void duplicateCanonicalHashIdentityAndUnexpectedBuiltInSetFailClosed() {
         Map<String, List<byte[]>> duplicateHash = baseResources();

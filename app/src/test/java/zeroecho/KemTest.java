@@ -83,12 +83,17 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 public class KemTest {
 
-    /** All temporary files live here and are auto-cleaned by JUnit. */
+    /**
+     * All temporary files live here and are auto-cleaned by JUnit.
+     */
     @TempDir
     Path tmp;
 
     private PrintStream savedOut;
 
+    /**
+     * Initializes cryptographic providers before tests that require their algorithms.
+     */
     @BeforeAll
     static void bootBouncyCastle() {
         System.out.println("bootBouncyCastle()");
@@ -97,6 +102,9 @@ public class KemTest {
         System.out.println("bootBouncyCastle...ok");
     }
 
+    /**
+     * Restores the original standard output stream after a test that redirected it.
+     */
     @AfterEach
     void restoreStdout() {
         if (savedOut != null) {
@@ -108,6 +116,7 @@ public class KemTest {
     /**
      * Confirms that {@code --list-kems} short-circuits and exits 0 without
      * requiring a keyring.
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void listKems_runs() throws Exception {
@@ -133,6 +142,7 @@ public class KemTest {
      * If any KEM fails at any step, the test records it and continues. At the end,
      * it fails with a concise summary of all failures.
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void allKems_encryptDecrypt_aesAndChacha() throws Exception {

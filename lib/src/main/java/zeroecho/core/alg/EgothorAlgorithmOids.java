@@ -58,28 +58,44 @@ package zeroecho.core.alg;
  */
 public final class EgothorAlgorithmOids { // NOPMD DataClass - Canonical public OID constants preserve API identity.
 
-    /** Egothor organisation root OID (IANA PEN 31424). */
+    /**
+     * Egothor organisation root OID (IANA PEN 31424).
+     */
     public static final String OID_ROOT = "1.3.6.1.4.1.31424";
 
-    /** ZeroEcho platform cryptography arc. */
+    /**
+     * ZeroEcho platform cryptography arc.
+     */
     public static final String OID_ZEROECHO = OID_ROOT + ".1";
 
-    /** SPHINCS+ algorithm arc (ZeroEcho default parameter set). */
+    /**
+     * SPHINCS+ algorithm arc (ZeroEcho default parameter set).
+     */
     public static final String OID_SPHINCS_PLUS = OID_ZEROECHO + ".1";
 
-    /** SPHINCS+ SubjectPublicKeyInfo OID. */
+    /**
+     * SPHINCS+ SubjectPublicKeyInfo OID.
+     */
     public static final String OID_SPHINCS_PLUS_SPKI = OID_SPHINCS_PLUS + ".1";
 
-    /** SPHINCS+ CSR signature algorithm OID. */
+    /**
+     * SPHINCS+ CSR signature algorithm OID.
+     */
     public static final String OID_SPHINCS_PLUS_CSR_SIGNATURE = OID_SPHINCS_PLUS + ".2"; // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
 
-    /** SPHINCS+ certificate signature algorithm OID. */
+    /**
+     * SPHINCS+ certificate signature algorithm OID.
+     */
     public static final String OID_SPHINCS_PLUS_CERTIFICATE_SIGNATURE = OID_SPHINCS_PLUS + ".3"; // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
 
-    /** SPHINCS+ CRL signature algorithm OID. */
+    /**
+     * SPHINCS+ CRL signature algorithm OID.
+     */
     public static final String OID_SPHINCS_PLUS_CRL_SIGNATURE = OID_SPHINCS_PLUS + ".4"; // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
 
-    /** SPHINCS+ OCSP request signature algorithm OID. */
+    /**
+     * SPHINCS+ OCSP request signature algorithm OID.
+     */
     public static final String OID_SPHINCS_PLUS_OCSP_REQUEST_SIGNATURE = OID_SPHINCS_PLUS + ".5"; // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
 
     private EgothorAlgorithmOids() {

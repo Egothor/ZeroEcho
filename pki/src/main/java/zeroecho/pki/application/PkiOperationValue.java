@@ -56,7 +56,11 @@ public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOpe
      * @param value nonnull text
      */
     record Text(String value) implements PkiOperationValue {
-        /** Validates the value. */
+        /**
+         * Validates the value.
+         * @param value nonnull text
+         * @throws NullPointerException if value is null
+         */
         public Text {
             Objects.requireNonNull(value, "value");
         }
@@ -84,7 +88,12 @@ public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOpe
      * @param fields immutable named fields in insertion order
      */
     record ObjectValue(Map<String, PkiOperationValue> fields) implements PkiOperationValue {
-        /** Validates names and snapshots insertion order. */
+        /**
+         * Validates names and snapshots insertion order.
+         * @param fields immutable named fields in insertion order
+         * @throws NullPointerException if fields is null or a supplied collection contains a null member
+         * @throws IllegalArgumentException if a field name is blank or duplicated
+         */
         public ObjectValue {
             Objects.requireNonNull(fields, "fields");
             Map<String, PkiOperationValue> copy = new LinkedHashMap<>();
@@ -105,7 +114,11 @@ public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOpe
      * @param values immutable ordered values
      */
     record ListValue(List<PkiOperationValue> values) implements PkiOperationValue {
-        /** Snapshots the list and rejects null entries. */
+        /**
+         * Snapshots the list and rejects null entries.
+         * @param values immutable ordered values
+         * @throws NullPointerException if values is null or a supplied collection contains a null member
+         */
         public ListValue {
             Objects.requireNonNull(values, "values");
             values = List.copyOf(values);

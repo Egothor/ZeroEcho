@@ -49,14 +49,22 @@ import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 
-/** Package-owned immutable registry implementation used by session bootstrap. */
+/**
+ * Package-owned immutable registry implementation used by session bootstrap.
+ */
 public final class ImmutableX509AlgorithmBindingRegistry implements X509AlgorithmBindingRegistry {
 
-    /** Egothor Private Enterprise Number root. */
+    /**
+     * Egothor Private Enterprise Number root.
+     */
     public static final String EGOTHOR_PEN = "1.3.6.1.4.1.31424";
-    /** Frozen ZeroEcho private assignment branch. */
+    /**
+     * Frozen ZeroEcho private assignment branch.
+     */
     public static final String ZEROECHO_ASSIGNMENT_ROOT = EGOTHOR_PEN + ".1.1";
-    /** Deployment-local experimental branch. */
+    /**
+     * Deployment-local experimental branch.
+     */
     public static final String ZEROECHO_DEPLOYMENT_ROOT = EGOTHOR_PEN + ".1.2";
 
     private final List<X509AlgorithmBinding> bindings;
@@ -94,6 +102,8 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
      *
      * @param bindings complete explicitly selected binding set
      * @return immutable registry
+     * @throws NullPointerException if {@code bindings} or a binding entry is null
+     * @throws IllegalArgumentException if a ZeroEcho-private binding is outside its frozen branch or a standard binding uses the Egothor PEN
      */
     public static ImmutableX509AlgorithmBindingRegistry create(List<X509AlgorithmBinding> bindings) {
         Objects.requireNonNull(bindings, "bindings");
@@ -119,6 +129,7 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
      * @param oid object identifier to test
      * @param root authorized object-identifier root
      * @return {@code true} when {@code oid} equals or descends from {@code root}
+     * @throws NullPointerException if {@code oid} or {@code root} is null
      */
     public static boolean isWithin(String oid, String root) {
         Objects.requireNonNull(oid, "oid");
@@ -126,27 +137,42 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
         return oid.equals(root) || oid.startsWith(root + ".");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<X509AlgorithmBinding> bindings() {
         return bindings;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<X509AlgorithmBinding> find(String bindingId) {
         return Optional.ofNullable(byId.get(Objects.requireNonNull(bindingId, "bindingId")));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<X509AlgorithmBinding> standard(AlgorithmIdentity identity, X509AlgorithmBinding.Role role) {
         return Optional.ofNullable(standards.get(key(Objects.requireNonNull(identity, "identity"),
                 Objects.requireNonNull(role, "role"))));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String commitment() {
         return commitment;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509AlgorithmBinding require(String bindingId, String expectedCommitment) {
         X509AlgorithmBinding binding = find(bindingId)

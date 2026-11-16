@@ -51,11 +51,25 @@ final class CredentialSnapshots {
     private CredentialSnapshots() {
     }
 
+    /**
+     * Snapshots framework output so retained credential metadata no longer depends on mutable attributes.
+     *
+     * @param source credential bundle produced by a framework
+     * @return new bundle with copied credential attributes and an immutable supporting-object list
+     * @throws NullPointerException if the source or a required member is null
+     */
     /* default */ static CredentialBundle copy(CredentialBundle source) {
         Credential credential = copy(source.credential());
         return new CredentialBundle(credential, List.copyOf(source.supportingObjects()));
     }
 
+    /**
+     * Copies credential metadata while independently snapshotting attribute lists and byte values.
+     *
+     * @param source credential whose immutable identity and content reference are retained
+     * @return new credential metadata with independently owned attribute collections and arrays
+     * @throws NullPointerException if the source or a required attribute is null
+     */
     /* default */ static Credential copy(Credential source) {
         return new Credential(source.credentialId(), source.formatId(), source.issuerRef(), source.subjectRef(),
                 source.validity(), source.serialOrUniqueId(), source.publicKeyId(), source.profileBinding(),

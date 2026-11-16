@@ -46,7 +46,13 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.application.PkiOperationValue;
 
+/**
+ * Regression coverage for typed remote arguments and encoded envelope limits.
+ */
 class PkiRemoteArgumentsTest {
+    /**
+     * Checks operation arguments at server-supported sizes without changing configuration parser limits.
+     */
     @Test
     void structuredArgumentsAcceptServerSizedStringsAndCollectionsWithoutChangingConfigurationLimits() {
         String text = "x".repeat(5000);
@@ -59,6 +65,9 @@ class PkiRemoteArgumentsTest {
         assertEquals(2049, ((PkiOperationValue.ListValue) parse("--arg-json", "x=" + array).fields().get("x")).values().size());
     }
 
+    /**
+     * Rejects invalid, ambiguous, unsupported, and over-budget operation argument values.
+     */
     @Test
     void malformedDuplicateNullFloatingAndOverBudgetValuesAreRejected() {
         for (String value : List.of("", "null", "1.5", "true false", "{\"x\":1,\"x\":2}", "{\"x\":null}",
@@ -72,6 +81,9 @@ class PkiRemoteArgumentsTest {
         assertThrows(IllegalArgumentException.class, () -> parse("--arg-json", "missing"));
     }
 
+    /**
+     * Rejects an oversized encoded envelope before HTTP submission and returns an invocation failure.
+     */
     @Test
     void encodedAggregateBoundStopsBeforeAnyPostAndMapsToInvalidInvocation() {
         String large = "x".repeat(9 * 1_048_576);

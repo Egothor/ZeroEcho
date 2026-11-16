@@ -63,12 +63,19 @@ import zeroecho.pki.application.LocalSigningResult;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionConfiguration;
 
-/** Informational, serial root-publication measurements; no throughput or latency acceptance threshold. */
+/**
+ * Informational, serial root-publication measurements; no throughput or latency acceptance threshold.
+ */
 @Tag("local-performance")
 public class PkiLocalPerformanceTest {
     private static final int WARMUP = 5;
     private static final int MEASURED = 30;
 
+    /**
+     * Records three independent JVM repetitions and packaged CLI startup samples using test-owned stores.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(1800)
     void recordThreeFreshJvmRepetitionsAndPackagedStartup() throws Exception {
@@ -82,7 +89,11 @@ public class PkiLocalPerformanceTest {
         }
     }
 
-    /** One isolated repetition: same generated RSA key, separate local and reactive stores. */
+    /**
+     * One isolated repetition: same generated RSA key, separate local and reactive stores.
+     * @param arguments fixture directory, packaged executable path, and repetition index, in that order
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     public static void main(String[] arguments) throws Exception {
         Path directory = Path.of(arguments[0]);
         Path executable = Path.of(arguments[1]);

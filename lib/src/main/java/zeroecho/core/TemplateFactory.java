@@ -42,12 +42,25 @@ import java.util.function.Function;
 
 import zeroecho.core.spec.AlgorithmKeySpec;
 
-/** Package-private validation shared by both template constructors. */
+/**
+ * Validates template schemas and arguments before invoking the supplied factory.
+ *
+ * @param <S> immutable algorithm-key specification produced by the factory
+ */
 final class TemplateFactory<S extends AlgorithmKeySpec> implements Function<Map<String, Object>, S> {
     private final List<TemplateParameter> parameters;
     private final List<ParameterConstraint> constraints;
     private final Function<Map<String, Object>, S> delegate;
 
+    /**
+     * Snapshots a schema and checks that every parameter has one matching constraint.
+     *
+     * @param parameters ordered presentation parameters; must not be null or contain null
+     * @param constraints ordered validation constraints; must not be null or contain null
+     * @param delegate factory called after argument validation; must not be null
+     * @throws NullPointerException if a required value or schema entry is null
+     * @throws IllegalArgumentException if names, types, or schema sizes do not match
+     */
     /* default */ TemplateFactory(List<TemplateParameter> parameters, List<ParameterConstraint> constraints,
             Function<Map<String, Object>, S> delegate) {
         this.parameters = List.copyOf(parameters);
@@ -77,15 +90,34 @@ final class TemplateFactory<S extends AlgorithmKeySpec> implements Function<Map<
         }
     }
 
+    /**
+     * Returns the snapshotted validation schema in parameter order.
+     *
+     * @return the immutable list of constraints
+     */
     /* default */ List<ParameterConstraint> constraints() {
         return constraints;
     }
 
+    /**
+     * Creates unconstrained legacy metadata for each presentation parameter.
+     *
+     * @param parameters ordered presentation parameters; must not be null or contain null
+     * @return immutable constraints in the same order, with no defaults or domain bounds
+     * @throws NullPointerException if the parameter list or an entry is null
+     */
     /* default */ static List<ParameterConstraint> legacy(List<TemplateParameter> parameters) {
         return parameters.stream().map(parameter -> new ParameterConstraint(parameter.name(),
                 ParameterConstraint.ValueKind.LEGACY, false, null, List.of(), null, null, 1, 0)).toList();
     }
 
+    /**
+     * Validates and defaults supplied arguments, then invokes the configured factory.
+     *
+     * @param arguments supplied name-to-value mapping; must not be null
+     * @return the specification returned by the delegate
+     * @throws IllegalArgumentException if an argument is missing, unknown, or fails its constraint
+     */
     @Override
     public S apply(Map<String, Object> arguments) {
         if (arguments == null) {

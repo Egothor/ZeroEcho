@@ -47,9 +47,20 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.server.schema.OperationDescriptorCatalog;
 import zeroecho.pki.server.schema.OperationParameterSchema.FieldSpec;
 
+/**
+ * Contract coverage for OpenAPI operation parity with the authoritative catalogue.
+ */
 class OpenApiCatalogParityTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporary;
 
+    /**
+     * Checks generated OpenAPI parity with catalogue fields, permissions, and operation availability.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void generatedOperationsPreserveEveryCatalogFieldPermissionAndAvailability() throws Exception {
         Path output = temporary.resolve("openapi.yaml");
         OpenApiGenerator.main(new String[]{"test", "src/main/resources/openapi-supplement.yaml", output.toString()});

@@ -43,7 +43,12 @@ import java.util.Objects;
  */
 public record SigningAcceptanceResult(SigningAcceptanceDisposition disposition,
         SigningAcceptanceReceipt receipt) {
-    /** Validates the result. */
+    /**
+     * Validates the result.
+     * @param disposition exact durable disposition
+     * @param receipt receipt usable for authoritative recovery
+     * @throws NullPointerException if disposition or receipt is null
+     */
     public SigningAcceptanceResult {
         Objects.requireNonNull(disposition, "disposition");
         Objects.requireNonNull(receipt, "receipt");

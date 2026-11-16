@@ -49,6 +49,9 @@ public record PolicyTraceStep(String ruleId, String outcome, List<String> notes)
      * Creates a policy trace step.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param ruleId stable rule identifier (implementation-defined)
+     * @param outcome human-readable outcome string (e.g., "ALLOW", "DENY", "MODIFY")
+     * @param notes non-sensitive explanatory notes
      */
     public PolicyTraceStep {
         if (ruleId == null || ruleId.isBlank()) {

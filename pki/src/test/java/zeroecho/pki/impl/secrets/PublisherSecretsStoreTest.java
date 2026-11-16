@@ -62,11 +62,22 @@ import zeroecho.sdk.guard.MultiRecipientContent;
 import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
 import zeroecho.sdk.guard.UnlockMaterial;
 
+/**
+ * Contract and regression tests for publisher secrets store.
+ */
 @Timeout(30)
 class PublisherSecretsStoreTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Opens version one envelope using original writer parameters.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void opensVersionOneEnvelopeUsingOriginalWriterParameters() throws Exception {
         Path store = store(envelope(600_000));
@@ -76,6 +87,11 @@ class PublisherSecretsStoreTest {
         assertArrayEquals(original, Files.readAllBytes(store));
     }
 
+    /**
+     * Rejects valid envelope above publisher iteration policy.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsValidEnvelopeAbovePublisherIterationPolicy() throws Exception {
         // This is a valid authenticated envelope, not a malformed password blob.
@@ -85,6 +101,12 @@ class PublisherSecretsStoreTest {
         assertArrayEquals(original, Files.readAllBytes(store));
     }
 
+    /**
+     * Rejects invalid decoded work factors.
+     *
+     * @param iterations PBKDF2 iteration count selected for the work-factor boundary case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(ints = {9_999, Integer.MAX_VALUE})
     void rejectsInvalidDecodedWorkFactors(int iterations) throws Exception {
@@ -107,6 +129,11 @@ class PublisherSecretsStoreTest {
         assertArrayEquals(original, Files.readAllBytes(store));
     }
 
+    /**
+     * Rejects tampered ciphertext without changing store.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsTamperedCiphertextWithoutChangingStore() throws Exception {
         byte[] encrypted = envelope(600_000);

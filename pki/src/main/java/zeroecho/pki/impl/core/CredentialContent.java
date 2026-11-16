@@ -53,11 +53,23 @@ import zeroecho.pki.spi.store.PkiStore;
  * Internal individual-certificate adapter around store-owned content.
  */
 final class CredentialContent {
+    /**
+     * Inclusive maximum individual certificate payload size, one mebibyte of DER bytes.
+     */
     /* default */ static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
 
     private CredentialContent() {
     }
 
+    /**
+     * Stages an individual certificate in persisted-lifecycle DER content storage.
+     *
+     * @param store authoritative store owning the completed content reference
+     * @param encoded certificate bytes, bounded to one mebibyte; read synchronously without retaining the array
+     * @return durable reference produced after the sink completes
+     * @throws NullPointerException if a required argument is null
+     * @throws PkiException if the payload is oversized or staging fails
+     */
     /* default */ static DurableContentReference stage(PkiStore store, byte[] encoded) {
         if (encoded.length > MAXIMUM_CERTIFICATE_BYTES) {
             throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
@@ -71,6 +83,15 @@ final class CredentialContent {
         }
     }
 
+    /**
+     * Reads one bounded DER certificate into independently owned bytes for the ASN.1 adapter.
+     *
+     * @param store store owning the referenced content
+     * @param reference nonempty DER content reference bounded to one mebibyte
+     * @return newly allocated exact certificate bytes
+     * @throws NullPointerException if a required argument is null
+     * @throws PkiException if the reference exceeds bounds or content cannot be read exactly
+     */
     /* default */ static byte[] materializeForBc(PkiStore store, DurableContentReference reference) {
         long length = reference.length();
         if (reference.encoding() != Encoding.DER || length <= 0L || length > MAXIMUM_CERTIFICATE_BYTES) {
@@ -86,6 +107,17 @@ final class CredentialContent {
         }
     }
 
+    /**
+     * Validates a bounded stored certificate using immutable public algorithm authority.
+     *
+     * @param store store owning the referenced content
+     * @param reference nonempty DER certificate reference bounded to one mebibyte
+     * @param authority exact configured public validation authority
+     * @param expectedSignature expected signature identity, or an empty optional
+     * @return validated public certificate algorithm bindings
+     * @throws NullPointerException if a required argument is null
+     * @throws PkiException if content bounds, I/O or canonical public DER validation fail
+     */
     /* default */ static BcX509SignedObjectValidator.CertificateBindings validateCertificate(PkiStore store,
             DurableContentReference reference, X509AuthoritySnapshot authority,
             Optional<AlgorithmIdentity> expectedSignature) {

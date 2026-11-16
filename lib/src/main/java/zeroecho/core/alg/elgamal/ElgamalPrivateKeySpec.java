@@ -182,6 +182,9 @@ public final class ElgamalPrivateKeySpec implements AlgorithmKeySpec, Destroyabl
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -195,6 +198,9 @@ public final class ElgamalPrivateKeySpec implements AlgorithmKeySpec, Destroyabl
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

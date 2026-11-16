@@ -67,7 +67,9 @@ import zeroecho.pki.api.backup.BackupLimits;
 import zeroecho.pki.api.backup.BackupSink;
 import zeroecho.pki.api.backup.BackupSource;
 
-/** Version-1 envelope; ZIP32 regular files, STORED or DEFLATED, no extra fields. */
+/**
+ * Version-1 envelope; ZIP32 regular files, STORED or DEFLATED, no extra fields.
+ */
 final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private static final String FORMAT = "zeroecho-pki-backup";
     private static final int VERSION = 1;
@@ -76,11 +78,51 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
     private static final int CENTRAL_SIGNATURE = 0x02014b50;
     private FsBackupArchive() { }
 
+    /**
+     * Manifest entry describing one uncompressed backup file and its integrity coordinates.
+     *
+     * @param path validated relative archive path
+     * @param length uncompressed file length in bytes
+     * @param crc unsigned ZIP CRC-32 integrity value
+     * @param digest SHA-256 integrity commitment of the uncompressed file
+     * @param modifiedMillis last-modified timestamp in milliseconds since the Unix epoch
+     */
     /* default */ record Item(String path, long length, long crc, byte[] digest, long modifiedMillis) { }
+    /**
+     * Validated ZIP entry framing and compressed-data location.
+     *
+     * @param path validated relative archive path
+     * @param length uncompressed file length in bytes
+     * @param compressed encoded compressed length in bytes
+     * @param crc unsigned ZIP CRC-32 integrity value
+     * @param method ZIP compression method discriminator
+     * @param flags validated ZIP general-purpose flags
+     * @param offset zero-based encoded byte offset
+     * @param dataOffset zero-based byte offset of the checkpoint data region
+     */
     /* default */ record Entry(String path, long length, long compressed, long crc, int method,
             int flags, long offset, long dataOffset) { }
+    /**
+     * Backup identity, creation time and integrity-protected file inventory.
+     *
+     * @param id exact backup identity
+     * @param createdAt backup creation instant
+     * @param items ordered file inventory retained by the manifest
+     * @param digest SHA-256 integrity commitment of the complete encoded manifest
+     */
     /* default */ record Manifest(PkiId id, Instant createdAt, List<Item> items, String digest) { }
 
+    /**
+     * Inventories a frozen snapshot, writes and forces its bounded integrity manifest, and publishes a ZIP32 backup through a bounded sink. The returned source owns the completed archive lifetime.
+     *
+     * @param frozen frozen source snapshot directory
+     * @param work private directory used for archive publication
+     * @param id backup identity to embed
+     * @param instant backup creation instant
+     * @param limits resource and path limits to enforce
+     * @return completed backup source whose lifetime belongs to the caller
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static BackupSource write(Path frozen, Path work, PkiId id, Instant instant, BackupLimits limits)
             throws IOException {
         List<Item> items = inventory(frozen, limits);
@@ -171,6 +213,14 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
                 length, crc.getValue(), digest.digest(), Files.getLastModifiedTime(path).toMillis());
     }
 
+    /**
+     * Parses and validates the bounded ZIP32 central directory and entry framing without extracting file contents.
+     *
+     * @param archive backup archive file
+     * @param limits resource and path limits to enforce
+     * @return validated ordered archive entries
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static List<Entry> directory(Path archive, BackupLimits limits) throws IOException {
         try (FileChannel channel = FileChannel.open(archive, StandardOpenOption.READ)) {
             ByteBuffer end = directoryEnd(channel, limits);
@@ -325,6 +375,16 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
         return buffer;
     }
 
+    /**
+     * Extracts the bounded archive into the target and validates its expected identity, inventory and content commitments before returning the manifest.
+     *
+     * @param archive backup archive file
+     * @param target target extraction directory
+     * @param expectedId required backup identity
+     * @param limits resource and path limits to enforce
+     * @return authenticated extracted manifest
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static Manifest extract(Path archive, Path target, PkiId expectedId, BackupLimits limits) throws IOException {
         List<Entry> entries = directory(archive, limits); // No extraction writes before structural preflight.
         Entry manifestEntry = entries.stream().filter(e -> FsBackupFiles.MANIFEST.equals(e.path()))
@@ -445,7 +505,9 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
         } finally { if (inflater != null) { inflater.end(); } }
     }
 
-    /** Reads a bounded compressed-entry range without crossing ZIP framing. */
+    /**
+     * Reads a bounded compressed-entry range without crossing ZIP framing.
+     */
     private static final class RangeInput extends InputStream {
         private final FileChannel channel;
         private long remaining;
@@ -455,11 +517,17 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
             channel.position(offset);
             remaining = length;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read() throws IOException {
             byte[] one = new byte[1];
             int count = read(one, 0, 1);
             return count < 0 ? -1 : one[0] & 255;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read(byte[] bytes, int offset, int length) throws IOException {
             java.util.Objects.checkFromIndexSize(offset, length, bytes.length);
             if (length == 0) { return 0; }
@@ -469,10 +537,15 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
             remaining -= count;
             return count;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { channel.close(); }
     }
 
-    /** Enforces a byte limit before forwarding any oversized write. */
+    /**
+     * Enforces a byte limit before forwarding any oversized write.
+     */
     private static final class LimitedOutput extends OutputStream {
         private final OutputStream delegate;
         private final long maximum;
@@ -482,12 +555,21 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
             this.delegate = delegate;
             this.maximum = maximum;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void write(int value) throws IOException { write(new byte[] { (byte) value }); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void write(byte[] bytes, int offset, int length) throws IOException {
             if (length > maximum - written) { throw FsBackupFiles.invalid("BACKUP_MANIFEST_LIMIT"); }
             delegate.write(bytes, offset, length);
             written += length;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { delegate.close(); }
     }
 }

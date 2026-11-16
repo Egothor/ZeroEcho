@@ -254,7 +254,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
-    /* package */ static final String CURRENT_STORE_VERSION = "v18";
+    /* package */
+    /**
+     * Exact current filesystem store version marker.
+     */
+    static final String CURRENT_STORE_VERSION = "v18";
     private static final byte[] CURRENT_STORE_VERSION_BYTES =
             CURRENT_STORE_VERSION.getBytes(StandardCharsets.US_ASCII);
     private static final String SIGN_ENVELOPE_NAMESPACE = "io.zeroecho.pki.signing-envelope";
@@ -267,10 +271,26 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final String STATUS_OWNER_NAMESPACE = "io.zeroecho.pki.status-object-owner";
     private static final String PUBLICATION_RECORD_NAMESPACE = "io.zeroecho.pki.publication-record";
     private static final String CREDENTIAL_SERIAL_NAMESPACE = "io.zeroecho.pki.credential-serial-index";
-    /* default */ static final String ISSUANCE_EVIDENCE_NAMESPACE = "io.zeroecho.pki.issuance-evidence-log";
-    /* default */ static final String STATUS_EVIDENCE_NAMESPACE = "io.zeroecho.pki.status-evidence-log";
-    /* default */ static final String PUBLICATION_EVIDENCE_NS = "io.zeroecho.pki.publication-evidence-log";
-    /* default */ static final String SIGNING_EVIDENCE_NAMESPACE = "io.zeroecho.pki.signing-evidence-log";
+    /* default */
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.issuance-evidence-log}; persisted identities depend on this value.
+     */
+    static final String ISSUANCE_EVIDENCE_NAMESPACE = "io.zeroecho.pki.issuance-evidence-log";
+    /* default */
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.status-evidence-log}; persisted identities depend on this value.
+     */
+    static final String STATUS_EVIDENCE_NAMESPACE = "io.zeroecho.pki.status-evidence-log";
+    /* default */
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.publication-evidence-log}; persisted identities depend on this value.
+     */
+    static final String PUBLICATION_EVIDENCE_NS = "io.zeroecho.pki.publication-evidence-log";
+    /* default */
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.signing-evidence-log}; persisted identities depend on this value.
+     */
+    static final String SIGNING_EVIDENCE_NAMESPACE = "io.zeroecho.pki.signing-evidence-log";
     private static final String CONFIRMATION_RECORD_NS = "io.zeroecho.pki.confirmation-record";
     private static final String CONFIRMATION_REVIEW_NS = "io.zeroecho.pki.confirmation-review";
     private static final String CONFIRMATION_CHALLENGE_NS =
@@ -331,7 +351,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private CredentialSearchIndex credentialSearch;
     private final zeroecho.pki.api.backup.BackupLimits backupLimits;
 
-    /** Optional CT journal; {@code null} when CT Mode A is not configured. */
+    /**
+     * Optional CT journal; {@code null} when CT Mode A is not configured.
+     */
     private volatile zeroecho.pki.spi.ct.CtJournalStore ctJournalStore; // NOPMD AvoidUsingVolatile - Journal attachment is published independently of store operation locks.
 
     /**
@@ -382,6 +404,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 backupLimits);
     }
 
+    /**
+     * Opens an exclusively owned filesystem store with injectable persistence fault boundaries.
+     *
+     * <p>Initializes or validates the on-disk layout and recovers durable state before
+     * returning. The caller must close the successful store.</p>
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param indexUpdateFaults test callback at derived revocation-index update boundaries
+     * @throws NullPointerException if a required root, option, clock, or configuration is null
+     * @throws IllegalArgumentException if the signing-work capacity is outside supported bounds
+     * @throws IllegalStateException if exclusive ownership, initialization, or recovery fails
+     */
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults) {
         this(root, options, clock, indexUpdateFaults, SigningContentRetirementFaultInjector.NONE,
@@ -389,6 +425,21 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, null);
     }
 
+    /**
+     * Opens an exclusively owned filesystem store with injectable persistence fault boundaries.
+     *
+     * <p>Initializes or validates the on-disk layout and recovers durable state before
+     * returning. The caller must close the successful store.</p>
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param indexUpdateFaults test callback at derived revocation-index update boundaries
+     * @param signingRetirementFaults test callback before physical signing-content retirement
+     * @throws NullPointerException if a required root, option, clock, or configuration is null
+     * @throws IllegalArgumentException if the signing-work capacity is outside supported bounds
+     * @throws IllegalStateException if exclusive ownership, initialization, or recovery fails
+     */
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
             final SigningContentRetirementFaultInjector signingRetirementFaults) {
@@ -397,6 +448,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, null);
     }
 
+    /**
+     * Opens an exclusively owned filesystem store with injectable persistence fault boundaries.
+     *
+     * <p>Initializes or validates the on-disk layout and recovers durable state before
+     * returning. The caller must close the successful store.</p>
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param confirmationCleanupFaults test callback before derived confirmation cleanup after revocation
+     * @throws NullPointerException if a required root, option, clock, or configuration is null
+     * @throws IllegalArgumentException if the signing-work capacity is outside supported bounds
+     * @throws IllegalStateException if exclusive ownership, initialization, or recovery fails
+     */
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final ConfirmationRevocationCleanupFaultInjector confirmationCleanupFaults) {
         this(root, options, clock, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE,
@@ -404,6 +469,21 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 false, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, null);
     }
 
+    /**
+     * Opens an exclusively owned filesystem store with injectable persistence fault boundaries.
+     *
+     * <p>Initializes or validates the on-disk layout and recovers durable state before
+     * returning. The caller must close the successful store.</p>
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param maximumSigningWork positive active signing-work bound within the ordered-index capacity
+     * @param signingWalOperations injectable WAL filesystem operations, or null for production operations
+     * @throws NullPointerException if a required root, option, clock, or configuration is null
+     * @throws IllegalArgumentException if the signing-work capacity is outside supported bounds
+     * @throws IllegalStateException if exclusive ownership, initialization, or recovery fails
+     */
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options,
             final Clock clock, final int maximumSigningWork,
             final SigningActiveWal.Operations signingWalOperations) {
@@ -413,6 +493,22 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 maximumSigningWork, signingWalOperations);
     }
 
+    /**
+     * Opens an exclusively owned filesystem store with injectable persistence fault boundaries.
+     *
+     * <p>Initializes or validates the on-disk layout and recovers durable state before
+     * returning. The caller must close the successful store.</p>
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param maximumSigningWork positive active signing-work bound within the ordered-index capacity
+     * @param signingWalOperations injectable WAL filesystem operations, or null for production operations
+     * @param signingWalConfiguration validated WAL writer and recovery configuration; must not be null
+     * @throws NullPointerException if a required root, option, clock, or configuration is null
+     * @throws IllegalArgumentException if the signing-work capacity is outside supported bounds
+     * @throws IllegalStateException if exclusive ownership, initialization, or recovery fails
+     */
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options,
             final Clock clock, final int maximumSigningWork,
             final SigningActiveWal.Operations signingWalOperations,
@@ -649,6 +745,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Opens a restore view borrowing store ownership held by the restore coordinator.
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @param clock authoritative store clock; must not be null
+     * @param limits validated backup/restore resource limits; must not be null
+     * @return open restore store; closing it does not release the coordinator's borrowed ownership
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalStateException if initialization or recovery fails
+     */
     /* default */ static FilesystemPkiStore openRestoreBorrowed(Path root, FsPkiStoreOptions options,
             Clock clock, zeroecho.pki.api.backup.BackupLimits limits) {
         return new FilesystemPkiStore(root, options, clock,
@@ -710,7 +817,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** Read-only cutover guard; empty legacy directories are harmless. */
+    /**
+     * Read-only cutover guard; empty legacy directories are harmless.
+     */
     private static void rejectLegacyAuthorityLayout(Path root) throws IOException {
         for (String tree : List.of("cas", "issuer-generations", "issuer-chain-paths", "credentials", "credential-handoffs")) {
             Path directory = root.resolve(tree);
@@ -764,6 +873,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Opens a snapshot assembly store using the UTC system clock and snapshot-specific initialization.
+     *
+     * @param root private filesystem store root; must not be null
+     * @param options validated store options; must not be null
+     * @return open assembly store owned by the snapshot exporter
+     * @throws NullPointerException if root or options is null
+     * @throws IllegalStateException if ownership or initialization fails
+     */
     /* package */ static FilesystemPkiStore openSnapshotAssembly(final Path root,
             final FsPkiStoreOptions options) {
         return new FilesystemPkiStore(root, options, Clock.systemUTC(),
@@ -885,6 +1003,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return found[0];
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public StagedContentStore stagedContent() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -926,6 +1047,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Validates recovered schedules, credential scope/serial authority, and issuance evidence.
+     *
+     * <p>Rebuilds the derived credential serial index only after authoritative consistency
+     * checks pass.</p>
+     *
+     * @throws IOException if recovered authoritative metadata, dependencies, or derived-index rebuilding fails
+     */
     /* default */ void validateRecoveredCrlAuthority() throws IOException {
         schedules().validate(this::validateScheduleReceipt);
         new CredentialMetadataAuthority(metadataStore, stagedContent).validateAll(this::validateCredentialScopeAuthority);
@@ -1160,8 +1289,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      *
      * @param targetRoot new store root to create/populate
      * @param at         snapshot time (inclusive, "latest &lt;= at")
-     * @throws IllegalArgumentException if inputs are null
      * @throws IllegalStateException    if export fails
+     * @throws NullPointerException if targetRoot or at is null
      */
     public void exportSnapshot(final Path targetRoot, final Instant at) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1180,20 +1309,46 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Returns the exact root used by snapshot export operations.
+     *
+     * @return borrowed immutable store root path
+     */
     /* default */ Path snapshotRoot() {
         return paths.root();
     }
 
+    /**
+     * Returns the store-owned transactional metadata subsystem for internal snapshot operations.
+     *
+     * @return borrowed metadata store; callers must not close it independently
+     */
     /* default */ SegmentedTransactionalMetadataStore metadataStore() {
         return metadataStore;
     }
 
+    /**
+     * Copies the authoritative revocation prefix to an export target.
+     *
+     * @param target target path for the copied revocation prefix
+     * @return frozen recovery target describing the copied authoritative prefix
+     * @throws IOException if prefix reading, copying, or target persistence fails
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ FilesystemRevocationLog.RecoveryTarget copyRevocationPrefix(Path target)
             throws IOException {
         requireStoreUsable();
         return revocations.copyAuthoritativePrefix(target);
     }
 
+    /**
+     * Collects content referenced by retained signing workflows in one metadata snapshot.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @return immutable set of signing candidate content identities
+     * @throws IOException if snapshot signing metadata cannot be decoded
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ Set<String> snapshotNonCredentialContentIds(MetadataSnapshot snapshot) throws IOException {
         requireStoreUsable();
         Set<String> contentIds = new HashSet<>();
@@ -1203,11 +1358,27 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return Set.copyOf(contentIds);
     }
 
+    /**
+     * Reads status objects from a single authoritative metadata snapshot.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @return unmodifiable snapshot status-object list
+     * @throws IOException if status records cannot be read or decoded
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ List<StatusObject> snapshotStatusObjects(MetadataSnapshot snapshot) throws IOException {
         requireStoreUsable();
         return listStoredStatuses(snapshot).stream().map(StoredStatus::status).toList();
     }
 
+    /**
+     * Streams decoded signing workflows to the supplied visitor, closing each cursor record.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @param visitor callback invoked for every workflow in the borrowed snapshot
+     * @throws IOException if scan, workflow decoding, or the visitor fails
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ void visitSnapshotSigningWorkflows(MetadataSnapshot snapshot,
             AuthorityMetadataStore.Visitor<SignWorkflowStore.Workflow> visitor) throws IOException {
         requireStoreUsable();
@@ -1221,6 +1392,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Exports the selected authoritative metadata namespaces into a snapshot target root.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @param targetRoot target store root; must not be null
+     * @throws IOException if target creation or metadata snapshot export fails
+     * @throws NullPointerException if targetRoot is null
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ void copySnapshotMetadataTo(MetadataSnapshot snapshot, Path targetRoot) throws IOException {
         requireStoreUsable();
         Objects.requireNonNull(targetRoot, "targetRoot");
@@ -1236,6 +1416,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec.CANDIDATE_INDEX, CrlSignerLineageCodec.NAMESPACE));
     }
 
+    /**
+     * Restores CA heads, retained transitions, activations, and CRL signer lineage at the selected time.
+     *
+     * @param source borrowed source metadata snapshot
+     * @param cas logical CAs retained in the snapshot
+     * @param retainedGenerations issuer generations retained by the snapshot
+     * @param at historical selection instant
+     * @throws IOException if lifecycle rows cannot be restored or retained signing/activation evidence would be rewound
+     * @throws IllegalStateException if a retained transition payload cannot be decoded
+     */
     /* default */ void restoreSnapshotLifecycle(MetadataSnapshot source, List<CaRecord> cas, List<IssuerGeneration> retainedGenerations, Instant at) throws IOException {
         java.util.Map<PkiId, CaRecord> selected = new java.util.HashMap<>();
         java.util.Map<PkiId, zeroecho.pki.api.ca.CaHeadSnapshot> heads = new java.util.HashMap<>();
@@ -1282,6 +1472,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Restores one logical CA only after validating its credential dependencies.
+     *
+     * @param ca CA record selected from the snapshot
+     * @throws IOException if credential dependencies or authoritative CA metadata cannot be restored
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ void restoreSnapshotCa(CaRecord ca) throws IOException {
         requireStoreUsable();
         validateCaCredentialReferences(ca);
@@ -1310,6 +1507,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.ca.CaHeadSnapshot> getCaHeadSnapshot(PkiId caId) {
         requireStoreUsable();
@@ -1317,6 +1517,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransition(PkiId transitionId) {
         requireStoreUsable();
@@ -1324,6 +1527,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransitionForIssuer(PkiId issuerId) {
         requireStoreUsable();
@@ -1333,6 +1539,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> getRootTrustAnchorActivation(PkiId transitionId) {
         requireStoreUsable();
@@ -1340,6 +1549,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         catch (IOException failure) { throw signingDurabilityFailure(failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean compareAndSetCaHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1350,6 +1562,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.ca.RootTrustAnchorTransition registerRootCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1360,6 +1575,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.ca.RootTrustAnchorActivation activateRootCandidate(PkiId transitionId,
             zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation) {
@@ -1403,6 +1621,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CaRecord> getCa(final PkiId caId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1417,6 +1638,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CaRecord> listCas() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1433,6 +1657,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1473,6 +1700,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CaRecord> selectAuthoritiesPage(Optional<String> after, int limit,
             java.util.function.Predicate<CaRecord> include, CancellationSignal cancellation) {
@@ -1486,6 +1716,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void visitAuthorityKeyReferences(java.util.function.Consumer<zeroecho.pki.api.KeyRef> visitor,
             CancellationSignal cancellation) {
@@ -1512,6 +1745,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1544,6 +1780,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<RequestSelection> listRequestsPage(Optional<String> after, int limit, java.util.function.Predicate<RequestSelection> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1570,6 +1809,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1586,11 +1828,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean credentialSearchAvailable() {
         return !closing.get() && !durabilityUncertain.get() && credentialSearch != null && credentialSearch.available();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<Credential> searchCredentials(zeroecho.pki.api.credential.CredentialSearchQuery query,
             Optional<String> after, int limit, java.util.function.Predicate<Credential> include,
@@ -1609,6 +1857,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) { throw new IllegalStateException("Credential search failed", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1621,6 +1872,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<StatusObject> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1632,6 +1886,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit, java.util.function.Predicate<PublicationRecord> include, CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1693,11 +1950,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putIssuerGeneration(IssuerGeneration generation) {
         throw new IllegalStateException("Current storage requires explicit issuer cryptographic binding; use the paired generation operation");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putIssuerGeneration(IssuerGeneration generation, zeroecho.pki.api.ca.IssuerCryptographicBinding binding) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1723,6 +1986,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1739,6 +2005,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> getIssuerCryptographicBinding(PkiId issuerId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1750,6 +2019,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public BigInteger reserveCrlNumber(PkiId issuerGenerationId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1786,6 +2058,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<IssuerGeneration> listIssuerGenerations(PkiId authorityId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1804,16 +2079,31 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     // Test-only, calling-thread counters; setup/startup reads are excluded by
     // installing immediately before the measured ingress and clearing afterward.
+    /**
+     * Resets and enables calling-thread issuer-generation point/list read counters for a bounded test measurement.
+     */
     /* default */ static void startIssuerGenerationReadCounting() {
         ISSUER_GENERATION_READ_COUNTS.set(new long[2]);
     }
 
+    /**
+     * Returns an independent snapshot of the calling thread's issuer-generation read counters.
+     *
+     * @return two-element array containing point lookup count then generation-list count
+     * @throws NullPointerException if counting has not been installed on the current thread
+     */
     /* default */ static long[] issuerGenerationReadCounts() {
         return Objects.requireNonNull(ISSUER_GENERATION_READ_COUNTS.get(), "read counting is not installed").clone();
     }
 
+    /**
+     * Removes the calling-thread issuer-generation measurement state.
+     */
     /* default */ static void stopIssuerGenerationReadCounting() { ISSUER_GENERATION_READ_COUNTS.remove(); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putIssuerChainPath(IssuerChainPath path) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1826,6 +2116,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1840,6 +2133,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1875,6 +2171,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiId requireCrlSignerLineage(PkiId issuerId) {
         requireStoreUsable();
@@ -1891,6 +2190,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL signer lineage cannot be read", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putCredential(final Credential credential) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -1901,6 +2203,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putCredentialFromSigning(Credential credential, PkiId operationId, String commandCommitment) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -2040,15 +2345,49 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireKnownOutcome(result);
     }
 
+    /**
+     * Calling-thread deterministic failure boundaries for credential and permanent serial reservation persistence.
+     */
     /* default */ enum CredentialReservationFault {
-        BEFORE_CREDENTIAL, COMMIT_AS_UNKNOWN, BEFORE_SERIAL_INDEX,
-        SERIAL_INDEX_READ_IO, SERIAL_INDEX_WRITE_IO, ISSUANCE_EVIDENCE_IO
+        /**
+         * Fault injection point for the boundary before credential persistence.
+         */
+        BEFORE_CREDENTIAL,
+        /**
+         * Fault injection point for an unknown commit outcome.
+         */
+        COMMIT_AS_UNKNOWN,
+        /**
+         * Fault injection point for the boundary before updating the issuer serial index.
+         */
+        BEFORE_SERIAL_INDEX,
+        /**
+         * Fault injection point for issuer serial index reads.
+         */
+        SERIAL_INDEX_READ_IO,
+        /**
+         * Fault injection point for issuer serial index writes.
+         */
+        SERIAL_INDEX_WRITE_IO,
+        /**
+         * Fault injection point for issuance evidence I/O.
+         */
+        ISSUANCE_EVIDENCE_IO
     }
 
+    /**
+     * Installs a calling-thread credential reservation failure mode until cleared.
+     *
+     * @param point deterministic fault boundary; must not be null
+     * @throws NullPointerException if the supplied fault mode is null
+     */
     /* default */ static void installCredentialReservationFault(CredentialReservationFault point) {
         CREDENTIAL_RESERVATION_FAULT.set(Objects.requireNonNull(point, "point"));
     }
 
+    /**
+     * Removes the calling-thread credential reservation fault mode.
+     */
     /* default */ static void clearCredentialReservationFault() { CREDENTIAL_RESERVATION_FAULT.remove(); }
 
     private ScopeSerialReservation credentialReservation(Credential credential,
@@ -2100,10 +2439,25 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Checks source credential replay against permanent scope and serial ownership.
+     *
+     * @param credential exact credential whose stored metadata and content are checked
+     * @return exact frozen X.509 credential authority, or empty for a non-X.509 credential
+     * @throws IOException if metadata cannot be read or credential authority is missing or inconsistent
+     */
     /* default */ Optional<SnapshotCredentialAuthority> credentialSnapshotAuthority(Credential credential) throws IOException {
         try (MetadataSnapshot snapshot = metadataStore.snapshot()) { return credentialSnapshotAuthority(snapshot, credential); }
     }
 
+    /**
+     * Checks source credential replay against permanent scope and serial ownership.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @param credential exact credential whose stored metadata and content are checked
+     * @return exact frozen X.509 credential authority, or empty for a non-X.509 credential
+     * @throws IOException if metadata cannot be read or credential authority is missing or inconsistent
+     */
     /* default */ Optional<SnapshotCredentialAuthority> credentialSnapshotAuthority(MetadataSnapshot snapshot, Credential credential) throws IOException {
         if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) { return Optional.empty(); }
         requireExactCredentialReplay(new CredentialMetadataAuthority(metadataStore, stagedContent).find(snapshot, credential.credentialId())
@@ -2127,6 +2481,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Called only by the snapshot transfer after its exact source credential and
     // permanent reservation have been validated. Target content is reminted, but
     // issuance ownership is read from the copied authoritative metadata revision.
+    /**
+     * Stores a reminted snapshot credential only when copied permanent ownership agrees.
+     *
+     * @param credential exact credential whose stored metadata and content are checked
+     * @param sourceAuthority frozen source scope/serial authority; required for X.509 and absent otherwise
+     * @throws IOException if copied source authority, certificate commitment, or permanent reservations differ
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ void putSnapshotCredential(Credential credential, Optional<SnapshotCredentialAuthority> sourceAuthority)
             throws IOException {
         requireStoreUsable();
@@ -2151,8 +2513,24 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         putCredentialReserved(credential, frozen.reservation().issuanceOwner());
     }
 
-    /* default */ record SnapshotCredentialAuthority(CrlScopeOwner scopeOwner,
+    /* default */ /**
+     * Exact scope, serial ownership and certificate commitment retained for snapshot authority checks.
+     *
+     * @param scopeOwner exact structural CRL scope owner
+     * @param reservation permanent scope-wide serial reservation
+     * @param certificateCommitment canonical SHA-256 commitment of the imported certificate DER
+     */
+    record SnapshotCredentialAuthority(CrlScopeOwner scopeOwner,
             ScopeSerialReservation reservation, String certificateCommitment) {
+        /**
+         * Validates the exact permanent scope, serial reservation, and certificate commitment.
+         *
+         * @param scopeOwner permanent structural CRL scope owner; must not be null
+         * @param reservation permanent scope-wide serial reservation; must not be null
+         * @param certificateCommitment canonical lowercase SHA-256 certificate commitment
+         * @throws NullPointerException if owner or reservation is null
+         * @throws IllegalArgumentException if the commitment or scope agreement is invalid
+         */
         SnapshotCredentialAuthority {
             Objects.requireNonNull(scopeOwner, "scopeOwner");
             Objects.requireNonNull(reservation, "reservation");
@@ -2163,9 +2541,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Signals that snapshot credential content or ownership differs from permanent scope/serial authority.
+     */
     /* default */ static final class SnapshotCredentialAuthorityException extends IOException {
         private static final long serialVersionUID = 1L;
 
+        /**
+         * Creates the stable diagnostic for mismatched snapshot credential authority.
+         */
         /* default */ SnapshotCredentialAuthorityException() {
             super("Snapshot credential differs from its permanent scope or serial authority");
         }
@@ -2346,6 +2730,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -2360,6 +2747,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<Credential> getCredentialByIssuerAndSerial(PkiId issuerId, BigInteger serial) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -2745,6 +3135,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -2776,6 +3169,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationLifecycle initializeCredentialConfirmation(
             final CredentialConfirmationInitialization initialization) {
@@ -2825,6 +3221,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialConfirmationLifecycle> getCredentialConfirmation(final PkiId credentialId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -2835,6 +3234,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialConfirmationChallenge> getCredentialConfirmationChallenge(
             final PkiId credentialId) {
@@ -2852,6 +3254,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationChallenge issueCredentialConfirmationChallenge(
             final CredentialConfirmationChallengeIssuance issuance) {
@@ -2902,6 +3307,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationLifecycle completeCredentialConfirmation(
             final CredentialConfirmationProofCas proofCas) {
@@ -2988,6 +3396,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.NPathComplexity")
     public CredentialConfirmationReviewPage pagePendingCredentialConfirmationReviews(
@@ -3796,6 +4207,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return path;
     }
 
+    /**
+     * Reads one positive bounded issuer certificate and requires canonical DER.
+     *
+     * <p>Owns and closes the read handles and clears the temporary encoded buffer.</p>
+     *
+     * @param credential exact credential whose stored metadata and content are checked
+     * @return parsed canonical X.509 certificate
+     * @throws IOException if content is truncated, changes length, cannot be read, or is not canonical DER
+     * @throws IllegalStateException if the declared certificate length is outside the one-MiB artifact bound
+     */
     /* default */ X509Certificate certificateHolder(Credential credential) throws IOException {
         long length = credential.content().length();
         if (length <= 0L || length > 1024L * 1024L || length > Integer.MAX_VALUE) {
@@ -3839,6 +4260,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putRequest(final ParsedCertificationRequest request) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -3851,6 +4275,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateRevocation(RevocationCommand command, boolean overdueConfirmation) {
         requireStoreUsable();
@@ -3878,6 +4305,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         nextRevocationTransition(current, command, time);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationRecord revokeOverduePendingCredentialConfirmation(
             final RevocationCommand.RevokePermanently command) {
@@ -4016,6 +4446,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return left.equals(right);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<ParsedCertificationRequest> getRequest(final PkiId requestId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4026,6 +4459,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Filesystem failures are normalized to the stable store failure code.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -4094,6 +4530,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 || request.requestedProfileId().filter(query.profileId().orElseThrow()::equals).isPresent();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Store failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
@@ -4142,6 +4581,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<RevocationRecord> getRevocation(final PkiId credentialId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4156,6 +4598,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationHistory openRevocationHistory(final PkiId credentialId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4170,6 +4615,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationTransitionFeed openRevocationTransitionFeed(
             final Optional<RevocationTransitionFeed.Position> afterExclusive) {
@@ -4185,6 +4633,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void requireRevocationPrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
             CancellationSignal cancellation) throws IOException {
@@ -4195,6 +4646,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openIssuanceEvidenceFeed(final long afterSequenceExclusive) {
@@ -4209,6 +4663,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openStatusEvidenceFeed(final long afterSequenceExclusive) {
@@ -4223,6 +4680,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public AuditEvidenceFeed openPublicationEvidenceFeed(final long afterSequenceExclusive) {
@@ -4238,6 +4698,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsSigningEvidenceFeed() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4247,6 +4710,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace") // Feed failures expose only a fixed safe diagnostic.
     public AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
@@ -4271,20 +4737,35 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.reader = reader;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public long highWatermark() { return reader.highWatermark(); }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean next(CancellationSignal cancellation) throws IOException {
             return reader.next(cancellation);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Entry current() {
             MetadataEvidenceLog.Entry entry = reader.current();
             return new Entry(entry.sequence(), entry.objectId(), entry.recordedAt(), entry.payload());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { reader.close(); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Snapshot failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -4300,6 +4781,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RevocationView openRevocationView() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4313,11 +4797,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putStatusObject(final StatusObject object) {
         putStatusObject(object, Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putStatusObjectFromSigning(StatusObject object, PkiId operationId, String commandCommitment) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4374,6 +4864,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4399,6 +4892,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<StatusObject> listStatusObjects(final PkiId issuerCaId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4417,6 +4913,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationRecord createPublicationRecord(final PublicationRecord record) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4458,6 +4957,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PublicationRecord> getPublicationRecord(final PkiId publicationId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4479,6 +4981,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean replacePublicationRecord(final PublicationRecord expected,
             final PublicationRecord replacement) {
@@ -4557,6 +5062,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public PublicationCursor openPublicationRecords() {
@@ -4578,12 +5086,23 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Opens a publication cursor over a borrowed metadata snapshot.
+     *
+     * @param snapshot borrowed authoritative metadata snapshot; remains owned by the caller
+     * @return cursor owned by the caller; closing it leaves the supplied snapshot open
+     * @throws IOException if the publication namespace scan cannot be opened
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ PublicationCursor openPublicationRecords(MetadataSnapshot snapshot) throws IOException {
         requireStoreUsable();
         return new PublicationMetadataCursor(snapshot, snapshot.scan(MetadataSnapshot.KeyRange.all(PUBLICATION_RECORD_NAMESPACE),
                 CancellationSignal.NONE), false);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Persistence causes may contain filesystem data and are intentionally
     // redacted.
@@ -4637,6 +5156,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<ImportedCertificateProfileVersion> getProfileVersion(final String profileId,
             final long profileVersion) {
@@ -4650,6 +5172,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Filesystem failures are normalized to the stable store failure code.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -4676,6 +5201,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     // Persistence causes may contain filesystem data and are intentionally
     // redacted.
@@ -4710,6 +5238,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CertificateProfileRef> getActiveProfileRef(final String profileId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4720,6 +5251,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ActiveCertificateProfile requireActiveProfile(final String profileId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4733,6 +5267,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putPolicyTrace(final PolicyTrace trace) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4745,6 +5282,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4759,6 +5299,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // Workflow continuation state (orchestration)
     // -------------------------------------------------------------------------
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void putWorkflowState(final WorkflowStateRecord record) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4775,6 +5318,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4785,6 +5331,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void deleteWorkflowState(final PkiId opId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4801,6 +5350,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<WorkflowStateRecord> listWorkflowStates() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4811,6 +5363,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<StatusSchedule> getStatusSchedule(PkiId caId, StatusObjectType statusType) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4821,6 +5376,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<StatusSchedule> listActiveStatusSchedulesPage(Optional<String> after, int limit,
             CancellationSignal cancellation) {
@@ -4833,6 +5391,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public StatusSchedule putStatusSchedule(StatusSchedule schedule) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4843,6 +5404,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean replaceStatusSchedule(StatusSchedule expected, StatusSchedule replacement) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4895,8 +5459,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean supportsStatusScheduling() { return true; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<StatusScheduleState> getStatusScheduleState(PkiId caId, StatusObjectType type) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
         try (admission) {
@@ -4906,6 +5476,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<StatusScheduleState> listStatusScheduleWork(Optional<String> after, int limit,
             CancellationSignal cancellation) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4916,6 +5489,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<StatusScheduleState.Execution> claimStatusSchedule(StatusScheduleState expected) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
         try (admission) {
@@ -4925,6 +5501,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean advanceStatusSchedule(StatusScheduleState.Execution expected) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
         try (admission) {
@@ -4935,6 +5514,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean failStatusSchedule(StatusScheduleState.Execution expected, String detailCode) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
         try (admission) {
@@ -4944,6 +5526,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Instant signingNow() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4965,6 +5550,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return Instant.ofEpochMilli(monotonic);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String signingNamespace() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4974,6 +5562,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Duration signingPermittedSkew() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4983,6 +5574,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Duration signingHorizon() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -4997,9 +5591,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 || state == SignWorkflowStore.State.CANCELLING;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsHybridCrlContinuations() { return true; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void requireCrlHybridMetadataBudget(SignWorkflowStore.AcceptanceCommand parentCommand) {
         requireStoreUsable();
@@ -5044,6 +5644,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         if (hybrid) requireCrlHybridMetadataBudget(command);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.AcceptanceResolution resolveCrlNativeChild(PkiId parentId,
             SignWorkflowStore.AcceptanceCommitment childCommitment) {
@@ -5056,6 +5659,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 ? SignWorkflowStore.AcceptanceResolution.MATCHED : SignWorkflowStore.AcceptanceResolution.CONFLICT;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.AcceptanceResult adoptCrlNativeChild(PkiId parentId, long expectedParentRevision,
             long parentFence, long expectedExecutionRevision, SignWorkflowStore.AcceptanceCommand child) {
@@ -5171,6 +5777,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return new SigningTransactionPayloadCodec.Mutation(SigningTransactionPayloadCodec.MutationKind.REPLACE, key, revision, bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.spi.store.CrlHybridExecution> getCrlHybridExecution(PkiId parentId) {
         requireStoreUsable();
@@ -5178,6 +5787,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         catch (IOException failure) { throw new IllegalStateException("Hybrid CRL execution cannot be read", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.spi.store.CrlHybridExecution> getCrlHybridExecutionForChild(PkiId childId) {
         requireStoreUsable();
@@ -5257,12 +5869,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.AcceptanceResult acceptSign(
             SignWorkflowStore.AcceptanceCommand command) {
         return acceptSign(command, Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SignWorkflowStore.AcceptanceResult acceptScheduledSign(
             SignWorkflowStore.AcceptanceCommand command, StatusScheduleState.Execution claim) {
         return acceptSign(command, Optional.of(Objects.requireNonNull(claim, "claim")));
@@ -5446,6 +6064,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.AcceptanceResolution resolveAcceptance(PkiId operationId,
             SignWorkflowStore.AcceptanceCommitment commitment) {
@@ -5620,14 +6241,37 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Calling-thread fault modes distinguishing failed, uncertain, and durably committed signing acceptance.
+     */
     /* default */ enum SignAcceptanceCommitFault {
-        BEFORE_COMMIT_FAILURE, BEFORE_COMMIT_AS_UNKNOWN, AFTER_COMMIT_AS_UNKNOWN
+        /**
+         * Fault injection point for failure before invoking the commit.
+         */
+        BEFORE_COMMIT_FAILURE,
+        /**
+         * Fault injection point for a simulated unknown outcome before the commit.
+         */
+        BEFORE_COMMIT_AS_UNKNOWN,
+        /**
+         * Fault injection point for a simulated unknown outcome after the commit.
+         */
+        AFTER_COMMIT_AS_UNKNOWN
     }
 
+    /**
+     * Installs a calling-thread signing acceptance commit failure mode until cleared.
+     *
+     * @param fault deterministic commit fault mode; must not be null
+     * @throws NullPointerException if the supplied fault mode is null
+     */
     /* default */ static void installSignAcceptanceCommitFault(SignAcceptanceCommitFault fault) {
         SIGN_ACCEPTANCE_COMMIT_FAULT.set(Objects.requireNonNull(fault, "fault"));
     }
 
+    /**
+     * Removes the calling-thread signing acceptance commit fault mode.
+     */
     /* default */ static void clearSignAcceptanceCommitFault() { SIGN_ACCEPTANCE_COMMIT_FAULT.remove(); }
 
     private void reclaimDefinitelyUnboundCandidate(DurableContentReference candidate) {
@@ -5642,6 +6286,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(PkiId operationId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -5658,6 +6305,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<DomainContinuationStore.Record> getDomainContinuation(
             DomainContinuationStore.Kind kind, String correlationId) {
@@ -5691,6 +6341,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<DomainContinuationStore.Record> transitionDomainContinuation(PkiId operationId,
             long expectedRevision, DomainContinuationStore.State target,
@@ -5775,6 +6428,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> getSignWorkflow(PkiId submissionId) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -5801,6 +6457,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<SignWorkflowStore.Workflow> listSignWorkflows() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -5810,6 +6469,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public List<SignWorkflowStore.Workflow> selectDueSignWorkflows(Instant cutoffInclusive,
@@ -5836,6 +6498,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor, int maximumRecords,
             CancellationSignal cancellation) {
@@ -5845,6 +6510,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.Page pageSignWorkflows(Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumRecords, CancellationSignal cancellation) {
@@ -5943,6 +6611,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignWorkflowStore.DuePage pageDueSignWorkflows(Instant cutoffInclusive,
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
@@ -5995,6 +6666,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> deferSignReconciliation(PkiId submissionId, long expectedRevision,
             long fence, SignWorkflowStore.ReconciliationFailureClass failureClass) {
@@ -6157,6 +6831,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Reads a signing workflow without expiring it during reservation recovery.
+     *
+     * @param id canonical operation identity to inspect
+     * @return retained workflow, or empty when no workflow exists
+     */
     /* default */ Optional<SignWorkflowStore.Workflow> recoverySigningWorkflow(PkiId id) {
         return readSignWorkflow(id); // Recovery must not expire a workflow while validating its reservation.
     }
@@ -6273,26 +6953,53 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Installs a calling-thread status publication commit fault until cleared.
+     *
+     * @param point deterministic fault boundary; must not be null
+     * @throws NullPointerException if the supplied fault mode is null
+     */
     /* package */ static void installStatusCommitFault(StatusCommitFaultPoint point) {
         STATUS_COMMIT_FAULT.set(Objects.requireNonNull(point, "point"));
     }
 
+    /**
+     * Removes the calling-thread status publication commit fault.
+     */
     /* package */ static void clearStatusCommitFault() {
         STATUS_COMMIT_FAULT.remove();
     }
 
+    /**
+     * Installs a calling-thread callback at signing transition admission.
+     *
+     * @param observer test callback; must not be null
+     * @throws NullPointerException if observer is null
+     */
     /* package */ static void installSignTransitionAdmissionObserver(Runnable observer) {
         SIGN_ADMISSION_OBSERVER.set(Objects.requireNonNull(observer, "observer"));
     }
 
+    /**
+     * Removes the calling-thread signing transition admission callback.
+     */
     /* package */ static void clearSignTransitionAdmissionObserver() {
         SIGN_ADMISSION_OBSERVER.remove();
     }
 
+    /**
+     * Installs a calling-thread callback consumed after signing acceptance validation.
+     *
+     * @param observer test callback; must not be null
+     * @throws NullPointerException if observer is null
+     */
     /* package */ static void installSignAcceptanceValidatedObserver(Runnable observer) {
         SIGN_ACCEPTANCE_VALIDATED_OBSERVER.set(Objects.requireNonNull(observer, "observer"));
     }
 
+    /**
+     * Removes the calling-thread post-validation signing acceptance callback.
+     */
     /* package */ static void clearSignAcceptanceValidatedObserver() {
         SIGN_ACCEPTANCE_VALIDATED_OBSERVER.remove();
     }
@@ -6313,15 +7020,24 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** Test-only status-publication boundary; never part of production API. */
+    /**
+     * Test-only status-publication boundary; never part of production API.
+     */
     /* default */
     enum StatusCommitFaultPoint {
-        /** Fails after admission but before the metadata commit attempt. */
+        /**
+         * Fails after admission but before the metadata commit attempt.
+         */
         BEFORE_COMMIT,
-        /** Reports uncertainty only after a real durable commit. */
+        /**
+         * Reports uncertainty only after a real durable commit.
+         */
         AFTER_COMMIT_AS_UNKNOWN
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> claimSignStep(PkiId submissionId, long expectedRevision,
             Duration lease) {
@@ -6376,6 +7092,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointPendingSignDispatch(PkiId submissionId,
             long expectedRevision, long fence) {
@@ -6387,6 +7106,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> completeSignObservation(PkiId submissionId,
             long expectedRevision, long fence) {
@@ -6439,6 +7161,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> renewSignStep(PkiId submissionId, long expectedRevision, long fence,
             Duration lease) {
@@ -6483,6 +7208,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> requestSignCancellation(PkiId submissionId,
             long expectedRevision, long fence) {
@@ -6551,6 +7279,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) { throw new IllegalStateException("Hybrid CRL result bound cannot be read", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> transitionSign(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.State target, Optional<String> detailCode, Optional<EncodedObject> result,
@@ -6630,6 +7361,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> checkpointCaProof(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.CaSubjectProofOutcome outcome, Optional<EncodedObject> signature) {
@@ -6674,6 +7408,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> completeCaProofVerification(PkiId submissionId, long expectedRevision, long fence) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -6729,6 +7466,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         ? outcome : current.alternativeProofOutcome()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SignWorkflowStore.Workflow> retireSign(PkiId submissionId, long expectedRevision, long fence) {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -6811,6 +7551,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)).isPresent();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int purgeExpiredSignRecords() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -6954,6 +7697,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) { throw new IllegalStateException("Schedule cleanup authority unavailable", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsBackup() { return true; }
 
@@ -6987,7 +7733,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.BackupSource createBackupSource(
             zeroecho.pki.api.backup.BackupRequest request) throws IOException {
@@ -7135,7 +7883,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.BackupVerificationReport verifyBackupSource(
             zeroecho.pki.api.backup.BackupSource source) {
@@ -7150,7 +7900,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.BackupPreparation prepareBackup(
             zeroecho.pki.api.backup.BackupSource source) throws IOException {
@@ -7162,14 +7914,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source)
             throws IOException {
         return stageRestore(source, new PkiId(java.util.UUID.randomUUID().toString()));
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source,
             PkiId restoreId) throws IOException {
@@ -7203,7 +7959,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -7213,7 +7971,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void discardUnpublishedRestore(PkiId restoreId, Optional<PkiId> previousRestoreId,
             String manifestSha256) throws IOException {
@@ -7225,7 +7985,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity() throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -7275,6 +8037,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Validates bounded request, policy, profile, and workflow files before backup use.
+     *
+     * @throws IOException if a domain file is unreadable or invalid
+     */
     /* default */ void validateBackupDomainFiles() throws IOException {
         for (String tree : List.of("requests", "policy", "profiles", "workflows")) {
             Path directory = paths.root().resolve(tree);
@@ -7323,6 +8090,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.stop();
@@ -7364,11 +8134,22 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Observes the current store-owned local signing WAL writer without changing its state.
+     *
+     * @return immutable writer counter snapshot
+     * @throws IllegalStateException if the store is unavailable
+     */
     /* default */ SigningActiveWal.Snapshot localSigningWriterSnapshot() {
         requireStoreUsable();
         return metadataStore.writerSnapshot();
     }
 
+    /**
+     * Returns the first retained local signing recovery failure for internal diagnostics.
+     *
+     * @return first recovery failure, or null when none was recorded
+     */
     /* default */ Throwable firstLocalSigningRecoveryFailure() {
         return metadataStore.firstRecoveryFailure();
     }
@@ -8191,6 +8972,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Maps metadata failure categories to stable signing rejection or durability-uncertainty errors.
+     *
+     * @param failure classified metadata failure; must not be null
+     * @return PKI exception retaining the original cause and stable failure code
+     * @throws NullPointerException if failure is null
+     */
     /* package */ PkiException translateSigningMetadataFailure(MetadataStoreException failure) {
         Objects.requireNonNull(failure, "failure");
         if (failure.category() == MetadataCommitResult.FailureCategory.STORAGE_FAILURE) {
@@ -8314,26 +9102,66 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return lease.compareTo(untilDeadline) >= 0 ? workflow.deadline() : now.plus(lease);
     }
 
+    /**
+     * Builds the immutable signing acceptance-envelope metadata key.
+     *
+     * @param submissionId canonical submission identity; must not be null
+     * @return metadata key in the corresponding signing namespace
+     * @throws IllegalArgumentException if submission syntax is invalid
+     * @throws NullPointerException if submissionId is null
+     */
     static MetadataKey signingEnvelopeKey(PkiId submissionId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
         return new MetadataKey(SIGN_ENVELOPE_NAMESPACE, parsed.id().value());
     }
 
+    /**
+     * Builds the mutable signing workflow-state metadata key.
+     *
+     * @param submissionId canonical submission identity; must not be null
+     * @return metadata key in the corresponding signing namespace
+     * @throws IllegalArgumentException if submission syntax is invalid
+     * @throws NullPointerException if submissionId is null
+     */
     static MetadataKey signingStateKey(PkiId submissionId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
         return new MetadataKey(SIGN_STATE_NAMESPACE, parsed.id().value());
     }
 
+    /**
+     * Builds a candidate-to-signing-owner binding key.
+     *
+     * @param candidateId content identity; must not be null
+     * @return metadata key in the signing candidate binding namespace
+     * @throws NullPointerException if candidateId is null
+     */
     static MetadataKey signingCandidateBindingKey(String candidateId) {
         Objects.requireNonNull(candidateId, "candidateId");
         return new MetadataKey(SIGN_CANDIDATE_BINDING_NAMESPACE, candidateId);
     }
 
+    /**
+     * Builds the domain continuation key for a canonical signing submission.
+     *
+     * @param operationId canonical signing submission identity; must not be null
+     * @return metadata key in the durable domain continuation namespace
+     * @throws IllegalArgumentException if the submission identity is malformed
+     * @throws NullPointerException if operationId is null
+     */
     static MetadataKey domainContinuationKey(PkiId operationId) {
         SigningSubmissionId parsed = SigningSubmissionId.parse(operationId);
         return new MetadataKey(DOMAIN_CONT_NAMESPACE, parsed.id().value());
     }
 
+    /**
+     * Hashes domain kind and correlation identity into a bounded stable metadata key.
+     *
+     * @param kind domain continuation kind; must not be null
+     * @param correlationId exact caller correlation identity; must not be null
+     * @return SHA-256-derived correlation namespace key
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     static MetadataKey domainCorrelationKey(DomainContinuationStore.Kind kind, String correlationId) {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(correlationId, "correlationId");
@@ -8347,14 +9175,35 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Encodes the versioned correlation value binding to an operation identity.
+     *
+     * @param operationId canonical signing submission identity; must not be null
+     * @return new UTF-8 version-one correlation value bytes
+     * @throws NullPointerException if operationId is null
+     */
     static byte[] encodeDomainCorrelation(PkiId operationId) {
         return ("v1\n" + operationId.value()).getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * Builds the authoritative status-object record key.
+     *
+     * @param statusObjectId status-object identity; must not be null
+     * @return metadata key in the status record namespace
+     * @throws NullPointerException if statusObjectId is null
+     */
     static MetadataKey statusRecordKey(PkiId statusObjectId) {
         return new MetadataKey(STATUS_RECORD_NAMESPACE, statusObjectId.value());
     }
 
+    /**
+     * Builds the transactional status content-owner record key.
+     *
+     * @param statusObjectId status-object identity; must not be null
+     * @return metadata key in the status owner namespace
+     * @throws NullPointerException if statusObjectId is null
+     */
     static MetadataKey statusOwnerKey(PkiId statusObjectId) {
         return new MetadataKey(STATUS_OWNER_NAMESPACE, statusObjectId.value());
     }
@@ -8494,10 +9343,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 "Publication metadata outcome requires recovery: code=PUBLICATION_PERSISTENCE_UNKNOWN");
     }
 
+    /**
+     * Installs a calling-thread publication metadata commit fault until consumed or cleared.
+     *
+     * @param point deterministic fault boundary; must not be null
+     * @throws NullPointerException if the supplied fault mode is null
+     */
     /* package */ static void installPublicationCommitFault(PublicationCommitFaultPoint point) {
         PUBLICATION_COMMIT_FAULT.set(Objects.requireNonNull(point, "point"));
     }
 
+    /**
+     * Removes the calling-thread publication metadata commit fault.
+     */
     /* package */ static void clearPublicationCommitFault() {
         PUBLICATION_COMMIT_FAULT.remove();
     }
@@ -8508,40 +9366,64 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return point;
     }
 
-    /** Test-only publication metadata commit boundary. */
+    /**
+     * Test-only publication metadata commit boundary.
+     */
     /* default */
     enum PublicationCommitFaultPoint {
-        /** Fails registration before the metadata commit attempt. */
+        /**
+         * Fails registration before the metadata commit attempt.
+         */
         CREATE_BEFORE_COMMIT,
-        /** Fails one state replacement before the metadata commit attempt. */
+        /**
+         * Fails one state replacement before the metadata commit attempt.
+         */
         REPLACE_BEFORE_COMMIT,
-        /** Reports uncertainty after one replacement was durably committed. */
+        /**
+         * Reports uncertainty after one replacement was durably committed.
+         */
         REPLACE_COMMIT_AS_UNKNOWN
     }
 
-    /** Test seam at the post-RETIRED physical content-deletion boundary. */
+    /**
+     * Test seam at the post-RETIRED physical content-deletion boundary.
+     */
     /* default */
     @FunctionalInterface
     interface SigningContentRetirementFaultInjector {
-        /** Production no-op. */
+        /**
+         * Production no-op.
+         */
         SigningContentRetirementFaultInjector NONE = reference -> {
             // No fault.
         };
 
-        /** Invoked immediately before physical signing-content retirement. */
+        /**
+         * Invoked immediately before physical signing-content retirement.
+         * @param reference durable content reference whose exact storage coordinates are encoded
+         * @throws IOException to inject a physical content-retirement failure
+         */
         void beforeRetirement(DurableContentReference reference) throws IOException;
     }
 
-    /** Test seam after authoritative revocation and before derived confirmation cleanup. */
+    /**
+     * Test seam after authoritative revocation and before derived confirmation cleanup.
+     */
     /* default */
     @FunctionalInterface
     interface ConfirmationRevocationCleanupFaultInjector {
-        /** Production no-op. */
+        /**
+         * Production no-op.
+         */
         ConfirmationRevocationCleanupFaultInjector NONE = credentialId -> {
             // No fault.
         };
 
-        /** Invoked after authoritative revocation and before derived metadata cleanup. */
+        /**
+         * Invoked after authoritative revocation and before derived metadata cleanup.
+         * @param credentialId credential whose authoritative revocation has already completed
+         * @throws IOException to inject a derived confirmation cleanup failure
+         */
         void beforeCleanup(PkiId credentialId) throws IOException;
     }
 
@@ -8579,6 +9461,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return DomainContinuationValidation.validate(operationId, decoded, encoded.length);
     }
 
+    /**
+     * Encodes a validated status-object owner and its exact durable content coordinates.
+     *
+     * @param statusObjectId status-object identity; must not be null
+     * @param reference durable content reference whose exact storage coordinates are encoded
+     * @return new versioned transactional ownership value bytes
+     * @throws IllegalArgumentException if owner identity or encoded content coordinates are invalid
+     * @throws NullPointerException if a required value is null
+     */
     static byte[] encodeStatusOwner(PkiId statusObjectId, DurableContentReference reference) {
         new DurableContentOwner(DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusObjectId.value());
         return encodeTransactionalOwner(STATUS_OWNER_VALUE_VERSION,
@@ -8734,7 +9625,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         void visit(PkiId submissionId, DurableContentReference reference) throws IOException;
     }
 
-    /** Store-owned bounded finite control metadata used only for synchronous admission. */
+    /**
+     * Store-owned bounded finite control metadata used only for synchronous admission.
+     */
     private static final class ByteValueContent implements RepeatableContent {
         private final byte[] value;
 
@@ -8742,21 +9635,33 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.value = Objects.requireNonNull(value, "value").clone();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() {
             return new ByteArrayInputStream(value);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(value.length);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "signing-control-metadata";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             Arrays.fill(value, (byte) 0);
@@ -8985,7 +9890,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         private final AtomicInteger references = new AtomicInteger();
     }
 
-    /** Reference-counted per-profile import and activation lock. */
+    /**
+     * Reference-counted per-profile import and activation lock.
+     */
     private static final class ProfileLockEntry {
         private final ReentrantLock lock = new ReentrantLock();
         private final AtomicInteger references = new AtomicInteger();
@@ -9014,6 +9921,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
         // Raw lock exceptions are deliberately replaced by the stable redacted
         // contention code.
+        /**
+         * Acquires exclusive writer ownership, retaining the file channel and lock until close.
+         *
+         * <p>If acquisition fails, closes the partial channel before propagating a stable
+         * contention error.</p>
+         *
+         * @param lockFile store writer-lock file opened with create and write access
+         * @return owned lock carrier; the caller must close it
+         * @throws IOException if opening or acquiring the lock fails
+         * @throws IllegalStateException if another writer already owns the store
+         */
         @SuppressWarnings("PMD.PreserveStackTrace")
         /* default */ static StoreOwnership acquire(Path lockFile) throws IOException {
             FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
@@ -9043,8 +9961,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
         }
 
+        /**
+         * Creates a no-op ownership carrier for a view borrowing an already-held writer lock.
+         *
+         * @return carrier whose close operation releases no lock or channel
+         */
         /* default */ static StoreOwnership borrowed() { return new StoreOwnership(null, null); }
 
+        /**
+         * Attempts to release store ownership while preserving an authoritative construction failure.
+         *
+         * <p>Suppresses I/O cleanup failures and logs no lock or filesystem details.</p>
+         */
         /* default */ void closeSilently() {
             try {
                 close();
@@ -9053,6 +9981,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             closeLock.lock();
@@ -9150,10 +10081,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    /**
+     * Installs a calling-thread filesystem initialization fault until cleared.
+     *
+     * @param point deterministic fault boundary; must not be null
+     * @throws NullPointerException if the supplied fault mode is null
+     */
     /* default */ static void installInitializationFault(InitializationFaultPoint point) {
         INITIALIZATION_FAULT.set(Objects.requireNonNull(point, "point"));
     }
 
+    /**
+     * Removes the calling-thread filesystem initialization fault.
+     */
     /* default */ static void clearInitializationFault() {
         INITIALIZATION_FAULT.remove();
     }
@@ -9164,16 +10104,45 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** Durable boundaries exercised while publishing a new v14 store root. */
+    /**
+     * Durable boundaries exercised while publishing a new v14 store root.
+     */
     /* default */ enum InitializationFaultPoint {
+        /**
+         * Fault injection point for publication of the namespace marker.
+         */
         NAMESPACE_PUBLISHED,
+        /**
+         * Fault injection point for publication of staged content storage.
+         */
         STAGED_CONTENT_PUBLISHED,
+        /**
+         * Fault injection point for publication of metadata storage.
+         */
         METADATA_PUBLISHED,
+        /**
+         * Fault injection point for publication of revocation storage.
+         */
         REVOCATIONS_PUBLISHED,
+        /**
+         * Fault injection point for creation of the temporary version marker.
+         */
         VERSION_TEMP_CREATE,
+        /**
+         * Fault injection point for writing the version marker.
+         */
         VERSION_WRITE,
+        /**
+         * Fault injection point for forcing the version marker file.
+         */
         VERSION_FILE_FORCE,
+        /**
+         * Fault injection point for atomic publication of the version marker.
+         */
         VERSION_ATOMIC_MOVE,
+        /**
+         * Fault injection point for forcing the version marker directory.
+         */
         VERSION_DIRECTORY_FORCE
     }
 
@@ -9201,7 +10170,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return new UnsupportedStoreFormatException();
     }
 
-    /** Redacted marker used to preserve format rejection across constructor wrapping. */
+    /**
+     * Redacted marker used to preserve format rejection across constructor wrapping.
+     */
     private static final class UnsupportedStoreFormatException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -9362,7 +10333,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    /** Stable metadata cursor that decodes and validates one record at a time. */
+    /**
+     * Stable metadata cursor that decodes and validates one record at a time.
+     */
     private final class PublicationMetadataCursor implements PublicationCursor {
         private final MetadataSnapshot snapshot;
         private final MetadataCursor cursor;
@@ -9379,6 +10352,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.ownsSnapshot = ownsSnapshot;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<PublicationRecord> next(CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(cancellation, "cancellation");
@@ -9394,6 +10370,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (cursorClosed.compareAndSet(false, true)) {

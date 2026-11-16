@@ -77,9 +77,14 @@ final class JdkHttpExchange implements PkiHttpExchange {
     /**
      * Opens an exchange bound to one base URL and mutual-TLS context.
      *
+     * <p>Construction configures a 20-second connect timeout and disables redirects.
+     * It performs no handshake or request and retains the caller's URI/SSLContext
+     * selection. This factory does not itself repeat URL or certificate validation.</p>
+     *
      * @param baseUri validated {@code https} base URL
      * @param sslContext context carrying the client key and server trust material
-     * @return an open exchange
+     * @return exchange owning a newly configured HttpClient
+     * @throws NullPointerException if the URI or SSL context is null
      */
     /* default */ static JdkHttpExchange open(URI baseUri, SSLContext sslContext) {
         Objects.requireNonNull(baseUri, "baseUri");
@@ -89,6 +94,13 @@ final class JdkHttpExchange implements PkiHttpExchange {
         return new JdkHttpExchange(client, baseUri);
     }
 
+    /**
+     * Sends the request with a bounded response subscriber and the requested wait budget.
+     *
+     * @param request request whose borrowed body must remain stable during sending
+     * @return copied response status/location/body, without envelope or durable-outcome verification
+     * @throws IOException if transport, interruption, timeout or bounded response handling fails
+     */
     // HttpClient interruption must be observed and restored on the calling thread.
     // Typed rethrows preserve the original failure object; wrapped failures preserve their original cause.
     @SuppressWarnings({ "PMD.DoNotUseThreads", "PMD.PreserveStackTrace" })
@@ -123,7 +135,9 @@ final class JdkHttpExchange implements PkiHttpExchange {
         }
     }
 
-    /** Cancels the response subscription before exceeding the response size bound. */
+    /**
+     * Cancels the response subscription before exceeding the response size bound.
+     */
     private static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
         private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         private final CompletableFuture<byte[]> body = new CompletableFuture<>();
@@ -163,6 +177,10 @@ final class JdkHttpExchange implements PkiHttpExchange {
         public void onComplete() { body.complete(bytes.toByteArray()); }
     }
 
+    /**
+     * Requests immediate shutdown of this exchange's owned HttpClient.
+     *
+     */
     @Override
     public void close() {
         client.shutdownNow();

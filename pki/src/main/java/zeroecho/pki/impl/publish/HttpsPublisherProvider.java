@@ -73,21 +73,32 @@ public final class HttpsPublisherProvider implements PublisherProvider {
     private static final String CREDENTIALS = "credentials";
     private static final String METHOD = "method";
 
-    /** Creates an HTTPS publisher provider descriptor. */
+    /**
+     * Creates an HTTPS publisher provider descriptor.
+     */
     public HttpsPublisherProvider() {
         // ServiceLoader creates this stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "https";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(URL, TARGET_ID, CREDENTIALS, METHOD);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateConfig(ProviderConfig config) {
         PublisherProvider.super.validateConfig(config);
@@ -105,6 +116,9 @@ public final class HttpsPublisherProvider implements PublisherProvider {
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Publisher allocate(ProviderConfig config) {
         validateConfig(config);

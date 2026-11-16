@@ -45,12 +45,24 @@ import zeroecho.pki.api.*;
 import zeroecho.pki.api.ca.*;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 
-/** Context-bound compact ZICB v1 storage; immutable generation coordinates are stored once. */
+/**
+ * Context-bound compact ZICB v1 storage; immutable generation coordinates are stored once.
+ */
 final class IssuerBindingStorageCodec {
     private static final int MAGIC = 0x5a494342;
     private static final int MAXIMUM = SigningWalFrameCodec.MAX_PAYLOAD_BYTES;
     private IssuerBindingStorageCodec() { }
 
+    /**
+     * Encodes issuer public binding evidence with its exact generation context.
+     *
+     * @param binding validated immutable issuer cryptographic binding
+     * @param generation exact authoritative generation whose key and profile coordinates must match
+     * @return newly allocated context-bound binary binding evidence
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if binding and generation coordinates differ
+     * @throws IOException if bounded field encoding fails
+     */
     /* default */ static byte[] encode(IssuerCryptographicBinding binding, IssuerGeneration generation) throws IOException {
         requireCoordinates(binding, generation);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -68,10 +80,25 @@ final class IssuerBindingStorageCodec {
         return bytes.toByteArray();
     }
 
+    /**
+     * Reads the issuer identity from a versioned storage envelope.
+     *
+     * @param bytes complete context-bound binding envelope
+     * @return decoded issuer identity; this lookup alone does not validate the full binding or its generation context
+     * @throws IOException if envelope framing or the leading identity field cannot be decoded
+     */
     /* default */ static PkiId issuerId(byte[] bytes) throws IOException {
         try (var in = input(bytes)) { return new PkiId(text(in)); }
     }
 
+    /**
+     * Decodes and authenticates binding coordinates against the exact authoritative generation context.
+     *
+     * @param bytes complete stored binding envelope
+     * @param generation authoritative generation supplying owner, credential, key and profile coordinates
+     * @return validated immutable binding with matching canonical commitment
+     * @throws IOException if framing, context, coordinates, canonical commitment or trailing data is invalid
+     */
     /* default */ static IssuerCryptographicBinding decode(byte[] bytes, IssuerGeneration generation) throws IOException {
         try (var in = input(bytes)) {
             PkiId id = new PkiId(text(in));

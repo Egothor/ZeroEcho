@@ -33,18 +33,40 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
-/** Test-only access to existing commit-boundary fault hooks. */
+/**
+ * Test-only access to existing commit-boundary fault hooks.
+ */
 public final class StatusScheduleFaults {
     private StatusScheduleFaults() { }
+    /**
+     * Runs an action with the named signing-acceptance fault installed, clearing it afterward.
+     *
+     * @param point named persistence fault boundary to install for this invocation
+     * @param action checked operation that must reject the supplied invalid input
+     */
     public static void acceptance(String point, Runnable action) {
         FilesystemPkiStore.installSignAcceptanceCommitFault(FilesystemPkiStore.SignAcceptanceCommitFault.valueOf(point));
         try { action.run(); } finally { FilesystemPkiStore.clearSignAcceptanceCommitFault(); }
     }
+    /**
+     * Runs an action with the named status-effect fault installed, clearing it afterward.
+     *
+     * @param point named persistence fault boundary to install for this invocation
+     * @param action checked operation that must reject the supplied invalid input
+     */
     public static void effect(String point, Runnable action) {
         FilesystemPkiStore.installStatusCommitFault(FilesystemPkiStore.StatusCommitFaultPoint.valueOf(point));
         try { action.run(); } finally { FilesystemPkiStore.clearStatusCommitFault(); }
     }
 
+    /**
+     * Persists the selected malformed schedule head or signing receipt for recovery tests.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param state authority or schedule state selected for the fixture
+     * @param corruption named malformed schedule/head/receipt mutation to persist
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static void corrupt(FilesystemPkiStore store, zeroecho.pki.api.schedule.StatusScheduleState state,
             String corruption) throws Exception {
         zeroecho.pki.spi.store.MetadataKey head = FsStatusSchedules.key(state.configuration().caId(), state.configuration().statusType());

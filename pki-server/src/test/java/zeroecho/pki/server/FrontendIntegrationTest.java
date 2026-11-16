@@ -73,12 +73,22 @@ import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Opt-in browser contract gate; all servers, credentials and storage are test-owned. */
+/**
+ * Opt-in browser contract gate; all servers, credentials and storage are test-owned.
+ */
 @Tag("frontend-integration")
 class FrontendIntegrationTest {
     private static final char[] PASSWORD = "frontend-test-only-password".toCharArray();
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Exercises the built SPA against the live signing and approval workflow, including selection recovery, and checks browser cleanup.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void builtSpaUsesRealSigningApprovalSelectionsAndRecovery() throws Exception {
         Path frontend = Path.of(System.getProperty("frontend.directory")).toRealPath();

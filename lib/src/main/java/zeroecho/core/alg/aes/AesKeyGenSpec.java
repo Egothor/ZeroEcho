@@ -59,6 +59,7 @@ public record AesKeyGenSpec(int keySizeBits) implements AlgorithmKeySpec, Descri
      *
      * @throws IllegalArgumentException if {@code keySizeBits} is not one of 128,
      *                                  192, or 256
+     * @param keySizeBits the AES key size in bits (128, 192, or 256)
      */
     public AesKeyGenSpec {
         if (keySizeBits != 128 && keySizeBits != 192 && keySizeBits != 256) {

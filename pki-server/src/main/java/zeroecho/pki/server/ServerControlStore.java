@@ -81,58 +81,126 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
         "PMD.UseEnumCollections", "PMD.CommentRequired", "PMD.UncommentedEmptyMethodBody",
         "PMD.TooManyMethods", "PMD.ExcessivePublicCount", "PMD.AvoidInstantiatingObjectsInLoops" })
 public final class ServerControlStore implements AutoCloseable {
-    /** Stable namespace for the realm record. */ public static final String REALM = "io.zeroecho.server.realm";
-    /** Stable namespace for principals. */ public static final String PRINCIPAL = "io.zeroecho.server.principal";
-    /** Stable namespace for scoped role assignments. */ public static final String ASSIGNMENT = "io.zeroecho.server.assignment";
-    /** Stable namespace for direct permission grants. */ public static final String GRANT = "io.zeroecho.server.grant";
-    /** Stable namespace for approvals. */ public static final String APPROVAL = "io.zeroecho.server.approval";
-    /** Stable namespace for break-glass records. */ public static final String BREAK_GLASS = "io.zeroecho.server.break-glass";
-    /** Stable namespace for disclosure records. */ public static final String DISCLOSURE = "io.zeroecho.server.disclosure";
-    /** Stable namespace for capability commitments. */ public static final String CAPABILITY = "io.zeroecho.server.capability";
-    /** Stable namespace for non-authoritative public repository aliases. */
+    /**
+     * Stable namespace for the realm record.
+     */
+    public static final String REALM = "io.zeroecho.server.realm";
+    /**
+     * Stable namespace for principals.
+     */
+    public static final String PRINCIPAL = "io.zeroecho.server.principal";
+    /**
+     * Stable namespace for scoped role assignments.
+     */
+    public static final String ASSIGNMENT = "io.zeroecho.server.assignment";
+    /**
+     * Stable namespace for direct permission grants.
+     */
+    public static final String GRANT = "io.zeroecho.server.grant";
+    /**
+     * Stable namespace for approvals.
+     */
+    public static final String APPROVAL = "io.zeroecho.server.approval";
+    /**
+     * Stable namespace for break-glass records.
+     */
+    public static final String BREAK_GLASS = "io.zeroecho.server.break-glass";
+    /**
+     * Stable namespace for disclosure records.
+     */
+    public static final String DISCLOSURE = "io.zeroecho.server.disclosure";
+    /**
+     * Stable namespace for capability commitments.
+     */
+    public static final String CAPABILITY = "io.zeroecho.server.capability";
+    /**
+     * Stable namespace for non-authoritative public repository aliases.
+     */
     public static final String REPOSITORY_ALIAS = "io.zeroecho.server.repository-alias";
-    /** Stable namespace for ACME directory records. */
+    /**
+     * Stable namespace for ACME directory records.
+     */
     public static final String ACME_DIRECTORY = "io.zeroecho.server.acme-directory";
-    /** Stable namespace for ACME account records. */
+    /**
+     * Stable namespace for ACME account records.
+     */
     public static final String ACME_ACCOUNT = "io.zeroecho.server.acme-account";
-    /** Stable namespace for ACME order records. */
+    /**
+     * Stable namespace for ACME order records.
+     */
     public static final String ACME_ORDER = "io.zeroecho.server.acme-order";
-    /** Stable namespace for ACME authorization records. */
+    /**
+     * Stable namespace for ACME authorization records.
+     */
     public static final String ACME_AUTHORIZATION = "io.zeroecho.server.acme-authorization";
-    /** Stable namespace for ACME challenge records. */
+    /**
+     * Stable namespace for ACME challenge records.
+     */
     public static final String ACME_CHALLENGE = "io.zeroecho.server.acme-challenge";
-    /** Stable namespace for ACME validation-evidence records. */
+    /**
+     * Stable namespace for ACME validation-evidence records.
+     */
     public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
-    /** Stable namespace for durable OCSP responder bindings. */
+    /**
+     * Stable namespace for durable OCSP responder bindings.
+     */
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
-    /** Private canonical responder-certificate provisioning claims. */
+    /**
+     * Private canonical responder-certificate provisioning claims.
+     */
     static final String OCSP_PROVISIONING = "io.zeroecho.server.ocsp-provisioning";
-    /** Stable namespace for durable enrollment policy profiles. */
+    /**
+     * Stable namespace for durable enrollment policy profiles.
+     */
     public static final String ENROLLMENT_PROFILE = "io.zeroecho.server.enrollment-profile";
-    /** Stable namespace for revisioned enrollment endpoint bindings and tombstones. */
+    /**
+     * Stable namespace for revisioned enrollment endpoint bindings and tombstones.
+     */
     public static final String ENROLLMENT_ENDPOINT = "io.zeroecho.server.enrollment-endpoint";
-    /** Stable namespace for immutable enrollment credential-set commitments. */
+    /**
+     * Stable namespace for immutable enrollment credential-set commitments.
+     */
     public static final String ENROLLMENT_CREDENTIAL = "io.zeroecho.server.enrollment-credential";
-    /** Stable namespace for durable enrollment transactions and replay tombstones. */
+    /**
+     * Stable namespace for durable enrollment transactions and replay tombstones.
+     */
     public static final String ENROLLMENT_REQUEST = "io.zeroecho.server.enrollment-request";
-    /** Stable namespace for quota-reserved CMP transaction manifests. */
+    /**
+     * Stable namespace for quota-reserved CMP transaction manifests.
+     */
     public static final String CMP_TRANSACTION = "io.zeroecho.server.cmp-transaction";
-    /** Stable namespace for fixed CMP response slots owned by a manifest. */
+    /**
+     * Stable namespace for fixed CMP response slots owned by a manifest.
+     */
     public static final String CMP_RESPONSE = "io.zeroecho.server.cmp-response";
-    /** Immutable server-keygen reservations and encrypted delivery lifecycle. */
+    /**
+     * Immutable server-keygen reservations and encrypted delivery lifecycle.
+     */
     public static final String ENROLLMENT_KEYGEN = "io.zeroecho.server.enrollment-keygen";
-    /** Durable generate-only managed signing-key reservations and public receipts. */
+    /**
+     * Durable generate-only managed signing-key reservations and public receipts.
+     */
     public static final String MANAGED_KEY_GENERATION = "io.zeroecho.server.managed-key-generation";
-    /** Stable namespace for non-authoritative revocation-audit projection state. */
+    /**
+     * Stable namespace for non-authoritative revocation-audit projection state.
+     */
     public static final String REVOCATION_AUDIT_PROJECTION =
             "io.zeroecho.server.revocation-audit-projection";
-    /** Stable namespace for the durable cross-store audit-log integrity anchor. */
+    /**
+     * Stable namespace for the durable cross-store audit-log integrity anchor.
+     */
     public static final String AUDIT_ANCHOR = "io.zeroecho.server.audit-anchor";
-    /** Closed private namespace for retained administrative execution intents. */
+    /**
+     * Closed private namespace for retained administrative execution intents.
+     */
     public static final String ADMINISTRATIVE_REQUEST = "io.zeroecho.server.administrative-request";
-    /** Private retained dual-subject-key challenges and consumed proof tombstones. */
+    /**
+     * Private retained dual-subject-key challenges and consumed proof tombstones.
+     */
     public static final String HYBRID_SDK_INTENT = "io.zeroecho.server.hybrid-sdk-intent";
-    /** Stable namespace for per-family success-evidence audit-projection cursors. */
+    /**
+     * Stable namespace for per-family success-evidence audit-projection cursors.
+     */
     public static final String AUDIT_EVIDENCE_PROJECTION = "io.zeroecho.server.audit-evidence-projection";
 
     private static final int MAGIC = 0x5a455331;
@@ -164,7 +232,16 @@ public final class ServerControlStore implements AutoCloseable {
      * @param payload strict versioned protocol-domain encoding
      */
     public record ProtocolRecord(String namespace, String recordId, String commitment, byte[] payload) {
-        /** Validates namespace, identity, commitment, and defensive payload bounds. */
+        /**
+         * Validates namespace, identity, commitment, and defensive payload bounds.
+         * @param namespace one closed protocol namespace
+         * @param recordId canonical domain identity
+         * @param commitment SHA-256 commitment of the complete domain payload
+         * @param payload strict versioned protocol-domain encoding
+         * @throws NullPointerException if {@code payload} is null
+         * @throws IllegalArgumentException if the protocol namespace is outside the closed supported set or the
+         *         private protocol payload is empty or oversized
+         */
         public ProtocolRecord {
             if (!PROTOCOL_NAMESPACES.contains(namespace)) {
                 throw new IllegalArgumentException("Unknown protocol control namespace");
@@ -207,7 +284,20 @@ public final class ServerControlStore implements AutoCloseable {
     public record RealmRecord(RealmId realmId, String displayName, AuthorityExposurePolicy exposure,
             String authorizationCommitment, String approvalCommitment, String extendedApprovalCommitment,
             String disclosureCommitment, MetadataStoreId controlStoreId) {
-        /** Validates finite realm control metadata. */
+        /**
+         * Validates finite realm control metadata.
+         * @param realmId realm identity
+         * @param displayName safe administrative display name
+         * @param exposure authority exposure policy
+         * @param authorizationCommitment authorization configuration commitment
+         * @param approvalCommitment HIGH_RISK approval-policy commitment
+         * @param extendedApprovalCommitment commitment over all non-HIGH_RISK approval policies
+       (canonical digest of the category-sorted map; the empty-map digest when none are configured)
+         * @param disclosureCommitment disclosure-default commitment
+         * @param controlStoreId exact metadata-store identity
+         * @throws NullPointerException if any of {@code realmId}, {@code exposure}, {@code controlStoreId} is
+         *         null
+         */
         public RealmRecord {
             Objects.requireNonNull(realmId, "realmId");
             Permission.requireBounded(displayName, 256, "realm display name");
@@ -227,6 +317,7 @@ public final class ServerControlStore implements AutoCloseable {
      * Creates a server-control adapter over one exclusively owned metadata store.
      *
      * @param metadata lifecycle-owned metadata authority
+     * @throws NullPointerException if {@code metadata} is null
      */
     public ServerControlStore(TransactionalMetadataStore metadata) {
         this.metadata = Objects.requireNonNull(metadata, "metadata");
@@ -248,6 +339,8 @@ public final class ServerControlStore implements AutoCloseable {
      *
      * @param expected expected immutable realm record
      * @return existing or newly created exact realm record
+     * @throws NullPointerException if {@code expected} is null
+     * @throws IllegalStateException if the retained realm identity or configuration commitment differs
      */
     public synchronized RealmRecord ensureRealm(RealmRecord expected) {
         Objects.requireNonNull(expected, "expected");
@@ -457,6 +550,9 @@ public final class ServerControlStore implements AutoCloseable {
      * Counts pending, unexpired approvals in one stable metadata scan using constant auxiliary memory.
      * @param now evaluation instant
      * @return exact count in this snapshot
+     * @throws NullPointerException if {@code now} is null
+     * @throws IllegalStateException if a retained approval has inconsistent record identity or approval
+     *         metadata cannot be read
      */
     public synchronized long pendingApprovalCount(Instant now) {
         requireOpen();
@@ -622,7 +718,14 @@ public final class ServerControlStore implements AutoCloseable {
      * @param hasMore whether another page may contain values
      */
     public record Page<T>(List<T> values, int nextOffset, boolean hasMore) {
-        /** Snapshots the bounded page. */
+        /**
+         * Snapshots the bounded page.
+         * @param values immutable page values
+         * @param nextOffset offset for the next page
+         * @param hasMore whether another page may contain values
+         * @throws NullPointerException if {@code values} is null
+         * @throws IllegalArgumentException if the page continuation offset is negative
+         */
         public Page {
             values = List.copyOf(Objects.requireNonNull(values, "values"));
             if (nextOffset < 0) throw new IllegalArgumentException("Next offset is negative");
@@ -636,7 +739,12 @@ public final class ServerControlStore implements AutoCloseable {
      * @param expectedCommitment empty for create-only, otherwise the required current commitment
      */
     public record ProtocolMutation(ProtocolRecord record, Optional<String> expectedCommitment) {
-        /** Validates the immutable mutation request. */
+        /**
+         * Validates the immutable mutation request.
+         * @param record replacement protocol record
+         * @param expectedCommitment empty for create-only, otherwise the required current commitment
+         * @throws NullPointerException if any of {@code record}, {@code expectedCommitment} is null
+         */
         public ProtocolMutation {
             Objects.requireNonNull(record, "record");
             expectedCommitment = Objects.requireNonNull(expectedCommitment, "expectedCommitment");
@@ -676,6 +784,7 @@ public final class ServerControlStore implements AutoCloseable {
      * retains one bounded record; the metadata provider owns snapshot resources.
      * @param namespace closed protocol namespace
      * @return caller-owned snapshot cursor
+     * @throws IllegalStateException if a committed protocol snapshot cannot be opened
      */
     public synchronized ProtocolCursor protocolSnapshot(String namespace) {
         requireOpen();
@@ -693,7 +802,9 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** Thread-confined, closeable iterator over one immutable protocol snapshot. */
+    /**
+     * Thread-confined, closeable iterator over one immutable protocol snapshot.
+     */
     public static final class ProtocolCursor implements AutoCloseable {
         private final String namespace;
         private final MetadataSnapshot snapshot;
@@ -728,7 +839,10 @@ public final class ServerControlStore implements AutoCloseable {
             }
         }
 
-        /** Releases the cursor and snapshot; repeated close is harmless. */
+        /**
+         * Releases the cursor and snapshot; repeated close is harmless.
+         * @throws IllegalStateException if the owned protocol snapshot cannot be closed
+         */
         @Override public void close() {
             if (closed) return;
             closed = true;
@@ -816,6 +930,7 @@ public final class ServerControlStore implements AutoCloseable {
      * Callers hold this control monitor through subsequent challenge creation.
      * @param now trusted current time
      * @return bounded live challenge count
+     * @throws NullPointerException if {@code now} is null
      */
     public synchronized int openSdkIntentCount(Instant now) {
         requireOpen(); Objects.requireNonNull(now, "now"); int count = 0;
@@ -837,6 +952,11 @@ public final class ServerControlStore implements AutoCloseable {
      * @param proposed immutable native enrollment with its SDK proof reference
      * @param expectedCmp exact prior CMP manifest, absent for initial creation
      * @param linkedCmp exact linked CMP manifest, absent outside CMP
+     * @throws IllegalArgumentException if administrative and enrollment SDK linkage differs or the consumed
+     *         intent differs from frozen enrollment coordinates or SDK proof and CMP manifest linkage differ or
+     *         the proposed CMP manifest differs from its retained original or the CMP predecessor binding
+     *         differs or the SDK atomic mutation exceeds its reserved byte or record budget
+     * @throws IllegalStateException if the SDK intent compare-and-set commitment changed
      */
     public synchronized void mutateSdkEnrollment(
             zeroecho.pki.server.enrollment.EnrollmentSdkIntent prior,
@@ -935,11 +1055,15 @@ public final class ServerControlStore implements AutoCloseable {
     }
 
     /**
-     * Atomically publishes an SDK consumption alongside its request and approval.
-     * @param request next request record @param expectedRequest previous request commitment or empty for create
-     * @param expectedApproval previous approval or empty for create
-     * @param approval next approval or empty for no transition
-     * @param sdkConsumption exact OPEN-to-CONSUMED SDK mutation, absent on ordinary transitions
+     * Atomically publishes SDK intent consumption alongside its request and ordinary approval.
+     *
+     * @param request next private administrative-request record
+     * @param expectedRequest exact previous request commitment, or empty for initial creation
+     * @param expectedApproval previous approval snapshot, or empty before approval creation
+     * @param approval next approval snapshot, or empty when approval is unchanged
+     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary transitions
+     * @throws IllegalArgumentException if request, approval or SDK-consumption invariants are invalid
+     * @throws IllegalStateException if the store is closed or a compare-and-set precondition fails
      */
     synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
             Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
@@ -947,14 +1071,34 @@ public final class ServerControlStore implements AutoCloseable {
         mutateAdministrativeRequest(request, expectedRequest, expectedApproval, approval, sdkConsumption, Optional.empty());
     }
 
-    /** Atomically binds a purpose-specific provisioning claim to its exact request and ordinary approval. */
+    /**
+     * Atomically binds a purpose-specific provisioning claim to its exact request and ordinary approval.
+     *
+     * @param request next private administrative-request record
+     * @param expectedRequest exact previous request commitment, or empty for initial creation
+     * @param expectedApproval previous approval snapshot, or empty before approval creation
+     * @param approval next approval snapshot, or empty when approval is unchanged
+     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary transitions
+     * @param provisioning responder-provisioning claim mutation, absent for other operation families
+     * @throws IllegalArgumentException if atomic request, claim, approval or SDK invariants are invalid
+     * @throws IllegalStateException if the store is closed or a compare-and-set precondition fails
+     */
     synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
             Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
             Optional<ProtocolMutation> sdkConsumption, Optional<ProtocolMutation> provisioning) {
         mutateAdministrativeRequest(request,expectedRequest,expectedApproval,approval,sdkConsumption,provisioning,Optional.empty());
     }
 
-    /** Publishes a verified attached winner after the losing receipt was definitely not accepted. */
+    /**
+     * Publishes a verified winning receipt after durable observations prove the loser was not accepted.
+     *
+     * @param request replacement administrative-request record carrying the winning receipt
+     * @param expectedRequest exact prior administrative-request commitment
+     * @param slot replacement provisioning-slot mutation
+     * @param attachment package-local proof of the exact permitted receipt replacement
+     * @throws IllegalArgumentException if request or slot coordinates are inconsistent
+     * @throws IllegalStateException if attachment proof or a compare-and-set precondition fails
+     */
     synchronized void attachOcspProvisioningReceipt(ProtocolRecord request, String expectedRequest,
             ProtocolMutation slot, OcspResponderProvisioningService.Attachment attachment) {
         mutateAdministrativeRequest(request,Optional.of(expectedRequest),Optional.empty(),Optional.empty(),Optional.empty(),
@@ -1097,6 +1241,11 @@ public final class ServerControlStore implements AutoCloseable {
      * @param limit maximum rows, 1 through 1001 including lookahead
      * @param cancellation cooperative cancellation checked for each record
      * @return immutable bounded page; no global count or namespace cursor
+     * @throws NullPointerException if any of {@code objectId}, {@code after}, {@code cancellation} is null
+     * @throws IllegalArgumentException if the capability selection limit is outside its supported range
+     * @throws IllegalStateException if retained capability metadata has inconsistent identity or capability
+     *         metadata cannot be selected
+     * @throws java.util.concurrent.CancellationException if cooperative capability selection is cancelled
      */
     public synchronized List<DisclosureService.Capability> selectCapabilities(PkiId objectId,
             Optional<String> after, int limit, CancellationSignal cancellation) {
@@ -1175,6 +1324,8 @@ public final class ServerControlStore implements AutoCloseable {
      * @param current caller-observed current record
      * @param updated replacement record with the same identity
      * @param expectedCurrentCommitment optional expected current record commitment
+     * @throws IllegalStateException if the repository alias changed concurrently or the expected-current alias
+     *         commitment differs
      */
     public synchronized void replaceRepositoryAlias(RepositoryAliasService.Record current,
             RepositoryAliasService.Record updated, Optional<String> expectedCurrentCommitment) {
@@ -1225,6 +1376,7 @@ public final class ServerControlStore implements AutoCloseable {
      * Validates durable relationships against the active strict role catalog.
      *
      * @param roles active strict role-template catalog
+     * @throws NullPointerException if {@code roles} is null
      */
     public synchronized void validateReferences(RoleTemplateCatalog roles) {
         Objects.requireNonNull(roles, "roles");
@@ -1262,7 +1414,14 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** Opens no sidecar authority and closes the sole metadata authority idempotently. */
+    /**
+     * Closes the sole metadata authority without opening a sidecar authority.
+     *
+     * <p>The store is marked closed before the underlying close attempt; subsequent
+     * calls do not repeat that attempt.</p>
+     *
+     * @throws IOException if the underlying metadata authority fails to close
+     */
     @Override
     public synchronized void close() throws IOException {
         if (!closed) {
@@ -1678,9 +1837,21 @@ public final class ServerControlStore implements AutoCloseable {
 
     private record ByteContent(byte[] value) implements RepeatableContent {
         private ByteContent { value = value.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public InputStream openStream() { return new ByteArrayInputStream(value); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OptionalLong length() { return OptionalLong.of(value.length); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String contentId() { return "server-control-record"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { }
     }
 }

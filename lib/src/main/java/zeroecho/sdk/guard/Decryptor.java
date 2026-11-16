@@ -69,6 +69,17 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
     private DataContent upstream;
     private boolean closed;
 
+    /**
+     * Creates decrypting content from an already validated envelope configuration.
+     *
+     * @param openers owned reusable recipient openers, retained in supplied order
+     * @param material borrowed unlock material made available to the openers
+     * @param aesBuilder configured AES payload builder, or null when ChaCha is selected
+     * @param chachaBuilder configured ChaCha payload builder, or null when AES is selected
+     * @param keyBytes content-encryption key length, in bytes
+     * @param maxRecipients maximum recipient entries accepted in the envelope
+     * @param maxEntryLen maximum encoded recipient-entry length, in bytes
+     */
     /* package */ Decryptor(List<RecipientOpener> openers, UnlockMaterial material, AesDataContentBuilder aesBuilder,
             ChaChaDataContentBuilder chachaBuilder, int keyBytes, int maxRecipients, int maxEntryLen) {
         this.openers = openers;
@@ -100,6 +111,7 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
      * @return an input stream over the plaintext
      * @throws IOException if header parsing fails, if CEK cannot be recovered, or
      *                     if symmetric stage fails
+     * @throws NullPointerException if no upstream encrypted input has been set
      */
     @Override
     public InputStream getStream() throws IOException { // NOPMD
@@ -280,6 +292,14 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
         closeOpeners(openers, primary);
     }
 
+    /**
+     * Closes every owned opener and preserves the primary operation failure.
+     *
+     * @param ownedOpeners owned openers; must not be null or contain null
+     * @param primary existing failure receiving suppressed cleanup failures, or null
+     * @throws IOException if cleanup fails and there is no primary failure;
+     *         subsequent cleanup failures are suppressed on the first
+     */
     /* default */ static void closeOpeners(List<RecipientOpener> ownedOpeners, Throwable primary) throws IOException {
         IOException cleanupFailure = null;
         for (RecipientOpener opener : ownedOpeners) { // NOPMD - each opener is closed in this loop

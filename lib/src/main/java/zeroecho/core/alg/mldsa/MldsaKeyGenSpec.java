@@ -61,11 +61,17 @@ public final class MldsaKeyGenSpec implements AlgorithmKeySpec {
      * @since 1.0
      */
     public enum ParameterSet {
-        /** ML-DSA-44 (~128-bit security). */
+        /**
+         * ML-DSA-44 (~128-bit security).
+         */
         ML_DSA_44(44, 128),
-        /** ML-DSA-65 (~192-bit security). */
+        /**
+         * ML-DSA-65 (~192-bit security).
+         */
         ML_DSA_65(65, 192),
-        /** ML-DSA-87 (~256-bit security). */
+        /**
+         * ML-DSA-87 (~256-bit security).
+         */
         ML_DSA_87(87, 256);
 
         /**
@@ -78,6 +84,12 @@ public final class MldsaKeyGenSpec implements AlgorithmKeySpec {
          */
         public final int strengthBits;
 
+        /**
+         * Retains the standardized parameter-set metadata.
+         *
+         * @param number ML-DSA parameter-set number
+         * @param strengthBits claimed classical security strength in bits
+         */
         ParameterSet(int number, int strengthBits) {
             this.number = number;
             this.strengthBits = strengthBits;
@@ -95,9 +107,13 @@ public final class MldsaKeyGenSpec implements AlgorithmKeySpec {
      * @since 1.0
      */
     public enum PreHash {
-        /** No pre-hash parameter set (pure ML-DSA). */
+        /**
+         * No pre-hash parameter set (pure ML-DSA).
+         */
         NONE,
-        /** Pre-hash with SHA-512 (provider-specific variant). */
+        /**
+         * Pre-hash with SHA-512 (provider-specific variant).
+         */
         SHA512
     }
 

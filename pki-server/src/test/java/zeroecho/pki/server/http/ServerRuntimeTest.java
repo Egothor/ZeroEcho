@@ -50,8 +50,15 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.PkiServerConfiguration;
 
-/** Deterministic bounded-admission, queue, cancellation and worker-close tests. */
+/**
+ * Deterministic bounded-admission, queue, cancellation and worker-close tests.
+ */
 class ServerRuntimeTest {
+    /**
+     * Checks zero/oversized deadline rejection, successful values, preserved execution causes and rejection after quiescence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void publicExecutionValidatesDeadlineAndPreservesFailuresAndRejection() throws Exception {
         try (ServerRuntime runtime = new ServerRuntime(configuration())) {
             assertThrows(IllegalArgumentException.class, () -> runtime.execute(Duration.ZERO, signal -> "unused"));
@@ -65,6 +72,11 @@ class ServerRuntimeTest {
         }
     }
 
+    /**
+     * Interrupts an awaiting caller and checks that cooperative cancellation remains tracked until its deliberately delayed worker exits.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void interruptedPublicExecutionKeepsRunningWorkerTrackedUntilActualExit() throws Exception {
         ServerRuntime runtime = new ServerRuntime(configuration());
         CountDownLatch started = new CountDownLatch(1);
@@ -108,6 +120,11 @@ class ServerRuntimeTest {
         assertEquals(0, runtime.trackedCancellationTokens());
     }
 
+    /**
+     * Checks cancelled queued tasks never execute, retire exact future/token ownership and do not consume capacity after repeated cancellation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void queuedCancellationAndRejectionRetireExactOperationTracking() throws Exception {
         ServerRuntime runtime = new ServerRuntime(configuration());
@@ -171,6 +188,11 @@ class ServerRuntimeTest {
         }
     }
 
+    /**
+     * Checks forced shutdown cancels a queued task before execution and drains operation/token tracking after the running task exits.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void shutdownCancelsQueuedOperationsAndCleansTracking() throws Exception {
         ServerRuntime runtime = new ServerRuntime(configuration());
@@ -200,6 +222,11 @@ class ServerRuntimeTest {
         assertEquals(0, runtime.trackedCancellationTokens());
     }
 
+    /**
+     * Checks validation-queue cancellation/rejection and repeated queue reuse without leaking tracked futures or executing cancelled tasks.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void challengeCancellationRejectionAndShutdownRetireExactTracking() throws Exception {
         ServerRuntime.ChallengeRuntime runtime = new ServerRuntime.ChallengeRuntime(configuration());
@@ -245,6 +272,11 @@ class ServerRuntimeTest {
         }
     }
 
+    /**
+     * Checks a one-worker/one-slot queue and ingress permit pairing, including rejection before either request or operation body executes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void enforcesFixedWorkersBoundedQueueAndPermitRelease() throws Exception {
         System.out.println("enforcesFixedWorkersBoundedQueueAndPermitRelease");
@@ -288,6 +320,11 @@ class ServerRuntimeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that a worker cannot self-wait to termination and that an external retry completes the quiescent runtime shutdown.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void operationWorkerCloseReportsTimeoutAndRemainsRetryable() throws Exception {
         System.out.println("operationWorkerCloseReportsTimeoutAndRemainsRetryable");
@@ -309,6 +346,11 @@ class ServerRuntimeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Holds a noncooperative worker past forced shutdown and checks its cancellation token remains visible until external retry succeeds.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void forcedTimeoutKeepsCancellationVisibleUntilRetry() throws Exception {
         ServerRuntime runtime = new ServerRuntime(configuration());
@@ -336,6 +378,11 @@ class ServerRuntimeTest {
         assertTrue(runtime.transportExecutor().isTerminated());
     }
 
+    /**
+     * Checks lifecycle worker markers on operation, transport and validation lanes while the test caller remains unmarked.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void marksOperationAndValidationWorkersWithoutUsingNames() throws Exception {
         assertFalse(ServerRuntime.isWorkerThread());

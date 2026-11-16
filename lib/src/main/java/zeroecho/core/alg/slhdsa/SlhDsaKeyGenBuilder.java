@@ -58,11 +58,16 @@ public final class SlhDsaKeyGenBuilder implements AsymmetricKeyPairGenerator<Slh
 
     private static final String ALG = "SLH-DSA";
 
-    /** Creates a stateless SLH-DSA key-pair generator. */
+    /**
+     * Creates a stateless SLH-DSA key-pair generator.
+     */
     public SlhDsaKeyGenBuilder() {
         // Stateless generator.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public KeyPair generateKeyPair(SlhDsaKeyGenSpec spec) throws GeneralSecurityException {
         Objects.requireNonNull(spec, "spec");

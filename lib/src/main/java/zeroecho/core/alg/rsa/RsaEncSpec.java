@@ -90,9 +90,13 @@ public final class RsaEncSpec implements ContextSpec, Describable {
      * Supported RSA padding schemes.
      */
     public enum Padding {
-        /** Optimal Asymmetric Encryption Padding (PKCS#1 OAEP). */
+        /**
+         * Optimal Asymmetric Encryption Padding (PKCS#1 OAEP).
+         */
         OAEP,
-        /** Legacy PKCS#1 v1.5 padding. */
+        /**
+         * Legacy PKCS#1 v1.5 padding.
+         */
         PKCS1V15
     }
 
@@ -100,13 +104,21 @@ public final class RsaEncSpec implements ContextSpec, Describable {
      * Hash algorithms usable within OAEP padding.
      */
     public enum Hash {
-        /** SHA-1 (deprecated, retained for compatibility). */
+        /**
+         * SHA-1 (deprecated, retained for compatibility).
+         */
         SHA1,
-        /** SHA-256. */
+        /**
+         * SHA-256.
+         */
         SHA256,
-        /** SHA-384. */
+        /**
+         * SHA-384.
+         */
         SHA384,
-        /** SHA-512. */
+        /**
+         * SHA-512.
+         */
         SHA512
     } // used for OAEP only
 

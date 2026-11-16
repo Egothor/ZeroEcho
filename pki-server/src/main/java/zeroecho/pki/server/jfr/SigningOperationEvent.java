@@ -58,17 +58,23 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public final class SigningOperationEvent extends Event { // NOPMD DataClass - JFR event fields are its runtime schema.
 
-    /** Stable operation identifier, e.g. {@code credential.issue}. */
+    /**
+     * Stable operation identifier, e.g. {@code credential.issue}.
+     */
     @Label("Operation ID")
     @Description("Stable operation identifier, e.g. credential.issue or ca.create.")
     public String operationId;
 
-    /** Identifier of the certificate authority targeted by this operation. */
+    /**
+     * Identifier of the certificate authority targeted by this operation.
+     */
     @Label("Authority ID")
     @Description("Identifier of the certificate authority targeted by this operation; empty when not applicable.")
     public String authorityId;
 
-    /** Whether the operation completed without a server-side failure. */
+    /**
+     * Whether the operation completed without a server-side failure.
+     */
     @Label("Succeeded")
     @Description("True if the operation was accepted or completed; false if the server returned a failure outcome.")
     public boolean succeeded;
@@ -80,7 +86,9 @@ public final class SigningOperationEvent extends Event { // NOPMD DataClass - JF
     @Label("Failure Reason")
     @Description("Short failure-reason code from the outcome; null when the operation succeeded.")
     public String failureReason;
-    /** Creates an uncommitted event with default field values; populate fields before committing. */
+    /**
+     * Creates an uncommitted event with default field values; populate fields before committing.
+     */
     public SigningOperationEvent() {
         super();
     }

@@ -43,11 +43,17 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for authority fair queue.
+ */
 final class AuthorityFairQueueTest {
     private static final PkiId AUTHORITY_A = id("authority-a");
     private static final PkiId AUTHORITY_B = id("authority-b");
     private static final PkiId AUTHORITY_C = id("authority-c");
 
+    /**
+     * Rotates authorities and preserves per authority fifo.
+     */
     @Test
     void rotatesAuthoritiesAndPreservesPerAuthorityFifo() {
         AuthorityFairQueue queue = new AuthorityFairQueue(5);
@@ -61,6 +67,9 @@ final class AuthorityFairQueueTest {
                 drain(queue));
     }
 
+    /**
+     * Late authority joins tail of current round.
+     */
     @Test
     void lateAuthorityJoinsTailOfCurrentRound() {
         AuthorityFairQueue queue = new AuthorityFairQueue(5);
@@ -75,6 +84,9 @@ final class AuthorityFairQueueTest {
                 drain(queue));
     }
 
+    /**
+     * Single authority remains fifo.
+     */
     @Test
     void singleAuthorityRemainsFifo() {
         AuthorityFairQueue queue = new AuthorityFairQueue(3);
@@ -85,6 +97,9 @@ final class AuthorityFairQueueTest {
         assertEquals(List.of(id("a-1"), id("a-2"), id("a-3")), drain(queue));
     }
 
+    /**
+     * Duplicate operation is rejected without identifier disclosure.
+     */
     @Test
     void duplicateOperationIsRejectedWithoutIdentifierDisclosure() {
         AuthorityFairQueue queue = new AuthorityFairQueue(2);
@@ -98,6 +113,9 @@ final class AuthorityFairQueueTest {
         assertEquals(1, queue.remainingCapacity());
     }
 
+    /**
+     * Full queue rejects without changing exact counts or leaking identifiers.
+     */
     @Test
     void fullQueueRejectsWithoutChangingExactCountsOrLeakingIdentifiers() {
         AuthorityFairQueue queue = new AuthorityFairQueue(2);
@@ -111,6 +129,9 @@ final class AuthorityFairQueueTest {
         assertEquals(0, queue.remainingCapacity());
     }
 
+    /**
+     * Drained queue removes authority state and can be reused.
+     */
     @Test
     void drainedQueueRemovesAuthorityStateAndCanBeReused() {
         AuthorityFairQueue queue = new AuthorityFairQueue(2);
@@ -125,6 +146,9 @@ final class AuthorityFairQueueTest {
         assertEquals(List.of(id("a-2"), id("b-1")), drain(queue));
     }
 
+    /**
+     * Clear releases all buckets operations and capacity.
+     */
     @Test
     void clearReleasesAllBucketsOperationsAndCapacity() {
         AuthorityFairQueue queue = new AuthorityFairQueue(3);
@@ -139,6 +163,9 @@ final class AuthorityFairQueueTest {
         assertEquals(id("a-1"), queue.poll());
     }
 
+    /**
+     * Validates capacity and identifiers.
+     */
     @Test
     void validatesCapacityAndIdentifiers() {
         assertThrows(IllegalArgumentException.class, () -> new AuthorityFairQueue(0));
@@ -152,6 +179,9 @@ final class AuthorityFairQueueTest {
         assertEquals(0, queue.size());
     }
 
+    /**
+     * Every buffered authority progresses within each finite round.
+     */
     @Test
     void everyBufferedAuthorityProgressesWithinEachFiniteRound() {
         AuthorityFairQueue queue = new AuthorityFairQueue(8);

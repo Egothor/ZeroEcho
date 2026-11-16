@@ -67,6 +67,13 @@ public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String p
      * Creates a CA create command.
      *
      * @throws IllegalArgumentException if any required component is null or bounded text is invalid
+     * @param formatId target credential format
+     * @param subjectRef normalized CA subject reference
+     * @param profileId nonblank strict UTF-8 profile id, at most 256 bytes
+     * @param keyRef existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
+     * @param altKeyRef optional alternative key reference for hybrid certificate issuance; when absent the profile's default alternative key reference is used
+     * @param attributes universal attributes (may be empty but not null)
+     * @param signatureAlgorithmId exact outgoing primary signature selection, empty for legacy default
      */
     public CaCreateCommand {
         CaCommandInputs.required(formatId);
@@ -110,6 +117,9 @@ public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String p
         this(formatId, subjectRef, profileId, keyRef, altKeyRef, attributes, Optional.empty());
     }
 
-    /** Returns a diagnostic representation without command coordinates or attributes. */
+    /**
+     * Returns a diagnostic representation without command coordinates or attributes.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "CaCreateCommand[redacted]"; }
 }

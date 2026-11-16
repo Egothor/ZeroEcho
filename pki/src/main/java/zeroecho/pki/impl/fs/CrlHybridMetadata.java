@@ -43,14 +43,51 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
-/** Bounded canonical execution rows and exact reverse mirrors; graph authority is checked by the store. */
+/**
+ * Bounded canonical execution rows and exact reverse mirrors; graph authority is checked by the store.
+ */
 final class CrlHybridMetadata {
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.crl-hybrid-execution}; persisted identities depend on this value.
+     */
     static final String EXECUTION_NAMESPACE = "io.zeroecho.pki.crl-hybrid-execution";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.crl-hybrid-parent}; persisted identities depend on this value.
+     */
     static final String REVERSE_NAMESPACE = "io.zeroecho.pki.crl-hybrid-parent";
+    /**
+     * Inclusive maximum encoded metadata record length in bytes.
+     */
     static final int MAXIMUM_BYTES = 16 * 1024;
     private CrlHybridMetadata() { }
+    /**
+     * Returns the exact metadata key for the parent execution row.
+     *
+     * @param parent operation identifier bound into the key
+     * @return namespaced operation key
+     * @throws NullPointerException if the identifier is null
+     */
     static MetadataKey executionKey(PkiId parent) { return new MetadataKey(EXECUTION_NAMESPACE, parent.value()); }
+    /**
+     * Returns the exact metadata key for the native-child reverse lookup row.
+     *
+     * @param child operation identifier bound into the key
+     * @return namespaced operation key
+     * @throws NullPointerException if the identifier is null
+     */
     static MetadataKey reverseKey(PkiId child) { return new MetadataKey(REVERSE_NAMESPACE, child.value()); }
+    /**
+     * Derives native-child scheduling coordinates only after validating captured issuer generation and binding authority.
+     *
+     * @param parent accepted parent operation envelope
+     * @param execution frozen hybrid execution coordinates
+     * @param rows pinned reader of captured issuer authority
+     * @return native signing key and accepted fairness authority
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if the captured command or issuer coordinates are malformed
+     * @throws java.util.NoSuchElementException if the parent has no outer command
+     * @throws IOException if issuer evidence is missing, inconsistent or unreadable
+     */
     static SignWorkflowStore.SchedulingCoordinates futureChildCoordinates(SignWorkflowStore.AcceptanceEnvelope parent,
             CrlHybridExecution execution, SigningHybridCrlDependencies.RowReader rows) throws IOException {
         var command = zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(parent.outer().orElseThrow().command());
@@ -70,7 +107,19 @@ final class CrlHybridMetadata {
         return new SignWorkflowStore.SchedulingCoordinates(binding.primary().keyRef(), parent.fairnessAuthorityId());
     }
 
-    /** Serialization-only prototype; never an issued content reference or a signing/adoption input. */
+    /**
+     * Builds a serialization-only maximal native-child prototype for capacity accounting.
+     * The prototype is not an issued content reference or a signing or adoption input.
+     *
+     * @param parent accepted parent operation envelope
+     * @param execution frozen hybrid execution coordinates
+     * @param rows pinned reader of captured issuer authority
+     * @return future-child envelope containing synthetic maximum-size content coordinates
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if accepted command or envelope coordinates are malformed
+     * @throws java.util.NoSuchElementException if the parent has no outer command
+     * @throws IOException if issuer scheduling authority is missing, inconsistent or unreadable
+     */
     static SignWorkflowStore.AcceptanceEnvelope futureChildEnvelope(SignWorkflowStore.AcceptanceEnvelope parent,
             CrlHybridExecution execution, SigningHybridCrlDependencies.RowReader rows) throws IOException {
         var coordinate = futureChildCoordinates(parent, execution, rows);
@@ -87,6 +136,14 @@ final class CrlHybridMetadata {
             String sha256, zeroecho.pki.api.content.DurableContentReference.Lifecycle lifecycle)
             implements zeroecho.pki.api.content.DurableContentReference { }
 
+    /**
+     * Derives the initial alternative-signature waiting phase for an accepted hybrid CRL command.
+     *
+     * @param command candidate signing acceptance
+     * @return initial execution, or empty for a nonstatus or nonhybrid command
+     * @throws NullPointerException if command is null
+     * @throws IllegalArgumentException if the command is malformed or its native child identity differs from the deterministic parent binding
+     */
     static Optional<CrlHybridExecution> initial(SignWorkflowStore.AcceptanceCommand command) {
         if (command.outer().filter(value -> value.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.STATUS).isEmpty()) return Optional.empty();
         var outer = command.outer().orElseThrow();
@@ -101,12 +158,33 @@ final class CrlHybridMetadata {
                 SignWorkflowStore.CrlHybridPhase.AWAITING_ALT, 0, Optional.empty(), Optional.empty(), Optional.empty()));
     }
 
+    /**
+     * Computes the bounded future hybrid transaction byte allowance from accepted inputs and captured issuer authority.
+     *
+     * @param parent accepted parent operation envelope
+     * @param execution frozen hybrid execution coordinates
+     * @param rows pinned reader of captured issuer authority
+     * @return maximum future transaction size in bytes
+     * @throws IOException if required authority cannot be read or validated
+     */
     static long futureTransactionBytes(SignWorkflowStore.AcceptanceEnvelope parent, CrlHybridExecution execution,
             SigningHybridCrlDependencies.RowReader rows) throws IOException {
         return CrlHybridTransactionBudget.maximum(parent, execution, rows);
     }
 
-    /** Validates ownership against accepted inputs using persisted CRL bytes, even after operation content retirement. */
+    /**
+     * Validates published CRL ownership, accepted child signature, issuer lineage and exact DER content coordinates.
+     * Validation uses persisted CRL bytes even after operation content retirement.
+     *
+     * @param status published CRL status object
+     * @param execution accepted hybrid execution
+     * @param rows reader of accepted operation and authority metadata
+     * @param content owning durable CRL content resolver
+     * @throws NullPointerException if a required argument is null
+     * @throws java.util.NoSuchElementException if required accepted execution coordinates are absent
+     * @throws IllegalArgumentException if encoded commands or algorithm coordinates are malformed
+     * @throws IOException if ownership, signatures, algorithms, lineage or content differ from accepted inputs or cannot be read
+     */
     static void requireOwnedPublication(zeroecho.pki.api.status.StatusObject status, CrlHybridExecution execution,
             SigningHybridCrlDependencies.RowReader rows, StagedContentStore content) throws IOException {
         byte[] owner = rows.read(FilesystemPkiStore.statusOwnerKey(status.statusObjectId()));
@@ -176,14 +254,41 @@ final class CrlHybridMetadata {
         catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 
+    /**
+     * Encodes a hybrid execution and enforces the finite metadata row bound.
+     *
+     * @param value validated execution state
+     * @return newly allocated complete execution bytes
+     * @throws IOException if encoding fails or exceeds the row bound
+     */
     static byte[] encode(CrlHybridExecution value) throws IOException {
         byte[] bytes = FsCodec.encode(FsCodec.CRL_HYBRID_EXECUTION, value);
         if (bytes.length > MAXIMUM_BYTES) throw new IOException("Hybrid CRL execution exceeds row bound");
         return bytes;
     }
+    /**
+     * Reads a bounded parent execution row and validates its operation identity.
+     *
+     * @param snapshot caller-owned pinned metadata view
+     * @param parent operation identifier used for lookup
+     * @param content durable resolver for encoded content references
+     * @return validated execution, or empty if the row is absent
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if decoding, key binding or linked-child phase validation fails
+     */
     static Optional<CrlHybridExecution> read(MetadataSnapshot snapshot, PkiId parent, StagedContentStore content) throws IOException {
         return read(snapshot, executionKey(parent), content, false);
     }
+    /**
+     * Reads a bounded linked native-child reverse execution row and validates its operation identity.
+     *
+     * @param snapshot caller-owned pinned metadata view
+     * @param child operation identifier used for lookup
+     * @param content durable resolver for encoded content references
+     * @return validated execution, or empty if the row is absent
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if decoding, key binding or linked-child phase validation fails
+     */
     static Optional<CrlHybridExecution> reverse(MetadataSnapshot snapshot, PkiId child, StagedContentStore content) throws IOException {
         return read(snapshot, reverseKey(child), content, true);
     }

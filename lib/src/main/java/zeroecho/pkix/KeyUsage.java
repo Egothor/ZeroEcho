@@ -43,23 +43,41 @@ package zeroecho.pkix;
  * </p>
  */
 public enum KeyUsage {
-    /** digitalSignature (bit 0). */
+    /**
+     * digitalSignature (bit 0).
+     */
     DIGITAL_SIGNATURE,
-    /** nonRepudiation / contentCommitment (bit 1). */
+    /**
+     * nonRepudiation / contentCommitment (bit 1).
+     */
     NON_REPUDIATION,
-    /** keyEncipherment (bit 2). */
+    /**
+     * keyEncipherment (bit 2).
+     */
     KEY_ENCIPHERMENT,
-    /** dataEncipherment (bit 3). */
+    /**
+     * dataEncipherment (bit 3).
+     */
     DATA_ENCIPHERMENT,
-    /** keyAgreement (bit 4). */
+    /**
+     * keyAgreement (bit 4).
+     */
     KEY_AGREEMENT,
-    /** keyCertSign (bit 5). */
+    /**
+     * keyCertSign (bit 5).
+     */
     KEY_CERT_SIGN,
-    /** cRLSign (bit 6). */
+    /**
+     * cRLSign (bit 6).
+     */
     CRL_SIGN,
-    /** encipherOnly (bit 7). */
+    /**
+     * encipherOnly (bit 7).
+     */
     ENCIPHER_ONLY,
-    /** decipherOnly (bit 8). */
+    /**
+     * decipherOnly (bit 8).
+     */
     DECIPHER_ONLY;
 
     /**

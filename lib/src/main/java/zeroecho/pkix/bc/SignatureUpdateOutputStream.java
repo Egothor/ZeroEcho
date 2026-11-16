@@ -45,11 +45,19 @@ final class SignatureUpdateOutputStream extends OutputStream {
 
     private final Signature signature;
 
+    /**
+     * Routes stream writes into an initialized JCA signature engine.
+     *
+     * @param signature borrowed initialized engine; must not be null
+     */
     /* default */ SignatureUpdateOutputStream(Signature signature) {
         super();
         this.signature = signature;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void write(int value) {
         try {
@@ -59,6 +67,9 @@ final class SignatureUpdateOutputStream extends OutputStream {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void write(byte[] buffer, int offset, int length) {
         try {

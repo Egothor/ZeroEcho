@@ -55,12 +55,23 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for keyring store.
+ */
 class KeyringStoreTest {
     private static final char[] PASSWORD = new char[] { 'c', 'o', 'r', 'r', 'e', 'c', 't' };
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Encrypted round trip and plaintext absence.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encryptedRoundTripAndPlaintextAbsence() throws Exception {
         start("encryptedRoundTripAndPlaintextAbsence");
@@ -94,6 +105,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Wrong password and corruption fail uniformly.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void wrongPasswordAndCorruptionFailUniformly() throws Exception {
         start("wrongPasswordAndCorruptionFailUniformly");
@@ -116,6 +132,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Plaintext v1 and duplicate owner are rejected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void plaintextV1AndDuplicateOwnerAreRejected() throws Exception {
         start("plaintextV1AndDuplicateOwnerAreRejected");
@@ -148,6 +169,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Close is repeat safe and rejects use.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void closeIsRepeatSafeAndRejectsUse() throws Exception {
         start("closeIsRepeatSafeAndRejectsUse");
@@ -163,6 +189,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Trailing data and non exportable keys are rejected.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void trailingDataAndNonExportableKeysAreRejected() throws Exception {
         start("trailingDataAndNonExportableKeysAreRejected");
@@ -200,6 +231,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * HMAC variants are closed and rejected before mutation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hmacVariantsAreClosedAndRejectedBeforeMutation() throws Exception {
         start("hmacVariantsAreClosedAndRejectedBeforeMutation");
@@ -242,6 +278,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Provider draft and unknown HMAC variant are rejected structurally.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void providerDraftAndUnknownHmacVariantAreRejectedStructurally() throws Exception {
         start("providerDraftAndUnknownHmacVariantAreRejectedStructurally");
@@ -263,6 +304,11 @@ class KeyringStoreTest {
         ok();
     }
 
+    /**
+     * Provider bound or noncanonical keys fail before mutation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void providerBoundOrNoncanonicalKeysFailBeforeMutation() throws Exception {
         start("providerBoundOrNoncanonicalKeysFailBeforeMutation");

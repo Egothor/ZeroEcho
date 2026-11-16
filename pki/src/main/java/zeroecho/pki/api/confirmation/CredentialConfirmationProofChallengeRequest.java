@@ -59,6 +59,9 @@ public record CredentialConfirmationProofChallengeRequest(PkiId credentialId,
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if the identity, revision, or commitment is not canonical
+     * @param credentialId exact target credential
+     * @param expectedLifecycleRevision expected pending lifecycle revision, always 1
+     * @param expectedLifecycleRecordCommitment exact pending lifecycle-record commitment
      */
     public CredentialConfirmationProofChallengeRequest {
         credentialId = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);

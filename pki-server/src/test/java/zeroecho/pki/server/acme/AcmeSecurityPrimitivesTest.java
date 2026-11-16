@@ -71,7 +71,9 @@ import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
 import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 
-/** Strict replay, JOSE and bounded-admission coverage. */
+/**
+ * Strict replay, JOSE and bounded-admission coverage.
+ */
 class AcmeSecurityPrimitivesTest {
     private static final Instant NOW = Instant.parse("2026-08-05T08:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -79,6 +81,9 @@ class AcmeSecurityPrimitivesTest {
     private static final String NONCE_SCOPE = "internal";
     private static final URI URL = URI.create("https://acme.example.test/acme/internal/new-account");
 
+    /**
+     * Checks cross-directory rejection, one-time nonce consumption and the exact retained nonce-capacity bound.
+     */
     @Test
     void nonceIsDirectoryBoundOneTimeAndBounded() {
         System.out.println("nonceIsDirectoryBoundOneTimeAndBounded");
@@ -94,6 +99,11 @@ class AcmeSecurityPrimitivesTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Builds a maximal completion envelope and checks acceptance at its exact byte bound and rejection one byte below.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void completionWireBoundIsExactListenerMinimum() throws Exception {
         URI external = URI.create("https://acme.example.test");
@@ -121,6 +131,11 @@ class AcmeSecurityPrimitivesTest {
         assertEquals(minimum, listener(external, minimum).maximumBodyBytes());
     }
 
+    /**
+     * Checks a real ES256 JWS, rejects nonce replay and rejects a signature bound to another canonical URL.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void es256JwsRequiresCanonicalUrlNonceAndJwkMode() throws Exception {
         System.out.println("es256JwsRequiresCanonicalUrlNonceAndJwkMode");
@@ -145,6 +160,11 @@ class AcmeSecurityPrimitivesTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks account commitment/SPKI round-trip and independent finite order/finalization admission budgets.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void accountCodecAndAdmissionRemainFiniteAndDeterministic() throws Exception {
         System.out.println("accountCodecAndAdmissionRemainFiniteAndDeterministic");
@@ -169,6 +189,11 @@ class AcmeSecurityPrimitivesTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects missing current keys, duplicate/oversized key histories and a retained account encoded with an obsolete version.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void accountHistoryRejectsMissingCurrentKeyDuplicateKeysAndOldFormats() throws Exception {
         byte[] spki = accountKey().getPublic().getEncoded();
@@ -189,6 +214,9 @@ class AcmeSecurityPrimitivesTest {
         assertThrows(IllegalArgumentException.class, () -> codec.decode(previous));
     }
 
+    /**
+     * Checks that restart encoding preserves the pending signing-operation identity and issuance commitment exactly.
+     */
     @Test
     void processingOrderCodecRetainsExactSigningOperation() {
         PkiId operationId = new PkiId("signing:acme-restart");
@@ -211,6 +239,9 @@ class AcmeSecurityPrimitivesTest {
         assertEquals(sealed.commitment(), decoded.commitment());
     }
 
+    /**
+     * Checks that directory encoding preserves frozen confirmation policy and changes its commitment when policy changes.
+     */
     @Test
     void directoryCodecFreezesExactConfirmationPolicyInCommitment() {
         CredentialConfirmationPolicy policy = confirmationPolicy(ConfirmationDisclosurePolicy.OWNER_ONLY);

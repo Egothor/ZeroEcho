@@ -47,7 +47,13 @@ import java.util.Optional;
  */
 public record PkiOperationResult(String operationName, Map<String, PkiOperationValue> fields) {
 
-    /** Validates and snapshots the result. */
+    /**
+     * Validates and snapshots the result.
+     * @param operationName stable operation identity
+     * @param fields ordered allowlisted result fields
+     * @throws IllegalArgumentException if operationName is null or blank, or fields contains a null key or value
+     * @throws NullPointerException if fields is null
+     */
     public PkiOperationResult {
         if (operationName == null || operationName.isBlank()) {
             throw new IllegalArgumentException("operationName must not be blank");
@@ -64,6 +70,7 @@ public record PkiOperationResult(String operationName, Map<String, PkiOperationV
      *
      * @param name field name
      * @return field value when declared
+     * @throws NullPointerException if name is null
      */
     public Optional<PkiOperationValue> field(String name) {
         return Optional.ofNullable(fields.get(Objects.requireNonNull(name, "name")));

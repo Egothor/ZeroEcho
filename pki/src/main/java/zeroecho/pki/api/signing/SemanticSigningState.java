@@ -34,16 +34,28 @@
 
 package zeroecho.pki.api.signing;
 
-/** Authoritative outer lifecycle, independent of the signature lifecycle. */
+/**
+ * Authoritative outer lifecycle, independent of the signature lifecycle.
+ */
 public enum SemanticSigningState {
-    /** The domain continuation is waiting for signing or terminal reconciliation. */
+    /**
+     * The domain continuation is waiting for signing or terminal reconciliation.
+     */
     SIGNING,
-    /** The signature is available and domain publication is being reconciled. */
+    /**
+     * The signature is available and domain publication is being reconciled.
+     */
     PUBLISHING,
-    /** Domain publication and its terminal result are durably complete. */
+    /**
+     * Domain publication and its terminal result are durably complete.
+     */
     COMPLETED,
-    /** Signing, cancellation or a frozen domain postcondition caused terminal failure. */
+    /**
+     * Signing, cancellation or a frozen domain postcondition caused terminal failure.
+     */
     FAILED,
-    /** The operation expired before trustworthy completion. */
+    /**
+     * The operation expired before trustworthy completion.
+     */
     EXPIRED
 }

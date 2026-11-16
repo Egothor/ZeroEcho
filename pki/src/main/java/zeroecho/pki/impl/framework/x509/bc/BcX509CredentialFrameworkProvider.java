@@ -92,7 +92,9 @@ public final class BcX509CredentialFrameworkProvider implements CredentialFramew
 
     private static final Logger LOG = Logger.getLogger(BcX509CredentialFrameworkProvider.class.getName());
 
-    /** Creates a provider that supplies the Bouncy Castle X.509 framework. */
+    /**
+     * Creates a provider that supplies the Bouncy Castle X.509 framework.
+     */
     public BcX509CredentialFrameworkProvider() {
         // Stateless provider descriptor.
     }

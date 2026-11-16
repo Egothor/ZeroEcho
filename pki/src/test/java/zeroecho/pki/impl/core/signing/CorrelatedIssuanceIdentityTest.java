@@ -55,10 +55,16 @@ import zeroecho.pki.api.issuance.RetainedIssuanceBinding;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.impl.core.CorrelatedIssuanceIdentity;
 
+/**
+ * Contract and regression tests for correlated issuance identity.
+ */
 final class CorrelatedIssuanceIdentityTest {
     private static final String DIGEST = "1".repeat(64);
     private static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
 
+    /**
+     * Stable key is namespaced and independent of effective commitment.
+     */
     @Test
     void stableKeyIsNamespacedAndIndependentOfEffectiveCommitment() {
         CorrelatedEndEntityIssuanceRequest request = request("authority", "order", DIGEST, "profile", 1,
@@ -84,6 +90,9 @@ final class CorrelatedIssuanceIdentityTest {
         assertNotEquals(identity.effectiveCommitment(), different.effectiveCommitment());
     }
 
+    /**
+     * Renewal commitment binds every predecessor coordinate and rejects malformed input.
+     */
     @Test
     void renewalCommitmentBindsEveryPredecessorCoordinateAndRejectsMalformedInput() {
         CorrelatedEndEntityIssuanceRequest issue = request("authority", "order", DIGEST, "profile", 1,
@@ -124,6 +133,9 @@ final class CorrelatedIssuanceIdentityTest {
                 DIGEST, renewal.intent()));
     }
 
+    /**
+     * Every frozen input changes effective commitment.
+     */
     @Test
     void everyFrozenInputChangesEffectiveCommitment() {
         CorrelatedIssuanceIdentity original = CorrelatedIssuanceIdentity.derive(request("authority", "order",
@@ -154,6 +166,9 @@ final class CorrelatedIssuanceIdentityTest {
                 Optional.of(new Validity(NOW.plusNanos(1), NOW.plusSeconds(30))))));
     }
 
+    /**
+     * Replacement binds payload kind bytes predecessor and frozen selection in separate domain.
+     */
     @Test
     void replacementBindsPayloadKindBytesPredecessorAndFrozenSelectionInSeparateDomain() {
         CorrelatedEndEntityIssuanceRequest issue = request("authority", "order", DIGEST, "profile", 1,
@@ -187,6 +202,9 @@ final class CorrelatedIssuanceIdentityTest {
                 DIGEST, original.intent()));
     }
 
+    /**
+     * Framing prevents ambiguous concatenation.
+     */
     @Test
     void framingPreventsAmbiguousConcatenation() {
         CorrelatedIssuanceIdentity first = CorrelatedIssuanceIdentity.derive(request("ab", "c", DIGEST,
@@ -197,6 +215,9 @@ final class CorrelatedIssuanceIdentityTest {
         assertNotEquals(first.effectiveCommitment(), second.effectiveCommitment());
     }
 
+    /**
+     * Request bounds coordinates and keeps defensive CSR ownership.
+     */
     @Test
     void requestBoundsCoordinatesAndKeepsDefensiveCsrOwnership() {
         byte[] csr = { 1, 2 };
@@ -221,6 +242,9 @@ final class CorrelatedIssuanceIdentityTest {
         assertThrows(IllegalArgumentException.class, () -> new CorrelatedEndEntityIssuanceRequest(request.request(), null));
     }
 
+    /**
+     * Retained binding uses the same strict bounds and redacts coordinates.
+     */
     @Test
     void retainedBindingUsesTheSameStrictBoundsAndRedactsCoordinates() {
         CertificateProfileRef profile = new CertificateProfileRef("profile", 1, new byte[32]);
@@ -252,6 +276,22 @@ final class CorrelatedIssuanceIdentityTest {
                 new PkiId("issuer"), new PkiId("path"), DIGEST, DIGEST));
     }
 
+    /**
+     * Constructs correlated issuance input from explicit authority, profile, path, and request coordinates.
+     *
+     * @param authority logical authority identity encoded in the correlated issuance input
+     * @param issuanceId stable external issuance identity
+     * @param command semantic command commitment or typed command bound to the fixture
+     * @param profile certificate-profile identifier encoded in the issuance input
+     * @param version certificate-profile version to construct
+     * @param profileDigest canonical profile commitment encoded in the request
+     * @param issuer issuer authority, key pair, or credential selected by the fixture
+     * @param path issuer-chain path identity or ordered chain selected by the fixture
+     * @param pathDigest canonical issuer-path commitment encoded in the request
+     * @param csr complete certification-request bytes selected by the fixture
+     * @param validity optional requested validity bounds
+     * @return correlated request retaining the selected exact semantic fields
+     */
     static CorrelatedEndEntityIssuanceRequest request(String authority, String issuanceId, String command,
             String profile, long version, String profileDigest, String issuer, String path, String pathDigest,
             byte[] csr, Optional<Validity> validity) {

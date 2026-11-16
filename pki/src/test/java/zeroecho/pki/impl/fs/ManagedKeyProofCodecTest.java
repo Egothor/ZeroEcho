@@ -60,11 +60,19 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for managed key proof codec.
+ */
 final class ManagedKeyProofCodecTest {
     private static final List<DomainContinuationStore.Kind> KINDS = List.of(DomainContinuationStore.Kind.CA,
             DomainContinuationStore.Kind.ISSUANCE, DomainContinuationStore.Kind.STATUS, DomainContinuationStore.Kind.KEY_PROOF);
     private static final String DIGEST = "1".repeat(64);
 
+    /**
+     * Domain kind codes remain stable and unknown codes are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void domainKindCodesRemainStableAndUnknownCodesAreRejected() throws Exception {
         byte[] original = FsCodec.encode(FsCodec.DOMAIN_CONTINUATION, record(DomainContinuationStore.Kind.CA));
         int offset;
@@ -94,6 +102,9 @@ final class ManagedKeyProofCodecTest {
         }
     }
 
+    /**
+     * Acceptance commitment uses stable domain codes.
+     */
     @Test void acceptanceCommitmentUsesStableDomainCodes() {
         List<String> expected = List.of(
                 "8c94e4892ad0119dcd58850bc22fb3523f57d8e8de232cd984d26244e467eb0f",
@@ -107,6 +118,12 @@ final class ManagedKeyProofCodecTest {
         }
     }
 
+    /**
+     * Acceptance envelope round trips every domain including proof.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void acceptanceEnvelopeRoundTripsEveryDomainIncludingProof(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             DurableContentReference content = PkiTestRuntime.operationReference(store.stagedContent(),
@@ -123,6 +140,11 @@ final class ManagedKeyProofCodecTest {
         }
     }
 
+    /**
+     * Proof kind never derives certificate reservations or reads candidate.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void proofKindNeverDerivesCertificateReservationsOrReadsCandidate() throws Exception {
         DurableContentReference candidate = new TestReference("store", "content", Encoding.BINARY, 3L,
                 DIGEST, DurableContentReference.Lifecycle.OPERATION);

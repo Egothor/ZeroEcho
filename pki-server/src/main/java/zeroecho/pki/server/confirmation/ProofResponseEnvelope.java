@@ -35,11 +35,24 @@ package zeroecho.pki.server.confirmation;
 
 import java.util.Arrays;
 
-/** Immutable bounded client response; it deliberately carries no suite selector. */
+/**
+ * Bounded copied client response without a caller-selected proof-suite identity.
+ *
+ * <p>Access returns a copy. {@link #clear()} explicitly erases the retained bytes;
+ * callers serialize access and erasure and must erase their own previously returned copies.</p>
+ */
 final class ProofResponseEnvelope {
 
     private final byte[] response;
 
+    /**
+     * Snapshots a client proof response after enforcing its suite-selected byte bound.
+     *
+     * @param response nonempty response bytes; copied
+     * @param maximumBytes permitted response length, from 1 through 16,384 bytes inclusive
+     * @throws IllegalArgumentException if the response is null, empty or exceeds the bound,
+     *         or the bound is outside the supported range
+     */
     /* default */ ProofResponseEnvelope(byte[] response, int maximumBytes) {
         if (maximumBytes < 1 || maximumBytes > 16_384 || response == null || response.length == 0
                 || response.length > maximumBytes) {
@@ -48,10 +61,18 @@ final class ProofResponseEnvelope {
         this.response = response.clone();
     }
 
+    /**
+     * Copies the retained client proof response.
+     *
+     * @return caller-owned copy, containing zeroes after {@link #clear()}
+     */
     /* default */ byte[] response() {
         return response.clone();
     }
 
+    /**
+     * Erases retained proof-response bytes; previously returned copies remain caller-owned.
+     */
     /* default */ void clear() {
         Arrays.fill(response, (byte) 0);
     }

@@ -49,10 +49,18 @@ import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
+/**
+ * Contract and regression tests for ca signing intent.
+ */
 final class CaSigningIntentTest {
     private static final String HASH = "1".repeat(64);
     private static final String EMPTY_ATTRIBUTES = DomainAttributeEncoding.encode(new SimpleAttributeSet());
 
+    /**
+     * Every nonproof coordinate changes the commitment.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {IntermediateSigningCommand.CREATE, IntermediateSigningCommand.ISSUE, IntermediateSigningCommand.ROLLOVER})
     void everyNonproofCoordinateChangesTheCommitment(String operation) {
@@ -76,6 +84,9 @@ final class CaSigningIntentTest {
         assertNotEquals(original, CaSigningIntent.commitment(command, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256));
     }
 
+    /**
+     * Proof reference and command remain excluded and operation is bound.
+     */
     @Test
     void proofReferenceAndCommandRemainExcludedAndOperationIsBound() {
         DomainCommandEncoding.Decoded original = command(IntermediateSigningCommand.CREATE);
@@ -92,6 +103,9 @@ final class CaSigningIntentTest {
         assertNotEquals(commit(left), commit(right));
     }
 
+    /**
+     * Rejects malformed nonproof values and wrong schema.
+     */
     @Test
     void rejectsMalformedNonproofValuesAndWrongSchema() {
         DomainCommandEncoding.Decoded original = command(IntermediateSigningCommand.CREATE);
@@ -112,6 +126,9 @@ final class CaSigningIntentTest {
         assertThrows(NullPointerException.class, () -> CaSigningIntent.commitment(original, null));
     }
 
+    /**
+     * Exact aggregate bound counts domain algorithm and framing.
+     */
     @Test
     void exactAggregateBoundCountsDomainAlgorithmAndFraming() {
         DomainCommandEncoding.Decoded original = command(IntermediateSigningCommand.CREATE);
@@ -125,6 +142,9 @@ final class CaSigningIntentTest {
         assertThrows(IllegalArgumentException.class, () -> commit(changed(original, 10, exact + 'x')));
     }
 
+    /**
+     * Existing operations allow the same subject and parent key but creation does not.
+     */
     @Test
     void existingOperationsAllowTheSameSubjectAndParentKeyButCreationDoesNot() {
         DomainCommandEncoding.Decoded create = changed(command(IntermediateSigningCommand.CREATE), 14, "subject-key");

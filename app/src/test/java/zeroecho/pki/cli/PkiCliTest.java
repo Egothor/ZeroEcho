@@ -65,11 +65,20 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.LocalPkiSessionConfiguration;
 
+/**
+ * Integration and lifecycle coverage for typed local CLI commands and plans.
+ */
 class PkiCliTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Checks that help lists the supported administration command families.
+     */
     @Test
     void helpListsCompletedSafeAdministrationFamilies() {
         System.out.println("helpListsCompletedSafeAdministrationFamilies");
@@ -91,6 +100,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that absent signing capability fails the affected step and skips dependent steps.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void unconfiguredSigningFailsAtItsStepAndStopsDependents() throws IOException {
         System.out.println("unconfiguredSigningFailsAtItsStepAndStopsDependents");
@@ -120,6 +134,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Exercises profile management through typed production operations against persistent storage.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void productionProfileWorkflowUsesTypedOperationsAndDurableStore() throws IOException {
         System.out.println("productionProfileWorkflowUsesTypedOperationsAndDurableStore");
@@ -152,6 +171,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Exercises single commands in both machine-readable and human-readable output modes.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void productionSessionExecutesMachineAndHumanSingleCommands() throws IOException {
         System.out.println("productionSessionExecutesMachineAndHumanSingleCommands");
@@ -172,6 +196,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks direct and batch operation bindings for algorithm administration.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void bindingAdministrationUsesDirectAndBatchTypedExecution() throws IOException {
         System.out.println("bindingAdministrationUsesDirectAndBatchTypedExecution");
@@ -199,6 +228,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects legacy configuration formats rather than silently adapting them.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void legacyConfigurationsAreRejectedWithoutAdapters() throws IOException {
         for (int version = 1; version <= 6; version++) {
@@ -211,6 +245,11 @@ class PkiCliTest {
         }
     }
 
+    /**
+     * Checks shared typed execution and owned session cleanup for single commands and plans.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void singleAndBatchUseTheSameTypedExecutorAndSessionLifecycle() throws IOException {
         System.out.println("singleAndBatchUseTheSameTypedExecutorAndSessionLifecycle");
@@ -237,6 +276,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that a direct mutation passes through the shared typed operation executor.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void directMutationUsesTheSharedTypedExecutor() throws IOException {
         System.out.println("directMutationUsesTheSharedTypedExecutor");
@@ -258,6 +302,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that direct signing fails explicitly when no signing capability is configured.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void directSigningRequiresConfiguredCapability() throws IOException {
         System.out.println("directSigningRequiresConfiguredCapability");
@@ -275,6 +324,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Resolves earlier successful output fields while allowing only independent work after a failure.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void resolvesEarlierFieldsAndContinuesOnlyIndependentSteps() throws IOException {
         System.out.println("resolvesEarlierFieldsAndContinuesOnlyIndependentSteps");
@@ -304,6 +358,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects unsafe plan inputs before opening a backend session.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsFutureReferencesScriptsInterpolationAndSecretArgumentsBeforeOpening() throws IOException {
         System.out.println("rejectsFutureReferencesScriptsInterpolationAndSecretArgumentsBeforeOpening");
@@ -331,6 +390,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks explicit results for fail-fast execution, cancellation, and session close failures.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void failFastCancellationAndCloseFailuresRemainExplicit() throws IOException {
         System.out.println("failFastCancellationAndCloseFailuresRemainExplicit");
@@ -361,6 +425,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks safe malformed-configuration diagnostics without printing provider exception details.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsMalformedConfigurationAndNeverPrintsProviderExceptions() throws IOException {
         System.out.println("rejectsMalformedConfigurationAndNeverPrintsProviderExceptions");
@@ -387,6 +456,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Preserves local authority scope and option-like literal operation values.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void localAuthorityScopeAndOptionLookingValuesAreOperationArguments() throws IOException {
         Path configuration = configuration("scope");
@@ -405,6 +479,11 @@ class PkiCliTest {
         assertEquals(Optional.of("x509:previous"),inventory.after());
     }
 
+    /**
+     * Checks publication plan references and reuse of one lifecycle-owned session.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void publicationBatchPreservesCompletedReferencesAndSingleSession() throws IOException {
         Path configuration = configuration("publication");
@@ -424,6 +503,11 @@ class PkiCliTest {
         assertEquals("publication", ((PkiOperation.ProcessPublication) opener.operations.get(2)).publicationId().value());
     }
 
+    /**
+     * Retains signing receipts across execution failure, cancellation, and session cleanup.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signingReceiptsSurviveFailuresCancellationAndSessionClose() throws IOException {
         Path configuration = configuration("signing-receipt");
@@ -453,6 +537,11 @@ class PkiCliTest {
         assertFalse(json.contains("sensitive-close-detail"));
     }
 
+    /**
+     * Preserves the requested operation identity on control failures and cancellation before a step.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void controlFailuresAndPreStepCancellationRetainRequestedIdentity() throws IOException {
         Path configuration = configuration("control-receipt");
@@ -471,6 +560,11 @@ class PkiCliTest {
         }
     }
 
+    /**
+     * Checks that signing plans reference only completed outputs and retain identities on cancellation.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signingPlansExposeOnlyCompletedReferencesAndRetainCancelledReferenceIdentity() throws IOException {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -546,6 +640,11 @@ class PkiCliTest {
         return path;
     }
 
+    /**
+     * Rejects a remote-only pending wait option before opening a local session.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void localPendingWaitIsRejectedBeforeOpening() throws IOException {
         System.out.println("localPendingWaitIsRejectedBeforeOpening");
@@ -560,6 +659,11 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that an unexpected pending outcome cannot trigger a duplicate submission.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void unexpectedPendingOutcomeNeverResubmits() throws IOException {
         System.out.println("unexpectedPendingOutcomeNeverResubmits");
@@ -577,7 +681,9 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
-    /** Opener whose session returns Pending for the first N operation executions, then Completed. */
+    /**
+     * Opener whose session returns Pending for the first N operation executions, then Completed.
+     */
     private static final class PendingOpener implements PkiCli.SessionOpener {
         private final int pendingExecutions;
         private final AtomicInteger executions = new AtomicInteger();

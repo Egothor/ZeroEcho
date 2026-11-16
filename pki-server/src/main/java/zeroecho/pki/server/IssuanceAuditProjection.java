@@ -64,10 +64,24 @@ final class IssuanceAuditProjection {
     private IssuanceAuditProjection() {
     }
 
+    /**
+     * Returns the stable control-record identity for issuance success-evidence delivery.
+     *
+     * @return versioned family projection-cursor identity
+     */
     /* default */ static String recordId() {
         return RECORD_ID;
     }
 
+    /**
+     * Projects recognized issuance success evidence into a deterministic audit event.
+     *
+     * <p>The event identity remains stable across re-emission after a sink acknowledgement
+     * and before durable cursor advancement.</p>
+     *
+     * @param entry authoritative append-only family evidence entry
+     * @return safe audit event, or empty when the evidence version/type is not recognized
+     */
     /* default */ static Optional<AuditEvent> toEvent(AuditEvidenceFeed.Entry entry) {
         Optional<IssuanceExecutionEvidence> evidence = IssuanceExecutionEvidence.decode(entry.evidence());
         if (evidence.isEmpty()) {

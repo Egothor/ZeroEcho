@@ -86,9 +86,35 @@ public final class ExerciseProtocolSeed {
         finally {java.util.Arrays.fill(password,'\0');if(clientPassword!=null)java.util.Arrays.fill(clientPassword,'\0');}
         System.out.println(wire?"CMP_GENERAL_MESSAGE_VERIFIED":"PROTOCOL_FIXTURE_READY");
     }
+    /**
+     * Seeds disposable protocol prerequisites with a shared fixture unlock password.
+     *
+     * <p>This compatibility overload uses the supplied password for both server and
+     * client custody. Independent-client fixtures use the explicit two-password overload.</p>
+     *
+     * @param root owned stopped qualification environment root
+     * @param nonce exact 32-character environment-owner nonce
+     * @param runId exact 32-character qualification run identity
+     * @param authorityId owned protocol issuing-authority identity
+     * @param credentialId exact owned issuer credential identity
+     * @param password server custody unlock password
+     * @throws Exception if owner/stopped-state prerequisites, configuration, custody or durable seeding fails
+     */
     static void seed(Path root,String nonce,String runId,String authorityId,String credentialId,char[] password)throws Exception {
         seed(root,nonce,runId,authorityId,credentialId,password,password);
     }
+    /**
+     * Seeds disposable protocol credentials only after exact owned/stopped environment proofs pass.
+     *
+     * @param clientPassword independent unlock password for client-owned key custody
+     * @param root owned stopped qualification environment root
+     * @param nonce exact 32-character environment-owner nonce
+     * @param runId exact 32-character qualification run identity
+     * @param authorityId owned protocol issuing-authority identity
+     * @param credentialId exact owned issuer credential identity
+     * @param password server custody unlock password
+     * @throws Exception if owner/stopped-state prerequisites, configuration, custody or durable seeding fails
+     */
     static void seed(Path root,String nonce,String runId,String authorityId,String credentialId,char[] password,char[] clientPassword)throws Exception {
         root=root.toAbsolutePath().normalize();privatePath(root,true);
         if(!nonce.matches("[0-9a-f]{32}")||!runId.matches("[0-9a-f]{32}"))throw new IllegalArgumentException("Invalid fixture nonce");
@@ -167,12 +193,30 @@ public final class ExerciseProtocolSeed {
             write(root.resolve("config/protocol-context.json"),StrictJson.encode(object(Map.of("protocolAuthorityId",text(authorityId),"protocolIssuerId",text(issuer.issuerId().value()),"protocolEnrollmentProfileId",text(policy),"protocolProfileId",text("server-tls")))));
         }
     }
-    /** Creates only client custody; the caller supplies its independent client unlock secret. */
+    /**
+     * Creates only the independent client keyring without opening server custody.
+     *
+     * @param path new client-owned keyring path
+     * @param clientPassword independent client unlock bytes; copied for keyring initialization
+     * @param privateKey client RSA private key stored under the fixed client alias
+     * @throws Exception if client keyring creation or key storage fails
+     */
     static void storeClientKeyring(Path path,char[] clientPassword,java.security.PrivateKey privateKey)throws Exception {
         try(var clientUnlock=new KeyringPassword(clientPassword.clone());var clientRing=KeyringStore.create(path,clientUnlock)) {
             clientRing.putPrivate("client","RSA",privateKey);
         }
     }
+    /**
+     * Prepares and verifies an owned CMP wire fixture against the exact published local listener identity.
+     *
+     * @param root owned qualification environment root
+     * @param nonce exact environment-owner nonce
+     * @param runId exact qualification run identity
+     * @param origin canonical HTTPS localhost CMP origin
+     * @param label exact run-owned endpoint label
+     * @param password independent client keyring unlock password
+     * @throws Exception if ownership/listener binding, public certificate checks, client custody or wire processing fails
+     */
     static void cmpWire(Path root,String nonce,String runId,java.net.URI origin,String label,char[] password)throws Exception {
         root=root.toAbsolutePath().normalize();privatePath(root,true);
         if(!nonce.matches("[0-9a-f]{32}")||!runId.matches("[0-9a-f]{32}")||!text(object(root.resolve(".exercise-owner.json")),"nonce").equals(nonce)

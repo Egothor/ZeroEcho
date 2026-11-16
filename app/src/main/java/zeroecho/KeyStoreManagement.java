@@ -168,7 +168,9 @@ public final class KeyStoreManagement {
             .hasArg().argName("VAR").desc("Read the keyring password from the named environment variable "
                     + "instead of prompting (non-interactive/scripted use)").get();
 
-    /** Prevents instantiation. */
+    /**
+     * Prevents instantiation.
+     */
     private KeyStoreManagement() {
     }
 
@@ -438,7 +440,9 @@ public final class KeyStoreManagement {
     private record GeneratedSecret(SecretKey key, KeyOperationInfo info) {
     }
 
-    /** Selects the exact key-generation operation requested by the command. */
+    /**
+     * Selects the exact key-generation operation requested by the command.
+     */
     private enum GenerationKind {
         ASYMMETRIC, SYMMETRIC, NONE
     }

@@ -56,6 +56,9 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.impl.core.continuation.DomainContinuationPublisher.PostconditionFailure;
 
+/**
+ * Contract and regression tests for managed key proof command.
+ */
 final class ManagedKeyProofCommandTest {
     private static final PkiId AUTHORITY = new PkiId("authority");
     private static final PkiId SUBJECT = new PkiId("subject");
@@ -64,6 +67,9 @@ final class ManagedKeyProofCommandTest {
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "actor"),
             new Purpose("PROOF"), Optional.empty(), Optional.empty());
 
+    /**
+     * Prefix round trip maps only the purpose specific scope.
+     */
     @Test void prefixRoundTripMapsOnlyThePurposeSpecificScope() {
         for (ManagedKeyProofRequest request : requests()) {
             List<String> fields = ManagedKeyProofCommand.prefix(request);
@@ -99,6 +105,9 @@ final class ManagedKeyProofCommandTest {
         }
     }
 
+    /**
+     * Prefix rejects cross purpose coordinates and malformed fields.
+     */
     @Test void prefixRejectsCrossPurposeCoordinatesAndMalformedFields() {
         for (ManagedKeyProofRequest request : requests()) {
             List<String> valid = ManagedKeyProofCommand.prefix(request);
@@ -127,6 +136,9 @@ final class ManagedKeyProofCommandTest {
         }
     }
 
+    /**
+     * Prefix never admits full preparation or artifact publication.
+     */
     @Test void prefixNeverAdmitsFullPreparationOrArtifactPublication() {
         PkiStore forbidden = (PkiStore) java.lang.reflect.Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
                 new Class<?>[] { PkiStore.class }, (proxy, method, arguments) -> {

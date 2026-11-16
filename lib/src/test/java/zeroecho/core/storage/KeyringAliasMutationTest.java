@@ -55,11 +55,24 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import zeroecho.core.storage.KeyringFileOperations.Target;
 
-/** Real-filesystem integration coverage of logical alias transactions. */
+/**
+ * Real-filesystem integration coverage of logical alias transactions.
+ */
 class KeyringAliasMutationTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void provider() { BouncyCastleActivator.init(); }
 
+    /**
+     * Pair and secret removal preserve other aliases and reopen.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void pairAndSecretRemovalPreserveOtherAliasesAndReopen() throws Exception {
         Path path = directory.resolve("normal.zek");
@@ -87,6 +100,12 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Rejects invalid logical aliases without writing.
+     *
+     * @param alias invalid logical alias supplied by the parameterized test
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {" ", "token.pub", "token.priv", "token.pub.priv"})
@@ -101,6 +120,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Validates both components and algorithm before any persistence.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void validatesBothComponentsAndAlgorithmBeforeAnyPersistence() throws Exception {
         Path path = directory.resolve("validation.zek");
@@ -132,6 +156,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Rejects collisions and preserves legacy standalone operations.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsCollisionsAndPreservesLegacyStandaloneOperations() throws Exception {
         KeyPair pair = pair();
@@ -154,6 +183,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Accepts maximum UTF-8 aliases and rejects over limit without mutation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void acceptsMaximumUtf8AliasesAndRejectsOverLimitWithoutMutation() throws Exception {
         Path path = directory.resolve("boundary.zek");
@@ -171,6 +205,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Stateful active and public only aliases cannot be removed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void statefulActiveAndPublicOnlyAliasesCannotBeRemoved() throws Exception {
         Path path = directory.resolve("keys/stateful.zek");
@@ -191,6 +230,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Closed store and concurrent insertion have unambiguous results.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void closedStoreAndConcurrentInsertionHaveUnambiguousResults() throws Exception {
         KeyPair pair = pair();
@@ -216,6 +260,11 @@ class KeyringAliasMutationTest {
                 assertThrows(KeyringException.class, () -> store.removeAlias("token")).code());
     }
 
+    /**
+     * Concurrent removal is idempotent.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentRemovalIsIdempotent() throws Exception {
         Path path = directory.resolve("remove-concurrent.zek");
@@ -234,6 +283,11 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Close waits for pair publication.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @SuppressWarnings("try") // Explicit close is the concurrent operation under test; the resource also guarantees cleanup.
     void closeWaitsForPairPublication() throws Exception {
@@ -265,11 +319,21 @@ class KeyringAliasMutationTest {
         }
     }
 
+    /**
+     * Every pair persistence phase never exposes incomplete pair.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void everyPairPersistencePhaseNeverExposesIncompletePair() throws Exception {
         exerciseFailures(false);
     }
 
+    /**
+     * Every removal persistence phase preserves unrelated aliases.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void everyRemovalPersistencePhasePreservesUnrelatedAliases() throws Exception {
         exerciseFailures(true);

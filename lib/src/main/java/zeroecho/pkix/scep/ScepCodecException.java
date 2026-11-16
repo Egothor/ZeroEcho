@@ -40,11 +40,14 @@ package zeroecho.pkix.scep;
  */
 public final class ScepCodecException extends Exception {
 
-    /** Serialization identity for this exception type. */
+    /**
+     * Serialization identity for this exception type.
+     */
     private static final long serialVersionUID = 1L;
 
     /**
      * Creates an exception with a diagnostic message.
+     *
      * @param message failure description; must not contain protected key or payload data
      */
     public ScepCodecException(String message) {
@@ -53,6 +56,7 @@ public final class ScepCodecException extends Exception {
 
     /**
      * Creates an exception retaining its underlying cause.
+     *
      * @param message failure description; must not contain protected key or payload data
      * @param cause underlying failure, or null if unavailable
      */

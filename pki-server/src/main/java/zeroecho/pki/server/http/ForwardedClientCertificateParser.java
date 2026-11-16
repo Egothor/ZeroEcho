@@ -47,14 +47,25 @@ import java.util.Objects;
 import zeroecho.pki.server.ForwardedCertificateFormat;
 import zeroecho.pki.server.PkiServerConfiguration;
 
-/** Narrow strict parser for the two explicitly supported forwarded-certificate formats. */
+/**
+ * Narrow strict parser for the two explicitly supported forwarded-certificate formats.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition", "PMD.CyclomaticComplexity",
         "PMD.AvoidDeeplyNestedIfStmts", "PMD.ExceptionAsFlowControl",
         "PMD.AvoidThrowingNewInstanceOfSameException", "PMD.PreserveStackTrace",
         "PMD.AvoidReassigningLoopVariables" })
 final class ForwardedClientCertificateParser {
+    /**
+     * RFC 9440 field carrying the forwarded leaf certificate.
+     */
     /* default */ static final String RFC_CERTIFICATE_HEADER = "Client-Cert";
+    /**
+     * RFC 9440 field carrying the forwarded certificate chain.
+     */
     /* default */ static final String RFC_CHAIN_HEADER = "Client-Cert-Chain";
+    /**
+     * Legacy escaped-PEM field rejected when it conflicts with the configured forwarding format.
+     */
     /* default */ static final String DIRECT_REJECTED_NGINX_HEADER = "X-ZeroEcho-Client-Cert";
     private static final String PEM_BEGIN = "-----BEGIN CERTIFICATE-----\n";
     private static final String PEM_END = "\n-----END CERTIFICATE-----\n";
@@ -62,6 +73,20 @@ final class ForwardedClientCertificateParser {
     private ForwardedClientCertificateParser() {
     }
 
+    /**
+     * Parses the single configured forwarded-certificate representation under strict size bounds.
+     *
+     * <p>This parser establishes syntax only. The caller must authenticate the forwarding
+     * proxy and validate the resulting certificate chain independently.</p>
+     *
+     * @param configuration forwarding format, field names and decoded-byte limits
+     * @param headers received HTTP fields, preserving all values and case variants
+     * @return immutable leaf-first certificate list
+     * @throws NullPointerException if configuration or headers are null
+     * @throws IllegalArgumentException if fields conflict, cardinality or size is invalid,
+     *         or a certificate representation is malformed
+     * @throws java.util.NoSuchElementException if required forwarding configuration is absent
+     */
     /* default */ static List<X509Certificate> parse(PkiServerConfiguration.Authentication configuration,
             Map<String, List<String>> headers) {
         Objects.requireNonNull(configuration, "configuration");
@@ -101,6 +126,13 @@ final class ForwardedClientCertificateParser {
         return List.copyOf(result);
     }
 
+    /**
+     * Detects any recognized forwarded-identity field, including a conflicting representation.
+     *
+     * @param headers received HTTP field names; must not be null
+     * @return whether an RFC 9440 or legacy escaped-PEM identity field is present
+     * @throws NullPointerException if the headers map is null
+     */
     /* default */ static boolean containsForwardedIdentity(Map<String, List<String>> headers) {
         return present(headers, RFC_CERTIFICATE_HEADER) || present(headers, RFC_CHAIN_HEADER)
                 || present(headers, DIRECT_REJECTED_NGINX_HEADER);

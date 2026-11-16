@@ -39,19 +39,49 @@ import zeroecho.pki.api.SemanticSigningService;
 import zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest;
 import zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity;
 
-/** Purpose-specific canonical admission and projection; the coordinator retains actor and approval authority. */
+/**
+ * Purpose-specific canonical admission and projection; the coordinator retains actor and approval authority.
+ */
 final class OcspResponderProvisioningService {
     private final RealmId realm;
     private final ServerControlStore control;
     private final java.util.function.Supplier<SemanticSigningService> signing;
+    /**
+     * Composes realm-bound provisioning selection over durable control and domain signing observations.
+     *
+     * @param realm trusted owning realm
+     * @param control realm-owned server-control authority
+     * @param signing supplier of the authoritative semantic signing service
+     */
     OcspResponderProvisioningService(RealmId realm, ServerControlStore control,
             java.util.function.Supplier<SemanticSigningService> signing) {
         this.realm = realm; this.control = control; this.signing = signing;
     }
+    /**
+     * Server-normalized provisioning coordinates selected by the domain signing service.
+     *
+     * @param coreSlotId canonical domain slot identity
+     * @param serverSlotId realm-bound server slot identity
+     * @param revision selected provisioning revision
+     * @param requestId deterministic administrative request identity
+     * @param targetCommitment exact normalized target commitment
+     * @param authorityId issuing authority identity
+     * @param issuerId exact issuer credential identity
+     * @param primarySpkiSha256 primary responder public-key SHA-256
+     * @param alternativeSpkiSha256 alternative responder public-key SHA-256
+     * @param predecessor expected prior responder credential, if renewing
+     */
     record Selection(String coreSlotId, String serverSlotId, long revision, String requestId,
             String targetCommitment, PkiId authorityId, PkiId issuerId, String primarySpkiSha256,
             String alternativeSpkiSha256, Optional<PkiId> predecessor) { }
 
+    /**
+     * Resolves authoritative managed-key bindings and derives realm-local provisioning coordinates.
+     *
+     * @param request public provisioning selections to normalize through the domain service
+     * @return exact slot revision, deterministic request identity and target commitment
+     * @throws IllegalStateException if the domain service returns a noncanonical provisioning identity
+     */
     Selection select(ManagedOcspResponderIssuanceRequest request) {
         var selected = signing.get().managedOcspResponderProvisioningBinding(request);
         var retained = selected.retainedBinding();
@@ -64,10 +94,25 @@ final class OcspResponderProvisioningService {
                 selected.primarySpkiSha256(), selected.alternativeSpkiSha256(), request.expectedPredecessorCredentialId());
     }
 
+    /**
+     * Observes the private durable claim for the selected server slot.
+     *
+     * @param selection server-normalized provisioning coordinates
+     * @return retained claim record, or empty if no claim exists
+     */
     Optional<ServerControlStore.ProtocolRecord> record(Selection selection) {
         return control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, selection.serverSlotId());
     }
 
+    /**
+     * Finds an identical retained request or validates a permitted next-revision renewal.
+     *
+     * @param selection normalized requested slot revision and target
+     * @return existing identical request, or empty when a new claim may be attempted
+     * @throws TargetConflict if the target differs or renewal does not immediately follow a completed
+     *         predecessor
+     * @throws IllegalStateException if retained claim/request observations are unavailable or inconsistent
+     */
     Optional<AdministrativeRequest> existing(Selection selection) {
         var record = record(selection);
         if (record.isEmpty()) return Optional.empty();
@@ -84,6 +129,14 @@ final class OcspResponderProvisioningService {
         return Optional.empty();
     }
 
+    /**
+     * Builds the compare-and-set mutation for an initial or renewal provisioning claim.
+     *
+     * @param selected exact server-normalized slot coordinates
+     * @param request canonical administrative request committed with the claim
+     * @return mutation guarded by the previous slot commitment, if present
+     * @throws IllegalArgumentException if the request does not match the selected claim
+     */
     ServerControlStore.ProtocolMutation claim(Selection selected, AdministrativeRequest request) {
         var previous = record(selected);
         var slot = new OcspProvisioningSlot(realm, selected.serverSlotId(), selected.coreSlotId(), selected.authorityId(),
@@ -94,6 +147,16 @@ final class OcspResponderProvisioningService {
         return new ServerControlStore.ProtocolMutation(OcspProvisioningSlotCodec.encode(slot), previous.map(ServerControlStore.ProtocolRecord::commitment));
     }
 
+    /**
+     * Builds a claim mutation matching an administrative workflow state transition.
+     *
+     * @param old exact previously retained administrative request
+     * @param next replacement administrative state and optional result
+     * @return compare-and-set slot mutation preserving the exact target and receipt binding
+     * @throws IllegalStateException if the claim is missing or the completion result lacks a canonical
+     *         credential identity
+     * @throws IllegalArgumentException if either request is inconsistent with its slot
+     */
     ServerControlStore.ProtocolMutation transition(AdministrativeRequest old, AdministrativeRequest next) {
         var row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(old.requestId()))
                 .orElseThrow(() -> new IllegalStateException("OCSP provisioning claim unavailable"));
@@ -119,7 +182,16 @@ final class OcspResponderProvisioningService {
         return new ServerControlStore.ProtocolMutation(OcspProvisioningSlotCodec.encode(changed), Optional.of(row.commitment()));
     }
 
-    /** Pure durable observation proves that only the losing, definitely unaccepted receipt is replaced. */
+    /**
+     * Proves through durable observations that only a definitely unaccepted losing receipt is replaced.
+     *
+     * @param request retained request carrying the losing receipt
+     * @param selected exact managed responder issuance target
+     * @param winner authoritative accepted receipt for that target
+     * @return package-local attachment token bound to the exact request, target and receipt pair
+     * @throws IllegalStateException if receipt observations do not establish a definite attachment
+     * @throws IllegalArgumentException if the retained claim does not match the request
+     */
     Attachment attachment(AdministrativeRequest request, ManagedOcspResponderIssuanceRequest selected,
             zeroecho.pki.api.signing.SigningAcceptanceReceipt winner) {
         requireClaim(request);
@@ -134,7 +206,9 @@ final class OcspResponderProvisioningService {
         return new Attachment(request.requestId(),request.targetCommitment(),previous,winner);
     }
 
-    /** Unforgeable package-local token constructed only after authoritative receipt observations. */
+    /**
+     * Unforgeable package-local token constructed only after authoritative receipt observations.
+     */
     static final class Attachment {
         private final String requestId;
         private final String target;
@@ -144,6 +218,14 @@ final class OcspResponderProvisioningService {
                 zeroecho.pki.api.signing.SigningAcceptanceReceipt winner) {
             this.requestId=requestId; this.target=target; this.previous=previous; this.winner=winner;
         }
+        /**
+         * Checks that the atomic mutation performs only the proved receipt attachment.
+         *
+         * @param old exact retained accepted slot
+         * @param next replacement accepted slot
+         * @throws IllegalStateException if request, target, state or receipt pair differs from the proof
+         * @throws java.util.NoSuchElementException if the old slot is absent
+         */
         void require(Optional<OcspProvisioningSlot> old, OcspProvisioningSlot next) {
             var prior=old.orElseThrow();
             if (!requestId.equals(prior.canonicalRequestId()) || !requestId.equals(next.canonicalRequestId())
@@ -155,6 +237,13 @@ final class OcspResponderProvisioningService {
         }
     }
 
+    /**
+     * Requires a retained canonical claim matching the complete administrative request.
+     *
+     * @param request canonical responder-provisioning administrative request
+     * @throws IllegalStateException if request identity or retained claim is unavailable
+     * @throws IllegalArgumentException if request/claim coordinates or state differ
+     */
     void requireClaim(AdministrativeRequest request) {
         var row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(request.requestId()))
                 .orElseThrow(() -> new IllegalStateException("OCSP provisioning claim unavailable"));
@@ -169,10 +258,23 @@ final class OcspResponderProvisioningService {
         if (!requestId.matches("ocsp-prov:[0-9a-f]{64}:r[1-9][0-9]{0,18}")) throw new IllegalStateException("OCSP provisioning request identity invalid");
         return requestId.substring(10, 74);
     }
+    /**
+     * Signals an incompatible retained provisioning target while exposing only its canonical request identity.
+     */
     static final class TargetConflict extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         private final String canonicalRequestId;
+        /**
+         * Creates the safe target-conflict outcome for an existing canonical request.
+         *
+         * @param canonicalRequestId identity of the retained conflicting request
+         */
         TargetConflict(String canonicalRequestId) { super("OCSP_PROVISIONING_TARGET_CONFLICT"); this.canonicalRequestId = canonicalRequestId; }
+        /**
+         * Returns the canonical retained request that conflicts with the proposed target.
+         *
+         * @return retained request identity for safe observation
+         */
         String canonicalRequestId() { return canonicalRequestId; }
     }
 }

@@ -55,6 +55,9 @@ public final class ImportedCertificateProfileVersion {
      * @param definition    validated semantic definition
      * @param canonicalJson canonical JSON document
      * @param importedAt    authoritative import time
+     * @throws NullPointerException if reference, definition, canonicalJson or importedAt is null
+     * @throws IllegalArgumentException if schemaVersion is unsupported, canonicalJson is empty, or reference
+     *     identity/version differs from the definition
      */
     public ImportedCertificateProfileVersion(CertificateProfileRef reference, int schemaVersion,
             CertificateProfileDefinition definition, byte[] canonicalJson, Instant importedAt) {
@@ -121,6 +124,9 @@ public final class ImportedCertificateProfileVersion {
         return importedAt;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other
@@ -129,11 +135,17 @@ public final class ImportedCertificateProfileVersion {
                         && importedAt.equals(version.importedAt) && Arrays.equals(canonicalJson, version.canonicalJson);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return Objects.hash(reference, schemaVersion, definition, importedAt, Arrays.hashCode(canonicalJson));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "ImportedCertificateProfileVersion[reference=" + reference + ", schemaVersion=" + schemaVersion

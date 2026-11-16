@@ -51,6 +51,9 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofPresentation;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
+/**
+ * Contract and regression tests for credential confirmation proof challenge API.
+ */
 final class CredentialConfirmationProofChallengeApiTest {
     private static final PkiId CREDENTIAL = new PkiId("credential");
     private static final String LIFECYCLE_COMMITMENT = "a".repeat(64);
@@ -58,6 +61,9 @@ final class CredentialConfirmationProofChallengeApiTest {
     private static final ConfirmationProofSuiteBinding BINDING = new ConfirmationProofSuiteBinding(
             new ConfirmationProofSuiteRef("zeroecho.signature-pop.v1", "c".repeat(64)), 8_192);
 
+    /**
+     * Service exposes only safe proof challenge issuance.
+     */
     @Test
     void serviceExposesOnlySafeProofChallengeIssuance() {
         Set<String> methods = Arrays.stream(CredentialConfirmationService.class.getDeclaredMethods())
@@ -66,6 +72,9 @@ final class CredentialConfirmationProofChallengeApiTest {
                 "pagePendingReviews"), methods);
     }
 
+    /**
+     * Request contains only and validates exact pending expectation.
+     */
     @Test
     void requestContainsOnlyAndValidatesExactPendingExpectation() {
         CredentialConfirmationProofChallengeRequest request =
@@ -87,6 +96,9 @@ final class CredentialConfirmationProofChallengeApiTest {
                 () -> new CredentialConfirmationProofChallengeRequest(CREDENTIAL, 1L, "A".repeat(64)));
     }
 
+    /**
+     * Output owns presentation uses value semantics and redacts bytes.
+     */
     @Test
     void outputOwnsPresentationUsesValueSemanticsAndRedactsBytes() {
         byte[] source = bytes(64, 7);
@@ -107,6 +119,9 @@ final class CredentialConfirmationProofChallengeApiTest {
                 challenge.proofCas().expectedChallengeRecordCommitment());
     }
 
+    /**
+     * Output enforces exact expiry response and presentation bounds.
+     */
     @Test
     void outputEnforcesExactExpiryResponseAndPresentationBounds() {
         assertEquals(KeyPossessionProofPresentation.MAXIMUM_BYTES,
@@ -129,6 +144,9 @@ final class CredentialConfirmationProofChallengeApiTest {
                 new byte[KeyPossessionProofPresentation.MAXIMUM_BYTES + 1], 1));
     }
 
+    /**
+     * Submission owns and redacts its globally bounded response.
+     */
     @Test
     void submissionOwnsAndRedactsItsGloballyBoundedResponse() {
         byte[] source = bytes(64, 7);
@@ -163,6 +181,9 @@ final class CredentialConfirmationProofChallengeApiTest {
                         new byte[KeyPossessionProofResponse.MAXIMUM_BYTES + 1]));
     }
 
+    /**
+     * Result is closed and data free.
+     */
     @Test
     void resultIsClosedAndDataFree() {
         assertArrayEquals(new CredentialConfirmationProofResult[] {

@@ -71,7 +71,9 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
  */
 public final class BcX509VerificationExecutor implements AlgorithmExecutionCapabilityProvider {
 
-    /** Stable semantic implementation identifier. */
+    /**
+     * Stable semantic implementation identifier.
+     */
     public static final String IMPLEMENTATION_ID = "bc.x509-verification";
 
     private static final int BUFFER_BYTES = 16 * 1024;
@@ -106,11 +108,16 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
         SIGNATURES = Set.copyOf(all);
     }
 
-    /** Creates a stateless X.509 verification executor. */
+    /**
+     * Creates a stateless X.509 verification executor.
+     */
     public BcX509VerificationExecutor() {
         // Stateless.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<AlgorithmExecutionCapability> capabilities() {
         return List.of(new AlgorithmExecutionCapability() {

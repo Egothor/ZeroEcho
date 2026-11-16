@@ -55,7 +55,16 @@ import java.util.Objects;
  */
 public record CertificateExtension(String oid, boolean critical, byte[] derValue) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Retains validated components and defensively copies mutable inputs.
+     *
+     * @param oid dotted-decimal extension OID
+     * @param critical whether the extension is marked critical
+     * @param derValue exact DER of the extension value (the contents of the
+     *        {@code extnValue} OCTET STRING, not the OCTET STRING wrapper)
+     * @throws NullPointerException if any of {@code oid}, {@code derValue} is null
+     * @throws IllegalArgumentException if the extension OID is blank
+     */
     public CertificateExtension {
         Objects.requireNonNull(oid, "oid");
         Objects.requireNonNull(derValue, "derValue");
@@ -75,17 +84,33 @@ public record CertificateExtension(String oid, boolean critical, byte[] derValue
         return derValue.clone();
     }
 
+    /**
+     * Compares the extension OID, criticality, and exact DER value bytes by value.
+     *
+     * @param other object to compare, or null
+     * @return true for a compatible value with equal extension OID, criticality, and exact DER value bytes; false otherwise
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof CertificateExtension that && critical == that.critical
                 && oid.equals(that.oid) && Arrays.equals(derValue, that.derValue);
     }
 
+    /**
+     * Hashes the extension OID, criticality, and exact DER value bytes using the same components as equality.
+     *
+     * @return value-based hash code consistent with equals
+     */
     @Override
     public int hashCode() {
         return Objects.hash(oid, critical, Arrays.hashCode(derValue));
     }
 
+    /**
+     * Returns a diagnostic representation containing the extension OID and criticality, omitting encoded extension values.
+     *
+     * @return extension OID and criticality, omitting encoded extension values
+     */
     @Override
     public String toString() {
         return "CertificateExtension[oid=" + oid + ", critical=" + critical + ']';

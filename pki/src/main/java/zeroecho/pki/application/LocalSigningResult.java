@@ -38,7 +38,9 @@ import java.util.Objects;
 import java.util.Optional;
 import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
 
-/** Immutable local result; durable acceptance alone is never successful completion. */
+/**
+ * Immutable local result; durable acceptance alone is never successful completion.
+ */
 public sealed interface LocalSigningResult {
     /**
      * Completed outer domain operation.
@@ -46,7 +48,12 @@ public sealed interface LocalSigningResult {
      * @param receipt retained durable identity and acceptance commitment
      */
     record Completed(PkiOperationResult result, SigningAcceptanceReceipt receipt) implements LocalSigningResult {
-        /** Requires both completed metadata and its receipt. */
+        /**
+         * Requires both completed metadata and its receipt.
+         * @param result safe completed domain metadata
+         * @param receipt retained durable identity and acceptance commitment
+         * @throws NullPointerException if result, receipt is null
+         */
         public Completed {
             Objects.requireNonNull(result, "result");
             Objects.requireNonNull(receipt, "receipt");
@@ -59,7 +66,12 @@ public sealed interface LocalSigningResult {
      * @param receipt receipt when obtained, including uncertain admission
      */
     record Failed(PkiOperationOutcome.Failed failure, Optional<SigningAcceptanceReceipt> receipt) implements LocalSigningResult {
-        /** Requires a failure and an explicit optional receipt container. */
+        /**
+         * Requires a failure and an explicit optional receipt container.
+         * @param failure safe classification and code
+         * @param receipt receipt when obtained, including uncertain admission
+         * @throws NullPointerException if failure, receipt is null
+         */
         public Failed {
             Objects.requireNonNull(failure, "failure");
             Objects.requireNonNull(receipt, "receipt");

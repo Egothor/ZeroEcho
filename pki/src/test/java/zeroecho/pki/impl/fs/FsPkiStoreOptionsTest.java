@@ -40,8 +40,14 @@ import java.math.BigInteger;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for fs PKI store options.
+ */
 final class FsPkiStoreOptionsTest {
 
+    /**
+     * Initial CRL number defaults and issued range are exact.
+     */
     @Test
     void initialCrlNumberDefaultsAndIssuedRangeAreExact() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
@@ -56,6 +62,9 @@ final class FsPkiStoreOptionsTest {
         assertEquals(BigInteger.ONE, defaults.initialCrlNumber());
     }
 
+    /**
+     * Every copy preserves initial CRL number and unchanged options.
+     */
     @Test
     void everyCopyPreservesInitialCrlNumberAndUnchangedOptions() {
         BigInteger initial = BigInteger.valueOf(12345);
@@ -73,6 +82,9 @@ final class FsPkiStoreOptionsTest {
                 .withSigningCompactionTransientBudgetBytes(2000));
     }
 
+    /**
+     * Resident index budget accepts values above default.
+     */
     @Test
     void residentIndexBudgetAcceptsValuesAboveDefault() {
         long configured = 768L * 1024L * 1024L;
@@ -88,6 +100,9 @@ final class FsPkiStoreOptionsTest {
                 FsPkiStoreOptions.defaults().signingCompactionTransientBudgetBytes()));
     }
 
+    /**
+     * Resident index budget must be positive.
+     */
     @Test
     void residentIndexBudgetMustBePositive() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
@@ -97,6 +112,9 @@ final class FsPkiStoreOptionsTest {
                 () -> defaults.withSigningResidentIndexBudgetBytes(-1L));
     }
 
+    /**
+     * Compaction transient budget must be positive and combined envelope must not overflow.
+     */
     @Test
     void compactionTransientBudgetMustBePositiveAndCombinedEnvelopeMustNotOverflow() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();

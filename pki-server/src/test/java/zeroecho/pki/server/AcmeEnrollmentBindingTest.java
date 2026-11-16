@@ -66,12 +66,22 @@ import zeroecho.pki.server.enrollment.EnrollmentProfile;
 import zeroecho.pki.server.enrollment.EnrollmentProfileService;
 import zeroecho.pki.server.enrollment.EnrollmentProfileState;
 
-/** Mandatory ACME policy bindings survive restart and concurrent administration. */
+/**
+ * Mandatory ACME policy bindings survive restart and concurrent administration.
+ */
 class AcmeEnrollmentBindingTest {
     private static final Instant NOW = Instant.parse("2026-10-11T00:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks active compatible enrollment policy gates ACME directory registration while suspended historical bindings remain recoverable.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void requiresActiveCompatibleBindingAndPreservesSuspendedBindingAcrossRestart() throws Exception {
         Path log;
@@ -106,6 +116,11 @@ class AcmeEnrollmentBindingTest {
         }
     }
 
+    /**
+     * Checks shared durable authority serializes racing ACME registration and incompatible enrollment-policy replacement.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentRegistrationAndIncompatiblePolicyUpdateCannotBothCommit() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);

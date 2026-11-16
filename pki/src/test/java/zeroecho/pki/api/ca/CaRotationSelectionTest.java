@@ -40,7 +40,13 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.*;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 
+/**
+ * Contract and regression tests for ca rotation selection.
+ */
 class CaRotationSelectionTest {
+    /**
+     * Primary key replacement preserves alternative and exact outgoing algorithm.
+     */
     @Test void primaryKeyReplacementPreservesAlternativeAndExactOutgoingAlgorithm() {
         var retained = binding(true);
         var effective = CaRotationSelection.primaryKey(new KeyRef("replacement")).effective(retained);
@@ -51,6 +57,9 @@ class CaRotationSelectionTest {
                 effective.alternative().orElseThrow().keyRef().orElseThrow());
     }
 
+    /**
+     * Alternative algorithm only retains both keys and cannot add missing role.
+     */
     @Test void alternativeAlgorithmOnlyRetainsBothKeysAndCannotAddMissingRole() {
         var change = new CaRotationSelection(1, Optional.empty(), Optional.of(new CaRotationSelection.RoleChange(
                 Optional.empty(), Optional.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384.canonicalForm()))));
@@ -63,6 +72,9 @@ class CaRotationSelectionTest {
         assertThrows(IllegalArgumentException.class, () -> change.effective(binding(false)));
     }
 
+    /**
+     * Rejects missing role and ambiguous algorithm input.
+     */
     @Test void rejectsMissingRoleAndAmbiguousAlgorithmInput() {
         assertThrows(IllegalArgumentException.class, () -> new CaRotationSelection(1, Optional.empty(), Optional.empty()));
         assertThrows(IllegalArgumentException.class, () -> new CaRotationSelection.RoleChange(Optional.empty(), Optional.empty()));

@@ -62,7 +62,9 @@ import java.util.Objects;
 @SuppressWarnings("PMD.LongVariable")
 public enum PkiFailureReason {
 
-    /** The caller supplied an invalid X.509 CA distinguished name. */
+    /**
+     * The caller supplied an invalid X.509 CA distinguished name.
+     */
     CA_SUBJECT_INVALID(PkiFailureClassification.VALIDATION_FAILURE, true),
 
     /**
@@ -72,81 +74,136 @@ public enum PkiFailureReason {
      */
     STORE_DURABILITY_UNCONFIRMED(PkiFailureClassification.RECOVERY_REQUIRED, false),
 
-    /** The credential targeted by a revocation transition does not exist. */
+    /**
+     * The credential targeted by a revocation transition does not exist.
+     */
     REVOCATION_CREDENTIAL_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** The credential is already permanently revoked, so no further transition applies. */
+    /**
+     * The credential is already permanently revoked, so no further transition applies.
+     */
     REVOCATION_TERMINAL(PkiFailureClassification.POLICY_REJECTION, false),
 
-    /** The requested revocation transition is not permitted from the current state. */
+    /**
+     * The requested revocation transition is not permitted from the current state.
+     */
     REVOCATION_TRANSITION_ILLEGAL(PkiFailureClassification.POLICY_REJECTION, false),
 
-    /** The revocation transition conflicts with a later committed transition. */
+    /**
+     * The revocation transition conflicts with a later committed transition.
+     */
     REVOCATION_TRANSITION_CONFLICT(PkiFailureClassification.CONFLICT, false),
 
-    /** A revocation append outcome is unknown, so authoritative recovery is required. */
+    /**
+     * A revocation append outcome is unknown, so authoritative recovery is required.
+     */
     REVOCATION_RECOVERY_REQUIRED(PkiFailureClassification.RECOVERY_REQUIRED, false),
 
-    /** The persisted revocation state is structurally invalid and requires recovery. */
+    /**
+     * The persisted revocation state is structurally invalid and requires recovery.
+     */
     REVOCATION_STATE_CORRUPT(PkiFailureClassification.RECOVERY_REQUIRED, false),
 
-    /** Persisting a revocation transition failed against the underlying storage. */
+    /**
+     * Persisting a revocation transition failed against the underlying storage.
+     */
     REVOCATION_PERSIST_FAILED(PkiFailureClassification.RESOURCE_FAILURE, false),
 
-    /** The authoritative signing time source was unavailable for the revocation. */
+    /**
+     * The authoritative signing time source was unavailable for the revocation.
+     */
     REVOCATION_TIME_UNAVAILABLE(PkiFailureClassification.RESOURCE_FAILURE, false),
 
-    /** A revocation failed for an unenumerated store reason; details are withheld. */
+    /**
+     * A revocation failed for an unenumerated store reason; details are withheld.
+     */
     REVOCATION_STATE_UPDATE_FAILED(PkiFailureClassification.RESOURCE_FAILURE, false),
 
-    /** A pending-confirmation revocation cleanup outcome is unknown and requires recovery. */
+    /**
+     * A pending-confirmation revocation cleanup outcome is unknown and requires recovery.
+     */
     CONFIRMATION_REVOCATION_RECOVERY_REQUIRED(PkiFailureClassification.RECOVERY_REQUIRED, false),
 
-    /** The pending confirmation is not in a revocable state. */
+    /**
+     * The pending confirmation is not in a revocable state.
+     */
     CONFIRMATION_REVOCATION_CONFLICT(PkiFailureClassification.CONFLICT, false),
 
-    /** A publication attempt counter overflowed and cannot be advanced. */
+    /**
+     * A publication attempt counter overflowed and cannot be advanced.
+     */
     PUBLICATION_ATTEMPT_EXHAUSTED(PkiFailureClassification.RESOURCE_FAILURE, false),
 
-    /** A publication record changed concurrently and the transition no longer applies. */
+    /**
+     * A publication record changed concurrently and the transition no longer applies.
+     */
     PUBLICATION_CONCURRENT_MODIFICATION(PkiFailureClassification.CONFLICT, false),
 
-    /** A publication result outcome is unknown, so authoritative recovery is required. */
+    /**
+     * A publication result outcome is unknown, so authoritative recovery is required.
+     */
     PUBLICATION_RESULT_UNCONFIRMED(PkiFailureClassification.EXTERNAL_OUTCOME_UNKNOWN, false),
 
-    /** The content submitted for publication is invalid. */
+    /**
+     * The content submitted for publication is invalid.
+     */
     PUBLICATION_CONTENT_INVALID(PkiFailureClassification.VALIDATION_FAILURE, false),
 
-    /** The referenced publication operation does not exist. */
+    /**
+     * The referenced publication operation does not exist.
+     */
     PUBLICATION_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A publication operation requires authoritative recovery before continuing. */
+    /**
+     * A publication operation requires authoritative recovery before continuing.
+     */
     PUBLICATION_RECOVERY_FAILED(PkiFailureClassification.RECOVERY_REQUIRED, false),
 
-    /** A referenced issuing authority (CA) does not exist. */
+    /**
+     * A referenced issuing authority (CA) does not exist.
+     */
     ISSUER_CA_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A referenced issuing authority (CA) exists but is not in an active state. */
+    /**
+     * A referenced issuing authority (CA) exists but is not in an active state.
+     */
     ISSUER_CA_NOT_ACTIVE(PkiFailureClassification.POLICY_REJECTION, false),
 
-    /** A referenced issuer generation does not exist. */
+    /**
+     * A referenced issuer generation does not exist.
+     */
     ISSUER_GENERATION_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A referenced issuer chain path does not exist. */
+    /**
+     * A referenced issuer chain path does not exist.
+     */
     ISSUER_CHAIN_PATH_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A referenced issuer credential does not exist. */
+    /**
+     * A referenced issuer credential does not exist.
+     */
     ISSUER_CREDENTIAL_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A referenced end-entity credential does not exist. */
+    /**
+     * A referenced end-entity credential does not exist.
+     */
     CREDENTIAL_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false),
 
-    /** A referenced status-generation target does not exist. */
+    /**
+     * A referenced status-generation target does not exist.
+     */
     STATUS_TARGET_NOT_FOUND(PkiFailureClassification.NOT_FOUND, false);
 
     private final PkiFailureClassification classification;
     private final boolean externalSafe;
 
+    /**
+     * Associates the reason with its classification and external disclosure policy.
+     *
+     * @param classification protocol-independent classification assigned by the enum declaration
+     * @param externalSafe whether this reason token may be disclosed to external clients
+     * @throws NullPointerException if the classification is null
+     */
     PkiFailureReason(PkiFailureClassification classification, boolean externalSafe) {
         this.classification = Objects.requireNonNull(classification, "classification");
         this.externalSafe = externalSafe;

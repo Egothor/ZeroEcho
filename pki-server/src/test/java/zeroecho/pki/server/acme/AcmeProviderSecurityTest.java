@@ -53,10 +53,15 @@ import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Production challenge-provider policy and explicit-composition coverage. */
+/**
+ * Production challenge-provider policy and explicit-composition coverage.
+ */
 class AcmeProviderSecurityTest {
     private static final Instant NOW = Instant.parse("2026-08-05T08:00:00Z");
 
+    /**
+     * Checks that an empty selection activates no provider and explicit stable IDs produce an immutable provider map.
+     */
     @Test
     void providersRequireExplicitStableIdentity() {
         System.out.println("providersRequireExplicitStableIdentity");
@@ -72,6 +77,9 @@ class AcmeProviderSecurityTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that the production HTTP challenge policy rejects localhost with the safe network classification before access.
+     */
     @Test
     void httpProviderRejectsInternalTargetBeforeNetworkAccess() {
         System.out.println("httpProviderRejectsInternalTargetBeforeNetworkAccess");
@@ -83,6 +91,9 @@ class AcmeProviderSecurityTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that a DNS resolver hostname is rejected instead of being resolved implicitly by the provider.
+     */
     @Test
     void dnsProviderRequiresExplicitNumericResolver() {
         System.out.println("dnsProviderRequiresExplicitNumericResolver");
@@ -95,6 +106,9 @@ class AcmeProviderSecurityTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that a classpath EAB provider remains inactive until its exact configuration identity is selected.
+     */
     @Test
     void eabProviderIsClasspathInactiveUntilExplicitlySelected() {
         System.out.println("eabProviderIsClasspathInactiveUntilExplicitlySelected");

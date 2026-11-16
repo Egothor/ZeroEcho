@@ -64,7 +64,21 @@ import zeroecho.pki.server.RealmId;
  */
 public record PkiServerAuthenticationContext(List<X509Certificate> peerCertificates, String protocol,
         String cipherSuite, String requestId, RealmId realmId, Map<String, List<String>> requestHeaders) {
-    /** Validates and snapshots the finite authentication context. */
+    /**
+     * Validates and snapshots the finite authentication context.
+     * @param peerCertificates trusted JSSE peer chain, leaf first; 1\u201364 entries
+     * @param protocol negotiated TLS protocol; max 64 chars
+     * @param cipherSuite negotiated cipher suite; max 128 chars
+     * @param requestId safe request correlation identity matching {@code [A-Za-z0-9_-]{16,128}}
+     * @param realmId exact server realm
+     * @param requestHeaders bounded immutable request headers used only by an
+                      explicitly configured proxy mode; max 256 entries
+     * @throws NullPointerException if any of {@code peerCertificates}, {@code realmId}, {@code requestHeaders}
+     *         is null
+     * @throws IllegalArgumentException if the peer certificate chain is empty or exceeds its supported length
+     *         or TLS protocol or cipher metadata is invalid or the correlation identity is noncanonical or
+     *         forwarded authentication headers violate supported names, counts or byte bounds
+     */
     public PkiServerAuthenticationContext {
         peerCertificates = List.copyOf(Objects.requireNonNull(peerCertificates, "peerCertificates"));
         if (peerCertificates.isEmpty() || peerCertificates.size() > 64) {
@@ -103,7 +117,11 @@ public record PkiServerAuthenticationContext(List<X509Certificate> peerCertifica
         this(peerCertificates, protocol, cipherSuite, requestId, realmId, Map.of());
     }
 
-    /** Returns safe metadata only; certificate and header values are never rendered. */
+    /**
+     * Returns safe metadata without rendering certificate or header values.
+     *
+     * @return safe diagnostic metadata with protocol and cipher values redacted
+     */
     @Override
     public String toString() {
         return "PkiServerAuthenticationContext[peerCertificates=" + peerCertificates.size()

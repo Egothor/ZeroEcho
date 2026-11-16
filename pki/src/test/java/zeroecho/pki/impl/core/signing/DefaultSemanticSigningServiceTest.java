@@ -95,16 +95,34 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for default semantic signing service.
+ */
 final class DefaultSemanticSigningServiceTest {
+    /**
+     * Fixed reference instant shared by the fixture and its expected evidence.
+     */
     static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final Duration TTL = Duration.ofMinutes(1);
     private static final KeyRef KEY = new KeyRef("test-key");
+    /**
+     * Fairness key used to schedule the fixture signing operation.
+     */
     static final PkiId FAIRNESS = new PkiId("authority");
+    /**
+     * Authenticated actor and purpose attached to fixture signing requests.
+     */
     static final AccessContext ACCESS = new AccessContext(
             new Principal("TEST", "signer"), new Purpose("CA_CREATE"),
             Optional.empty(), Optional.empty());
 
+    /**
+     * Rejects inconsistent evidence during adoption and retained observation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsInconsistentEvidenceDuringAdoptionAndRetainedObservation(@TempDir Path root) throws Exception {
         AccessContext access = new AccessContext(new Principal("ACME_ACCOUNT", "account"), ACCESS.purpose(),
@@ -151,6 +169,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Provider limit rejects semantic acceptance before custody or outer continuation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void providerLimitRejectsSemanticAcceptanceBeforeCustodyOrOuterContinuation(@TempDir Path root)
             throws Exception {
@@ -176,6 +200,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Preparation adopts staged content and uses one atomic acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preparationAdoptsStagedContentAndUsesOneAtomicAcceptance(@TempDir Path root)
             throws Exception {
@@ -208,6 +238,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Scope survives reopen and never uses scheduling authority.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void scopeSurvivesReopenAndNeverUsesSchedulingAuthority(@TempDir Path root) throws Exception {
         PkiId id;
@@ -231,6 +267,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Signing success is not semantic completion.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signingSuccessIsNotSemanticCompletion(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -266,6 +308,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Foreign carrier and invalid binding cannot transfer custody.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void foreignCarrierAndInvalidBindingCannotTransferCustody(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -289,6 +337,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Capacity rejection cleans up without retaining custody.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void capacityRejectionCleansUpWithoutRetainingCustody(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 1, CLOCK);
@@ -304,6 +358,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Uncertain commit preserves single use and authoritative resolution.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainCommitPreservesSingleUseAndAuthoritativeResolution(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -322,6 +382,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Raw signing identifiers and corrupted outer scopes are not exposed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rawSigningIdentifiersAndCorruptedOuterScopesAreNotExposed(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -365,6 +431,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Scope comes from each canonical domain and cancellation does not complete outer.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void scopeComesFromEachCanonicalDomainAndCancellationDoesNotCompleteOuter(@TempDir Path root)
             throws Exception {
@@ -441,10 +513,23 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Composes the fixture semantic signing service over the selected store and signing collaborators.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param signing borrowed signing service used to create and accept the prepared operation
+     * @return semantic service borrowing the fixture store, clock, and provider
+     */
     static DefaultSemanticSigningService semantic(PkiStore store, DefaultSigningService signing) {
         return new DefaultSemanticSigningService(store, signing, PkiTestRuntime.endEntityPreparation(store, CLOCK));
     }
 
+    /**
+     * Exact issuance replay uses only point reads and survives reopen then purge.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactIssuanceReplayUsesOnlyPointReadsAndSurvivesReopenThenPurge(@TempDir Path root) throws Exception {
         CorrelatedEndEntityIssuanceRequest input = correlatedInput();
@@ -494,6 +579,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Changed or malformed CSR conflicts without parsing or proof verification.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void changedOrMalformedCsrConflictsWithoutParsingOrProofVerification(@TempDir Path root) throws Exception {
         CorrelatedEndEntityIssuanceRequest input = correlatedInput();
@@ -516,6 +607,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Correlated preparation replays failed and expired work without new preparation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPreparationReplaysFailedAndExpiredWorkWithoutNewPreparation(@TempDir Path root) throws Exception {
         CorrelatedEndEntityIssuanceRequest input = correlatedInput();
@@ -556,6 +653,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Occupied correlation verifies every frozen coordinate and excludes no intent.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void occupiedCorrelationVerifiesEveryFrozenCoordinateAndExcludesNoIntent(@TempDir Path root) throws Exception {
         CorrelatedEndEntityIssuanceRequest input = correlatedInput();
@@ -586,6 +689,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Wrong kind and raw work are not returned as issuance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void wrongKindAndRawWorkAreNotReturnedAsIssuance(@TempDir Path root) throws Exception {
         CorrelatedEndEntityIssuanceRequest input = correlatedInput();
@@ -617,6 +726,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Malformed persisted issuance identity is rejected.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedPersistedIssuanceIdentityIsRejected(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -640,6 +755,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Binding derivation is pure and lookup checks every frozen coordinate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bindingDerivationIsPureAndLookupChecksEveryFrozenCoordinate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -706,6 +827,12 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Binding lookup rejects inconsistent outer snapshot.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bindingLookupRejectsInconsistentOuterSnapshot(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -733,6 +860,11 @@ final class DefaultSemanticSigningServiceTest {
         }
     }
 
+    /**
+     * Constructs the fixed correlated issuance input used by replay and identity tests.
+     *
+     * @return immutable correlated end-entity issuance request
+     */
     static CorrelatedEndEntityIssuanceRequest correlatedInput() {
         return CorrelatedIssuanceIdentityTest.request("authority", "order", "1".repeat(64), "profile", 1,
                 "1".repeat(64), zeroecho.pki.testkit.SemanticIssuanceFixture.issuerId(1).value(),
@@ -740,6 +872,17 @@ final class DefaultSemanticSigningServiceTest {
                 zeroecho.pki.testkit.SemanticIssuanceFixture.path(1).pathCommitment(), new byte[] { 1, 2, 3 }, Optional.empty());
     }
 
+    /**
+     * Stages a correlated issuance candidate with an optional deliberately changed template field.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param signing borrowed signing service used to create and accept the prepared operation
+     * @param input correlated issuance input whose exact semantic identity is retained
+     * @param changedField zero-based template field to replace, or a negative value for no replacement
+     * @param changedValue replacement encoded value for the selected template field
+     * @return prepared domain signing request bound to the selected correlated input
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static DomainSigningRequest issuance(PkiStore store, DefaultSigningService signing,
             CorrelatedEndEntityIssuanceRequest input, int changedField, String changedValue) throws Exception {
         CorrelatedIssuanceIdentity identity = CorrelatedIssuanceIdentity.derive(input);
@@ -784,10 +927,23 @@ final class DefaultSemanticSigningServiceTest {
                 });
     }
 
+    /**
+     * Opens an owned filesystem store using the fixed fixture clock and test options.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @return open filesystem store that the caller must close
+     */
     static FilesystemPkiStore open(Path root) {
         return FilesystemPkiStoreTestAccess.open(root, 4, CLOCK);
     }
 
+    /**
+     * Creates the fixture durable signing service with the supplied provider and acceptance callback.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param provider borrowed signing provider selected for execution or capability checks
+     * @return signing service without a background reactor wait implementation
+     */
     static DefaultSigningService signing(PkiStore store, SigningProvider provider) {
         return signing(store, provider, (command, custody) -> {
             custody.run();
@@ -795,6 +951,14 @@ final class DefaultSemanticSigningServiceTest {
         });
     }
 
+    /**
+     * Creates the fixture durable signing service with the supplied provider and acceptance callback.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param provider borrowed signing provider selected for execution or capability checks
+     * @param acceptance callback defining the fixture acceptance/custody transaction
+     * @return signing service without a background reactor wait implementation
+     */
     static DefaultSigningService signing(PkiStore store, SigningProvider provider,
             DefaultSigningService.AcceptanceOperation acceptance) {
         return new DefaultSigningService(store, provider, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, TTL, new SecureRandom(),
@@ -802,6 +966,15 @@ final class DefaultSemanticSigningServiceTest {
                 (boundedWaitId, boundedWaitCancellation) -> { throw new UnsupportedOperationException("Fixture has no reactor wait"); });
     }
 
+    /**
+     * Stages the fixed certificate candidate and creates its domain signing request.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param signing borrowed signing service used to create and accept the prepared operation
+     * @param correlation stable fixture correlation identity
+     * @return prepared domain request carrying the selected correlation identity
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static DomainSigningRequest request(PkiStore store, DefaultSigningService signing,
             String correlation) throws Exception {
         DomainContinuationTemplate template = DomainCommandEncoding.correlatedTemplate(
@@ -814,27 +987,57 @@ final class DefaultSemanticSigningServiceTest {
                 Encoding.BINARY, content, TTL, template, java.util.Optional.empty());
     }
 
+    /**
+     * Signing provider fixture with deterministic outcomes for semantic workflow tests.
+     */
     static final class TestProvider implements SigningProvider {
         private zeroecho.pki.spi.crypto.SigningInputCapabilities inputs =
                 new zeroecho.pki.spi.crypto.SigningInputCapabilities(Long.MAX_VALUE, java.util.Map.of());
+        /**
+         * {@inheritDoc}
+         */
         @Override public zeroecho.pki.spi.crypto.SigningInputCapabilities inputCapabilities() {
             return inputs;
         }
+        /**
+         * Number of provider calls observed by the fixture.
+         */
         final AtomicInteger calls = new AtomicInteger();
+        /**
+         * {@inheritDoc}
+         */
         @Override public String id() { return "test-signer"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public ConfigurationCommitment configurationCommitment() {
             return new ConfigurationCommitment(new byte[ConfigurationCommitment.BYTE_LENGTH]);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Set<String> supportedAlgorithms() { return Set.of(zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm()); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation dispatch(SignRequest request, CallControl control) {
             calls.incrementAndGet();
             throw new UnsupportedOperationException();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation reconcile(PkiId id, CallControl control) {
             throw new UnsupportedOperationException();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation cancel(PkiId id, long fence, CancellationReason reason,
                 CallControl control) { throw new UnsupportedOperationException(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { }
     }
 }

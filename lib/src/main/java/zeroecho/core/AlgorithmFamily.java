@@ -62,14 +62,24 @@ package zeroecho.core;
  * @since 1.0
  */
 public enum AlgorithmFamily {
-    /** Public-key primitives (signatures, RSA, etc.). */
+    /**
+     * Public-key primitives (signatures, RSA, etc.).
+     */
     ASYMMETRIC,
-    /** Shared-key primitives (ciphers, MACs). */
+    /**
+     * Shared-key primitives (ciphers, MACs).
+     */
     SYMMETRIC,
-    /** Key encapsulation mechanisms (encapsulate/decapsulate). */
+    /**
+     * Key encapsulation mechanisms (encapsulate/decapsulate).
+     */
     KEM,
-    /** Unkeyed hash functions or XOFs. */
+    /**
+     * Unkeyed hash functions or XOFs.
+     */
     DIGEST,
-    /** Key-agreement schemes such as ECDH/X25519. */
+    /**
+     * Key-agreement schemes such as ECDH/X25519.
+     */
     AGREEMENT
 }

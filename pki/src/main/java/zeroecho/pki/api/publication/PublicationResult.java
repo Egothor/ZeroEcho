@@ -49,6 +49,9 @@ public record PublicationResult(PkiId publicationId, PublicationStatus status, l
      * Creates a publication result.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param publicationId publication record id
+     * @param status outcome status
+     * @param attemptNumber current monotonic attempt number
      */
     public PublicationResult {
         if (publicationId == null) {

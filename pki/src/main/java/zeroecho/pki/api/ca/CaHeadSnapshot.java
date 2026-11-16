@@ -44,7 +44,18 @@ import zeroecho.pki.api.PkiId;
  * @param pathId selected chain path
  * @param bindingCommitment exact selected issuer cryptographic binding SHA-256 */
 public record CaHeadSnapshot(int version, PkiId caId, long epoch, PkiId issuerId, PkiId pathId, String bindingCommitment) {
-    /** Creates a complete selected-head fence. */
+    /**
+     * Creates a complete selected-head fence.
+     * @param version record version, one
+     * @param caId logical authority
+     * @param epoch positive monotonic selection epoch
+     * @param issuerId selected generation
+     * @param pathId selected chain path
+     * @param bindingCommitment exact selected issuer cryptographic binding SHA-256
+     * @throws NullPointerException if caId, issuerId or pathId is null
+     * @throws IllegalArgumentException if version is not one, epoch is not positive, or bindingCommitment is
+     *     not a canonical SHA-256 digest
+     */
     public CaHeadSnapshot {
         Objects.requireNonNull(caId, "caId"); Objects.requireNonNull(issuerId, "issuerId"); Objects.requireNonNull(pathId, "pathId");
         if (version != 1 || epoch < 1 || bindingCommitment == null || !bindingCommitment.matches("[0-9a-f]{64}")) {

@@ -69,14 +69,31 @@ public record BackupTransferConfiguration(Path directory, long maximumArchiveByt
         long maximumRetainedBytes, int maximumArtifacts, int maximumConcurrentJobs,
         long maximumWorkspaceBytes, Duration lifetime, Duration transferTimeout,
         URI browserOrigin) {
-    /** Version of the separate transfer configuration document. */
+    /**
+     * Version of the separate transfer configuration document.
+     */
     public static final int VERSION = 1;
     private static final int CONFIGURATION_LIMIT = 16_384;
     private static final Set<String> FIELDS = Set.of("version", "directory", "maximumArchiveBytes",
             "maximumRetainedBytes", "maximumArtifacts", "maximumConcurrentJobs",
             "maximumWorkspaceBytes", "lifetimeSeconds", "transferTimeoutSeconds", "browserOrigin");
 
-    /** Validates mandatory budgets without creating directories or opening stores. */
+    /**
+     * Validates mandatory budgets without creating directories or opening stores.
+     * @param directory exclusively owned artifact directory
+     * @param maximumArchiveBytes compressed bytes allowed in one transfer
+     * @param maximumRetainedBytes total reserved compressed artifact bytes
+     * @param maximumArtifacts maximum live descriptors, including incomplete uploads
+     * @param maximumConcurrentJobs maximum simultaneous transfer or domain jobs
+     * @param maximumWorkspaceBytes aggregate domain-workspace admission budget
+     * @param lifetime lifetime measured from artifact reservation, not last access
+     * @param transferTimeout maximum duration of one network transfer
+     * @param browserOrigin exact origin allowed to submit browser transfer requests
+     * @throws NullPointerException if any of {@code directory}, {@code lifetime}, {@code transferTimeout},
+     *         {@code browserOrigin} is null
+     * @throws IllegalArgumentException if a transfer size, storage, concurrency or lifetime budget is outside
+     *         its supported bound or a permitted browser origin is not canonical
+     */
     public BackupTransferConfiguration {
         directory = Objects.requireNonNull(directory, "directory").toAbsolutePath().normalize();
         Objects.requireNonNull(lifetime, "lifetime");

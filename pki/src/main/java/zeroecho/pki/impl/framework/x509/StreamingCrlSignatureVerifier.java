@@ -54,7 +54,9 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.ZeroEchoSession;
 
-/** Stateless streaming signature verification shared by CRL preparation and publication. */
+/**
+ * Stateless streaming signature verification shared by CRL preparation and publication.
+ */
 public final class StreamingCrlSignatureVerifier {
     private StreamingCrlSignatureVerifier() { }
 

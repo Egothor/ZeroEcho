@@ -51,6 +51,10 @@ public record PublicationQuery(Optional<PublicationTargetType> targetType, Optio
      * Creates a publication query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param targetType optional target type filter
+     * @param after optional lower bound for time
+     * @param before optional upper bound for time
+     * @param sourceType optional source-object type filter
      */
     public PublicationQuery {
         if (targetType == null || after == null || before == null || sourceType == null) {

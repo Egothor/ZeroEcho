@@ -100,6 +100,12 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 final class HybridCertificateIssuanceTest {
 
+    /**
+     * Alternative intermediate retains its own subject key and both parent signatures.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void alternativeIntermediateRetainsItsOwnSubjectKeyAndBothParentSignatures(@TempDir Path root) throws Exception {
         HybridIssuanceFixture fixture = new HybridIssuanceFixture(root, "EC", "ECDSA", ECDSA_ALGORITHM,
                 HybridIssuanceFixture.alternative());
@@ -142,6 +148,13 @@ final class HybridCertificateIssuanceTest {
         }
     }
 
+    /**
+     * Rejects untrusted alternative provider output before acceptance.
+     *
+     * @param fault named failure injected at the selected lifecycle boundary
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"empty", "wrong-key", "changed-signature", "oversize-key", "malformed-key"})
     void rejectsUntrustedAlternativeProviderOutputBeforeAcceptance(String fault, @TempDir Path root) throws Exception {
@@ -158,6 +171,12 @@ final class HybridCertificateIssuanceTest {
         }
     }
 
+    /**
+     * Alternative root lifecycle preserves current roles and rejects mode changes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void alternativeRootLifecyclePreservesCurrentRolesAndRejectsModeChanges(@TempDir Path root) throws Exception {
         HybridIssuanceFixture fixture = new HybridIssuanceFixture(root, "EC", "ECDSA", ECDSA_ALGORITHM,
@@ -221,6 +240,14 @@ final class HybridCertificateIssuanceTest {
         }
     }
 
+    /**
+     * Explicit hybrid rotation preserves roles and root activation boundary.
+     *
+     * @param intermediate whether the tested authority is an intermediate rather than a root
+     * @param role algorithm role selected for the binding-policy case
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({"false,primary", "false,alternative", "false,both",
             "true,primary", "true,alternative", "true,both"})
@@ -298,6 +325,12 @@ final class HybridCertificateIssuanceTest {
         }
     }
 
+    /**
+     * Pure PQC root rotation publishes candidate and keeps selected issuer.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void purePqcRootRotationPublishesCandidateAndKeepsSelectedIssuer(@TempDir Path directory) throws Exception {
         var fixture = new HybridIssuanceFixture(directory, "ML-DSA-87", "ML-DSA",
                 BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(), HybridCertificateMode.None.INSTANCE,
@@ -325,6 +358,12 @@ final class HybridCertificateIssuanceTest {
         }
     }
 
+    /**
+     * Existing hybrid intermediate cannot drop alternative role through active profile.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void existingHybridIntermediateCannotDropAlternativeRoleThroughActiveProfile(@TempDir Path directory) throws Exception {
         var fixture = new HybridIssuanceFixture(directory, "EC384", "ECDSA", BootstrapAlgorithmIdentities.ECDSA_SHA384.canonicalForm(),
                 new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
@@ -395,6 +434,9 @@ final class HybridCertificateIssuanceTest {
     private static final String ALT_KEY_REF = "zeroecho-lib:alt.prv";
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Registers the cryptographic providers required by the test cases.
+     */
     @BeforeAll
     static void registerBouncyCastle() {
         BouncyCastleActivator.init();
@@ -404,6 +446,9 @@ final class HybridCertificateIssuanceTest {
      * Verifies that a hybrid ECDSA+ML-DSA-65 root CA creation is accepted by the full
      * PKI session — i.e., that the hybrid profile with AltSignature mode passes all
      * profile-validation, algorithm-compatibility and signing-provider gates.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @throws Exception if fixture setup, execution, or cleanup fails
      */
     @Test
     void hybridRootCaCreationIsAccepted(@TempDir Path root) throws Exception {
@@ -487,7 +532,9 @@ final class HybridCertificateIssuanceTest {
                 new HybridCertificateMode.AltSignature(ML_DSA_65_ALGORITHM, ALT_KEY_REF));
     }
 
-    /** Minimal bootstrap that installs the hybrid profile on first store open. */
+    /**
+     * Minimal bootstrap that installs the hybrid profile on first store open.
+     */
     private static final class HybridBootstrap implements DefaultPkiSession.Bootstrap {
         private final Path root;
 

@@ -111,6 +111,9 @@ public final class MldsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(MldsaPrivateKeySpec.class, new MldsaPrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

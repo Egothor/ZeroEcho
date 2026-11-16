@@ -54,7 +54,16 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 
+/**
+ * Contract and regression tests for credential metadata authority.
+ */
 final class CredentialMetadataAuthorityTest {
+    /**
+     * Atomic record and owner survive reopen and prevent reclaim.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void atomicRecordAndOwnerSurviveReopenAndPreventReclaim(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = open(root)) {
@@ -89,6 +98,12 @@ final class CredentialMetadataAuthorityTest {
         }
     }
 
+    /**
+     * Incomplete committed edge rejects startup before content reclamation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void incompleteCommittedEdgeRejectsStartupBeforeContentReclamation(@TempDir Path root) throws Exception {
         Path contentPath;
         try (FilesystemPkiStore store = open(root)) {
@@ -106,6 +121,11 @@ final class CredentialMetadataAuthorityTest {
         assertTrue(Files.exists(contentPath));
     }
 
+    /**
+     * Owner payload preserves existing version and rejects wrong identity or category.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void ownerPayloadPreservesExistingVersionAndRejectsWrongIdentityOrCategory() throws Exception {
         String content = "12345678-1234-4234-9234-123456789abc";
         Set<DurableContentOwner> owners = Set.of(DurableContentOwner.credentialRecord(new PkiId("credential")));

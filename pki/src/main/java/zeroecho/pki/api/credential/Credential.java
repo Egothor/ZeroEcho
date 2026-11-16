@@ -81,6 +81,17 @@ public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuer
      * Creates a credential record.
      *
      * @throws IllegalArgumentException if mandatory inputs are invalid
+     * @param credentialId stable identifier for the credential (typically a fingerprint of encoded bytes)
+     * @param formatId framework identifier
+     * @param issuerRef issuing CA reference
+     * @param subjectRef normalized subject reference
+     * @param validity validity interval
+     * @param serialOrUniqueId framework-specific unique identifier (serial for X.509)
+     * @param publicKeyId stable identifier derived from the subject public key
+     * @param profileBinding closed profile identity governing issuance
+     * @param status persisted issuance and inventory metadata; this value is not sufficient for a trust decision because current revocation state and evaluation time are external runtime inputs. Security-sensitive callers must use {@link EffectiveCredentialStatusResolver}.
+     * @param content immutable store-owned credential content
+     * @param attributes universal attribute set
      */
     public Credential {
         if (credentialId == null) {

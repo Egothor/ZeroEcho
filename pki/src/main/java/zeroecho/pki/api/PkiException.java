@@ -60,7 +60,9 @@ public class PkiException extends RuntimeException {
 
     private static final long serialVersionUID = 759504279718537161L;
 
-    /** Optional stable machine-readable failure reason. */
+    /**
+     * Optional stable machine-readable failure reason.
+     */
     private final PkiFailureReason failureReason;
 
     /**

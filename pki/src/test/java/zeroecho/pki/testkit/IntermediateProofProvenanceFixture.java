@@ -47,11 +47,22 @@ import zeroecho.pki.impl.core.continuation.ManagedKeyProofCommand;
 import zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
-/** Structural fixture only; does not manufacture a retained completed proof. */
+/**
+ * Structural fixture only; does not manufacture a retained completed proof.
+ */
 public final class IntermediateProofProvenanceFixture {
     private IntermediateProofProvenanceFixture() { }
 
-    /** Adds exact structural provenance to synthetic internal acceptance fixtures. */
+    /**
+     * Adds exact structural provenance to synthetic internal acceptance fixtures.
+     *
+     * @param template synthetic intermediate command template to augment structurally
+     * @param namespace exact signing namespace encoded in the synthetic proof reference
+     * @param configuration exact provider configuration commitment
+     * @param tbsLength exact candidate TBS length in bytes
+     * @param tbsSha256 lowercase hexadecimal SHA-256 commitment of the candidate TBS
+     * @return structurally augmented template; this does not create an authoritative retained proof
+     */
     public static DomainContinuationTemplate withProof(DomainContinuationTemplate template, String namespace,
             ConfigurationCommitment configuration, long tbsLength, String tbsSha256) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(template.command());

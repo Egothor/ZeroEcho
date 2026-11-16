@@ -43,11 +43,44 @@ import zeroecho.pki.api.*;
 import zeroecho.pki.api.profile.*;
 import zeroecho.pki.application.*;
 import zeroecho.pki.server.http.*;
+/**
+ * Builds durable administrative-workflow fixtures with explicit test-only capability seams.
+ */
 final class AdministrativeWorkflowFixture {
+ /**
+  * Public test-only password for the fixture signing keyring; never use it for deployed keys.
+  */
  static final String PASSWORD="Workflow-fixture-123456";
+ /**
+  * Fails the standalone workflow fixture when an expected invariant is false.
+  *
+  * @param value invariant result
+  * @param message assertion diagnostic
+  * @throws AssertionError if value is false
+  */
  static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
+ /**
+  * Creates the fixed version-one root-authority request envelope for a safe test subject.
+  *
+  * @param subject subject text already safe for insertion into the fixture JSON literal
+  * @return typed root creation envelope using the root-ca profile and fixture private-key alias
+  */
  static PkiOperationValue.ObjectValue envelope(String subject){return (PkiOperationValue.ObjectValue)StrictJson.parse(("{\"version\":1,\"arguments\":{\"formatId\":\"x509\",\"subjectRef\":\""+subject+"\",\"profileId\":\"root-ca\",\"keyRef\":\"fixture:root.prv\"}}").getBytes(),262144);}
+ /**
+  * Creates a trusted-proxy administrative root request with explicit test-only certificate evidence.
+  *
+  * @param c open fixture realm providing catalogue and realm identity
+  * @param subject safe root subject text
+  * @return authenticated typed root request carrying fixture authority and resource context
+  */
  static ServerOperationGateway.Request request(ServerRealmContext c,String subject){var d=HttpOperationCodec.decode(PkiSigningOperation.CreateAuthority.NAME,StrictJson.encode(envelope(subject)),262144,c.configuration().realmId(),c.gateway()::descriptor);var r=c.configuration().realmId();return new ServerOperationGateway.Request(r,"bootstrap-admin",AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY,Optional.of("trusted-proxy"),Optional.of(new CertificateIdentityEvidence(r,"a".repeat(64),"d".repeat(64),Set.of("e".repeat(64)),"f".repeat(64))),d.operation(),d.resource(),Permission.Relationship.ANY,d.context(),Optional.empty(),"workflow");}
+ /**
+  * Executes the real durable administrative approval workflow, including restart and root publication.
+  *
+  * @param directory isolated filesystem root for control log, domain store, and signing keyring
+  * @throws Exception if key setup, workflow processing, restart, or cleanup fails
+  * @throws AssertionError if a workflow durability, approval, replay, or publication invariant differs
+  */
  static void run(Path directory)throws Exception {
  AdministrativeRequestCoverage.verify();
  var config=configuration(directory,false);
@@ -194,15 +227,59 @@ final class AdministrativeWorkflowFixture {
 System.out.println("PASS submit once; bad DN rejected before approval; idempotent; independent approval; restart worker produces real CA: "+result.result().get());
  }
  }
+ /**
+  * Binds a typed operation envelope to the fixture's trusted-proxy requester identity.
+  *
+  * @param context open fixture realm
+  * @param operation semantic operation name resolved by the gateway catalogue
+  * @param envelope typed version-one operation envelope
+  * @return authenticated request retaining decoded scope and explicit fixture evidence
+  */
  static ServerOperationGateway.Request genericRequest(ServerRealmContext context,String operation,PkiOperationValue.ObjectValue envelope){
  var decoded=HttpOperationCodec.decode(operation,StrictJson.encode(envelope),262144,context.configuration().realmId(),context.gateway()::descriptor);
  var original=request(context,"CN=unused");return new ServerOperationGateway.Request(original.realmId(),original.principalId(),original.authenticationMode(),original.transportPrincipalId(),original.credentialEvidence(),decoded.operation(),decoded.resource(),Permission.Relationship.ANY,decoded.context(),Optional.empty(),"generic");
  }
- /** Opens only a test collaborator seam; no production API exposes the private control authority. */
+ /**
+  * Opens only a test collaborator seam; no production API exposes the private control authority.
+  * @param context open fixture realm whose private control collaborator is inspected
+  * @return borrowed private control store; the realm remains its lifecycle owner
+  * @throws Exception if reflective fixture access is unavailable
+  */
  static ServerControlStore control(ServerRealmContext context)throws Exception{var field=ServerRealmContext.class.getDeclaredField("control");field.setAccessible(true);return (ServerControlStore)field.get(context);}
+ /**
+  * Parses one bounded UTF-8 fixture JSON object without accepting a different root type.
+  *
+  * @param json valid object JSON bounded to one MiB after encoding
+  * @return typed immutable JSON object
+  * @throws IllegalArgumentException if JSON is malformed or exceeds the parser bound
+  * @throws ClassCastException if the root value is not an object
+  */
  static PkiOperationValue.ObjectValue object(String json) {return (PkiOperationValue.ObjectValue)StrictJson.parse(json.getBytes(java.nio.charset.StandardCharsets.UTF_8),1048576);}
+ /**
+  * Copies a typed object and replaces or adds one field without modifying the original.
+  *
+  * @param original source typed object
+  * @param key field name to replace or add
+  * @param value new field value
+  * @return new typed object containing the replaced field
+  */
  static PkiOperationValue.ObjectValue with(PkiOperationValue.ObjectValue original,String key,PkiOperationValue value){var fields=new LinkedHashMap<>(original.fields());fields.put(key,value);return new PkiOperationValue.ObjectValue(fields);}
+ /**
+  * Wraps fixture text as a typed operation argument.
+  *
+  * @param value text value; must not be null
+  * @return typed immutable text value
+  * @throws NullPointerException if value is null
+  */
  static PkiOperationValue.Text text(String value){return new PkiOperationValue.Text(value);}
+ /**
+  * Derives a fixture realm from the committed trusted-proxy example with isolated filesystem paths.
+  *
+  * @param directory fixture root for control, keyring, store, and backup artifacts
+  * @param signing whether to include the real local signing provider configuration
+  * @return decoded server configuration with disabled public listener and explicit approval policy
+  * @throws Exception if the committed example cannot be located, read, or decoded
+  */
  static PkiServerConfiguration configuration(Path directory,boolean signing)throws Exception {
  Path repository=Path.of("").toAbsolutePath();if(!Files.isDirectory(repository.resolve("docs")))repository=repository.getParent();
  var document=(PkiOperationValue.ObjectValue)StrictJson.parse(Files.readAllBytes(repository.resolve("documentation/examples/configuration/pki-server-trusted-proxy-rfc9440-example.json")),1048576);
@@ -223,8 +300,20 @@ System.out.println("PASS submit once; bad DN rejected before approval; idempoten
  document=with(document,"authentication",auth);document=with(document,"publicListener",object("{\"enabled\":false}"));
  return PkiServerConfigurationCodec.decode(StrictJson.encode(document));
  }
+ /**
+  * Builds one deterministic certificate-to-principal mapping JSON value.
+  *
+  * @param id mapping identity
+  * @param principal principal identity to bind
+  * @param digest single hexadecimal character repeated 64 times for the test fingerprint
+  * @return typed mapping object containing the exact fixture certificate fingerprint
+  */
  static PkiOperationValue.ObjectValue mapping(String id,String principal,String digest){return new PkiOperationValue.ObjectValue(Map.of("mappingId",text(id),"principalId",text(principal),"certificateSha256",text(digest.repeat(64))));}
- /** Runs the repository fixture directly when external JUnit dependencies cannot be downloaded. */
+ /**
+  * Runs the repository fixture directly when external JUnit dependencies cannot be downloaded.
+  * @param args unused standalone fixture arguments
+  * @throws Exception if temporary root creation or workflow execution fails
+  */
  public static void main(String[] args)throws Exception{run(Files.createTempDirectory("zeroecho-workflow-domain-"));}
 
 }

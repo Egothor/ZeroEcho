@@ -89,11 +89,22 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionConfiguration;
 
+/**
+ * Contract and regression tests for filesystem status schedule.
+ */
 class FilesystemStatusScheduleTest {
     private static final Instant NOW = Instant.parse("2026-10-05T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporary;
 
+    /**
+     * Current version18 without schedule namespace is empty and reopens.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentVersion18WithoutScheduleNamespaceIsEmptyAndReopens() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             assertTrue(store.getStatusSchedule(new PkiId("absent"), StatusObjectType.CRL).isEmpty());
@@ -105,6 +116,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Persists every configuration field and preserves creation time.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void persistsEveryConfigurationFieldAndPreservesCreationTime() throws Exception {
         StatusSchedule first;
         StatusSchedule replacement;
@@ -127,6 +143,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Compare and replace has one concurrent winner and monotonic revision.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void compareAndReplaceHasOneConcurrentWinnerAndMonotonicRevision() throws Exception {
         try (FilesystemPkiStore store = open(temporary); java.util.concurrent.ExecutorService pool = Executors.newFixedThreadPool(2)) {
             StatusSchedule original = store.putStatusSchedule(schedule("ca", StatusObjectType.CRL, true, 0));
@@ -150,6 +171,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Composite pages include every enabled family without repeats or disabled gaps.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void compositePagesIncludeEveryEnabledFamilyWithoutRepeatsOrDisabledGaps() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             for (String ca : List.of("a", "a:CRL", "a/DELTA_CRL", "ž", "日本")) {
@@ -173,6 +199,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Invalid unicode cannot alias an existing authority.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidUnicodeCannotAliasAnExistingAuthority() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             StatusSchedule ordinary = store.putStatusSchedule(schedule("?", StatusObjectType.CRL, true, 0));
@@ -186,6 +217,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Malformed cursors and invalid bounds are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedCursorsAndInvalidBoundsAreRejected() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             for (String cursor : List.of("", "ca:CRL", ".CRL", "YQ==.CRL", "_w.CRL", "YQ.UNKNOWN", "IA.CRL")) {
@@ -199,6 +235,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Deterministic claim survives restart and explicit edit fences unaccepted work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deterministicClaimSurvivesRestartAndExplicitEditFencesUnacceptedWork() throws Exception {
         StatusScheduleState.Execution claimed;
         try (FilesystemPkiStore store = open(temporary)) {
@@ -226,6 +267,12 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Invalid persisted heads reject open.
+     *
+     * @param corruption named malformed state or encoded-field modification
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"future", "negative-revision", "negative-worker", "truncated", "trailing", "wrong-key", "duplicate"})
     void invalidPersistedHeadsRejectOpen(String corruption) throws Exception {
         Path root = temporary.resolve(corruption);
@@ -252,6 +299,9 @@ class FilesystemStatusScheduleTest {
         assertEquals("v18", Files.readString(root.resolve("VERSION")));
     }
 
+    /**
+     * Invalid cadence and grace are rejected.
+     */
     @Test void invalidCadenceAndGraceAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> new StatusSchedule(new PkiId("ca"), StatusObjectType.CRL,
                 new FormatId("x509"), Duration.ofSeconds(60).plusNanos(1), 60, true, Optional.empty(), NOW, NOW, 0));
@@ -262,6 +312,11 @@ class FilesystemStatusScheduleTest {
                         Duration.ofMinutes(1), grace, true, Optional.empty(), NOW, NOW, 0));
     }
 
+    /**
+     * Long identity round trips through application pagination.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void longIdentityRoundTripsThroughApplicationPagination() throws Exception {
         String first = "a".repeat(800);
         String second = "b".repeat(800);
@@ -286,6 +341,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Capacity failure does not retry or masquerade as cas conflict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void capacityFailureDoesNotRetryOrMasqueradeAsCasConflict() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             AtomicInteger attempts = new AtomicInteger();
@@ -302,6 +362,11 @@ class FilesystemStatusScheduleTest {
         }
     }
 
+    /**
+     * Only conflicts retry and persistent conflicts are bounded.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void onlyConflictsRetryAndPersistentConflictsAreBounded() throws Exception {
         try (FilesystemPkiStore store = open(temporary)) {
             AtomicInteger attempts = new AtomicInteger();

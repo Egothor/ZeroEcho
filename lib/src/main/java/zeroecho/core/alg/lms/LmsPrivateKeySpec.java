@@ -130,6 +130,9 @@ public final class LmsPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -143,6 +146,9 @@ public final class LmsPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();
@@ -153,6 +159,11 @@ public final class LmsPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * Returns the specification label and encoded-key length without disclosing key bytes.
+     *
+     * @return diagnostic type label and retained encoding length in bytes
+     */
     @Override
     public String toString() {
         return "LmsPrivateKeySpec[len=" + pkcs8.length + "]";

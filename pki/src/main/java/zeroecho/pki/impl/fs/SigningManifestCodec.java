@@ -44,15 +44,32 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Canonical version-one signing manifest codec. */
+/**
+ * Canonical version-one signing manifest codec.
+ */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace",
         "PMD.PrematureDeclaration" })
 final class SigningManifestCodec {
 
+    /**
+     * Fixed binary magic identifying this persisted format.
+     */
     /* default */ static final int MAGIC = 0x5A454D53;
+    /**
+     * Current binary format version encoded independently of enum ordering.
+     */
     /* default */ static final short VERSION = 1;
+    /**
+     * Inclusive maximum number of manifest segment entries.
+     */
     /* default */ static final int MAX_SEGMENTS = 4096;
+    /**
+     * Inclusive maximum UTF-8 length in bytes of a persisted artifact name.
+     */
     /* default */ static final int MAX_NAME_BYTES = 96;
+    /**
+     * Inclusive maximum referenced artifact length in bytes.
+     */
     /* default */ static final long MAX_FILE_BYTES = 1L << 40;
 
     private static final short FLAGS = 0;
@@ -61,6 +78,9 @@ final class SigningManifestCodec {
     private static final int SEGMENT_FIXED_BYTES = 66;
     private static final int ACTIVE_FIXED_BYTES = 66;
     private static final int COMMITMENT_BYTES = SigningFormatSupport.SHA_256_BYTES;
+    /**
+     * Inclusive maximum encoded record length in bytes.
+     */
     /* default */ static final int MAX_ENCODED_BYTES = FIXED_PREFIX_BYTES + CHECKPOINT_FIXED_BYTES
             + MAX_NAME_BYTES + MAX_SEGMENTS * (SEGMENT_FIXED_BYTES + MAX_NAME_BYTES)
             + ACTIVE_FIXED_BYTES + MAX_NAME_BYTES + COMMITMENT_BYTES;
@@ -69,6 +89,14 @@ final class SigningManifestCodec {
         // utility class
     }
 
+    /**
+     * Encodes a manifest into a newly allocated canonical, checksum-protected byte array.
+     *
+     * @param manifest manifest to encode
+     * @return newly allocated complete encoded bytes
+     * @throws NullPointerException if manifest is null
+     * @throws IllegalArgumentException if descriptor bounds, generation identities, names or sequence continuity are invalid
+     */
     /* default */ static byte[] encode(Manifest manifest) {
         validate(manifest);
         int length = FIXED_PREFIX_BYTES + ACTIVE_FIXED_BYTES + COMMITMENT_BYTES
@@ -101,6 +129,14 @@ final class SigningManifestCodec {
         return output.array();
     }
 
+    /**
+     * Authenticates and decodes the complete manifest, rejecting unsupported framing, invalid descriptors and trailing bytes.
+     *
+     * @param encoded complete encoded payload
+     * @return authenticated decoded value
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if encoded is null
+     */
     /* default */ static Manifest decode(byte[] encoded) throws IOException {
         Objects.requireNonNull(encoded, "encoded");
         if (encoded.length < FIXED_PREFIX_BYTES + ACTIVE_FIXED_BYTES + COMMITMENT_BYTES
@@ -338,14 +374,34 @@ final class SigningManifestCodec {
         return true;
     }
 
+    /**
+     * Formats the canonical checkpoint file name from its revision and sequence coordinates.
+     *
+     * @param revision checkpoint revision coordinate
+     * @param sequence nonnegative frame sequence
+     * @return formatted checkpoint file name
+     */
     /* default */ static String checkpointName(long revision, long sequence) {
         return String.format(Locale.ROOT, "checkpoint-%020d-%020d.zec", revision, sequence);
     }
 
+    /**
+     * Formats the canonical sealed-WAL file name from its inclusive sequence bounds.
+     *
+     * @param first first value or inclusive sequence coordinate
+     * @param last inclusive final sequence coordinate
+     * @return formatted sealed-WAL file name
+     */
     /* default */ static String segmentName(long first, long last) {
         return String.format(Locale.ROOT, "wal-%020d-%020d.zew", first, last);
     }
 
+    /**
+     * Formats the canonical active-WAL file name from its identity coordinate.
+     *
+     * @param identity active-WAL identity coordinate
+     * @return formatted active-WAL file name
+     */
     /* default */ static String activeName(long identity) {
         return String.format(Locale.ROOT, "wal-active-%020d.zew", identity);
     }
@@ -354,8 +410,28 @@ final class SigningManifestCodec {
         return SigningFormatSupport.invalid(diagnostic);
     }
 
+    /**
+     * Authoritative committed signing-ledger coordinates and the artifacts needed to recover them.
+     *
+     * @param committedRevision authoritative committed revision
+     * @param committedSequence last sequence covered by the committed state
+     * @param checkpoint selected checkpoint descriptor, or empty when recovery starts from WAL segments
+     * @param sealedSegments ordered immutable sealed segment descriptors
+     * @param activeWal active-WAL descriptor selected by the manifest
+     */
     /* default */ record Manifest(long committedRevision, long committedSequence,
             Optional<Checkpoint> checkpoint, List<Segment> sealedSegments, ActiveWal activeWal) {
+        /**
+         * Creates the authoritative committed signing-ledger coordinates and the artifacts needed to recover them.
+         *
+         * @param committedRevision authoritative committed revision
+         * @param committedSequence last sequence covered by the committed state
+         * @param checkpoint selected checkpoint descriptor, or empty when recovery starts from WAL segments
+         * @param sealedSegments ordered immutable sealed segment descriptors
+         * @param activeWal active-WAL descriptor selected by the manifest
+         * @throws NullPointerException if {@code checkpoint} is null; or if {@code sealedSegments} is null; or if {@code activeWal} is null
+         * @throws IllegalArgumentException if {@code (committedRevision < 0L || committedSequence < 0L || sealedSegments.size() > MAX_SEGMENTS)}
+         */
         Manifest {
             checkpoint = Objects.requireNonNull(checkpoint, "checkpoint");
             Objects.requireNonNull(sealedSegments, "sealedSegments");
@@ -368,8 +444,30 @@ final class SigningManifestCodec {
         }
     }
 
+    /**
+     * Immutable checkpoint artifact identity, coverage, byte length and integrity commitment.
+     *
+     * @param generationIdentity exact immutable artifact generation identity
+     * @param revision authoritative metadata revision
+     * @param coveredSequence last WAL sequence covered by the checkpoint
+     * @param length exact encoded content length in bytes
+     * @param commitment integrity commitment of the exact encoded artifact
+     * @param name validated store-local artifact name
+     */
     /* default */ record Checkpoint(long generationIdentity, long revision,
             long coveredSequence, long length, byte[] commitment, String name) {
+        /**
+         * Creates an immutable checkpoint artifact identity, coverage, byte length and integrity commitment.
+         *
+         * @param generationIdentity exact immutable artifact generation identity
+         * @param revision authoritative metadata revision
+         * @param coveredSequence last WAL sequence covered by the checkpoint
+         * @param length exact encoded content length in bytes
+         * @param commitment integrity commitment of the exact encoded artifact
+         * @param name validated store-local artifact name
+         * @throws NullPointerException if {@code commitment} is null
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || revision < 0L || coveredSequence < 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         */
         Checkpoint {
             Objects.requireNonNull(commitment, "commitment");
             if (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || revision < 0L
@@ -380,6 +478,11 @@ final class SigningManifestCodec {
             commitment = commitment.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained artifact commitment bytes.
+         *
+         * @return newly allocated array containing the integrity commitment of the exact encoded artifact
+         */
         @Override
         public byte[] commitment() {
             return commitment.clone();
@@ -390,8 +493,30 @@ final class SigningManifestCodec {
         }
     }
 
+    /**
+     * Immutable sealed WAL segment identity, sequence coverage and integrity commitment.
+     *
+     * @param generationIdentity exact immutable artifact generation identity
+     * @param firstSequence first sequence assigned to the generation
+     * @param sequenceCount number of sequences covered by the segment
+     * @param length exact encoded content length in bytes
+     * @param commitment integrity commitment of the exact encoded artifact
+     * @param name validated store-local artifact name
+     */
     /* default */ record Segment(long generationIdentity, long firstSequence,
             long sequenceCount, long length, byte[] commitment, String name) {
+        /**
+         * Creates an immutable sealed WAL segment identity, sequence coverage and integrity commitment.
+         *
+         * @param generationIdentity exact immutable artifact generation identity
+         * @param firstSequence first sequence assigned to the generation
+         * @param sequenceCount number of sequences covered by the segment
+         * @param length exact encoded content length in bytes
+         * @param commitment integrity commitment of the exact encoded artifact
+         * @param name validated store-local artifact name
+         * @throws NullPointerException if {@code commitment} is null
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || firstSequence < 0L || sequenceCount <= 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         */
         Segment {
             Objects.requireNonNull(commitment, "commitment");
             if (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || firstSequence < 0L
@@ -402,6 +527,11 @@ final class SigningManifestCodec {
             commitment = commitment.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained artifact commitment bytes.
+         *
+         * @return newly allocated array containing the integrity commitment of the exact encoded artifact
+         */
         @Override
         public byte[] commitment() {
             return commitment.clone();
@@ -412,8 +542,30 @@ final class SigningManifestCodec {
         }
     }
 
+    /**
+     * Active WAL identity, baseline and manifest-retained integrity coordinates.
+     *
+     * @param identity exact WAL generation identity
+     * @param firstSequence first sequence assigned to the generation
+     * @param baselineRevision committed revision before the first frame in this generation
+     * @param length exact encoded content length in bytes
+     * @param commitment integrity commitment of the exact encoded artifact
+     * @param name validated store-local artifact name
+     */
     /* default */ record ActiveWal(long identity, long firstSequence, long baselineRevision,
             long length, byte[] commitment, String name) {
+        /**
+         * Creates the active WAL identity, baseline and manifest-retained integrity coordinates.
+         *
+         * @param identity exact WAL generation identity
+         * @param firstSequence first sequence assigned to the generation
+         * @param baselineRevision committed revision before the first frame in this generation
+         * @param length exact encoded content length in bytes
+         * @param commitment integrity commitment of the exact encoded artifact
+         * @param name validated store-local artifact name
+         * @throws NullPointerException if {@code commitment} is null
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || identity < 0L || firstSequence < 0L || baselineRevision < 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         */
         ActiveWal {
             Objects.requireNonNull(commitment, "commitment");
             if (commitment.length != COMMITMENT_BYTES || identity < 0L
@@ -425,6 +577,11 @@ final class SigningManifestCodec {
             commitment = commitment.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained artifact commitment bytes.
+         *
+         * @return newly allocated array containing the integrity commitment of the exact encoded artifact
+         */
         @Override
         public byte[] commitment() {
             return commitment.clone();

@@ -126,6 +126,9 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
         LOGGER.log(Level.INFO, "DefaultAttributeGovernanceService initialized.");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<AttributeValue> read(AttributeCatalogue catalogue, AttributeSet set, AttributeId id,
             AccessContext context) {
@@ -151,6 +154,9 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
         return set.get(id);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AttributeSet write(AttributeCatalogue catalogue, AttributeSet set, AttributeId id, AttributeValue value,
             AccessContext context) {
@@ -177,6 +183,9 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
         return AttributeSetCopies.withSingleValue(set, id, value);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<AttributeValue> export(AttributeCatalogue catalogue, AttributeSet set, AttributeId id,
             AccessContext context) {
@@ -214,6 +223,9 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
         return Optional.of(redactForExport(definition.get().sensitivity(), value.get()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AttributeSet derive(AttributeCatalogue catalogue, AttributeSet set, AttributeId id, AccessContext context) {
         Objects.requireNonNull(catalogue, "catalogue");
@@ -386,16 +398,23 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
          * Creates a new attribute set backed by an immutable map.
          *
          * @param values attribute storage map
+         * @throws NullPointerException if {@code values} is null
          */
         /* default */ MapBackedAttributeSet(Map<AttributeId, List<AttributeValue>> values) {
             this.values = Objects.requireNonNull(values, "values");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public java.util.Set<AttributeId> ids() {
             return values.keySet();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AttributeValue> get(AttributeId id) {
             Objects.requireNonNull(id, "id");
@@ -406,6 +425,9 @@ public final class DefaultAttributeGovernanceService implements AttributeGoverna
             return Optional.of(list.get(0));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<AttributeValue> getAll(AttributeId id) {
             Objects.requireNonNull(id, "id");

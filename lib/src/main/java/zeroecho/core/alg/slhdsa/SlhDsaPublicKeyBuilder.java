@@ -49,11 +49,16 @@ public final class SlhDsaPublicKeyBuilder implements PublicKeyImporter<SlhDsaPub
 
     private static final String ALG = "SLH-DSA";
 
-    /** Creates a stateless SLH-DSA public-key importer. */
+    /**
+     * Creates a stateless SLH-DSA public-key importer.
+     */
     public SlhDsaPublicKeyBuilder() {
         // Stateless importer.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicKey importPublic(SlhDsaPublicKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance(ALG)

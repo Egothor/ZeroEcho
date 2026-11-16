@@ -71,8 +71,17 @@ public final class HttpCtLogClient implements CtLogClient {
     private static final int HTTP_SERVER_ERROR = 500;
 
 
+    /**
+     * Maximum number of CT submission retry attempts after retryable transport/server failures.
+     */
     /* default */ static final int MAX_RETRIES = 3;
+    /**
+     * Initial CT submission retry backoff, in milliseconds.
+     */
     /* default */ static final long INITIAL_BACKOFF_MS = 1000L;
+    /**
+     * Maximum CT log response entity size, in bytes.
+     */
     /* default */ static final int MAX_RESPONSE_BYTES = 65_536;
 
     private final String logId;
@@ -109,6 +118,7 @@ public final class HttpCtLogClient implements CtLogClient {
      *
      * @param descriptor describes the CT log endpoint; must not be {@code null}
      * @return ready-to-use client
+     * @throws NullPointerException if {@code descriptor} is null
      */
     public static HttpCtLogClient create(final CtLogDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor");
@@ -129,11 +139,17 @@ public final class HttpCtLogClient implements CtLogClient {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String logId() {
         return logId;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SignedCertificateTimestamp submit(final byte[] preCert, final List<byte[]> chain,
             final Instant deadline) throws CtSubmissionException {
@@ -169,6 +185,9 @@ public final class HttpCtLogClient implements CtLogClient {
                 : new CtSubmissionException("CT submission failed after " + MAX_RETRIES + " retries", logId);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {

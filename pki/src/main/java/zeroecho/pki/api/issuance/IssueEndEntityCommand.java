@@ -71,6 +71,11 @@ public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest
      *
      * @throws IllegalArgumentException if inputs are invalid or optional container
      *                                  is null
+     * @param issuerCaId issuer CA entity id
+     * @param request parsed certification request
+     * @param profileId profile id governing issuance
+     * @param validityOverride optional requested validity override (policy-validated)
+     * @param issuanceIntent optional durable correlation and frozen selection
      */
     public IssueEndEntityCommand {
         if (issuerCaId == null) {

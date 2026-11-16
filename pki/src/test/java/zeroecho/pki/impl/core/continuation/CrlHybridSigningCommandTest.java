@@ -49,10 +49,16 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for CRL hybrid signing command.
+ */
 class CrlHybridSigningCommandTest {
     private static final PkiId PARENT = new PkiId("zsign:v1:c036:1767225600000:0123456789abcdef0123456789abcdef");
     private static final PkiId CHILD = new PkiId("zsign:v1:c036:1767225600000:2e07573efce49cc18d99204619063f57");
 
+    /**
+     * Native child identity has independent golden nonce and preserves namespace and time.
+     */
     @Test void nativeChildIdentityHasIndependentGoldenNonceAndPreservesNamespaceAndTime() {
         assertEquals(CHILD, CrlHybridSigningCommand.nativeChildId(PARENT));
         assertEquals(SigningSubmissionId.parse(PARENT).namespace(), SigningSubmissionId.parse(CHILD).namespace());
@@ -66,6 +72,9 @@ class CrlHybridSigningCommandTest {
         assertThrows(IllegalArgumentException.class, () -> CrlHybridSigningCommand.nativeChildId(new PkiId("signing:unsupported")));
     }
 
+    /**
+     * Full and delta variants retain native algorithm and require the nine field descriptor.
+     */
     @Test void fullAndDeltaVariantsRetainNativeAlgorithmAndRequireTheNineFieldDescriptor() {
         var descriptor = descriptor(4627, 104);
         for (boolean delta : new boolean[] {false, true}) {
@@ -86,6 +95,9 @@ class CrlHybridSigningCommandTest {
         }
     }
 
+    /**
+     * Rejects noncanonical versions roles bounds and descriptor encodings.
+     */
     @Test void rejectsNoncanonicalVersionsRolesBoundsAndDescriptorEncodings() {
         for (int[] bounds : new int[][] {{1, 1_048_576}, {1_048_576, 1}}) {
             var value = descriptor(bounds[0], bounds[1]);

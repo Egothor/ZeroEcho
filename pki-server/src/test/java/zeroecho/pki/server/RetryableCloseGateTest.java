@@ -52,7 +52,15 @@ import java.util.concurrent.locks.LockSupport;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Checks shared close attempts, failure propagation, worker-call restrictions and external closure retry.
+ */
 final class RetryableCloseGateTest {
+    /**
+     * Checks overlapping external callers share one successful teardown generation and later calls remain terminal.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void overlappingSuccessRunsOneAttemptAndBecomesTerminal() throws Exception {
         RetryableCloseGate gate = new RetryableCloseGate();
@@ -87,6 +95,11 @@ final class RetryableCloseGateTest {
         assertEquals(1, attempts.get());
     }
 
+    /**
+     * Checks concurrent callers share the exact published close failure and retain interruption while a later generation may retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentFailureIsExactAndOneLaterGenerationMayRetry() throws Exception {
         RetryableCloseGate gate = new RetryableCloseGate();
@@ -141,6 +154,11 @@ final class RetryableCloseGateTest {
         assertEquals(2, attempts.get());
     }
 
+    /**
+     * Checks a joiner interrupted while waiting still observes shared completion and restores its interrupt status.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void interruptedWaiterRestoresInterruptAfterSharedCompletion() throws Exception {
         RetryableCloseGate gate = new RetryableCloseGate();
@@ -169,6 +187,9 @@ final class RetryableCloseGateTest {
         assertTrue(interrupted.get());
     }
 
+    /**
+     * Checks reentrant closure by the teardown owner fails promptly with the stable reentrancy classification.
+     */
     @Test
     void reentrantOwnerFailsFast() {
         RetryableCloseGate gate = new RetryableCloseGate();
@@ -178,6 +199,11 @@ final class RetryableCloseGateTest {
         assertTrue(failure.getMessage().contains("SERVER_CLOSE_REENTRANT"));
     }
 
+    /**
+     * Checks a worker only signals quiescence and receives external-retry guidance without taking ownership or joining an attempt.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void workerNeverOwnsOrJoinsAndSignalsQuiesce() throws Exception {
         RetryableCloseGate gate = new RetryableCloseGate();
@@ -208,6 +234,11 @@ final class RetryableCloseGateTest {
         assertEquals(1, attempts.get());
     }
 
+    /**
+     * Checks I/O/runtime/error identity preservation and InterruptedIOException translation with original cause and restored interrupt state.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void ioUncheckedAndErrorKeepIdentityAndPrimaryInterruptionIsTranslated() throws Exception {
         System.out.println("ioUncheckedAndErrorKeepIdentityAndPrimaryInterruptionIsTranslated");
@@ -272,6 +303,9 @@ final class RetryableCloseGateTest {
             this.classification = classification;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public String getMessage() {
             return classification;
         }

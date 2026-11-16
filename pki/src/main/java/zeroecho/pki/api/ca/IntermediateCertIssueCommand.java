@@ -70,6 +70,14 @@ public record IntermediateCertIssueCommand(FormatId formatId, PkiId issuerCaId, 
      * Creates an intermediate CA credential issuance command.
      *
      * @throws IllegalArgumentException if any component is null, bounded text is invalid
+     * @param formatId credential format id
+     * @param issuerCaId issuer CA entity id, strict UTF-8 at most 4,096 bytes
+     * @param subjectCaId subject CA entity id, strict UTF-8 at most 4,096 bytes
+     * @param profileId nonblank strict UTF-8 profile id, at most 256 bytes
+     * @param keyRef expected current subject key, strict UTF-8 at most 1,048,576 bytes
+     * @param requestedValidity optional requested validity (policy may override/deny)
+     * @param attributes universal attributes (may be empty but not null)
+     * @param expectedHead optional exact expected subject head before normalization
      */
     public IntermediateCertIssueCommand {
         CaCommandInputs.required(formatId);
@@ -83,16 +91,35 @@ public record IntermediateCertIssueCommand(FormatId formatId, PkiId issuerCaId, 
     }
 
     /**
-     * Preserves existing issuance inputs before expected-head normalization.
-     * @param formatId format @param issuerCaId parent authority @param subjectCaId subject authority
-     * @param profileId active profile @param keyRef expected subject key
-     * @param requestedValidity requested bounds @param attributes immutable attributes
+     * Creates an existing-intermediate issuance request before capturing the expected subject head.
+     *
+     * <p>The empty head fence must be normalized from authoritative subject state
+     * before approval. The supplied key is the expected current subject key, not
+     * the parent's issuer signing key or a request to generate or rotate a key.
+     * Construction does not resolve either authority or perform a possession proof.
+     *
+     * @param formatId requested credential format identifier; must not be null
+     * @param issuerCaId independently selected parent authority identifier
+     * @param subjectCaId existing intermediate authority identifier
+     * @param profileId selected active logical profile identifier
+     * @param keyRef expected current managed subject-key reference
+     * @param requestedValidity requested bounds, or an empty optional; must not be null
+     * @param attributes immutable universal attributes, possibly empty; must not be null
+     * @throws IllegalArgumentException if a required component is null or a bounded
+     *         identifier, profile identifier or key reference is invalid
      */
     public IntermediateCertIssueCommand(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
             KeyRef keyRef, Optional<Validity> requestedValidity, AttributeSet attributes) {
         this(formatId, issuerCaId, subjectCaId, profileId, keyRef, requestedValidity, attributes, Optional.empty());
     }
 
-    /** Returns a diagnostic representation without command coordinates or attributes. */
-    @Override public String toString() { return "IntermediateCertIssueCommand[redacted]"; }
+    /**
+     * Returns a diagnostic label without disclosing subject, issuer, key or attribute coordinates.
+     *
+     * @return the fixed redacted intermediate-issuance label
+     */
+    @Override
+    public String toString() {
+        return "IntermediateCertIssueCommand[redacted]";
+    }
 }

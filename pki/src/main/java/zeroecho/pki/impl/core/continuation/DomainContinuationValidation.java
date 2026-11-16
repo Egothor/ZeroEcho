@@ -50,7 +50,9 @@ import zeroecho.pki.api.credential.CredentialLineage;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
-/** Central fail-closed validation for recovered durable domain continuations. */
+/**
+ * Central fail-closed validation for recovered durable domain continuations.
+ */
 public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity - One persisted command grammar validates correlated domain continuations; individual methods remain checked.
     private static final int MAXIMUM_TOTAL_BYTES = 2 * 1_048_576;
     private static final String CREATE_ROOT = "CREATE_ROOT";
@@ -65,6 +67,8 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
      * @param record decoded record
      * @param encodedBytes total persisted record size
      * @return the exact validated record
+     * @throws NullPointerException if expectedOperationId, record is null
+     * @throws IllegalStateException if the operation identity, command commitment or kind-specific continuation invariants are inconsistent
      */
     public static DomainContinuationStore.Record validate(PkiId expectedOperationId,
             DomainContinuationStore.Record record, int encodedBytes) {
@@ -101,6 +105,7 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
      *
      * @param template immutable domain command template
      * @return validated decoded canonical command
+     * @throws NullPointerException if template is null
      */
     public static DomainCommandEncoding.Decoded validate(DomainContinuationTemplate template) {
         Objects.requireNonNull(template, "template");
@@ -120,6 +125,13 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         return decoded;
     }
 
+    /**
+     * Tests whether an operation currently has a domain continuation in the publishing state.
+     *
+     * @param store borrowed continuation store
+     * @param operationId operation identity to inspect
+     * @return true only when the continuation exists and is publishing
+     */
     /* default */ static boolean isPublishing(DomainContinuationStore store, PkiId operationId) {
         return store.getDomainContinuation(operationId)
                 .filter(domain -> domain.state() == DomainContinuationStore.State.PUBLISHING)

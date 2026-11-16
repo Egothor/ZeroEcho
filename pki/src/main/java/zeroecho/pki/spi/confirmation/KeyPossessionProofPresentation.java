@@ -44,13 +44,16 @@ import java.util.Arrays;
  * @param canonicalBytes non-empty canonical suite presentation
  */
 public record KeyPossessionProofPresentation(byte[] canonicalBytes) {
-    /** Maximum canonical presentation length in bytes. */
+    /**
+     * Maximum canonical presentation length in bytes.
+     */
     public static final int MAXIMUM_BYTES = 2_048;
 
     /**
      * Validates and defensively owns the presentation.
      *
      * @throws IllegalArgumentException if the payload is null, empty, or exceeds 2048 bytes
+     * @param canonicalBytes non-empty canonical suite presentation
      */
     public KeyPossessionProofPresentation {
         if (canonicalBytes == null || canonicalBytes.length == 0
@@ -70,20 +73,30 @@ public record KeyPossessionProofPresentation(byte[] canonicalBytes) {
         return canonicalBytes.clone();
     }
 
-    /** Compares canonical presentation bytes by content. */
+    /**
+     * Compares canonical presentation bytes by content.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof KeyPossessionProofPresentation candidate
                 && Arrays.equals(canonicalBytes, candidate.canonicalBytes);
     }
 
-    /** Returns a content-based hash code. */
+    /**
+     * Returns a content-based hash code.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return Arrays.hashCode(canonicalBytes);
     }
 
-    /** Returns a redacted structural description. */
+    /**
+     * Returns a redacted structural description.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "KeyPossessionProofPresentation[canonicalBytes=<" + canonicalBytes.length + " bytes>]";

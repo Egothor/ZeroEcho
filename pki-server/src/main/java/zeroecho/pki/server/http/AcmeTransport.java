@@ -58,7 +58,9 @@ import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Lifecycle owner for the isolated optional ACME HTTPS listener. */
+/**
+ * Lifecycle owner for the isolated optional ACME HTTPS listener.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ControlStatementBraces" })
 public final class AcmeTransport implements AutoCloseable {
     private final HttpsServer listener;
@@ -102,6 +104,7 @@ public final class AcmeTransport implements AutoCloseable {
      * @param reconciliationWake callback invoked after a durable signing-state change
      * @return started ACME listener lifecycle owner
      * @throws IllegalStateException if the listener cannot be initialized
+     * @throws NullPointerException if any of {@code configuration}, {@code reconciliationWake} is null
      */
     public static AcmeTransport start(PkiServerConfiguration.AcmeListener configuration,
             ServerRealmContext realm, Clock clock, SecureRandom random, ClassLoader loader,
@@ -154,7 +157,9 @@ public final class AcmeTransport implements AutoCloseable {
      */
     public InetSocketAddress address() { return listener.getAddress(); }
 
-    /** Rejects new protocol and validation work. */
+    /**
+     * Rejects new protocol and validation work.
+     */
     public void quiesce() { protocolRuntime.quiesce(); validationRuntime.quiesce(); }
 
     /**
@@ -169,6 +174,9 @@ public final class AcmeTransport implements AutoCloseable {
         protocolRuntime.close();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() { shutdown(Duration.ZERO); }
 
     private static HttpsConfigurator configurator(SSLContext context, boolean proxy) {

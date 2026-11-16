@@ -57,12 +57,27 @@ import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.server.http.TestTlsProvider;
 
-/** Native TLS HTTP coverage for durable administrative request admission and observation. */
+/**
+ * Native TLS HTTP coverage for durable administrative request admission and observation.
+ */
 class AdminHttpRequestsTest {
+    /**
+     * Exercises native TLS administrative submission with retained exact target and continuation after separate approval.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void nativeHttpSubmissionRetainsTargetAndContinuesAfterIndependentApproval(@TempDir Path directory) throws Exception {
         exercise(directory);
     }
 
+    /**
+     * Runs the real retained administrative-request HTTP workflow against an isolated loopback server.
+     *
+     * @param directory isolated fixture control, PKI and TLS storage root
+     * @throws Exception if server setup, request/approval workflow, restart or cleanup fails
+     */
     static void exercise(Path directory) throws Exception {
         var tls = HttpServerTestSupport.tls();
         var transport = HttpServerTestSupport.configuration(directory.resolve("transport"), tls.clientCertificate());
@@ -333,5 +348,11 @@ class AdminHttpRequestsTest {
                 .POST(HttpRequest.BodyPublishers.ofString(document)).build(), HttpResponse.BodyHandlers.ofString());
     }
     private static void check(boolean condition, String failure) { if (!condition) throw new AssertionError(failure); }
+    /**
+     * Runs the native HTTP workflow fixture directly with one isolated output root.
+     *
+     * @param args command-line arguments consumed by the direct fixture launcher
+     * @throws Exception if fixture setup, protocol assertions or cleanup fails
+     */
     public static void main(String[] args) throws Exception { exercise(Files.createTempDirectory("zeroecho-admin-http-")); }
 }

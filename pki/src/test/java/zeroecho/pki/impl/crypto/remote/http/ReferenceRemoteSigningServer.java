@@ -116,7 +116,15 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
         return start(delegate, serverContext, Map.of("reason", reason));
     }
 
-    /** Starts a server that overrides selected untrusted status response fields. */
+    /**
+     * Starts a server that overrides selected untrusted status response fields.
+     *
+     * @param delegate borrowed remote signer receiving protocol operations
+     * @param serverContext TLS context containing the fixture server identity
+     * @param responseOverrides operation-to-status substitutions used to exercise client rejection paths
+     * @return started HTTPS fixture server owned by the caller
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     /* default */ static ReferenceRemoteSigningServer startWithStatusOverrides(RemoteSigningTransport delegate,
             SSLContext serverContext, Map<String, String> responseOverrides) throws Exception {
         return start(delegate, serverContext, responseOverrides);
@@ -142,7 +150,11 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
         return instance;
     }
 
-    /** @return the absolute endpoint URI to configure the transport with */
+    /**
+     * Returns the absolute HTTPS endpoint of this reference signing server.
+     *
+     * @return the absolute endpoint URI to configure the transport with
+     */
     public URI endpoint() {
         return URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/v1/sign");
     }
@@ -257,6 +269,9 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
         return value;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         server.stop(0);

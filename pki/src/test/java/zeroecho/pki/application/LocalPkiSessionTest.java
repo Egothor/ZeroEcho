@@ -100,12 +100,21 @@ import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for local PKI session.
+ */
 final class LocalPkiSessionTest {
     private static final FormatId X509 = new FormatId("x509");
     private static final KeyRef ROOT_KEY = new KeyRef("zeroecho-lib:root.prv");
     private static final KeyRef CHILD_KEY = new KeyRef("zeroecho-lib:child.prv");
     private static final KeyRef ROTATED_KEY = new KeyRef("zeroecho-lib:rotated.prv");
 
+    /**
+     * Real keyring completes root intermediate lifecycle and CRL on caller without signing threads.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void realKeyringCompletesRootIntermediateLifecycleAndCrlOnCallerWithoutSigningThreads(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -139,6 +148,12 @@ final class LocalPkiSessionTest {
         assertEquals(before, signingThreads());
     }
 
+    /**
+     * Local root approves all profile requirements without server evidence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void localRootApprovesAllProfileRequirementsWithoutServerEvidence(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -173,6 +188,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Reopen and reads do not advance accepted work explicit complete preserves original actor.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenAndReadsDoNotAdvanceAcceptedWorkExplicitCompletePreservesOriginalActor(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -198,6 +219,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Uncertain acceptance retains receipt and never signs until explicit completion.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainAcceptanceRetainsReceiptAndNeverSignsUntilExplicitCompletion(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -218,6 +245,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Durable signature resumes publication only after explicit eligible completion.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void durableSignatureResumesPublicationOnlyAfterExplicitEligibleCompletion(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -247,6 +280,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Live claim returns immediately and expired claim reconciles without redispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void liveClaimReturnsImmediatelyAndExpiredClaimReconcilesWithoutRedispatch(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -270,6 +309,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Retired provider cancellation remains cancelled after reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void retiredProviderCancellationRemainsCancelledAfterReopen(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -291,6 +336,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Independent read failure is not cancellation and post claim uncertainty is recovery.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void independentReadFailureIsNotCancellationAndPostClaimUncertaintyIsRecovery(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -315,6 +366,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Completed publication wins over late cancellation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void completedPublicationWinsOverLateCancellation(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -325,6 +382,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Cancellation after preparation discards unbound content and retains receipt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationAfterPreparationDiscardsUnboundContentAndRetainsReceipt(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -359,6 +422,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Explicit completion rejects unknown and raw sign only identities without advancing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void explicitCompletionRejectsUnknownAndRawSignOnlyIdentitiesWithoutAdvancing(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -387,6 +456,12 @@ final class LocalPkiSessionTest {
         }
     }
 
+    /**
+     * Audited inspection never advances pending work and projects only completed metadata.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void auditedInspectionNeverAdvancesPendingWorkAndProjectsOnlyCompletedMetadata(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(root);
@@ -442,6 +517,11 @@ final class LocalPkiSessionTest {
         return accepted.receipt();
     }
 
+    /**
+     * Creates the typed root-authority operation used by local session tests.
+     *
+     * @return unexecuted root-authority operation
+     */
     static PkiSigningOperation rootCommand() {
         return new PkiSigningOperation.CreateAuthority(X509, new SubjectRef("CN=Local Root,C=CZ"), "root-test", ROOT_KEY);
     }
@@ -463,13 +543,22 @@ final class LocalPkiSessionTest {
         @Override public Instant instant() { return now; }
     }
 
+    /**
+     * Lifecycle fixture retaining an openable store and observable signing state.
+     */
     static final class Fixture implements DefaultPkiSession.Bootstrap {
         private final Path root;
         private final Path keyring;
         private final MutableClock clock = new MutableClock();
+        /**
+         * Number of signing-provider dispatches observed by the fixture.
+         */
         final AtomicInteger dispatches = new AtomicInteger();
         private final List<AuditEvent> events = new ArrayList<>();
         private final AtomicBoolean cancellation = new AtomicBoolean();
+        /**
+         * Store retained by the fixture for persisted-state assertions.
+         */
         PkiStore store;
         private SigningProvider provider;
         private boolean loseAcceptance;
@@ -480,6 +569,12 @@ final class LocalPkiSessionTest {
         private boolean cancelAfterDispatch;
         private boolean controlledProviderClock;
 
+        /**
+         * Creates the local-session fixture and its persistent keyring/store prerequisites.
+         *
+         * @param root filesystem root retaining the test store and keyring artifacts
+         * @throws Exception if fixture construction, execution, or cleanup fails
+         */
         Fixture(Path root) throws Exception {
             this.root = root;
             keyring = root.resolve("keys.bin");
@@ -493,14 +588,30 @@ final class LocalPkiSessionTest {
             }
         }
 
+        /**
+         * Replaces the fixture clock instant used by subsequent session operations.
+         *
+         * @param instant authoritative clock value to expose to subsequent fixture calls
+         */
         void time(Instant instant) { clock.now = instant; controlledProviderClock = true; }
 
+        /**
+         * Opens an owned PKI session against the fixture store and encrypted signing keyring.
+         *
+         * @param operator local operator identity attached to the opened session
+         * @return open session that the caller must close
+         */
         PkiSession open(String operator) {
             return DefaultPkiSession.openLocal(new LocalPkiSessionConfiguration(new ProviderConfig("fs", Map.of("root", root.resolve("store").toString())),
                     new ProviderConfig("memory", Map.of()), operator, Optional.of(signingConfiguration()), List.of(), List.of()),
                     PkiSessionRuntimeDependencies.withKeyringUnlockProvider(TestKeyringUnlocks.provider()), clock, this);
         }
 
+        /**
+         * Builds the local signing configuration bound to the fixture encrypted keyring.
+         *
+         * @return immutable fixture signing configuration
+         */
         LocalSigningConfiguration signingConfiguration() {
             return new LocalSigningConfiguration(new ProviderConfig("zeroecho-lib", Map.of(
                     "keyringPath", keyring.toString(), "operationHorizon", "P90D", "keyRefPrefix", "zeroecho-lib:",
@@ -508,9 +619,21 @@ final class LocalPkiSessionTest {
                     Optional.empty(), Duration.ofSeconds(30), Duration.ofSeconds(20), OptionalLong.empty());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void validateStore(ProviderConfig configuration) { PkiBootstrap.validateStoreConfiguration(configuration); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void validateAudit(ProviderConfig configuration) { PkiBootstrap.validateAuditConfiguration(configuration); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiStore openStore(ProviderConfig configuration) { return openStore(configuration, new PkiStoreRuntimeDependencies(clock)); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiStore openStore(ProviderConfig configuration, PkiStoreRuntimeDependencies dependencies) {
             store = PkiBootstrap.openStore(configuration, dependencies);
             if (store.getActiveProfileRef("root-test").isEmpty()) {
@@ -546,7 +669,13 @@ final class LocalPkiSessionTest {
                     });
             return store;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public AuditSink openAudit(ProviderConfig configuration) { return events::add; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
                 SigningProviderRuntimeDependencies dependencies) {
             PkiBootstrap.SigningComposition allocation = PkiBootstrap.openConfiguredSigningComposition(configuration, dependencies);

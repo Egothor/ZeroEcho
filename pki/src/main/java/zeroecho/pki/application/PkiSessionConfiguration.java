@@ -61,10 +61,22 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         Optional<SigningConfiguration> signing, List<ProviderConfig> publishers,
         List<BindingProviderConfiguration> bindingProviders) {
 
-    /** Current and only accepted configuration schema version. */
+    /**
+     * Current and only accepted configuration schema version.
+     */
     public static final int CURRENT_VERSION = 6;
 
-    /** Validates and snapshots the current configuration. */
+    /**
+     * Validates and snapshots the current configuration.
+     * @param version exact configuration schema version
+     * @param store store-provider configuration
+     * @param audit audit-provider configuration
+     * @param signing optional provider/domain configuration reserved for the reactive signing layer
+     * @param publishers explicitly enabled publication destinations
+     * @param bindingProviders explicitly activated X.509 binding providers
+     * @throws IllegalArgumentException if version is unsupported or binding-provider identities are duplicated
+     * @throws NullPointerException if store, audit, signing, publishers, bindingProviders is null or a supplied collection contains a null member
+     */
     public PkiSessionConfiguration {
         if (version != CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported PKI session configuration version");
@@ -104,7 +116,17 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         private static final long MAXIMUM_JCA_MESSAGE_BYTES = Integer.MAX_VALUE - 8L;
         private static final long EDDSA_TRANSFER_BUFFER_BYTES = 16L * 1024L;
 
-        /** Validates and snapshots provider/domain configuration. */
+        /**
+         * Validates and snapshots provider/domain configuration.
+         * @param provider signing-provider configuration
+         * @param signatureAlgorithm canonical configured signing algorithm
+         * @param signingTtl positive signing deadline
+         * @param unlockEnvironmentVariable optional environment-variable reference
+         * @param topology explicit bounded signing routing topology
+         * @param pureEdDsaMaximumTbsBytes optional operator-selected maximum raw {@code TBSCertList} size for pure Ed25519 or Ed448; empty selects the heap- and concurrency-aware default
+         * @throws NullPointerException if provider, unlockEnvironmentVariable, topology, pureEdDsaMaximumTbsBytes is null
+         * @throws IllegalArgumentException if the signature algorithm is null/blank, signingTtl is null/nonpositive, the unlock-variable reference is malformed or finite signing timing/message bounds are invalid
+         */
         public SigningConfiguration {
             provider = PkiSessionConfiguration.snapshot(Objects.requireNonNull(provider, "provider"));
             if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
@@ -182,7 +204,14 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         private static final int MAXIMUM_EXACT_GROUPS = 255;
         private static final int MAXIMUM_EXACT_KEYS = 4096;
 
-        /** Validates aggregate bounds, routing uniqueness, and snapshots groups. */
+        /**
+         * Validates aggregate bounds, routing uniqueness, and snapshots groups.
+         * @param coordinator limits shared by the topology coordinator
+         * @param exactGroups disjoint exact-key routing groups; may be empty
+         * @param catchAll mandatory lane pool for keys not assigned to an exact group
+         * @throws NullPointerException if coordinator, catchAll, exactGroups is null or a supplied collection contains a null member
+         * @throws IllegalArgumentException if exact groups exceed their finite bound, a key is assigned to multiple routes or pageSize exceeds aggregate prefetch capacity
+         */
         public SigningTopology {
             coordinator = Objects.requireNonNull(coordinator, "coordinator");
             catchAll = Objects.requireNonNull(catchAll, "catchAll");
@@ -265,7 +294,15 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         private static final Duration MINIMUM_IDLE_POLL_INTERVAL = Duration.ofMillis(1L);
         private static final Duration MAXIMUM_DURATION = Duration.ofDays(1L);
 
-        /** Validates explicit finite coordinator and duration bounds. */
+        /**
+         * Validates explicit finite coordinator and duration bounds.
+         * @param pageSize durable due-work page size, from 1 through 4096
+         * @param claimLease positive claim lease, strictly longer than one provider call timeout
+         * @param providerCallTimeout positive finite provider-call timeout
+         * @param idlePollInterval finite idle polling interval of at least one millisecond
+         * @param closeTimeout positive finite close timeout
+         * @throws IllegalArgumentException if pageSize or a duration exceeds its finite bound, idlePollInterval is less than one millisecond or claimLease does not exceed providerCallTimeout
+         */
         public SigningCoordinatorLimits {
             if (pageSize < 1 || pageSize > MAXIMUM_PAGE_ENTRIES) {
                 throw new IllegalArgumentException("pageSize is outside its finite bound");
@@ -301,7 +338,13 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         private static final int MAXIMUM_KEYS = 4096;
         private static final long MAXIMUM_KEY_REFERENCE_UTF8_BYTES = 1_048_576L; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
 
-        /** Validates and snapshots one exact-key group without exposing key values. */
+        /**
+         * Validates and snapshots one exact-key group without exposing key values.
+         * @param keyRefs nonempty immutable exact-key set expressed as a list
+         * @param lanePool dedicated bounded lane pool
+         * @throws NullPointerException if lanePool, keyRefs is null or a supplied collection contains a null member
+         * @throws IllegalArgumentException if the key set is empty or excessive, a key reference exceeds its byte bound or a key is duplicated
+         */
         public SigningKeyGroup {
             lanePool = Objects.requireNonNull(lanePool, "lanePool");
             List<KeyRef> suppliedKeys = Objects.requireNonNull(keyRefs, "keyRefs");
@@ -327,6 +370,9 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String toString() {
             return "SigningKeyGroup[keyRefs=<redacted>, lanePool=" + lanePool + ']';
@@ -343,7 +389,12 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         private static final int MAXIMUM_LANES = 256;
         private static final int MAXIMUM_PREFETCH_ENTRIES = 4096;
 
-        /** Validates explicit finite per-pool bounds. */
+        /**
+         * Validates explicit finite per-pool bounds.
+         * @param laneCount lane count, from 1 through 256
+         * @param prefetchSize prefetched identifier capacity, from 1 through 4096
+         * @throws IllegalArgumentException if laneCount or prefetchSize is outside its finite positive bound
+         */
         public SigningLanePool {
             if (laneCount < 1 || laneCount > MAXIMUM_LANES) {
                 throw new IllegalArgumentException("laneCount is outside its finite bound");
@@ -364,7 +415,14 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
     public record BindingProviderConfiguration(String providerId, List<String> authorizedOidRoots,
             Optional<String> expectedBindingSetVersion) {
 
-        /** Validates and snapshots the activation. */
+        /**
+         * Validates and snapshots the activation.
+         * @param providerId stable installed provider identity
+         * @param authorizedOidRoots finite roots owned by the deployment
+         * @param expectedBindingSetVersion optional pinned binding-set version
+         * @throws IllegalArgumentException if providerId is null/blank, authorized OID roots are empty, invalid or duplicated, or the expected binding-set version is blank or excessive
+         * @throws NullPointerException if authorizedOidRoots, expectedBindingSetVersion is null or a supplied collection contains a null member
+         */
         public BindingProviderConfiguration {
             if (providerId == null || providerId.isBlank()) {
                 throw new IllegalArgumentException("binding providerId must not be blank");

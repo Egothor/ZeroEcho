@@ -70,6 +70,20 @@ public record PublicationRecord(PkiId publicationId, PublicationSourceType sourc
      * Creates a publication record.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param publicationId publication id
+     * @param sourceType authoritative source-object type
+     * @param sourceId authoritative source-object identity
+     * @param content exact immutable source content
+     * @param target configured destination identity
+     * @param status durable lifecycle state
+     * @param attemptNumber non-negative monotonic attempt number
+     * @param attemptToken stable token for the current attempt, when one exists
+     * @param createdAt registration time
+     * @param updatedAt last durable state-change time
+     * @param failure safe failure classification
+     * @param evidence safe outcome-evidence classification
+     * @throws NullPointerException if publicationId, sourceType, sourceId, content, target, status,
+     *     attemptToken, createdAt, updatedAt, failure, evidence is null
      */
     public PublicationRecord {
         Objects.requireNonNull(publicationId, "publicationId");

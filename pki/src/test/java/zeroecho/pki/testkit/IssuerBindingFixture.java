@@ -15,15 +15,20 @@ import zeroecho.pki.impl.framework.x509.*;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Explicit public authority for low-level store fixtures; callers must name the known outgoing signer. */
+/**
+ * Explicit public authority for low-level store fixtures; callers must name the known outgoing signer.
+ */
 public final class IssuerBindingFixture {
-    /** Exact closed standard registry used by these explicit fixture generations. */
+    /**
+     * Exact closed standard registry used by these explicit fixture generations.
+     */
     public static final String BINDING_SET_COMMITMENT = ImmutableX509AlgorithmBindingRegistry.create(StandardX509Bindings.descriptors()).commitment();
     private IssuerBindingFixture() { }
     /**
      * Publishes a generation with public evidence from its actual fixture certificate.
      * This deliberately does not infer intermediate outgoing algorithms from incoming signatures.
-     * @param store fixture store @param generation exact immutable generation
+     * @param store fixture store
+     * @param generation exact immutable generation
      * @param signature explicit algorithm selected by the fixture's signing provider
      */
     public static void put(PkiStore store, IssuerGeneration generation, AlgorithmIdentity signature) {

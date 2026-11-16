@@ -52,11 +52,22 @@ import zeroecho.pki.api.audit.AuditQuery;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
+/**
+ * Contract and regression tests for file audit sink.
+ */
 public final class FileAuditSinkTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     public Path tempDir;
 
+    /**
+     * Record then search and get by id round trips deterministically.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void recordThenSearchAndGetById_roundTripsDeterministically() throws Exception {
         System.out.println("recordThenSearchAndGetById_roundTripsDeterministically");

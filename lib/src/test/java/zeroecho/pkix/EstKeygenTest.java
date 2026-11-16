@@ -78,16 +78,29 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pkix.cmp.CmpProtectedMessage;
 import zeroecho.pkix.sign.ContentSigner;
 
+/**
+ * Contract and regression tests for est keygen.
+ */
 class EstKeygenTest {
     private static KeyPair rsa;
     private static X509Certificate generator;
 
+    /**
+     * Prepares cryptographic keys, certificates, and protocol material used by the tests.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @BeforeAll static void material() throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         rsa = key("RSA", null);
         generator = certificate(rsa, Set.of(KeyUsage.DIGITAL_SIGNATURE, KeyUsage.KEY_ENCIPHERMENT));
     }
 
+    /**
+     * RSA package has exact nested content types and verified generator and private key.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void rsaPackageHasExactNestedContentTypesAndVerifiedGeneratorAndPrivateKey() throws Exception {
         byte[] template = template(rsa, generator, rsaCapability(), false);
         byte[] body = EstKeygen.signedEncryptedPackage(template, rsa.getPrivate().getEncoded(), generator, List.of(generator),
@@ -95,6 +108,11 @@ class EstKeygenTest {
         verifyPackage(body, rsa, rsa.getPrivate().getEncoded());
     }
 
+    /**
+     * Provider failure never discloses its message cause or suppressed failures.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void providerFailureNeverDisclosesItsMessageCauseOrSuppressedFailures() throws Exception {
         IllegalStateException sensitive = new IllegalStateException("SENSITIVE-PROVIDER-SENTINEL",
                 new IllegalArgumentException("SENSITIVE-CAUSE-SENTINEL"));
@@ -113,6 +131,11 @@ class EstKeygenTest {
         assertEquals(0, failure.getSuppressed().length);
     }
 
+    /**
+     * Named ec recipients use their actual curve without template proof.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void namedEcRecipientsUseTheirActualCurveWithoutTemplateProof() throws Exception {
         for (String curve : List.of("secp256r1", "secp384r1", "secp521r1")) {
             KeyPair recipient = key("EC", curve);
@@ -125,6 +148,11 @@ class EstKeygenTest {
         }
     }
 
+    /**
+     * Missing duplicate unknown recipient and wrong usage or negotiation fail.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void missingDuplicateUnknownRecipientAndWrongUsageOrNegotiationFail() throws Exception {
         byte[] valid = template(rsa, generator, rsaCapability(), false);
         KeyPair other = key("EC", "secp384r1");
@@ -151,6 +179,11 @@ class EstKeygenTest {
                 new DERSequence(rsaCapability()), false, true)));
     }
 
+    /**
+     * Template signature is ignored but its pkcs10 field types remain strict.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void templateSignatureIsIgnoredButItsPkcs10FieldTypesRemainStrict() throws Exception {
         byte[] valid = template(rsa, generator, rsaCapability(), true);
         EstKeygen.requireRecipient(valid, generator);

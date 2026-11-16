@@ -51,7 +51,15 @@ import java.util.Objects;
  */
 public record RelativeDistinguishedName(String attributeTypeOid, String value, DirectoryStringType stringType) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Retains the supplied name value and string type after required-input checks.
+     *
+     * @param attributeTypeOid the attribute-type OID (e.g. {@code 2.5.4.3} for CN)
+     * @param value the attribute value
+     * @param stringType the ASN.1 string type used to encode the value
+     * @throws NullPointerException if any of {@code attributeTypeOid}, {@code value}, {@code stringType} is null
+     * @throws IllegalArgumentException if the attribute-type OID is blank
+     */
     public RelativeDistinguishedName {
         Objects.requireNonNull(attributeTypeOid, "attributeTypeOid");
         Objects.requireNonNull(value, "value");

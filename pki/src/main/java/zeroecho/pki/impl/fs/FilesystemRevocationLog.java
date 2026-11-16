@@ -70,7 +70,9 @@ import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Exclusive-writer durable append-only revocation transition log. */
+/**
+ * Exclusive-writer durable append-only revocation transition log.
+ */
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class FilesystemRevocationLog implements AutoCloseable {
 
@@ -123,18 +125,57 @@ final class FilesystemRevocationLog implements AutoCloseable {
         scanInvocations = 1L;
     }
 
+    /**
+     * Creates an authoritative revocation log retaining an in-memory per-credential predecessor map.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param storeId stable store identity written into the new log; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog create(
             Path logPath, MetadataStoreId storeId, CredentialAuthority credentialAuthority) throws IOException {
         return create(logPath, storeId, credentialAuthority,
                 DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Creates an authoritative production log whose callers supply exact predecessor records.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param storeId stable store identity written into the new log; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog createProduction(
             Path logPath, MetadataStoreId storeId, CredentialAuthority credentialAuthority) throws IOException {
         return Lifecycle.create(logPath, storeId, credentialAuthority,
                 DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE, false);
     }
 
+    /**
+     * Opens an authoritative production log without retaining a per-credential predecessor map.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog openProduction(
             Path logPath, MetadataStoreId expectedStoreId, CredentialAuthority credentialAuthority)
             throws IOException {
@@ -142,6 +183,19 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE, false);
     }
 
+    /**
+     * Opens and replays an authoritative revocation log retaining per-credential predecessor state.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog open(
             Path logPath, MetadataStoreId expectedStoreId, CredentialAuthority credentialAuthority)
             throws IOException {
@@ -149,6 +203,21 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Creates an authoritative revocation log retaining an in-memory per-credential predecessor map.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param storeId stable store identity written into the new log; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @param capabilities filesystem durability capability profile; must not be null
+     * @param faults deterministic fault callback; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog create(
             Path logPath,
             MetadataStoreId storeId,
@@ -158,6 +227,21 @@ final class FilesystemRevocationLog implements AutoCloseable {
         return Lifecycle.create(logPath, storeId, credentialAuthority, capabilities, faults, true);
     }
 
+    /**
+     * Opens and replays an authoritative revocation log retaining per-credential predecessor state.
+     *
+     * <p>The returned log owns its writer lock and channel. The caller must close it;
+     * partial initialization closes acquired resources on failure.</p>
+     *
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @param capabilities filesystem durability capability profile; must not be null
+     * @param faults deterministic fault callback; must not be null
+     * @return open exclusively owned authoritative revocation log
+     * @throws IOException if format validation, replay, filesystem capability, or writer ownership fails
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static FilesystemRevocationLog open(
             Path logPath,
             MetadataStoreId expectedStoreId,
@@ -167,10 +251,31 @@ final class FilesystemRevocationLog implements AutoCloseable {
         return Lifecycle.open(logPath, expectedStoreId, credentialAuthority, capabilities, faults, true);
     }
 
+    /**
+     * Returns the exact authoritative revocation log store identity.
+     *
+     * @return exact authoritative revocation log store identity
+     */
     /* default */ MetadataStoreId storeId() {
         return storeId;
     }
 
+    /**
+     * Validates and force-appends one legal credential transition before advancing the in-memory endpoint.
+     *
+     * <p>The overload without a predecessor requires map-tracking mode; production mode
+     * uses the overload carrying the exact predecessor. Uncertain append/force completion
+     * fences further appends until close and recovery.</p>
+     *
+     * @param credentialId exact store-local credential identity; must not be null
+     * @param transition legal next transition bound to this credential; must not be null
+     * @return complete authoritative record after its file force succeeds
+     * @throws IOException if credential authority or writer authority cannot be established
+     * @throws NullPointerException if credentialId or transition is null, or map-mode append is used without a predecessor map
+     * @throws IllegalArgumentException if the transition is illegal for its predecessor
+     * @throws IllegalStateException if the log is closed
+     * @throws OutcomeUnknownException if append or file-force completion is uncertain
+     */
     /* default */ RevocationTransitionFrameCodec.CompleteRecord append(
             PkiId credentialId, RevocationTransition transition) throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
@@ -205,6 +310,22 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates and force-appends one legal credential transition before advancing the in-memory endpoint.
+     *
+     * <p>The overload without a predecessor requires map-tracking mode; production mode
+     * uses the overload carrying the exact predecessor. Uncertain append/force completion
+     * fences further appends until close and recovery.</p>
+     *
+     * @param credentialId exact store-local credential identity; must not be null
+     * @param transition legal next transition bound to this credential; must not be null
+     * @param previous exact prior credential transition, or null for the first transition
+     * @return complete authoritative record after its file force succeeds
+     * @throws IOException if credential/writer authority, predecessor identity, transition legality, or the next revision cannot be established
+     * @throws NullPointerException if credentialId or transition is null
+     * @throws IllegalStateException if closed or the predecessor overload is used outside production mode
+     * @throws OutcomeUnknownException if append or file-force completion is uncertain
+     */
     /* default */ RevocationTransitionFrameCodec.CompleteRecord append(
             PkiId credentialId, RevocationTransition transition,
             RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
@@ -240,6 +361,17 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Sequentially validates the authoritative log and provisionally replays records to the supplied sink.
+     *
+     * <p>The no-argument overload validates without an external replay sink. A successful
+     * scan completes the sink; a failed scan aborts its provisional state.</p>
+     *
+     * @param sink borrowed provisional replay sink; must not be null
+     * @return validated complete-prefix recovery result
+     * @throws IOException if log framing, credential authority, writer authority, or replay fails
+     * @throws IllegalStateException if the log is closed
+     */
     /* default */ RecoveryResult scan(RecoverySink sink) throws IOException {
         appendLock.lock();
         try {
@@ -251,10 +383,27 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Sequentially validates the authoritative log and provisionally replays records to the supplied sink.
+     *
+     * <p>The no-argument overload validates without an external replay sink. A successful
+     * scan completes the sink; a failed scan aborts its provisional state.</p>
+     *
+     * @return validated complete-prefix recovery result
+     * @throws IOException if log framing, credential authority, writer authority, or replay fails
+     * @throws IllegalStateException if the log is closed
+     */
     /* default */ RecoveryResult scan() throws IOException {
         return scan(RecoverySink.NONE);
     }
 
+    /**
+     * Returns the number of credential identities retained in map-tracking mode.
+     *
+     * @return size of the latest-state map, including terminal revoked states
+     * @throws IOException if writer authority is no longer valid
+     * @throws IllegalStateException if closed or production mode does not retain a current-state map
+     */
     /* default */ int activeCredentialCount() throws IOException {
         appendLock.lock();
         try {
@@ -268,6 +417,11 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes completed or attempted full-log scans under the append lock.
+     *
+     * @return lifetime scan invocation count, including opening replay
+     */
     /* default */ long scanInvocationCount() {
         appendLock.lock();
         try {
@@ -277,6 +431,13 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes the current authoritative log revision under writer authority.
+     *
+     * @return last force-acknowledged global revision
+     * @throws IOException if writer authority is invalid
+     * @throws IllegalStateException if the log is closed
+     */
     /* default */ long currentGlobalRevision() throws IOException {
         appendLock.lock();
         try {
@@ -292,6 +453,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
      *
      * <p>Records appended after this method returns belong to a later prefix and do
      * not change the returned target.</p>
+     * @return immutable exact authoritative prefix endpoint
+     * @throws IOException if writer authority is invalid or the log requires recovery
+     * @throws IllegalStateException if the log is closed
      */
     /* default */ RecoveryTarget recoveryTarget() throws IOException {
         appendLock.lock();
@@ -305,6 +469,11 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Tests whether uncertain append or writer ownership has fenced this log instance.
+     *
+     * @return true if close and recovery are required before further appends
+     */
     /* default */ boolean recoveryRequired() {
         appendLock.lock();
         try {
@@ -314,6 +483,16 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates a borrowed log channel and replays its complete authoritative prefix.
+     *
+     * @param channel borrowed channel; remains owned by the caller
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param credentialAuthority borrowed credential ownership validator; must not be null
+     * @param sink borrowed provisional replay sink; must not be null
+     * @return validated complete-prefix recovery result
+     * @throws IOException if framing, commitments, credential authority, or sink callbacks fail
+     */
     /* default */ static RecoveryResult scanChannel(
             FileChannel channel,
             MetadataStoreId expectedStoreId,
@@ -322,6 +501,14 @@ final class FilesystemRevocationLog implements AutoCloseable {
         return Scanner.scan(channel, expectedStoreId, credentialAuthority, sink);
     }
 
+    /**
+     * Validates one decoded transition against the exact optional prior credential record.
+     *
+     * @param data decoded candidate transition; must not be null
+     * @param previous exact prior credential transition, or null for the first transition
+     * @throws IOException if the transition is illegal for its predecessor
+     * @throws NullPointerException if data is null
+     */
     /* default */ static void validateTransition(
             RevocationTransitionFrameCodec.TransitionData data,
             RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
@@ -334,6 +521,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Logs the advisory derived-index directory durability warning without changing authority state.
+     */
     /* default */ static void warnIndexDirectoryDurability() {
         try {
             LOGGER.warning(INDEX_DIRECTORY_WARNING);
@@ -342,6 +532,14 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Derives a domain-separated SHA-256 index key from a bounded strict-UTF-8 credential identity.
+     *
+     * @param credentialId exact store-local credential identity; must not be null
+     * @return lowercase 64-character hexadecimal index-key digest
+     * @throws IOException if the identity is empty, malformed UTF-8, or exceeds the technical byte bound
+     * @throws NullPointerException if credentialId is null
+     */
     /* default */ static String indexKeyDigest(PkiId credentialId) throws IOException {
         byte[] identity = strictUtf8(credentialId.value());
         if (identity.length == 0
@@ -509,6 +707,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         appendLock.lock();
@@ -549,7 +750,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         return first;
     }
 
-    /** Isolates create and reopen mechanics from the retained writer authority. */
+    /**
+     * Isolates create and reopen mechanics from the retained writer authority.
+     */
     private static final class Lifecycle {
         private static FilesystemRevocationLog create(
                 Path logPath,
@@ -671,7 +874,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** One-pass scanner retaining only the latest finite state per credential. */
+    /**
+     * One-pass scanner retaining only the latest finite state per credential.
+     */
     private static final class Scanner {
         private static RecoveryResult scan(
                 FileChannel channel,
@@ -777,7 +982,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Production scalar scan; credential-local state is rebuilt only in the disk index. */
+    /**
+     * Production scalar scan; credential-local state is rebuilt only in the disk index.
+     */
     private static final class ScalarScanner {
         private static ProvisionalRecovery scanProvisional(
                 FileChannel channel,
@@ -822,7 +1029,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Successful scan whose sink publication remains provisional until its owner completes it. */
+    /**
+     * Successful scan whose sink publication remains provisional until its owner completes it.
+     */
     private record ProvisionalRecovery(RecoveryResult result, RecoverySink sink) {
         private ProvisionalRecovery {
             Objects.requireNonNull(result, "result");
@@ -830,7 +1039,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Exact existing revocation state-machine rules without synthetic history allocation. */
+    /**
+     * Exact existing revocation state-machine rules without synthetic history allocation.
+     */
     private static final class TransitionRules {
         private static void validate(
                 RevocationTransitionFrameCodec.TransitionData data, LatestState previous) {
@@ -901,7 +1112,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Mutable startup-only scalar state used by the single sequential scan. */
+    /**
+     * Mutable startup-only scalar state used by the single sequential scan.
+     */
     private static final class ScanState {
         private final MetadataStoreId storeId;
         private final long physicalEnd;
@@ -918,12 +1131,28 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Latest finite state retained for one credential, never its history. */
+    /**
+     * Latest finite state retained for one credential, never its history.
+     * @param globalRevision authoritative global revocation revision
+     * @param commitment integrity commitment of the exact encoded artifact
+     * @param transition immutable revocation transition retained for the credential
+     * @param recordOffset zero-based byte offset of the encoded record
+     */
     /* default */ record LatestState(
             long globalRevision,
             RevocationTransitionFrameCodec.Commitment commitment,
             RevocationTransition transition,
             long recordOffset) {
+        /**
+         * Creates the latest finite state retained for one credential, never its history.
+         *
+         * @param globalRevision authoritative global revocation revision
+         * @param commitment integrity commitment of the exact encoded artifact
+         * @param transition immutable revocation transition retained for the credential
+         * @param recordOffset zero-based byte offset of the encoded record
+         * @throws NullPointerException if {@code commitment} is null; or if {@code transition} is null
+         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || recordOffset < RevocationTransitionFrameCodec.PREAMBLE_BYTES)}
+         */
         LatestState {
             Objects.requireNonNull(commitment, "commitment");
             Objects.requireNonNull(transition, "transition");
@@ -932,6 +1161,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean equals(Object candidate) {
             if (this == candidate) {
@@ -946,6 +1178,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
                     && RevocationTransitionFrameCodec.transitionsEqual(transition, other.transition);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int hashCode() {
             return Objects.hash(globalRevision, commitment,
@@ -953,7 +1188,17 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Immutable result of one bounded-memory sequential recovery pass. */
+    /**
+     * Immutable result of one bounded-memory sequential recovery pass.
+     * @param storeId exact authoritative metadata store identity
+     * @param lastCompleteRecordBoundary exclusive byte boundary after the last complete revocation record
+     * @param physicalEnd observed physical file length in bytes
+     * @param incompleteTail whether an incomplete record remains after the complete prefix
+     * @param globalRevision authoritative global revocation revision
+     * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+     * @param globalCommitment global revocation commitment at the captured boundary
+     * @param latestStates latest finite revocation state for each credential identity
+     */
     /* default */ record RecoveryResult(
             MetadataStoreId storeId,
             long lastCompleteRecordBoundary,
@@ -963,6 +1208,20 @@ final class FilesystemRevocationLog implements AutoCloseable {
             OptionalLong finalRecordStart,
             RevocationTransitionFrameCodec.Commitment globalCommitment,
             Map<PkiId, LatestState> latestStates) {
+        /**
+         * Creates an immutable result of one bounded-memory sequential recovery pass.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param lastCompleteRecordBoundary exclusive byte boundary after the last complete revocation record
+         * @param physicalEnd observed physical file length in bytes
+         * @param incompleteTail whether an incomplete record remains after the complete prefix
+         * @param globalRevision authoritative global revocation revision
+         * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+         * @param globalCommitment global revocation commitment at the captured boundary
+         * @param latestStates latest finite revocation state for each credential identity
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         * @throws IllegalArgumentException if {@code (lastCompleteRecordBoundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES || physicalEnd < lastCompleteRecordBoundary || globalRevision < 0L || globalRevision == 0L != finalRecordStart.isEmpty())}
+         */
         RecoveryResult {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(finalRecordStart, "finalRecordStart");
@@ -991,7 +1250,14 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Immutable scalar boundary used by bounded derived-state recovery. */
+    /**
+     * Immutable scalar boundary used by bounded derived-state recovery.
+     * @param storeId exact authoritative metadata store identity
+     * @param globalRevision authoritative global revocation revision
+     * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+     * @param boundary exclusive byte boundary of the captured authoritative log prefix
+     * @param globalCommitment global revocation commitment at the captured boundary
+     */
     /* default */ record RecoveryTarget(
             MetadataStoreId storeId,
             long globalRevision,
@@ -999,6 +1265,17 @@ final class FilesystemRevocationLog implements AutoCloseable {
             long boundary,
             RevocationTransitionFrameCodec.Commitment globalCommitment)
             implements FilesystemRevocationCurrentIndex.RecoveryBoundary {
+        /**
+         * Creates an immutable scalar boundary used by bounded derived-state recovery.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param globalRevision authoritative global revocation revision
+         * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+         * @param boundary exclusive byte boundary of the captured authoritative log prefix
+         * @param globalCommitment global revocation commitment at the captured boundary
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         * @throws IllegalArgumentException if {@code (globalRevision < 0L || boundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES || globalRevision == 0L != finalRecordStart.isEmpty())}; or if {@code (globalRevision == 0L && (boundary != RevocationTransitionFrameCodec.PREAMBLE_BYTES || !globalCommitment.equals(RevocationTransitionFrameCodec.initialCommitment(storeId))))}; or if {@code (finalRecordStart.isPresent() && (finalRecordStart.getAsLong() < RevocationTransitionFrameCodec.PREAMBLE_BYTES || finalRecordStart.getAsLong() >= boundary))}
+         */
         RecoveryTarget {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(finalRecordStart, "finalRecordStart");
@@ -1022,76 +1299,152 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Provisional replay sink that can discard accepted records after later corruption. */
+    /**
+     * Provisional replay sink that can discard accepted records after later corruption.
+     */
     /* default */ interface RecoverySink {
+        /**
+         * No-op recovery sink that retains no decoded records.
+         */
         RecoverySink NONE = new RecoverySink() {
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void accept(RevocationTransitionFrameCodec.CompleteRecord record) {
                 // The default sink intentionally retains no historical record.
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void complete() {
                 // No provisional external state requires publication.
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void abort() {
                 // No provisional external state requires rollback.
             }
         };
 
-        /** Accepts one validated record provisionally during sequential replay. */
+        /**
+         * Accepts one validated record provisionally during sequential replay.
+         * @param record validated complete record provisionally replayed in log order
+         * @throws IOException if the sink cannot retain the provisional record
+         */
         void accept(RevocationTransitionFrameCodec.CompleteRecord record) throws IOException;
 
-        /** Publishes all provisionally accepted records after a valid scan. */
+        /**
+         * Publishes all provisionally accepted records after a valid scan.
+         * @throws IOException if the sink cannot publish its complete provisional replay
+         */
         void complete() throws IOException;
 
-        /** Discards provisionally accepted records after a failed scan. */
+        /**
+         * Discards provisionally accepted records after a failed scan.
+         */
         void abort();
     }
 
-    /** Store-local authority check performed once per distinct recovered credential. */
+    /**
+     * Store-local authority check performed once per distinct recovered credential.
+     */
     /* default */
     @FunctionalInterface
     interface CredentialAuthority {
-        /** Requires the exact credential to belong to the owning filesystem store. */
+        /**
+         * Requires the exact credential to belong to the owning filesystem store.
+         * @param credentialId exact store-local credential identity; must not be null
+         * @throws IOException if the exact credential is absent or does not belong to the store
+         */
         void requireCredential(PkiId credentialId) throws IOException;
     }
 
-    /** Deterministic package-private append and durability fault boundaries. */
+    /**
+     * Deterministic package-private append and durability fault boundaries.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for appending a durable log frame.
+         */
         APPEND,
+        /**
+         * Fault injection point for forcing file data and metadata.
+         */
         FILE_FORCE,
+        /**
+         * Fault injection point for the file force performed while opening the log.
+         */
         OPEN_FORCE,
+        /**
+         * Fault injection point for truncating an incomplete uncommitted tail.
+         */
         TAIL_TRUNCATE,
+        /**
+         * Fault injection point for forcing the repaired tail.
+         */
         TAIL_FORCE,
+        /**
+         * Fault injection point for verifying a repaired tail.
+         */
         TAIL_VERIFY
     }
 
-    /** Deterministic fault injection seam; it is not a production extension point. */
+    /**
+     * Deterministic fault injection seam; it is not a production extension point.
+     */
     /* default */
     @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails one selected append, force, or recovery boundary. */
+        /**
+         * Fails one selected append, force, or recovery boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
     }
 
-    /** Package-private capability observations for advisory durability behavior. */
+    /**
+     * Package-private capability observations for advisory durability behavior.
+     */
     /* default */ interface CapabilityProfile {
-        /** Reports whether owner-only POSIX creation attributes are available. */
+        /**
+         * Reports whether owner-only POSIX creation attributes are available.
+         * @param parent existing parent directory whose filesystem capabilities are inspected
+         * @return true when POSIX attribute support is available for the directory
+         * @throws IOException if filesystem capabilities cannot be inspected
+         */
         boolean posixAvailable(Path parent) throws IOException;
 
-        /** Reports whether the parent uses a recognized local filesystem. */
+        /**
+         * Reports whether the parent uses a recognized local filesystem.
+         * @param parent existing parent directory whose filesystem capabilities are inspected
+         * @return true when the directory resides on an accepted local filesystem
+         * @throws IOException if filesystem capabilities cannot be inspected
+         */
         boolean localFileSystem(Path parent) throws IOException;
 
-        /** Attempts to force the parent directory after exclusive creation. */
+        /**
+         * Attempts to force the parent directory after exclusive creation.
+         * @param parent existing parent directory whose filesystem capabilities are inspected
+         * @throws IOException if parent-directory durability cannot be confirmed
+         */
         void forceParent(Path parent) throws IOException;
     }
 
-    /** Caller-visible append uncertainty requiring close and scanner recovery. */
+    /**
+     * Caller-visible append uncertainty requiring close and scanner recovery.
+     */
     /* default */ static final class OutcomeUnknownException extends IOException {
         private static final long serialVersionUID = -1593021845236499276L;
 
@@ -1100,7 +1453,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Checked corruption result; corrupt complete bytes are never tail-repaired. */
+    /**
+     * Checked corruption result; corrupt complete bytes are never tail-repaired.
+     */
     /* default */ static final class CorruptLogException extends IOException {
         private static final long serialVersionUID = -5000565696885871383L;
 
@@ -1113,28 +1468,41 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Live lifecycle of the retained writer authority. */
+    /**
+     * Live lifecycle of the retained writer authority.
+     */
     private enum State {
         OPEN,
         RECOVERY_REQUIRED,
         CLOSED
     }
 
-    /** Default observations for the active Java filesystem provider. */
+    /**
+     * Default observations for the active Java filesystem provider.
+     */
     private enum DefaultCapabilityProfile implements CapabilityProfile {
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean posixAvailable(Path parent) throws IOException {
             return Files.getFileStore(parent).supportsFileAttributeView("posix");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean localFileSystem(Path parent) throws IOException {
             FileStore store = Files.getFileStore(parent);
             return LOCAL_FILE_SYSTEMS.contains(store.type().toLowerCase(Locale.ROOT));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceParent(Path parent) throws IOException {
             // POSIX directory fsync; a correct no-op on platforms that carry
@@ -1143,11 +1511,15 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
-    /** Immutable advisory capability observation. */
+    /**
+     * Immutable advisory capability observation.
+     */
     private record CapabilityObservation(boolean posix, boolean local, boolean limited) {
     }
 
-    /** Owns the channel and lock until their authority transfers to an opened log. */
+    /**
+     * Owns the channel and lock until their authority transfers to an opened log.
+     */
     private static final class Resources {
         private final FileChannel channel;
         private final FileLock writerLock;

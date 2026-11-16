@@ -82,12 +82,20 @@ import zeroecho.pki.spi.audit.AuditSink;
  * binds each approval to the exact issuance commitment before signing.
  */
 class IssuanceApprovalGatewayTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
     private static final PkiId ISSUER = ServerTestSupport.AUTHORITY;
     private static final PkiId REQUEST_ID = new PkiId("request-1");
     private static final String PROFILE = "server-tls";
 
+    /**
+     * Checks a threshold-gated profile prevents dispatch until quorum and consumes approved issuance exactly once.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void thresholdProfileGatesIssuanceUntilQuorumApprovesThenExecutesExactlyOnce() throws Exception {
         System.out.println("thresholdProfileGatesIssuanceUntilQuorumApprovesThenExecutesExactlyOnce");
@@ -124,6 +132,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a one-approval profile holds issuance until one distinct eligible approval is retained.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void issuanceWithoutApprovalIsHeldAndSingleApprovalProfileRequiresOneDecision() throws Exception {
         System.out.println("issuanceWithoutApprovalIsHeldAndSingleApprovalProfileRequiresOneDecision");
@@ -152,6 +165,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a profile with no approval requirement dispatches one issuance directly.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void noneProfileIssuesWithoutApproval() throws Exception {
         System.out.println("noneProfileIssuesWithoutApproval");
@@ -168,6 +186,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a rejected approval cannot authorize issuance and leaves the backend uncalled.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectedApprovalPreventsIssuance() throws Exception {
         System.out.println("rejectedApprovalPreventsIssuance");
@@ -192,6 +215,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks expiry is observed durably before dispatch and no issuance occurs.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void expiredApprovalPreventsIssuance() throws Exception {
         System.out.println("expiredApprovalPreventsIssuance");
@@ -223,6 +251,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks an approved record survives control-store reopen and gates one subsequent issuance through executed state.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void approvalSurvivesRestartAndStillGatesIssuance() throws Exception {
         System.out.println("approvalSurvivesRestartAndStillGatesIssuance");
@@ -260,6 +293,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks racing issuance claims consume one approval and dispatch the backend once.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentIssuanceClaimsExecuteExactlyOnce() throws Exception {
         System.out.println("concurrentIssuanceClaimsExecuteExactlyOnce");
@@ -308,6 +346,11 @@ class IssuanceApprovalGatewayTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the administrative approval API retains a pending issuance decision that later authorizes one dispatch.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void issuanceApprovalIsCreatableThroughTheAdministrativeApi() throws Exception {
         System.out.println("issuanceApprovalIsCreatableThroughTheAdministrativeApi");
@@ -422,6 +465,9 @@ class IssuanceApprovalGatewayTest {
     private static final class CountingExecutor implements PkiOperationExecutor {
         private final AtomicInteger calls = new AtomicInteger();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
             calls.incrementAndGet();
@@ -431,8 +477,17 @@ class IssuanceApprovalGatewayTest {
     }
 
     private static final class EmptyScopeResolver implements PkiResourceScopeResolver {
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<CredentialScope> credentialScope(PkiId credentialId) { return Optional.empty(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<PkiId> statusObjectAuthority(PkiId statusObjectId) { return Optional.empty(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<PkiId> publicationAuthority(PkiId publicationId) { return Optional.empty(); }
     }
 }

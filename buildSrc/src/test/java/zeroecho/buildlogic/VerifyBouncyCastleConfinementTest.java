@@ -47,10 +47,21 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+/**
+ * Build-logic tests for lexical detection and module confinement of provider dependencies.
+ */
 class VerifyBouncyCastleConfinementTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Detects forbidden Bouncy Castle references without resolving provider classes.
+     * @param source Java source containing a forbidden provider reference
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = {
         "import org.bouncycastle.cert.X509CertificateHolder; class Example {}",
@@ -68,6 +79,11 @@ class VerifyBouncyCastleConfinementTest {
         assertTrue(error.getMessage().contains("must be confined to :lib"));
     }
 
+    /**
+     * Checks Java Unicode translation before scanning for forbidden provider references.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void appliesUnicodeTranslationBeforeDetectingReferences() throws Exception {
         String escaped = "import org." + "\\" + "u0062ouncycastle.cert.X509CertificateHolder; class Example {}";
@@ -76,6 +92,11 @@ class VerifyBouncyCastleConfinementTest {
         assertThrows(GradleException.class, fixture("pki", escapedNewline)::verify);
     }
 
+    /**
+     * Ignores provider-like text in comments and literals and unrelated package names.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ignoresCommentsJavadocStringsTextBlocksAndSimilarPackages() throws Exception {
         String source = """
@@ -98,11 +119,21 @@ class VerifyBouncyCastleConfinementTest {
         assertTrue(Files.exists(task.getMarker().get().getAsFile().toPath()));
     }
 
+    /**
+     * Checks that the designated library module may reference provider implementation classes.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void permitsProviderImplementationInLib() throws Exception {
         assertDoesNotThrow(fixture("lib", "import org.bouncycastle.cert.X509CertificateHolder; class Example {}")::verify);
     }
 
+    /**
+     * Rejects malformed Java input instead of silently skipping confinement checks.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void failsClosedOnMalformedJava() throws Exception {
         GradleException error = assertThrows(GradleException.class,

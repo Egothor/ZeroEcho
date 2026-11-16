@@ -64,11 +64,17 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pkix.Pkix;
 
-/** Internal durable full-CRL schema shared by preparation, publication and recovery. */
+/**
+ * Internal durable full-CRL schema shared by preparation, publication and recovery.
+ */
 public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity totals independent cohesive operations; method-level checks remain enabled.
-    /** Full-CRL-only schema discriminator. */
+    /**
+     * Full-CRL-only schema discriminator.
+     */
     public static final String OPERATION = "GENERATE_FULL_CRL";
-    /** Delta-CRL schema discriminator with an immutable five-field base suffix. */
+    /**
+     * Delta-CRL schema discriminator with an immutable five-field base suffix.
+     */
     public static final String DELTA_OPERATION = "GENERATE_DELTA_CRL";
 
     /**
@@ -86,12 +92,21 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * Freezes bounded provenance for an already staged, validated TBS. No content is copied.
      * @param prepared exact completed domain preparation
      * @return correlated durable command
+     * @throws IllegalArgumentException if prepared contains a hybrid CRL requiring a separately captured parent identity
      */
     public static DomainContinuationTemplate template(PreparedFullCrlTbs prepared) {
         if (prepared.hybrid().isPresent()) throw new IllegalArgumentException("Hybrid CRL requires a captured parent identity");
         return template(prepared, null);
     }
 
+    /**
+     * Encodes the exact prepared CRL inputs into a durable domain continuation template.
+     *
+     * @param prepared frozen prepared TBS and issuer metadata
+     * @param hybridDescriptor captured hybrid descriptor, or null for native signing
+     * @return canonical CRL continuation template
+     * @throws IllegalArgumentException if prepared inputs or descriptor are invalid
+     */
     /* default */ static DomainContinuationTemplate template(PreparedFullCrlTbs prepared, String hybridDescriptor) {
         String number = prepared.crlNumber().toString();
         boolean delta = prepared.base().isPresent();
@@ -136,6 +151,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
     /**
      * Validates the canonical scalar schema without opening any content.
      * @param command frozen full or delta CRL command
+     * @throws IllegalStateException if frozen command discriminators, CRL coordinates, identities, algorithms, commitments or bounds are inconsistent
      */
     public static void validate(DomainCommandEncoding.Decoded command) {
         boolean delta = DELTA_OPERATION.equals(command.operation());
@@ -221,6 +237,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * Checks live TBS metadata against the frozen command, without restoring retired content.
      * @param command validated frozen command
      * @param content live operation-owned TBS reference
+     * @throws IllegalStateException if signing content does not match the frozen command encoding, lifecycle, length or commitment
      */
     public static void requireTbs(DomainCommandEncoding.Decoded command, DurableContentReference content) {
         if (content.encoding() != Encoding.DER || content.lifecycle() != DurableContentReference.Lifecycle.OPERATION
@@ -234,6 +251,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * @param algorithm canonical signature algorithm identity
      * @param length candidate message length in bytes
      * @param maximum positive finite pure-EdDSA message bound in bytes
+     * @throws IllegalArgumentException if maximum is outside its finite bound or a pure EdDSA CRL exceeds that TBS length limit
      */
     public static void requireAdmission(String algorithm, long length, long maximum) {
         if (maximum <= 0 || maximum > Integer.MAX_VALUE - 8L) {
@@ -249,6 +267,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * Decodes the sole permitted full-CRL completion result.
      * @param result encoded bounded canonical status identity
      * @return parsed status-object identifier
+     * @throws IllegalStateException if result is not the exact bounded binary encoding of a canonical CRL status identity
      */
     public static PkiId resultId(EncodedObject result) {
         byte[] bytes = result.bytes();
@@ -317,6 +336,7 @@ public final class FullCrlSigningCommand { // NOPMD - CyclomaticComplexity total
      * @param domain publishing continuation
      * @param signature authoritative provider result
      * @throws IOException if content cannot be read
+     * @throws IllegalStateException if the retained signature or assembled CRL differs from its accepted result, frozen TBS or commitments, or SHA-256 is unavailable
      */
     public static void requireSigningEffect(PkiStore store, StatusObject status,
             DomainContinuationStore.Record domain, EncodedObject signature) throws IOException {

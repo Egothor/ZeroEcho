@@ -58,7 +58,14 @@ public record FullCrlSnapshotProvenance(MetadataStoreId sourceStoreId, long revi
     private static final AttributeId BOUNDARY = new AttributeId("zeroecho.pki.full-crl.snapshot-boundary");
     private static final AttributeId COMMITMENT = new AttributeId("zeroecho.pki.full-crl.snapshot-commitment");
 
-    /** Validates bounded canonical provenance without consulting a store. */
+    /**
+     * Validates bounded canonical provenance without consulting a store.
+     * @param sourceStoreId source identity captured by the prepared snapshot
+     * @param revision captured global revision, including zero for genesis
+     * @param boundary captured authoritative byte boundary
+     * @param commitment captured lowercase SHA-256 global commitment
+     * @throws NullPointerException if sourceStoreId is null
+     */
     public FullCrlSnapshotProvenance {
         Objects.requireNonNull(sourceStoreId, "sourceStoreId");
         if (revision < 0 || boundary < 0 || commitment == null || commitment.length() != 64

@@ -94,6 +94,9 @@ import zeroecho.pki.spi.framework.CertificationRequestParser;
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
     private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
+    /**
+     * Inclusive maximum decoded certification request size, one mebibyte of DER bytes.
+     */
     /* default */ static final int MAXIMUM_CSR_DER_BYTES = 1024 * 1024;
     private static final int MAXIMUM_CSR_ENCODED_BYTES = 2 * 1024 * 1024;
     private static final int MAXIMUM_SUBJECT_RDNS = 32;
@@ -105,7 +108,9 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     private static final String NEW_CERTIFICATE_REQUEST = "NEW CERTIFICATE REQUEST";
     private static final String CSR_PEM_INVALID = "Invalid PEM: code=CSR_PEM_INVALID";
 
-    /** Creates a stateless PKCS#10 request parser. */
+    /**
+     * Creates a stateless PKCS#10 request parser.
+     */
     public BcX509CertificationRequestParser() {
         // Stateless.
     }
@@ -117,6 +122,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * @param request bounded immutable original payload
      * @return normalized request with one syntax-specific transport attribute
      * @throws PkiException if the request or supported subject/SAN grammar is invalid
+     * @throws NullPointerException if {@code request} is null
      */
     @Override
     public ParsedCertificationRequest parseX509(X509EnrollmentPayload request) {
@@ -166,6 +172,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * @param request exact DER PKCS#10 carrying one alternative subject SPKI request
      * @return separate normalized two-subject-key view
      * @throws PkiException for malformed DER, unsupported keys or an invalid primary proof
+     * @throws NullPointerException if {@code request} is null
      */
     public zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parseHybridSdk(CertificationRequest request) {
         Objects.requireNonNull(request, "request");
@@ -190,6 +197,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * @param payload canonical single PKCS#10 or CRMF request
      * @return normalized dual-key request with verified original primary proof
      * @throws PkiException for unsupported syntax, extension, suite or proof
+     * @throws NullPointerException if {@code payload} is null
      */
     public zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parseHybridSdk(X509EnrollmentPayload payload) {
         Objects.requireNonNull(payload, "payload");
@@ -286,6 +294,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * @param certificate already-issued certificate to reconstruct from
      * @param formatId    active framework format identifier
      * @return reconstructed request with no CSR transport attribute
+     * @throws NullPointerException if {@code certificate} or {@code formatId} is null
+     * @throws PkiException if the certificate cannot supply its encoded public key or complete DER encoding
      */
     // Certificate provider accessors may throw provider-specific runtime exceptions at this validation boundary.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")

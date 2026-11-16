@@ -35,6 +35,8 @@ package zeroecho.pki.spi.publish;
 
 import zeroecho.pki.spi.ConfigurableProvider;
 
-/** Service-provider contract for explicitly configured publication destinations. */
+/**
+ * Service-provider contract for explicitly configured publication destinations.
+ */
 public interface PublisherProvider extends ConfigurableProvider<Publisher> {
 }

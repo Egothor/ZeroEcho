@@ -45,7 +45,9 @@ import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
 import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 import zeroecho.pki.api.confirmation.CredentialConfirmationReview;
 
-/** Strict current-format codec for one derived confirmation-review projection. */
+/**
+ * Strict current-format codec for one derived confirmation-review projection.
+ */
 final class CredentialConfirmationReviewCodec {
     private static final int MAGIC = 0x5a455256; // ZERV
     private static final int VERSION = 2;
@@ -57,6 +59,13 @@ final class CredentialConfirmationReviewCodec {
 
     private CredentialConfirmationReviewCodec() { }
 
+    /**
+     * Encodes the bounded credential confirmation review projection.
+     *
+     * @param review validated credential, authority, profile, review time and disclosure projection
+     * @return newly allocated complete binary review record
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static byte[] encode(CredentialConfirmationReview review) {
         byte[] credential = review.credentialId().value().getBytes(StandardCharsets.UTF_8);
         byte[] authority = review.authorityId().value().getBytes(StandardCharsets.UTF_8);
@@ -73,6 +82,14 @@ final class CredentialConfirmationReviewCodec {
         return output.array();
     }
 
+    /**
+     * Decodes one exact confirmation review projection with bounded strict text fields.
+     *
+     * @param encoded complete versioned review bytes
+     * @return validated immutable review projection
+     * @throws NullPointerException if the input array is null
+     * @throws IOException if size, framing, text, timestamp or disclosure code is malformed or trailing bytes remain
+     */
     /* default */ static CredentialConfirmationReview decode(byte[] encoded) throws IOException {
         try {
             if (encoded.length < FIXED_BYTES + 3 || encoded.length > MAXIMUM_BYTES) {

@@ -49,7 +49,9 @@ import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Strict bounded encoding of the closed public attribute-value hierarchy. */
+/**
+ * Strict bounded encoding of the closed public attribute-value hierarchy.
+ */
 public final class DomainAttributeEncoding { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
     private static final int UTF8_TWO_BYTE_START = 0x80;
     private static final int UTF8_THREE_BYTE_START = 0x800;
@@ -64,6 +66,7 @@ public final class DomainAttributeEncoding { // NOPMD - CyclomaticComplexity tot
      *
      * @param attributes immutable attributes to encode
      * @return canonical unpadded base64url representation
+     * @throws IllegalStateException if in-memory attribute encoding cannot complete
      */
     public static String encode(AttributeSet attributes) {
         int size = encodedSize(attributes);

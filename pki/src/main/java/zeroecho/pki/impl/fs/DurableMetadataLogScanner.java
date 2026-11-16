@@ -54,7 +54,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
-/** Strict sequential recovery scanner for one durable append-only metadata log. */
+/**
+ * Strict sequential recovery scanner for one durable append-only metadata log.
+ */
 final class DurableMetadataLogScanner {
 
     private static final short SEMANTIC_VERSION = 1;
@@ -89,41 +91,116 @@ final class DurableMetadataLogScanner {
      * state. MetadataFrameCodec supplies fixed-buffer payload validation; this
      * scanner reads only exact bounded semantic payloads and 32-byte digests.
     */
+    /**
+     * Validates the complete structural log and reconstructs finite per-transaction recovery facts.
+     *
+     * @param channel borrowed seekable source channel; its position may change
+     * @return immutable transaction, epoch and complete-prefix recovery facts
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if framing, integrity, transaction continuity or semantic control records are invalid
+     */
     /* default */ static RecoveryResult scan(SeekableByteChannel channel) throws IOException {
         return new ScanEngine(channel).scan();
     }
 
+    /**
+     * Validates the complete structural log and reconstructs the current metadata index and terminal outcomes.
+     *
+     * @param channel borrowed seekable source channel; its position may change
+     * @return current-state replay result and its exact recovery boundaries
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if framing, integrity, transaction continuity or semantic control records are invalid
+     */
     /* default */ static ReplayResult replay(SeekableByteChannel channel) throws IOException {
         return new ReplayEngine(channel).replay();
     }
 
+    /**
+     * Encodes the exact store identity in its versioned structural header payload.
+     *
+     * @param storeId validated canonical store identity
+     * @return new fixed-size semantic store-header payload
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static byte[] encodeStoreHeader(MetadataStoreId storeId) {
         return Semantic.encodeStoreHeader(storeId);
     }
 
+    /**
+     * Encodes a store-bound transaction issuance control payload.
+     *
+     * @param transactionId exact validated transaction identity
+     * @return new fixed-size issuance payload
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static byte[] encodeIssuance(MetadataTransactionId transactionId) {
         return Semantic.encodeIssuance(transactionId);
     }
 
+    /**
+     * Encodes a committed terminal payload binding transaction identity, revision and frame chain.
+     *
+     * @param transactionId exact validated transaction identity
+     * @param revision nonnegative committed metadata revision
+     * @param chainState exact 32-byte transaction chain commitment
+     * @return new fixed-size committed terminal payload
+     * @throws NullPointerException if the transaction identity is null
+     * @throws IllegalArgumentException if revision or chain commitment length is invalid
+     */
     /* default */ static byte[] encodeCommitted(
             MetadataTransactionId transactionId, long revision, byte[] chainState) {
         return Semantic.encodeCommitted(transactionId, revision, chainState);
     }
 
+    /**
+     * Encodes a noncommitted terminal payload binding transaction identity, failure and frame chain.
+     *
+     * @param transactionId exact validated transaction identity
+     * @param failureCode positive stable terminal failure code
+     * @param chainState exact 32-byte transaction chain commitment
+     * @return new fixed-size rejected terminal payload
+     * @throws NullPointerException if the transaction identity is null
+     * @throws IllegalArgumentException if the failure code or chain commitment length is invalid
+     */
     /* default */ static byte[] encodeRejected(
             MetadataTransactionId transactionId, int failureCode, byte[] chainState) {
         return Semantic.encodeRejected(transactionId, failureCode, chainState);
     }
 
+    /**
+     * Encodes recovery epoch advancement and its finite repair counters.
+     *
+     * @param epoch nonnegative new recovery epoch
+     * @param abandonedOpenCount nonnegative number of unfinished transactions abandoned by recovery
+     * @param truncatedByteCount nonnegative incomplete-tail length removed in bytes
+     * @return new fixed-size recovery restart payload
+     * @throws IllegalArgumentException if a coordinate or counter is negative
+     */
     /* default */ static byte[] encodeRestart(
             long epoch, long abandonedOpenCount, long truncatedByteCount) {
         return Semantic.encodeRestart(epoch, abandonedOpenCount, truncatedByteCount);
     }
 
+    /**
+     * Returns the new initial transaction digest chain state.
+     *
+     * @return new initial transaction digest chain state
+     */
     /* default */ static byte[] initialChainState() {
         return TransactionDigest.initial();
     }
 
+    /**
+     * Advances the domain-separated transaction commitment with one exact validated frame.
+     *
+     * @param channel borrowed source channel used to read authenticated frame evidence
+     * @param frame exact validated frame locator
+     * @param previousState 32-byte transaction chain commitment preceding this frame
+     * @return new 32-byte transaction chain commitment
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the prior chain commitment length is invalid
+     * @throws IOException if the exact frame integrity evidence cannot be read
+     */
     /* default */ static byte[] advanceChain(
             SeekableByteChannel channel,
             MetadataFrameCodec.FrameMetadata frame,
@@ -131,6 +208,11 @@ final class DurableMetadataLogScanner {
         return TransactionDigest.advance(channel, frame, previousState);
     }
 
+    /**
+     * Returns the fixed zero transaction token used by structural framing.
+     *
+     * @return fixed zero transaction token used by structural framing
+     */
     /* default */ static String zeroToken() {
         return ZERO_TOKEN;
     }
@@ -215,6 +297,13 @@ final class DurableMetadataLogScanner {
                 MetadataCommitResult.FailureCategory.INTEGRITY_FAILURE, message, cause);
     }
 
+    /**
+     * Advances a validated recovery epoch without silently wrapping signed arithmetic.
+     *
+     * @param currentEpoch validated current nonnegative recovery epoch
+     * @return next representable recovery epoch
+     * @throws MetadataStoreException if incrementing the epoch overflows
+     */
     /* default */ static long checkedNextRecoveryEpoch(long currentEpoch)
             throws MetadataStoreException {
         try {
@@ -224,14 +313,35 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Physical state of the bytes following the last complete validated frame. */
+    /**
+     * Physical state of the bytes following the last complete validated frame.
+     */
     /* default */ enum Tail {
+        /**
+         * The scan reached the exact end of the committed log.
+         */
         CLEAN_END,
+        /**
+         * The input ends with a partial frame or record.
+         */
         INCOMPLETE_TAIL
     }
 
-    /** Semantic terminal result reconstructed without applying opaque mutations. */
+    /**
+     * Semantic terminal result reconstructed without applying opaque mutations.
+     * @param kind closed TerminalKind discriminator
+     * @param committedRevision authoritative committed revision, absent when no commit occurred
+     * @param failureCode stable terminal failure code, absent when not applicable
+     */
     /* default */ record Terminal(TerminalKind kind, OptionalLong committedRevision, OptionalInt failureCode) {
+        /**
+         * Creates the semantic terminal result reconstructed without applying opaque mutations.
+         *
+         * @param kind closed TerminalKind discriminator
+         * @param committedRevision authoritative committed revision, absent when no commit occurred
+         * @param failureCode stable terminal failure code, absent when not applicable
+         * @throws NullPointerException if {@code kind} is null; or if {@code committedRevision} is null; or if {@code failureCode} is null
+         */
         Terminal {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(committedRevision, "committedRevision");
@@ -239,27 +349,59 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Closed terminal kinds understood by the current log version. */
+    /**
+     * Closed terminal kinds understood by the current log version.
+     */
     /* default */ enum TerminalKind {
+        /**
+         * The transaction has a retained committed terminal outcome.
+         */
         COMMITTED,
+        /**
+         * The transaction has a retained noncommitted terminal outcome.
+         */
         NOT_COMMITTED
     }
 
-    /** Stable internal reasons for synthesized or locally authored rejections. */
+    /**
+     * Stable internal reasons for synthesized or locally authored rejections.
+     */
     /* default */ enum FailureReason {
+        /**
+         * A transaction conflicts with the authoritative record state.
+         */
         TRANSACTION_CONFLICT(1),
+        /**
+         * Recovery terminated an issued transaction without a committed outcome.
+         */
         ABANDONED_BY_RECOVERY(2);
 
         private final int code;
 
+        /**
+         * Associates the closed recovery rejection reason with an explicit persisted code.
+         *
+         * @param code stable positive code assigned by the enum declaration
+         */
         FailureReason(int code) {
             this.code = code;
         }
 
+        /**
+         * Returns the stable explicitly assigned terminal failure code.
+         *
+         * @return stable explicitly assigned terminal failure code
+         */
         /* default */ int code() {
             return code;
         }
 
+        /**
+         * Resolves a known recovery rejection code without inventing a fallback reason.
+         *
+         * @param code persisted stable failure code
+         * @return matching closed reason, or an empty optional for an unknown code
+         */
         /* default */ static Optional<FailureReason> fromCode(int code) {
             for (FailureReason reason : values()) {
                 if (reason.code == code) {
@@ -270,13 +412,29 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Exact semantic facts carried by one store-scoped recovery restart. */
+    /**
+     * Exact semantic facts carried by one store-scoped recovery restart.
+     */
     private record Restart(long epoch, long abandonedOpenCount, long truncatedByteCount) {
     }
 
-    /** Immutable finite transaction facts reconstructed by recovery. */
+    /**
+     * Immutable finite transaction facts reconstructed by recovery.
+     * @param transactionId exact durable transaction identity
+     * @param mutationCount number of mutations observed for the transaction
+     * @param terminal retained terminal result, or empty for an unfinished transaction
+     */
     /* default */ record RecoveredTransaction(
             MetadataTransactionId transactionId, long mutationCount, Optional<Terminal> terminal) {
+        /**
+         * Creates an immutable finite transaction facts reconstructed by recovery.
+         *
+         * @param transactionId exact durable transaction identity
+         * @param mutationCount number of mutations observed for the transaction
+         * @param terminal retained terminal result, or empty for an unfinished transaction
+         * @throws NullPointerException if {@code transactionId} is null; or if {@code terminal} is null
+         * @throws IllegalArgumentException if {@code (mutationCount < MINIMUM_COUNT)}
+         */
         RecoveredTransaction {
             Objects.requireNonNull(transactionId, "transactionId");
             Objects.requireNonNull(terminal, "terminal");
@@ -286,7 +444,18 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Complete immutable result of one recovery scan. */
+    /**
+     * Complete immutable result of one recovery scan.
+     * @param storeId exact authoritative metadata store identity
+     * @param lastCompleteFrameBoundary exclusive byte boundary after the last structurally complete frame
+     * @param physicalEnd observed physical file length in bytes
+     * @param tail classification of bytes after the last complete frame
+     * @param transactions recovered per-transaction facts keyed by exact transaction identity
+     * @param nextTransactionToken next issuable transaction token, or empty when unavailable
+     * @param transactionTokensExhausted whether the transaction-token space has been exhausted
+     * @param recoveryEpoch authoritative recovery incarnation
+     * @param openTransactionCount number of issued transactions without terminal outcomes
+     */
     /* default */ record RecoveryResult(
             MetadataStoreId storeId,
             long lastCompleteFrameBoundary,
@@ -297,6 +466,21 @@ final class DurableMetadataLogScanner {
             boolean transactionTokensExhausted,
             long recoveryEpoch,
             long openTransactionCount) {
+        /**
+         * Creates the complete immutable result of one recovery scan.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param lastCompleteFrameBoundary exclusive byte boundary after the last structurally complete frame
+         * @param physicalEnd observed physical file length in bytes
+         * @param tail classification of bytes after the last complete frame
+         * @param transactions recovered per-transaction facts keyed by exact transaction identity
+         * @param nextTransactionToken next issuable transaction token, or empty when unavailable
+         * @param transactionTokensExhausted whether the transaction-token space has been exhausted
+         * @param recoveryEpoch authoritative recovery incarnation
+         * @param openTransactionCount number of issued transactions without terminal outcomes
+         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if {@code transactions} is null; or if {@code nextTransactionToken} is null
+         * @throws IllegalArgumentException if {@code (lastCompleteFrameBoundary < MINIMUM_COUNT || physicalEnd < MINIMUM_COUNT)}; or if {@code (lastCompleteFrameBoundary > physicalEnd)}; or if {@code (tail == Tail.CLEAN_END && lastCompleteFrameBoundary != physicalEnd)}; or if {@code (tail == Tail.INCOMPLETE_TAIL && lastCompleteFrameBoundary >= physicalEnd)}; or if {@code (transactionTokensExhausted && nextTransactionToken.isPresent())}; or if {@code (!transactionTokensExhausted && nextTransactionToken.isEmpty())}; or if {@code (recoveryEpoch < MINIMUM_COUNT || openTransactionCount < MINIMUM_COUNT)}
+         */
         RecoveryResult {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(tail, "tail");
@@ -330,7 +514,23 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Current-state replay result used only by the internal store engine. */
+    /**
+     * Current-state replay result used only by the internal store engine.
+     * @param storeId exact authoritative metadata store identity
+     * @param lastCompleteFrameBoundary exclusive byte boundary after the last structurally complete frame
+     * @param physicalEnd observed physical file length in bytes
+     * @param tail classification of bytes after the last complete frame
+     * @param nextTransactionToken next issuable transaction token, or empty when unavailable
+     * @param transactionTokensExhausted whether the transaction-token space has been exhausted
+     * @param stateIndex reconstructed current-state index
+     * @param outcomes retained terminal outcomes keyed by exact transaction identity
+     * @param restartOutcomes terminal outcomes established by recovery restart handling
+     * @param recoveryEpoch authoritative recovery incarnation
+     * @param openTransactionCount number of issued transactions without terminal outcomes
+     * @param recoveryFullMapCopies number of full-map copies performed during recovery
+     * @param recoveryFinalInstalls number of final reconstructed-state installations
+     * @param discardedDescriptorCount number of mutation descriptors discarded during replay
+     */
     /* default */ record ReplayResult(
             MetadataStoreId storeId,
             long lastCompleteFrameBoundary,
@@ -346,6 +546,26 @@ final class DurableMetadataLogScanner {
             long recoveryFullMapCopies,
             long recoveryFinalInstalls,
             long discardedDescriptorCount) {
+        /**
+         * Creates the current-state replay result used only by the internal store engine.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param lastCompleteFrameBoundary exclusive byte boundary after the last structurally complete frame
+         * @param physicalEnd observed physical file length in bytes
+         * @param tail classification of bytes after the last complete frame
+         * @param nextTransactionToken next issuable transaction token, or empty when unavailable
+         * @param transactionTokensExhausted whether the transaction-token space has been exhausted
+         * @param stateIndex reconstructed current-state index
+         * @param outcomes retained terminal outcomes keyed by exact transaction identity
+         * @param restartOutcomes terminal outcomes established by recovery restart handling
+         * @param recoveryEpoch authoritative recovery incarnation
+         * @param openTransactionCount number of issued transactions without terminal outcomes
+         * @param recoveryFullMapCopies number of full-map copies performed during recovery
+         * @param recoveryFinalInstalls number of final reconstructed-state installations
+         * @param discardedDescriptorCount number of mutation descriptors discarded during replay
+         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if {@code nextTransactionToken} is null; or if {@code stateIndex} is null; or if {@code outcomes} is null; or if {@code restartOutcomes} is null
+         * @throws IllegalArgumentException if {@code (recoveryEpoch < MINIMUM_COUNT || openTransactionCount < MINIMUM_COUNT || recoveryFullMapCopies < MINIMUM_COUNT || recoveryFinalInstalls < MINIMUM_COUNT || discardedDescriptorCount < MINIMUM_COUNT)}; or if {@code (restartOutcomes.size() != openTransactionCount)}
+         */
         ReplayResult {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(tail, "tail");
@@ -366,7 +586,9 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Unsigned 128-bit scalar counter; zero is reserved and maximum is issued once. */
+    /**
+     * Unsigned 128-bit scalar counter; zero is reserved and maximum is issued once.
+     */
     /* default */ static final class TransactionCounter {
         private static final long ALL_ONES = -1L;
         private static final long ZERO_LIMB = 0L;
@@ -382,10 +604,23 @@ final class DurableMetadataLogScanner {
             this.exhausted = exhausted;
         }
 
+        /**
+         * Creates a fresh unsigned 128-bit transaction counter after the reserved zero token.
+         *
+         * @return new counter whose first issuable token is one
+         */
         /* default */ static TransactionCounter first() {
             return new TransactionCounter(ZERO_LIMB, FIRST_LOW_LIMB, false);
         }
 
+        /**
+         * Creates a counter from the exact unsigned high and low token limbs.
+         *
+         * @param high high 64-bit token limb, interpreted as an unsigned bit pattern
+         * @param low low 64-bit token limb, interpreted as an unsigned bit pattern
+         * @return new counter beginning at the supplied nonzero 128-bit token
+         * @throws IllegalArgumentException if both limbs are zero, which is reserved
+         */
         /* default */ static TransactionCounter startingAt(long high, long low) {
             if (high == ZERO_LIMB && low == ZERO_LIMB) {
                 throw new IllegalArgumentException("Zero Durable metadata transaction token is reserved");
@@ -393,6 +628,17 @@ final class DurableMetadataLogScanner {
             return new TransactionCounter(high, low, false);
         }
 
+        /**
+         * Restores the next transaction token or a permanently exhausted counter from validated recovery facts.
+         *
+         * @param nextTransactionToken validated exact 32-character lowercase hexadecimal next token, required when not exhausted
+         * @param exhausted whether recovery proved the full token space exhausted
+         * @return new restored counter
+         * @throws NullPointerException if a required input is null
+         * @throws java.util.NoSuchElementException if a nonexhausted recovery result omits its next token
+         * @throws IllegalArgumentException if hexadecimal token syntax is invalid or the token is zero
+         * @throws java.nio.BufferUnderflowException if the supplied nonexhausted token contains fewer than 16 bytes
+         */
         /* default */ static TransactionCounter recovered(
                 Optional<String> nextTransactionToken, boolean exhausted) {
             Objects.requireNonNull(nextTransactionToken, "nextTransactionToken");
@@ -404,6 +650,14 @@ final class DurableMetadataLogScanner {
             return startingAt(token.getLong(), token.getLong());
         }
 
+        /**
+         * Returns the next exact store-bound token and advances the unsigned counter once.
+         *
+         * @param storeId validated store identity bound into the issued transaction
+         * @return fresh transaction identity; issuing the final token permanently exhausts this counter
+         * @throws NullPointerException if a required input is null
+         * @throws IllegalStateException if the token space is exhausted
+         */
         /* default */ MetadataTransactionId issue(MetadataStoreId storeId) {
             Objects.requireNonNull(storeId, "storeId");
             if (exhausted) {
@@ -447,7 +701,9 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Sequential scanner that owns recovery control state for one invocation. */
+    /**
+     * Sequential scanner that owns recovery control state for one invocation.
+     */
     private static final class ScanEngine {
         private final SeekableByteChannel channel;
         private final MetadataFrameCodec codec = new MetadataFrameCodec();
@@ -610,7 +866,9 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Streaming semantic replay retaining only active transactions and one batch. */
+    /**
+     * Streaming semantic replay retaining only active transactions and one batch.
+     */
     private static final class ReplayEngine {
         private final SeekableByteChannel channel;
         private final MetadataFrameCodec codec = new MetadataFrameCodec();
@@ -811,7 +1069,9 @@ final class DurableMetadataLogScanner {
                 OptionalInt.of(FailureReason.ABANDONED_BY_RECOVERY.code()));
     }
 
-    /** Domain-separated digest mechanics for one transaction prefix. */
+    /**
+     * Domain-separated digest mechanics for one transaction prefix.
+     */
     private static final class TransactionDigest {
         private static byte[] initial() {
             MessageDigest digest = sha256();
@@ -855,7 +1115,9 @@ final class DurableMetadataLogScanner {
         }
     }
 
-    /** Scanner-confined O(1) state for one issued transaction. */
+    /**
+     * Scanner-confined O(1) state for one issued transaction.
+     */
     private static final class TransactionState {
         private byte[] chainState = initialChainState();
         private long nextSequence = FIRST_TRANSACTION_SEQUENCE;
@@ -863,7 +1125,9 @@ final class DurableMetadataLogScanner {
         private Terminal terminal;
     }
 
-    /** Exact bounded semantic payload schemas; no opaque mutation is decoded here. */
+    /**
+     * Exact bounded semantic payload schemas; no opaque mutation is decoded here.
+     */
     private static final class Semantic {
 
         private static byte[] encodeStoreHeader(MetadataStoreId storeId) {

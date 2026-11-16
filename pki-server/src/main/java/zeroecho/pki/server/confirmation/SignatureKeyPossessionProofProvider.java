@@ -57,28 +57,38 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofVerification;
  * persistence, clock access, configuration lookup, or lifecycle mutation.</p>
  */
 public final class SignatureKeyPossessionProofProvider implements KeyPossessionProofProvider {
-    /** Canonical version-one signature proof-suite identity. */
+    /**
+     * Canonical version-one signature proof-suite identity.
+     */
     public static final String SUITE_ID = "zeroecho.signature-pop.v1";
 
-    /** Creates one stateless provider. */
+    /**
+     * Creates one stateless provider.
+     */
     public SignatureKeyPossessionProofProvider() {
         // Stateless by design.
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String suiteId() {
         return SUITE_ID;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public KeyPossessionProofDescriptor descriptor(int rsaMaximumModulusBits) {
         SignatureProofSuite suite = new SignatureProofSuite(rsaMaximumModulusBits);
         return externalDescriptor(suite, rsaMaximumModulusBits);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateCredential(KeyPossessionProofCredential credential) {
         KeyPossessionProofCredential exact = Objects.requireNonNull(credential, "credential");
@@ -86,7 +96,9 @@ public final class SignatureKeyPossessionProofProvider implements KeyPossessionP
         profile.suite().validatePublicKey(exact.publicKey());
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public KeyPossessionProofPresentation createChallenge(
             KeyPossessionProofChallengeContext context) {
@@ -114,7 +126,9 @@ public final class SignatureKeyPossessionProofProvider implements KeyPossessionP
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public KeyPossessionProofVerification verify(KeyPossessionProofChallengeContext context,
             KeyPossessionProofCredential credential, KeyPossessionProofResponse response) {

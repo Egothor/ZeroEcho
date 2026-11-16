@@ -176,6 +176,12 @@ import zeroecho.pki.spi.store.PkiStore;
  */
 public final class FilesystemPkiStoreTest {
 
+    /**
+     * Small legal signing WAL configuration is reused across reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void smallLegalSigningWalConfigurationIsReusedAcrossReopen(@TempDir Path root) throws Exception {
         int maximumBatchBytes = SigningWalFrameCodec.BATCH_MARKER_BYTES
@@ -199,6 +205,12 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    /**
+     * Local signing index capacity metrics use configured budget across reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void localSigningIndexCapacityMetricsUseConfiguredBudgetAcrossReopen(@TempDir Path root) throws Exception {
         long configured = 768L * 1024L * 1024L;
@@ -239,6 +251,9 @@ public final class FilesystemPkiStoreTest {
                 metrics.combinedHighWaterReservedBytes());
     }
 
+    /**
+     * Signing maximum group size has stable validated copy contract.
+     */
     @Test
     void signingMaximumGroupSizeHasStableValidatedCopyContract() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
@@ -260,9 +275,17 @@ public final class FilesystemPkiStoreTest {
                 () -> defaults.withSigningMaximumGroupSize(33));
     }
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tmp;
 
+    /**
+     * Every non signing top level schema round trips through real store.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void everyNonSigningTopLevelSchemaRoundTripsThroughRealStore() throws Exception {
         System.out.println("everyNonSigningTopLevelSchemaRoundTripsThroughRealStore");
@@ -324,6 +347,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Status authority is atomic durable write once and protects content.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent() throws Exception {
         System.out.println("statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent");
@@ -381,6 +409,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent...ok");
     }
 
+    /**
+     * Status recovery rejects record owner asymmetry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusRecoveryRejectsRecordOwnerAsymmetry() throws Exception {
         System.out.println("statusRecoveryRejectsRecordOwnerAsymmetry");
@@ -401,6 +434,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("statusRecoveryRejectsRecordOwnerAsymmetry...ok");
     }
 
+    /**
+     * Status recovery rejects malformed or mismatched metadata.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusRecoveryRejectsMalformedOrMismatchedMetadata() throws Exception {
         System.out.println("statusRecoveryRejectsMalformedOrMismatchedMetadata");
@@ -446,6 +484,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("statusRecoveryRejectsMalformedOrMismatchedMetadata...ok");
     }
 
+    /**
+     * Status recovery rejects missing or corrupt content and sidecar repair.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair() throws Exception {
         System.out.println("statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair");
@@ -478,6 +521,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair...ok");
     }
 
+    /**
+     * Status commit faults preserve atomicity and unknown recovery.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusCommitFaultsPreserveAtomicityAndUnknownRecovery() throws Exception {
         System.out.println("statusCommitFaultsPreserveAtomicityAndUnknownRecovery");
@@ -637,6 +685,11 @@ public final class FilesystemPkiStoreTest {
         assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
     }
 
+    /**
+     * Write once credential rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void writeOnceCredentialRejected() throws Exception {
         System.out.println("writeOnceCredentialRejected");
@@ -658,6 +711,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("writeOnceCredentialRejected...ok");
     }
 
+    /**
+     * Ca history creates current and history.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void caHistoryCreatesCurrentAndHistory() throws Exception {
         System.out.println("caHistoryCreatesCurrentAndHistory");
@@ -684,6 +742,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("caHistoryCreatesCurrentAndHistory...ok");
     }
 
+    /**
+     * Ca keyset page uses canonical identity rather than filesystem encoding.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding() throws Exception {
         System.out.println("caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding");
@@ -702,6 +765,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding...ok");
     }
 
+    /**
+     * Ca references require valid standalone credentials and preserve order.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void caReferencesRequireValidStandaloneCredentialsAndPreserveOrder() throws Exception {
         System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder");
@@ -727,6 +795,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder...ok");
     }
 
+    /**
+     * Issuer serial index separates equal serials and recovers on restart.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart() throws Exception {
         System.out.println("issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart");
@@ -760,6 +833,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart...ok");
     }
 
+    /**
+     * Old store version is rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oldStoreVersionIsRejected() throws Exception {
         System.out.println("oldStoreVersionIsRejected");
@@ -772,6 +850,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("oldStoreVersionIsRejected...ok");
     }
 
+    /**
+     * Exact version marker reopens normally.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactVersionMarkerReopensNormally() throws Exception {
         Path root = tmp.resolve("store-exact-version");
@@ -793,6 +876,11 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    /**
+     * Initialization crash matrix leaves unsupported unversioned root without retry mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void initializationCrashMatrixLeavesUnsupportedUnversionedRootWithoutRetryMutation()
             throws Exception {
@@ -831,6 +919,13 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    /**
+     * Noncanonical version marker is rejected before mutation.
+     *
+     * @param fixtureName named malformed or compatibility fixture
+     * @param marker encoded sentinel used to detect plaintext leakage or framing confusion
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "{0}")
     @MethodSource("noncanonicalVersionMarkers")
     void noncanonicalVersionMarkerIsRejectedBeforeMutation(String fixtureName, byte[] marker) throws Exception {
@@ -851,6 +946,11 @@ public final class FilesystemPkiStoreTest {
         assertArrayEquals(new byte[] { 4, 5, 6 }, Files.readAllBytes(sentinel));
     }
 
+    /**
+     * Sparse oversized version marker is rejected before mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sparseOversizedVersionMarkerIsRejectedBeforeMutation() throws Exception {
         Path root = tmp.resolve("store-version-sparse-oversized");
@@ -888,6 +988,11 @@ public final class FilesystemPkiStoreTest {
         assertArrayEquals(new byte[] { 7, 8, 9 }, Files.readAllBytes(sentinel));
     }
 
+    /**
+     * Old v6 root is rejected before lock or directory mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oldV6RootIsRejectedBeforeLockOrDirectoryMutation() throws Exception {
         Path root = tmp.resolve("store-incomplete-v6");
@@ -910,6 +1015,11 @@ public final class FilesystemPkiStoreTest {
         assertArrayEquals(new byte[] { 4, 5, 6 }, Files.readAllBytes(root.resolve("sentinel.bin")));
     }
 
+    /**
+     * Snapshot reconstructs issuer generations with new target references.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotReconstructsIssuerGenerationsWithNewTargetReferences() throws Exception {
         System.out.println("snapshotReconstructsIssuerGenerationsWithNewTargetReferences");
@@ -943,6 +1053,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotReconstructsIssuerGenerationsWithNewTargetReferences...ok");
     }
 
+    /**
+     * Snapshot preserves standalone credential with new reference and resolvable ca.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa() throws Exception {
         System.out.println("snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa");
@@ -973,6 +1088,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa...ok");
     }
 
+    /**
+     * Snapshot preserves shared status content without stale credential owner.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner() throws Exception {
         System.out.println("snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner");
@@ -1010,6 +1130,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner...ok");
     }
 
+    /**
+     * Snapshot build failure cleans owned temporary root and publishes nothing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing() throws Exception {
         System.out.println("snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing");
@@ -1030,6 +1155,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing...ok");
     }
 
+    /**
+     * Snapshot rejects existing target without changing it.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotRejectsExistingTargetWithoutChangingIt() throws Exception {
         System.out.println("snapshotRejectsExistingTargetWithoutChangingIt");
@@ -1050,6 +1180,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotRejectsExistingTargetWithoutChangingIt...ok");
     }
 
+    /**
+     * Snapshot fails closed for missing issuer authority in every mode.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotFailsClosedForMissingIssuerAuthorityInEveryMode() throws Exception {
         System.out.println("snapshotFailsClosedForMissingIssuerAuthorityInEveryMode");
@@ -1083,6 +1218,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotFailsClosedForMissingIssuerAuthorityInEveryMode...ok");
     }
 
+    /**
+     * Global revocation log persists streaming history.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void globalRevocationLogPersistsStreamingHistory() throws Exception {
         System.out.println("globalRevocationLogPersistsStreamingHistory");
@@ -1138,6 +1278,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("globalRevocationLogPersistsStreamingHistory...ok");
     }
 
+    /**
+     * Snapshot export clones new root non strict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotExportClonesNewRootNonStrict() throws Exception {
         System.out.println("snapshotExportClonesNewRootNonStrict");
@@ -1172,6 +1317,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotExportClonesNewRootNonStrict...ok");
     }
 
+    /**
+     * Snapshot rejects truncated revocation authority and obsolete schema.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void snapshotRejectsTruncatedRevocationAuthorityAndObsoleteSchema() throws Exception {
@@ -1217,6 +1367,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotRejectsTruncatedRevocationAuthorityAndObsoleteSchema...ok");
     }
 
+    /**
+     * Stable revocation view is immutable and exact checkpoint is reused.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stableRevocationViewIsImmutableAndExactCheckpointIsReused() throws Exception {
         System.out.println("stableRevocationViewIsImmutableAndExactCheckpointIsReused");
@@ -1250,6 +1405,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("stableRevocationViewIsImmutableAndExactCheckpointIsReused...ok");
     }
 
+    /**
+     * Concurrent stable view and store close finish deterministically.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentStableViewAndStoreCloseFinishDeterministically() throws Exception {
         System.out.println("concurrentStableViewAndStoreCloseFinishDeterministically");
@@ -1290,6 +1450,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("concurrentStableViewAndStoreCloseFinishDeterministically...ok");
     }
 
+    /**
+     * Committed transition survives derived index update failure and concurrent recovery.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery() throws Exception {
         System.out.println("committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery");
@@ -1331,6 +1496,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery...ok");
     }
 
+    /**
+     * Snapshot export with multiple objects non strict does not fail.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotExportWithMultipleObjectsNonStrictDoesNotFail() throws Exception {
         System.out.println("snapshotExportWithMultipleObjectsNonStrictDoesNotFail");
@@ -1396,6 +1566,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotExportWithMultipleObjectsNonStrictDoesNotFail...ok");
     }
 
+    /**
+     * Snapshot export strict fails when at is before later insert.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotExportStrictFailsWhenAtIsBeforeLaterInsert() throws Exception {
         System.out.println("snapshotExportStrictFailsWhenAtIsBeforeLaterInsert");
@@ -1426,6 +1601,11 @@ public final class FilesystemPkiStoreTest {
         System.out.println("snapshotExportStrictFailsWhenAtIsBeforeLaterInsert...ok");
     }
 
+    /**
+     * Snapshot export strict succeeds when at is after all writes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotExportStrictSucceedsWhenAtIsAfterAllWrites() throws Exception {
         System.out.println("snapshotExportStrictSucceedsWhenAtIsAfterAllWrites");
@@ -1586,8 +1766,20 @@ public final class FilesystemPkiStoreTest {
      */
     public record TestAttributeSet(List<Entry> entries) implements AttributeSet {
 
+        /**
+         * Attribute identifier and ordered values retained by the test attribute set.
+         * @param id attribute identifier; must not be null
+         * @param values ordered attribute values retained as supplied
+         */
         public record Entry(AttributeId id, List<AttributeValue> values) {
 
+            /**
+             * Retains the required attribute identifier and ordered values without copying them.
+             *
+             * @param id profile, attribute, or credential identifier selected by the fixture
+             * @param values ordered attribute values retained as supplied; must not be null
+             * @throws IllegalArgumentException if the identifier or value list is null
+             */
             public Entry {
                 if (id == null) {
                     throw new IllegalArgumentException("id must not be null");
@@ -1598,11 +1790,17 @@ public final class FilesystemPkiStoreTest {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Set<AttributeId> ids() {
             return entries.stream().map(Entry::id).collect(Collectors.toUnmodifiableSet());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AttributeValue> get(AttributeId id) {
             if (id == null) {
@@ -1619,6 +1817,9 @@ public final class FilesystemPkiStoreTest {
             return Optional.empty();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<AttributeValue> getAll(AttributeId id) {
             if (id == null) {
@@ -1635,6 +1836,11 @@ public final class FilesystemPkiStoreTest {
 
     /**
      * Deterministic domain fixtures.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param profile certificate profile definition to import as a canonical version
+     * @param importedAt authoritative fixture import instant
+     * @throws Exception if fixture setup, execution, or cleanup fails
      */
     static void importProfile(FilesystemPkiStore store, CertificateProfile profile, Instant importedAt)
             throws Exception {
@@ -1658,6 +1864,12 @@ public final class FilesystemPkiStoreTest {
                         "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11"));
     }
 
+    /**
+     * Public algorithm inconsistency is rejected before write and on reopen.
+     *
+     * @param parent temporary parent directory used to construct the artifact layout
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publicAlgorithmInconsistencyIsRejectedBeforeWriteAndOnReopen(@TempDir Path parent) throws Exception {
         for (String mutation : List.of("publicKey", "signatureDer", "keyCompatibility", "missingBinding")) {
             Path caseRoot = Files.createDirectory(parent.resolve(mutation));
@@ -1706,6 +1918,12 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    /**
+     * Configured private public rules survive store open copies and reopen without managed key reads.
+     *
+     * @param parent temporary parent directory used to construct the artifact layout
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void configuredPrivatePublicRulesSurviveStoreOpenCopiesAndReopenWithoutManagedKeyReads(@TempDir Path parent) throws Exception {
         var fixture = new RootCreationFixture(); Path target = parent.resolve("target");
         var contributed = new zeroecho.pki.testkit.TestX509AlgorithmBindingProvider();
@@ -1783,10 +2001,22 @@ public final class FilesystemPkiStoreTest {
         return issuer;
     }
 
+    /**
+     * Minimal real certificate, profile, and authority records used by filesystem integration tests.
+     */
     static final class TestObjects {
 
         private static final AtomicLong SEQ = new AtomicLong(1L);
 
+        /**
+         * Stages issuer prerequisites and returns a minimal root-authority record.
+         *
+         * @param store borrowed test store used for fixture state, staging, and persisted assertions
+         * @param caId logical authority identifier used by the minimal record
+         * @param state authority or schedule state selected for the fixture
+         * @return root-authority record; the caller decides when to persist its head
+         * @throws IOException if fixture construction, execution, or cleanup fails
+         */
         static CaRecord minimalCaRecord(PkiStore store, String caId, CaState state) throws IOException {
             PkiId id = new PkiId(caId);
             KeyRef issuerKeyRef = new KeyRef("issuer-key-" + caId);
@@ -1831,6 +2061,12 @@ public final class FilesystemPkiStoreTest {
             }
         }
 
+        /**
+         * Creates the minimal RSA leaf profile used by filesystem store tests.
+         *
+         * @param profileId profile identifier retained by the minimal credential or profile
+         * @return one-year leaf profile with the fixture subject and usage constraints
+         */
         static CertificateProfile minimalProfile(String profileId) {
             FormatId formatId = new FormatId("fmt-x509");
             SubjectPolicy subject = new SubjectPolicy(false,
@@ -1845,6 +2081,14 @@ public final class FilesystemPkiStoreTest {
         }
 
         // Generic-format authority fixture retains a real public certificate without claiming X.509 scope ownership.
+        /**
+         * Stages a real issuer certificate under the generic fixture format.
+         *
+         * @param store borrowed test store used for fixture state, staging, and persisted assertions
+         * @param label unique label used to construct the generic issuer identifiers
+         * @return generic-format issuer credential without claiming X.509 scope ownership
+         * @throws IOException if fixture construction, execution, or cleanup fails
+         */
         static Credential minimalGenericIssuerCredential(PkiStore store, String label) throws IOException {
             PkiId authority = new PkiId("generic-authority:" + label), credentialId = new PkiId("generic-ca:" + label);
             PkiId issuer = IssuerGeneration.idFor(authority, credentialId);
@@ -1854,6 +2098,15 @@ public final class FilesystemPkiStoreTest {
                     value.serialOrUniqueId(), value.publicKeyId(), value.profileBinding(), value.status(), value.content(), value.attributes());
         }
 
+        /**
+         * Stages bounded fixture content and creates a minimal issued credential record.
+         *
+         * @param store borrowed test store used for fixture state, staging, and persisted assertions
+         * @param serial positive certificate serial number chosen for the fixture
+         * @param profileId profile identifier retained by the minimal credential or profile
+         * @return issued credential record with fresh fixture identities
+         * @throws IOException if fixture construction, execution, or cleanup fails
+         */
         static Credential minimalCredential(PkiStore store, String serial, String profileId) throws IOException {
             PkiId credentialId = new PkiId("cred-" + nextSeq());
             FormatId formatId = new FormatId("fmt-x509");
@@ -1878,6 +2131,11 @@ public final class FilesystemPkiStoreTest {
                     status, encoded, attrs);
         }
 
+        /**
+         * Creates an attribute-set fixture without any entries.
+         *
+         * @return empty test attribute set
+         */
         static AttributeSet emptyAttributes() {
             return new TestAttributeSet(List.of());
         }

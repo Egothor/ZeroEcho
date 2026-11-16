@@ -53,12 +53,18 @@ public enum PublicationStatus {
      */
     SUCCEEDED,
 
-    /** The attempt definitively failed and an explicit retry is permitted. */
+    /**
+     * The attempt definitively failed and an explicit retry is permitted.
+     */
     RETRYABLE_FAILURE,
 
-    /** The operation definitively failed and is terminal. */
+    /**
+     * The operation definitively failed and is terminal.
+     */
     TERMINAL_FAILURE,
 
-    /** The external effect is unknown and requires explicit reconciliation. */
+    /**
+     * The external effect is unknown and requires explicit reconciliation.
+     */
     OUTCOME_UNKNOWN
 }

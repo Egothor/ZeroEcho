@@ -35,10 +35,16 @@ package zeroecho.pki.server.confirmation;
 
 import java.security.PublicKey;
 
-/** Request-stateless closed strategy contract for key-possession proof profiles. */
+/**
+ * Request-stateless closed strategy contract for key-possession proof profiles.
+ */
 sealed interface KeyPossessionProofSuite permits SignatureProofSuite {
 
-    /** Returns the exact immutable profile descriptor. */
+    /**
+     * Returns the exact immutable profile descriptor.
+     *
+     * @return stable suite identity, configuration commitment and input bounds
+     */
     ProofSuiteDescriptor descriptor();
 
     /**

@@ -89,14 +89,28 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for end entity supersession publication.
+ */
 final class EndEntitySupersessionPublicationTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "operator"),
             new Purpose("LIFECYCLE"), Optional.empty(), Optional.empty());
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception { EndEntityLifecyclePreparationTest.keys(); }
 
+    /**
+     * Renew keeps predecessor while replace and reissue supersede.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void renewKeepsPredecessorWhileReplaceAndReissueSupersede(@TempDir Path root) throws Exception {
         for (String operation : List.of("RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY")) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(operation))) {
@@ -117,6 +131,12 @@ final class EndEntitySupersessionPublicationTest {
         }
     }
 
+    /**
+     * Permanent reason is preserved and held state can become superseded.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void permanentReasonIsPreservedAndHeldStateCanBecomeSuperseded(@TempDir Path root) throws Exception {
         for (boolean permanent : List.of(true, false)) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(Boolean.toString(permanent)))) {
@@ -134,6 +154,12 @@ final class EndEntitySupersessionPublicationTest {
         }
     }
 
+    /**
+     * Each durable crash prefix resumes without duplicate writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void eachDurableCrashPrefixResumesWithoutDuplicateWrites(@TempDir Path root) throws Exception {
         for (String cut : List.of("putCredentialFromSigning", "transitionRevocation", "transitionDomainContinuation")) {
             for (String operation : List.of("REPLACE_END_ENTITY", "REISSUE_END_ENTITY")) {
@@ -173,6 +199,12 @@ final class EndEntitySupersessionPublicationTest {
         }
     }
 
+    /**
+     * Concurrent permanent revocation and unknown acknowledgement resolve by point read.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void concurrentPermanentRevocationAndUnknownAcknowledgementResolveByPointRead(@TempDir Path root) throws Exception {
         for (boolean race : List.of(true, false)) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(Boolean.toString(race)))) {
@@ -189,6 +221,12 @@ final class EndEntitySupersessionPublicationTest {
         }
     }
 
+    /**
+     * Cancellation or signing failure never publishes or revokes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationOrSigningFailureNeverPublishesOrRevokes(@TempDir Path root) throws Exception {
         for (boolean cancel : List.of(true, false)) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(Boolean.toString(cancel)))) {
@@ -210,6 +248,12 @@ final class EndEntitySupersessionPublicationTest {
         }
     }
 
+    /**
+     * Reserved lineage attributes and malformed source cannot enter canonical command.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reservedLineageAttributesAndMalformedSourceCannotEnterCanonicalCommand(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root)) {
             SignWorkflowStore.Workflow signed = signed(store, "REISSUE_END_ENTITY", predecessor(store));

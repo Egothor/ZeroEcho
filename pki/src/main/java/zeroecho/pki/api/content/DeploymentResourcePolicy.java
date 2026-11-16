@@ -61,6 +61,13 @@ public record DeploymentResourcePolicy(ResourceLimit acceptedSourceBytes, Resour
      * Creates a deployment resource policy.
      *
      * @throws NullPointerException if a dimension is {@code null}
+     * @param acceptedSourceBytes accepted input bytes
+     * @param generatedObjectBytes generated signed-object bytes
+     * @param entryCount streamed entry count
+     * @param stagedContentBytes durable staged-content bytes
+     * @param temporaryStorageBytes temporary spool bytes
+     * @param publicationBytes bytes supplied to a publisher
+     * @param openStagedObjects concurrently open staged objects
      */
     public DeploymentResourcePolicy {
         Objects.requireNonNull(acceptedSourceBytes, "acceptedSourceBytes");

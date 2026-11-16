@@ -216,6 +216,9 @@ public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec, Destroyable
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -229,6 +232,9 @@ public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec, Destroyable
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

@@ -44,10 +44,21 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Validation coverage ensuring invalid supplements cannot publish partial OpenAPI output.
+ */
 class OpenApiSupplementValidationTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Rejects an invalid OpenAPI supplement without terminating the caller or writing an output document.
+     * @param content invalid supplement document supplied by the parameterized test source
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = {"title: missing-operations\n", "operations:\n  nonexistent.operation:\n    summary: incomplete\n"})
     void invalidSupplementFailsWithoutTerminatingCallerOrWritingOutput(String content) throws IOException {

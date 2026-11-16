@@ -35,7 +35,9 @@ package zeroecho.pki.application;
 
 import java.util.Objects;
 
-/** Closed completed, durable-pending, or safe-failure outcome returned by the operation executor. */
+/**
+ * Closed completed, durable-pending, or safe-failure outcome returned by the operation executor.
+ */
 public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Completed,
         PkiOperationOutcome.Pending, PkiOperationOutcome.Failed {
 
@@ -45,7 +47,11 @@ public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Complete
      * @param result safe transport-neutral result
      */
     record Completed(PkiOperationResult result) implements PkiOperationOutcome {
-        /** Validates the result. */
+        /**
+         * Validates the result.
+         * @param result safe transport-neutral result
+         * @throws NullPointerException if result is null
+         */
         public Completed {
             Objects.requireNonNull(result, "result");
         }
@@ -58,7 +64,13 @@ public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Complete
      * @param operationId private durable identifier
      */
     record Pending(String operationName, zeroecho.pki.api.PkiId operationId) implements PkiOperationOutcome {
-        /** Validates the stable operation and durable private identifier. */
+        /**
+         * Validates the stable operation and durable private identifier.
+         * @param operationName stable semantic operation name
+         * @param operationId private durable identifier
+         * @throws IllegalArgumentException if operationName is null or blank
+         * @throws NullPointerException if operationId is null
+         */
         public Pending {
             if (operationName == null || operationName.isBlank()) {
                 throw new IllegalArgumentException("operationName must not be blank");
@@ -76,7 +88,14 @@ public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Complete
      */
     record Failed(String operationName, PkiOperationFailure classification, String code)
             implements PkiOperationOutcome {
-        /** Validates stable, non-sensitive failure data. */
+        /**
+         * Validates stable, non-sensitive failure data.
+         * @param operationName stable semantic name
+         * @param classification closed failure class
+         * @param code stable non-sensitive code
+         * @throws IllegalArgumentException if operationName is null or blank, or code is null or not 3 to 64 uppercase letters, digits or underscores
+         * @throws NullPointerException if classification is null
+         */
         public Failed {
             if (operationName == null || operationName.isBlank() || code == null || !code.matches("[A-Z0-9_]{3,64}")) {
                 throw new IllegalArgumentException("Operation failure identity or code is invalid");

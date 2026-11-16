@@ -50,8 +50,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 
+/**
+ * Contract and regression tests for signing MVCC index.
+ */
 final class SigningMvccIndexTest {
 
+    /**
+     * Snapshot deferral signals exactly once after last snapshot closes.
+     */
     @Test
     void snapshotDeferralSignalsExactlyOnceAfterLastSnapshotCloses() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -73,6 +79,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Point and range reads use canonical order without full map copies.
+     */
     @Test
     void pointAndRangeReadsUseCanonicalOrderWithoutFullMapCopies() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -101,6 +110,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Overlapping snapshots observe update delete and reinsert.
+     */
     @Test
     void overlappingSnapshotsObserveUpdateDeleteAndReinsert() {
         SigningGenerationRegistry generations = publishedGenerations(1L, 2L);
@@ -130,6 +142,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Allocation watermarks release as oldest snapshot advances.
+     */
     @Test
     void allocationWatermarksReleaseAsOldestSnapshotAdvances() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -157,6 +172,9 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Sustained overlapping snapshots reclaim at every oldest advance.
+     */
     @Test
     void sustainedOverlappingSnapshotsReclaimAtEveryOldestAdvance() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -186,6 +204,9 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Current selections seek once and respect exact prefix boundaries.
+     */
     @Test
     void currentSelectionsSeekOnceAndRespectExactPrefixBoundaries() {
         SigningGenerationRegistry generations = publishedGenerations(1L, 2L);
@@ -220,6 +241,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Current selection pins old generation through replacement and reclamation.
+     */
     @Test
     void currentSelectionPinsOldGenerationThroughReplacementAndReclamation() {
         SigningGenerationRegistry generations = publishedGenerations(1L, 2L);
@@ -241,6 +265,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Failed current range capture releases capacity and pins.
+     */
     @Test
     void failedCurrentRangeCaptureReleasesCapacityAndPins() {
         MetadataKey key = key("owner", "abc:1");
@@ -258,6 +285,9 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Versions needed by intermediate snapshot remain visible.
+     */
     @Test
     void versionsNeededByIntermediateSnapshotRemainVisible() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -276,6 +306,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Snapshot bounds and revision span reject before mutation.
+     */
     @Test
     void snapshotBoundsAndRevisionSpanRejectBeforeMutation() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -297,6 +330,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Key capacity is stable and atomic.
+     */
     @Test
     void keyCapacityIsStableAndAtomic() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -321,6 +357,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Malformed recovery boundary inputs do not publish.
+     */
     @Test
     void malformedRecoveryBoundaryInputsDoNotPublish() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -343,6 +382,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Prepared apply publishes resolved slot and close rolls back reservations.
+     */
     @Test
     void preparedApplyPublishesResolvedSlotAndCloseRollsBackReservations() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -381,6 +423,9 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Queued prepared applies validate against candidate root and publish in order.
+     */
     @Test
     void queuedPreparedAppliesValidateAgainstCandidateRootAndPublishInOrder() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -401,6 +446,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Ordered recovery baseline installs without per key revision replay.
+     */
     @Test
     void orderedRecoveryBaselineInstallsWithoutPerKeyRevisionReplay() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -434,6 +482,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Current pointers own superseded generation until replacement or delete.
+     */
     @Test
     void currentPointersOwnSupersededGenerationUntilReplacementOrDelete() {
         SigningGenerationRegistry generations = publishedGenerations(1L, 2L);
@@ -460,6 +511,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Shared byte budget rejects before either index mutates.
+     */
     @Test
     void sharedByteBudgetRejectsBeforeEitherIndexMutates() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -479,6 +533,11 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Concurrent readers observe only whole revisions.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentReadersObserveOnlyWholeRevisions() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -519,6 +578,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Bounded scaling retains no map copies.
+     */
     @Test
     void boundedScalingRetainsNoMapCopies() {
         SigningGenerationRegistry generations = publishedGenerations(1L);
@@ -537,6 +599,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Relocation watermarks release as boundary snapshot advances.
+     */
     @Test
     void relocationWatermarksReleaseAsBoundarySnapshotAdvances() {
         int count = 1_000;
@@ -575,6 +640,9 @@ final class SigningMvccIndexTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Stale prepared apply is attributed before it can spend another index owner.
+     */
     @Test
     void stalePreparedApplyIsAttributedBeforeItCanSpendAnotherIndexOwner() {
         String diagnosticId = "diagnostic-stale-apply-001";
@@ -624,6 +692,9 @@ final class SigningMvccIndexTest {
         }
     }
 
+    /**
+     * Close is idempotent and invalidates snapshots.
+     */
     @Test
     void closeIsIdempotentAndInvalidatesSnapshots() {
         SigningGenerationRegistry generations = publishedGenerations(1L);

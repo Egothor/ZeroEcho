@@ -47,10 +47,21 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Module-boundary coverage for the public EXIF tag registration API.
+ */
 class SlotModuleCompatibilityTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Compiles and runs a named module that uses the public tag API without a direct imaging dependency.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void namedConsumerCanReadAndRegisterPublicTagInfoWithoutDirectImagingDependency() throws Exception {
         System.out.println("namedConsumerCanReadAndRegisterPublicTagInfoWithoutDirectImagingDependency");

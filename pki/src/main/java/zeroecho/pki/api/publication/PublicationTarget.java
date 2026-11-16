@@ -53,6 +53,8 @@ public record PublicationTarget(PublicationTargetType type, String targetId) {
      * Creates a publication target.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param type destination type
+     * @param targetId target identifier (implementation-defined)
      */
     public PublicationTarget {
         if (type == null) {

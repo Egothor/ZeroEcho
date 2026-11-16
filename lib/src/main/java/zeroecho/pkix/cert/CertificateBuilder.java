@@ -203,6 +203,7 @@ public interface CertificateBuilder {
      * The alternative algorithm and subject alternative public key extensions
      * must be supplied by the caller. No signer is invoked.
      * Time and auxiliary memory are linear in the encoded body size.
+     *
      * @return newly allocated canonical DER legacy BC pre-TBS sequence
      * @throws UnsupportedOperationException if this provider lacks this capability
      * @throws IllegalArgumentException if configured fields or extensions are invalid
@@ -217,6 +218,7 @@ public interface CertificateBuilder {
      * Builds the X.509 Cor.3 defect 450 alternative-signature input: a DER
      * SEQUENCE containing the complete TBS without altSignatureValue, followed
      * by the native signature AlgorithmIdentifier. The inner algorithm remains.
+     *
      * @param nativeAlgorithm exact native inner and outer signature algorithm
      * @return independent canonical DER transcript, without outer signature bits
      * @throws UnsupportedOperationException if the provider lacks this capability

@@ -79,9 +79,14 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 @ExtendWith(RequiresFileIdentity.FileIdentityCondition.class)
 @interface RequiresFileIdentity {
 
-    /** JUnit condition that gates a {@link RequiresFileIdentity} test on {@code fileKey} availability. */
+    /**
+     * JUnit condition that gates a {@link RequiresFileIdentity} test on {@code fileKey} availability.
+     */
     final class FileIdentityCondition implements ExecutionCondition {
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public ConditionEvaluationResult evaluateExecutionCondition(ExtensionContext context) {
             Path probe = null;

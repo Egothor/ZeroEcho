@@ -51,11 +51,22 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Durability and ownership tests for encrypted enrollment result spools and read leases.
+ */
 class EnrollmentKeygenSpoolTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
     private static final String ID = "a".repeat(64);
     private static final byte[] BODY = new byte[] {1, 3, 7, 15};
 
+    /**
+     * Checks durable spool reopening and prevents deletion or final close while a borrowed read lease remains active.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void forcedPublicationSurvivesRestartAndBorrowersPinDeletionAndClose() throws Exception {
         EnrollmentRuntimeConfiguration.KeygenArtifacts configuration = configuration();
         try (EnrollmentKeygenSpool spool = new EnrollmentKeygenSpool(configuration, 1)) {
@@ -78,6 +89,11 @@ class EnrollmentKeygenSpoolTest {
         }
     }
 
+    /**
+     * Checks that uncertain data-force, rename, and directory-force acknowledgements fence spool access until recovery.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void uncertainForceRenameAndDirectoryAcknowledgementsFenceUntilReopen() throws Exception {
         EnrollmentRuntimeConfiguration.KeygenArtifacts configuration = configuration();
         for (EnrollmentKeygenSpool.Phase fault : new EnrollmentKeygenSpool.Phase[] {
@@ -96,6 +112,11 @@ class EnrollmentKeygenSpoolTest {
         }
     }
 
+    /**
+     * Rejects malformed, oversized, or corrupt spool entries and conflicting writer ownership.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void strictBoundsIntegrityAndExclusiveOwnerRejectInvalidBodiesAndNames() throws Exception {
         EnrollmentRuntimeConfiguration.KeygenArtifacts configuration = configuration();
         try (EnrollmentKeygenSpool spool = new EnrollmentKeygenSpool(configuration, 1)) {
@@ -112,6 +133,11 @@ class EnrollmentKeygenSpoolTest {
         }
     }
 
+    /**
+     * Checks that uncertain deletion fences the spool without reporting unproven capacity release.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void failedDeletionAcknowledgementFencesWithoutClaimingCapacityRelease() throws Exception {
         EnrollmentRuntimeConfiguration.KeygenArtifacts configuration = configuration();
         try (EnrollmentKeygenSpool spool = new EnrollmentKeygenSpool(configuration, 1)) {

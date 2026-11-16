@@ -43,10 +43,20 @@ import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Canonical closed version-one slot payload; no private keys or signing content are retained here. */
+/**
+ * Canonical closed version-one slot payload; no private keys or signing content are retained here.
+ */
 final class OcspProvisioningSlotCodec {
     private static final int MAXIMUM_BYTES = 16_384;
     private OcspProvisioningSlotCodec() { }
+    /**
+     * Encodes canonical version-one slot metadata without keys or signing content.
+     *
+     * @param value validated provisioning slot
+     * @return private protocol record with canonical JSON payload and payload commitment
+     * @throws IllegalArgumentException if the canonical payload exceeds 16,384 bytes
+     * @throws NullPointerException if value is null
+     */
     static ServerControlStore.ProtocolRecord encode(OcspProvisioningSlot value) {
         var f = new LinkedHashMap<String, PkiOperationValue>();
         f.put("version", number(1)); f.put("realmId", text(value.realmId().value()));
@@ -65,6 +75,15 @@ final class OcspProvisioningSlotCodec {
         return new ServerControlStore.ProtocolRecord(ServerControlStore.OCSP_PROVISIONING, value.serverSlotId(),
                 ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(bytes)), bytes);
     }
+    /**
+     * Decodes a slot and verifies its namespace, exact canonical bytes, identity and commitment.
+     *
+     * @param record private retained provisioning-slot protocol record
+     * @return validated canonical slot
+     * @throws IllegalArgumentException if namespace, version, encoding, coordinates or commitment is invalid
+     * @throws ClassCastException if a required JSON field has another value type
+     * @throws NullPointerException if a required record or field is absent
+     */
     static OcspProvisioningSlot decode(ServerControlStore.ProtocolRecord record) {
         if (!record.namespace().equals(ServerControlStore.OCSP_PROVISIONING)) throw invalid();
         var f = ((PkiOperationValue.ObjectValue)StrictJson.parse(record.payload(), MAXIMUM_BYTES)).fields();

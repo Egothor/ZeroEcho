@@ -10,8 +10,13 @@ import zeroecho.pki.api.ca.CaHeadSnapshot;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSigningOperation;
 
-/** Strict public lifecycle syntax and canonical approval-field coverage. */
+/**
+ * Strict public lifecycle syntax and canonical approval-field coverage.
+ */
 class LifecycleProjectionTest {
+    /**
+     * Checks exact selected-head round-trip, optional absence and rejection of unknown fields, versions or root value types.
+     */
     @Test void headRoundTripsAndRejectsUnknownFieldsInvalidVersionAndWrongTypes() {
         var head=new CaHeadSnapshot(1,new PkiId("ca;one"),Long.MAX_VALUE,new PkiId("issuer=one"),new PkiId("path;one"),"a".repeat(64));
         var encoded=LifecycleProjection.headValue(head);
@@ -23,6 +28,9 @@ class LifecycleProjectionTest {
         assertThrows(IllegalArgumentException.class,()->LifecycleProjection.head(Map.of("expectedHead",new PkiOperationValue.ObjectValue(changed))));
         assertThrows(IllegalArgumentException.class,()->LifecycleProjection.head(Map.of("expectedHead",new PkiOperationValue.Text("{}"))));
     }
+    /**
+     * Checks canonical JSON bytes and sorted keys are independent of incoming outer/nested map order.
+     */
     @Test void canonicalProjectionIgnoresIncomingMapOrderAtEveryNewObjectBoundary() {
         var head=new CaHeadSnapshot(1,new PkiId("ca"),7,new PkiId("issuer"),new PkiId("path"),"d".repeat(64));
         var headFields=LifecycleProjection.headValue(head).fields();
@@ -41,6 +49,9 @@ class LifecycleProjectionTest {
         assertEquals(Optional.of(head),LifecycleProjection.head(reordered.fields()));
     }
 
+    /**
+     * Checks alternative-key role and selected-head epoch are preserved in exact lifecycle coordinates and malformed selection types are rejected.
+     */
     @Test void roleAndEpochChangesProduceDifferentCanonicalApprovalCoordinates() {
         var fields=Map.<String,PkiOperationValue>of("newAlternativeKeyRef",new PkiOperationValue.Text("managed:key;role=alt"),"alternativeSignatureAlgorithmId",new PkiOperationValue.Text("canonical;signature=alt"));
         var selection=LifecycleProjection.selection(fields);

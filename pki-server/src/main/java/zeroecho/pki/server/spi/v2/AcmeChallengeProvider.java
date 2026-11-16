@@ -55,15 +55,28 @@ import zeroecho.pki.spi.ProviderConfig;
  * @since 1.0
  */
 public interface AcmeChallengeProvider {
-    /** Supported ACME identifier kinds. */
+    /**
+     * Supported ACME identifier kinds.
+     */
     enum IdentifierType {
-        /** Domain Name System identifier. */ DNS
+        /**
+         * Domain Name System identifier.
+         */
+        DNS
     }
 
-    /** Supported challenge mechanisms. */
+    /**
+     * Supported challenge mechanisms.
+     */
     enum ChallengeType {
-        /** HTTP token-file validation. */ HTTP_01,
-        /** DNS TXT-record validation. */ DNS_01
+        /**
+         * HTTP token-file validation.
+         */
+        HTTP_01,
+        /**
+         * DNS TXT-record validation.
+         */
+        DNS_01
     }
 
     /**
@@ -74,7 +87,15 @@ public interface AcmeChallengeProvider {
      * @param wildcard whether the identifier represents wildcard subdomains
      */
     record Identifier(IdentifierType type, String value, boolean wildcard) {
-        /** Validates the complete canonical DNS representation. */
+        /**
+         * Validates the complete canonical DNS representation.
+         * @param type identifier kind
+         * @param value lowercase ASCII DNS name without a wildcard prefix
+         * @param wildcard whether the identifier represents wildcard subdomains
+         * @throws NullPointerException if any of {@code type}, {@code value} is null
+         * @throws IllegalArgumentException if the DNS identifier is not canonical or a DNS label violates the
+         *         supported syntax or length bound
+         */
         public Identifier {
             Objects.requireNonNull(type, "type");
             Objects.requireNonNull(value, "value");
@@ -139,7 +160,23 @@ public interface AcmeChallengeProvider {
     record Context(String directoryId, String authorizationId, Identifier identifier,
             ChallengeType challengeType, String token, String expectedKeyAuthorization,
             int attempt, Instant validationTime, Instant deadline) {
-        /** Validates complete attempt binding. */
+        /**
+         * Validates complete attempt binding.
+         * @param directoryId stable directory identity
+         * @param authorizationId stable authorization identity
+         * @param identifier identifier being authorized
+         * @param challengeType challenge mechanism to validate
+         * @param token canonical ACME challenge token
+         * @param expectedKeyAuthorization expected account-bound key authorization
+         * @param attempt positive validation-attempt number
+         * @param validationTime authoritative start time for this attempt
+         * @param deadline exclusive deadline for the bounded attempt
+         * @throws NullPointerException if any of {@code identifier}, {@code challengeType}, {@code
+         *         validationTime}, {@code deadline} is null
+         * @throws IllegalArgumentException if the challenge token is noncanonical or outside its supported
+         *         bound or key-authorization syntax or its token binding is invalid or the validation attempt
+         *         is not positive or the deadline is not strictly after validation time
+         */
         public Context {
             requireId(directoryId); requireId(authorizationId); Objects.requireNonNull(identifier, "identifier");
             Objects.requireNonNull(challengeType, "challengeType");
@@ -150,7 +187,11 @@ public interface AcmeChallengeProvider {
             if (!deadline.isAfter(validationTime)) { throw new IllegalArgumentException("Invalid validation deadline"); }
         }
 
-        /** Returns a redacted diagnostic without challenge credentials. */
+        /**
+         * Returns a redacted diagnostic without challenge credentials.
+         *
+         * @return fixed redacted challenge-context label
+         */
         @Override public String toString() { return "AcmeChallengeContext[redacted]"; }
     }
 
@@ -163,7 +204,16 @@ public interface AcmeChallengeProvider {
      * @param expiresAt exclusive evidence expiry, after {@code observedAt}
      */
     record Result(boolean valid, String classification, Instant observedAt, Instant expiresAt) {
-        /** Validates the safe evidence draft. */
+        /**
+         * Validates the safe evidence draft.
+         * @param valid whether the challenge evidence satisfied provider policy
+         * @param classification stable, non-sensitive result classification
+         * @param observedAt time at which the evidence was observed
+         * @param expiresAt exclusive evidence expiry, after {@code observedAt}
+         * @throws NullPointerException if any of {@code observedAt}, {@code expiresAt} is null
+         * @throws IllegalArgumentException if the safe result classification is noncanonical or the evidence
+         *         lifetime is inconsistent
+         */
         public Result {
             if (classification == null || !classification.matches("[A-Z0-9_]{1,64}")) { throw new IllegalArgumentException("Invalid ACME result classification"); }
             Objects.requireNonNull(observedAt, "observedAt"); Objects.requireNonNull(expiresAt, "expiresAt");

@@ -50,6 +50,13 @@ public final class StatefulSigner {
     private final LocalStatefulSigningAuthority authority;
     private final String alias;
 
+    /**
+     * Binds a signing facade to an already checked key alias and local authority.
+     *
+     * @param store borrowed open keyring; must outlive signing calls
+     * @param authority borrowed open durable signing authority
+     * @param alias logical alias of the stateful key pair
+     */
     /* default */ StatefulSigner(KeyringStore store, LocalStatefulSigningAuthority authority, String alias) {
         this.store = store;
         this.authority = authority;
@@ -67,6 +74,7 @@ public final class StatefulSigner {
      * All keys sharing an authority serialize, including content I/O. Callers
      * must supply bounded or interruptible I/O: cancellation is cooperative
      * between reads and does not interrupt lock acquisition or a blocked read.
+     *
      * @param content repeatable content
      * @param cancellation cancellation signal
      * @param maximumMessageBytes nonnegative caller-selected input-size limit;
@@ -84,6 +92,7 @@ public final class StatefulSigner {
 
     /**
      * Reads signature-size metadata without reserving a leaf or signing a probe.
+     *
      * @return exact signature length in bytes
      * @throws IOException if the enrollment cannot be authenticated
      * @throws GeneralSecurityException if key parameters are unsupported

@@ -115,6 +115,17 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
     private final X509AlgorithmBindingRegistry bindings;
     private final AlgorithmIdentity signature;
 
+    /**
+     * Creates a CRL preparer using an authoritative store, clock, and permitted signature binding.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param clock authoritative session clock; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param bindings immutable X.509 algorithm binding registry; must not be null
+     * @param signatureAlgorithm canonical permitted signature algorithm identity
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if the algorithm is noncanonical, not a signature, or disallowed
+     */
     /* default */ FullCrlPreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             X509AlgorithmBindingRegistry bindings, String signatureAlgorithm) {
         this.store = Objects.requireNonNull(store, "store");
@@ -129,11 +140,36 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         X509SecurityFloor.requirePermitted(signature);
     }
 
+    /**
+     * Validates the issuer and CRL policy, freezing bounded inputs for later TBS staging.
+     *
+     * <p>Preparation does not emit a signature or publish a status object.</p>
+     *
+     * @param request full or delta CRL request; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen issuer, scope, signature, validity, and optional delta-base inputs
+     * @throws IOException if authoritative content access or cooperative cancellation fails
+     * @throws PkiException if issuer selection, profile, CRL scope, or time policy rejects the request
+     * @throws NullPointerException if request or cancellation is null
+     */
     /* default */ Prepared prepare(FullCrlRequest request, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(request, "request");
         return prepare(request.issuerGenerationId(), request.validity(), false, 0, cancellation);
     }
 
+    /**
+     * Validates the issuer and CRL policy, freezing bounded inputs for later TBS staging.
+     *
+     * <p>Preparation does not emit a signature or publish a status object.</p>
+     *
+     * @param request full or delta CRL request; must not be null
+     * @param pureEdDsaMaximum finite maximum raw-message length in bytes for pure EdDSA
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen issuer, scope, signature, validity, and optional delta-base inputs
+     * @throws IOException if authoritative content access or cooperative cancellation fails
+     * @throws PkiException if issuer selection, profile, CRL scope, or time policy rejects the request
+     * @throws NullPointerException if request or cancellation is null
+     */
     /* default */ Prepared prepare(DeltaCrlRequest request, long pureEdDsaMaximum, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(request, "request");
         return prepare(request.issuerGenerationId(), request.validity(), true, pureEdDsaMaximum, cancellation);
@@ -490,11 +526,45 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
         return new PkiException("Full CRL preparation rejected: code=" + code);
     }
 
-    /** Frozen provider-free bounded inputs; the authorized process-local execution plan is not retained. */
+    /**
+     * Frozen provider-free bounded inputs; the authorized process-local execution plan is not retained.
+     * @param authority frozen CA record retaining its generation membership
+     * @param generation selected issuer generation
+     * @param credentialId exact issuer credential identity
+     * @param profile selected CA certificate profile reference
+     * @param issuerContent durable issuer certificate content reference
+     * @param scope frozen CRL scope
+     * @param signatureBinding authorized signature binding
+     * @param signatureIdentifier canonical X.509 signature AlgorithmIdentifier
+     * @param evaluationTime authoritative status evaluation time
+     * @param thisUpdate CRL issuance time
+     * @param nextUpdate exclusive upper freshness bound
+     * @param issuerDer issuer certificate DER, cloned at construction and on access
+     * @param base optional full CRL base for delta generation; container must not be null
+     * @param hybrid optional frozen hybrid-signature preparation
+     */
     /* default */ record Prepared(CaRecord authority, IssuerGeneration generation, PkiId credentialId, CertificateProfileRef profile,
             DurableContentReference issuerContent, CrlScope scope, X509AlgorithmBinding signatureBinding,
             X509AlgorithmIdentifier signatureIdentifier, Instant evaluationTime, Instant thisUpdate,
             Instant nextUpdate, byte[] issuerDer, Optional<DeltaCrlBase> base, Optional<PreparedFullCrlTbs.Hybrid> hybrid) {
+        /**
+         * Retains frozen CRL inputs, taking a defensive copy of issuer certificate DER.
+         *
+         * @param authority frozen CA record retaining its generation membership
+         * @param generation selected issuer generation
+         * @param credentialId exact issuer credential identity
+         * @param profile selected CA certificate profile reference
+         * @param issuerContent durable issuer certificate content reference
+         * @param scope frozen CRL scope
+         * @param signatureBinding authorized signature binding
+         * @param signatureIdentifier canonical X.509 signature AlgorithmIdentifier
+         * @param evaluationTime authoritative status evaluation time
+         * @param thisUpdate CRL issuance time
+         * @param nextUpdate exclusive upper freshness bound
+         * @param issuerDer issuer certificate DER, cloned at construction and on access
+         * @param base optional full CRL base for delta generation; container must not be null
+         * @throws NullPointerException if issuerDer or the base container is null
+         */
         Prepared(CaRecord authority, IssuerGeneration generation, PkiId credentialId, CertificateProfileRef profile,
                 DurableContentReference issuerContent, CrlScope scope, X509AlgorithmBinding signatureBinding,
                 X509AlgorithmIdentifier signatureIdentifier, Instant evaluationTime, Instant thisUpdate, Instant nextUpdate,
@@ -502,9 +572,41 @@ final class FullCrlPreparation { // NOPMD - CyclomaticComplexity totals independ
             this(authority, generation, credentialId, profile, issuerContent, scope, signatureBinding, signatureIdentifier,
                     evaluationTime, thisUpdate, nextUpdate, issuerDer, base, Optional.empty());
         }
+        /**
+         * Retains frozen CRL inputs, taking a defensive copy of issuer certificate DER.
+         *
+         * @param authority frozen CA record retaining its generation membership
+         * @param generation selected issuer generation
+         * @param credentialId exact issuer credential identity
+         * @param profile selected CA certificate profile reference
+         * @param issuerContent durable issuer certificate content reference
+         * @param scope frozen CRL scope
+         * @param signatureBinding authorized signature binding
+         * @param signatureIdentifier canonical X.509 signature AlgorithmIdentifier
+         * @param evaluationTime authoritative status evaluation time
+         * @param thisUpdate CRL issuance time
+         * @param nextUpdate exclusive upper freshness bound
+         * @param issuerDer issuer certificate DER, cloned at construction and on access
+         * @param base optional full CRL base for delta generation; container must not be null
+         * @param hybrid optional frozen hybrid-signature preparation
+         * @throws NullPointerException if issuerDer or the base container is null
+         */
         Prepared { issuerDer = issuerDer.clone(); Objects.requireNonNull(base, "base"); }
+        /**
+         * Returns the logical authority identity from the frozen CA record.
+         *
+         * @return frozen CA identity
+         */
         /* default */ PkiId authorityId() { return authority.caId(); }
+        /**
+         * Returns an independent copy of the frozen issuer certificate DER.
+         *
+         * @return issuer certificate bytes owned by the caller
+         */
         @Override public byte[] issuerDer() { return issuerDer.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "PreparedFullCrl[redacted]"; }
     }
 }

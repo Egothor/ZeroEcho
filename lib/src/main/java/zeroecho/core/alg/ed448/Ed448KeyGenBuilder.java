@@ -62,7 +62,9 @@ import zeroecho.core.alg.common.eddsa.AbstractEdDSAKeyGenBuilder;
  * @since 1.0
  */
 public final class Ed448KeyGenBuilder extends AbstractEdDSAKeyGenBuilder<Ed448KeyGenSpec> {
-    /** Creates a stateless Ed448 key-pair generator. */
+    /**
+     * Creates a stateless Ed448 key-pair generator.
+     */
     public Ed448KeyGenBuilder() {
         super();
         // Stateless generator.

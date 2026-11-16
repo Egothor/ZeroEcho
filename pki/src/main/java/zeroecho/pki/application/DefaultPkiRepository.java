@@ -63,7 +63,9 @@ import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Store-backed read-only repository application service. */
+/**
+ * Store-backed read-only repository application service.
+ */
 final class DefaultPkiRepository implements PkiRepository {
     private static final int MAX_PAGE = 1_000;
     private final PkiStore store;
@@ -72,10 +74,26 @@ final class DefaultPkiRepository implements PkiRepository {
     private static final int MAX_CREDENTIAL_BYTES = 1024 * 1024;
     private static final int MAX_EXPORT_BYTES = 2 * MAX_CREDENTIAL_BYTES + 256;
 
+    /**
+     * Binds a read-only repository without configured export frameworks.
+     *
+     * @param store borrowed authoritative repository store
+     * @param requireOpen session lifecycle guard
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ DefaultPkiRepository(PkiStore store, Runnable requireOpen) {
         this(store, requireOpen, List.of());
     }
 
+    /**
+     * Binds a read-only repository and indexes explicitly configured export frameworks.
+     *
+     * @param store borrowed authoritative repository store
+     * @param requireOpen session lifecycle guard
+     * @param configuredFrameworks borrowed frameworks indexed by exact format identity
+     * @throws NullPointerException if an argument or required framework metadata is null
+     * @throws IllegalStateException if frameworks advertise duplicate format identities
+     */
     /* default */ DefaultPkiRepository(PkiStore store, Runnable requireOpen,
             List<zeroecho.pki.spi.framework.CredentialFramework> configuredFrameworks) {
         this.frameworks = configuredFrameworks.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
@@ -84,11 +102,17 @@ final class DefaultPkiRepository implements PkiRepository {
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<CaRecord> authority(PkiId authorityId) {
         requireOpen.run();
         return store.getCa(Objects.requireNonNull(authorityId, "authorityId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<CaRecord> authorities(Optional<PkiId> afterAuthorityId, int limit) {
         requireOpen.run();
         Objects.requireNonNull(afterAuthorityId, "afterAuthorityId");
@@ -98,32 +122,50 @@ final class DefaultPkiRepository implements PkiRepository {
         return store.listCasPage(afterAuthorityId, limit);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<IssuerGeneration> issuer(PkiId issuerId) {
         requireOpen.run();
         return store.getIssuerGeneration(Objects.requireNonNull(issuerId, "issuerId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<IssuerChainPath> chainPath(PkiId pathId) {
         requireOpen.run();
         return store.getIssuerChainPath(Objects.requireNonNull(pathId, "pathId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<Credential> credential(PkiId credentialId) {
         requireOpen.run();
         return store.getCredential(Objects.requireNonNull(credentialId, "credentialId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<Credential> credential(PkiId issuerId, BigInteger serial) {
         requireOpen.run();
         return store.getCredentialByIssuerAndSerial(Objects.requireNonNull(issuerId, "issuerId"),
                 Objects.requireNonNull(serial, "serial"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<StatusObject> statusObject(PkiId statusObjectId) {
         requireOpen.run();
         return store.getStatusObject(Objects.requireNonNull(statusObjectId, "statusObjectId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> credentialRepresentations(PkiId credentialId) {
         requireOpen.run();
         Credential credential = credential(credentialId).orElseThrow(() -> new PkiException("Credential not found"));
@@ -142,6 +184,9 @@ final class DefaultPkiRepository implements PkiRepository {
         return values;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiRepositoryContent openCredential(PkiId credentialId, String representation,
             CancellationSignal cancellation) throws IOException {
         requireOpen.run();
@@ -206,15 +251,30 @@ final class DefaultPkiRepository implements PkiRepository {
         private final byte[] bytes;
         private boolean closed;
         ExportContent(byte[] bytes) { this.bytes = bytes; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized InputStream openStream() throws IOException {
             if (closed) throw new IOException("Credential export lease closed");
             return new java.io.ByteArrayInputStream(bytes);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OptionalLong length() { return OptionalLong.of(bytes.length); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String contentId() { return "credential-export:" + digest(bytes); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized void close() { closed = true; }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override public PkiRepositoryContent openCredential(PkiId credentialId) {
         requireOpen.run();
@@ -238,6 +298,9 @@ final class DefaultPkiRepository implements PkiRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override public List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> statusRepresentations(PkiId id) {
         requireOpen.run();var object=statusObject(id).orElseThrow(() -> new PkiException("Status object not found"));
@@ -249,6 +312,9 @@ final class DefaultPkiRepository implements PkiRepository {
         return values;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiRepositoryContent openStatusObject(PkiId id,String representation,CancellationSignal cancellation)throws IOException {
         requireOpen.run();Objects.requireNonNull(cancellation,"cancellation").throwIfCancelled();
         var object=statusObject(id).orElseThrow(() -> new PkiException("Status object not found"));
@@ -281,6 +347,9 @@ final class DefaultPkiRepository implements PkiRepository {
         cancellation.throwIfCancelled();if(count!=expected)throw new IOException("Status representation length differs");return HexFormat.of().formatHex(digest.digest());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiRepositoryContent openStatusObject(PkiId statusObjectId) {
         requireOpen.run();
         StatusObject object = statusObject(statusObjectId).orElseThrow(() -> new PkiException("Status object not found"));

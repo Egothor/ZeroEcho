@@ -39,7 +39,9 @@ package zeroecho.pki.cli;
  * response).
  *
  * <p>It carries a stable non-sensitive {@code category}/{@code code} pair and the
- * process exit code the CLI must return, and never a provider exception graph.</p>
+ * process exit code the CLI must return, and never a provider exception graph.
+ * Callers are responsible for choosing safe finite labels; the constructor does
+ * not validate them or constrain the numeric exit status.</p>
  */
 final class PkiRemoteTransportException extends Exception {
 
@@ -63,17 +65,29 @@ final class PkiRemoteTransportException extends Exception {
         this.code = code;
     }
 
-    /** @return stable process exit code */
+    /**
+     * Returns the supplied CLI process status.
+     *
+     * @return retained numeric exit code, without range validation
+     */
     /* default */ int exitCode() {
         return exitCode;
     }
 
-    /** @return stable safe failure category label */
+    /**
+     * Returns the caller-supplied failure classification.
+     *
+     * @return retained category text, possibly null if the caller supplied null
+     */
     /* default */ String category() {
         return category;
     }
 
-    /** @return stable safe failure code */
+    /**
+     * Returns the caller-supplied failure detail.
+     *
+     * @return retained code text, possibly null if the caller supplied null
+     */
     /* default */ String code() {
         return code;
     }

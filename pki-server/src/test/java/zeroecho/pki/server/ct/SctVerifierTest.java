@@ -63,6 +63,11 @@ class SctVerifierTest {
                 "SHA256withECDSA", new byte[]{0x30, 0x01, 0x00});
     }
 
+    /**
+     * Checks a zero-SCT policy accepts an empty verified set.
+     *
+     * @throws CtSubmissionException if test fixture setup or execution fails
+     */
     @Test
     void emptyInputWithZeroMinSctsReturnsEmpty() throws CtSubmissionException {
         List<SignedCertificateTimestamp> result = SctVerifier.verifyAll(
@@ -70,6 +75,9 @@ class SctVerifierTest {
         assertTrue(result.isEmpty());
     }
 
+    /**
+     * Checks a positive SCT requirement rejects empty evidence and reports the requested minimum.
+     */
     @Test
     void emptyInputWithPositiveMinSctsThrows() {
         CtSubmissionException ex = assertThrows(CtSubmissionException.class,
@@ -77,6 +85,9 @@ class SctVerifierTest {
         assertTrue(ex.getMessage().contains("2"));
     }
 
+    /**
+     * Checks a timestamp beyond permitted future drift does not count toward the verified SCT requirement.
+     */
     @Test
     void futureTimestampBeyondDriftIsRejected() {
         byte[] logId = new byte[32];
@@ -90,6 +101,9 @@ class SctVerifierTest {
         assertTrue(ex.getMessage().contains("0"));
     }
 
+    /**
+     * Checks SCTs from an unconfigured log contribute no verified evidence.
+     */
     @Test
     void sctFromUnknownLogIsDiscarded() {
         byte[] logId = new byte[32];
@@ -102,6 +116,9 @@ class SctVerifierTest {
         assertTrue(ex.getMessage().contains("0"));
     }
 
+    /**
+     * Checks null SCT list, log map and precertificate inputs are rejected explicitly.
+     */
     @Test
     void nullArgumentsThrow() {
         assertThrows(NullPointerException.class,
@@ -112,6 +129,9 @@ class SctVerifierTest {
                 () -> SctVerifier.verifyAll(List.of(), Map.of(), null, 0));
     }
 
+    /**
+     * Checks aggregated policy failure diagnostics include required and successfully verified SCT counts.
+     */
     @Test
     void policyExceptionMessageContainsBothCounts() {
         byte[] logId = new byte[32];
@@ -126,6 +146,9 @@ class SctVerifierTest {
         assertTrue(message.contains("0"), "Message should contain verified count: " + message);
     }
 
+    /**
+     * Checks aggregate policy failure uses an empty log-identity sentinel instead of blaming one log.
+     */
     @Test
     void policyExceptionLogIdIsSentinelForAggregatedFailure() {
         CtSubmissionException ex = assertThrows(CtSubmissionException.class,

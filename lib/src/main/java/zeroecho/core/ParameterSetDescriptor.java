@@ -120,8 +120,13 @@ public sealed interface ParameterSetDescriptor<S extends AlgorithmKeySpec>
 
         /**
          * Validates a concrete descriptor.
+         *
          * @throws NullPointerException if any field is {@code null}
          * @throws IllegalArgumentException if the identifier or label is blank
+         * @param id nonblank machine identifier
+         * @param displayName nonblank display label
+         * @param securityLevel security estimate
+         * @param spec ready-to-use specification
          */
         public Concrete {
             Objects.requireNonNull(id, "id must not be null");
@@ -163,8 +168,14 @@ public sealed interface ParameterSetDescriptor<S extends AlgorithmKeySpec>
          * Snapshots metadata and validates argument names and types before factory
          * invocation. Without an explicit schema, omitted arguments remain the
          * delegate's responsibility; descriptions are never parsed for constraints.
+         *
          * @throws NullPointerException if any field is {@code null}
          * @throws IllegalArgumentException if identifiers are blank or names repeat
+         * @param id nonblank machine identifier
+         * @param displayName nonblank display label
+         * @param securityLevel security estimate
+         * @param parameters ordered presentation metadata
+         * @param factory factory wrapped with centralized validation
          */
         public Template {
             Objects.requireNonNull(id, "id must not be null");
@@ -187,6 +198,7 @@ public sealed interface ParameterSetDescriptor<S extends AlgorithmKeySpec>
          * arguments with {@link IllegalArgumentException} before invoking the delegate.
          * The original five-argument constructor preserves legacy omission behavior;
          * it cannot infer defaults or required flags from descriptions.
+         *
          * @param id machine identifier
          * @param displayName nonblank label
          * @param securityLevel security estimate
@@ -206,6 +218,7 @@ public sealed interface ParameterSetDescriptor<S extends AlgorithmKeySpec>
         /**
          * Returns immutable ordered constraints. Legacy metadata uses LEGACY kind
          * and optional parameters; omission remains the original factory's concern.
+         *
          * @return the validation schema
          */
         public List<ParameterConstraint> constraints() {
@@ -215,6 +228,7 @@ public sealed interface ParameterSetDescriptor<S extends AlgorithmKeySpec>
 
     /**
      * Snapshots a provider's descriptors, rejecting duplicate identifiers.
+     *
      * @param descriptors ordered descriptors
      * @return immutable ordered snapshot
      * @throws IllegalArgumentException if identifiers repeat

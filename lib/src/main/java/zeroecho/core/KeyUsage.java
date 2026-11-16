@@ -64,22 +64,40 @@ package zeroecho.core;
  * @since 1.0
  */
 public enum KeyUsage {
-    /** Create digital signatures. */
+    /**
+     * Create digital signatures.
+     */
     SIGN,
-    /** Verify digital signatures. */
+    /**
+     * Verify digital signatures.
+     */
     VERIFY,
-    /** Encrypt data for confidentiality. */
+    /**
+     * Encrypt data for confidentiality.
+     */
     ENCRYPT,
-    /** Decrypt data that was encrypted under the matching key/parameters. */
+    /**
+     * Decrypt data that was encrypted under the matching key/parameters.
+     */
     DECRYPT,
-    /** Encapsulate a shared secret in a KEM flow. */
+    /**
+     * Encapsulate a shared secret in a KEM flow.
+     */
     ENCAPSULATE,
-    /** Decapsulate a shared secret in a KEM flow. */
+    /**
+     * Decapsulate a shared secret in a KEM flow.
+     */
     DECAPSULATE,
-    /** Compute a keyed message authentication code (e.g., HMAC, KMAC). */
+    /**
+     * Compute a keyed message authentication code (e.g., HMAC, KMAC).
+     */
     MAC,
-    /** Compute an unkeyed hash (e.g., SHA-256), pipeline-friendly. */
+    /**
+     * Compute an unkeyed hash (e.g., SHA-256), pipeline-friendly.
+     */
     DIGEST,
-    /** Perform key agreement (e.g., X25519, ECDH). */
+    /**
+     * Perform key agreement (e.g., X25519, ECDH).
+     */
     AGREEMENT
 }

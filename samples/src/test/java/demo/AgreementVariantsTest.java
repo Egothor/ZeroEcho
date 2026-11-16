@@ -112,6 +112,9 @@ class AgreementVariantsTest {
 
     private static final Logger LOG = Logger.getLogger(AgreementVariantsTest.class.getName());
 
+    /**
+     * Attempts optional cryptographic provider activation before the sample scenarios.
+     */
     @BeforeAll
     static void setup() {
         // Optional: activate BC/BCPQC if present.
@@ -135,6 +138,7 @@ class AgreementVariantsTest {
      * <li>Responder uses recipient {@link PrivateKey}, consumes the message, and
      * derives the same secret.</li>
      * </ul>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void kemAdapter_mlKem_roundTrip() throws Exception {
@@ -189,6 +193,7 @@ class AgreementVariantsTest {
      * key pair, each side keeps a private key, and the peer public key is provided
      * out-of-band (protocol message or session state).
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void classicAgreement_x25519_roundTrip() throws Exception {
@@ -249,6 +254,7 @@ class AgreementVariantsTest {
      * makes the "to-be-sent" artifact explicit (a byte array message), similarly to
      * KEM ciphertexts.
      * </p>
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void pairMessage_x25519_roundTrip() throws Exception {

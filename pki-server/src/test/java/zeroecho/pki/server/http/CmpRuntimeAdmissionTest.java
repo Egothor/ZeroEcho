@@ -57,7 +57,15 @@ import zeroecho.pki.server.cmp.CmpEndpoint;
 import zeroecho.pki.server.cmp.CmpService;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Checks configured CMP request-size, admission and cancellation limits at the transport boundary.
+ */
 class CmpRuntimeAdmissionTest {
+    /**
+     * Checks HTTP 413 for a 1,025-byte body under a 1,024-byte CMP policy without invoking protocol processing.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void configuredBodyBoundRejectsBeforeProtocolProcessing() throws Exception {
         PkiServerConfiguration.Execution execution = new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
                 Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1));
@@ -77,6 +85,11 @@ class CmpRuntimeAdmissionTest {
         }
     }
 
+    /**
+     * Checks CMP busy rejection, HTTP 504 deadline response, observed cancellation on the same worker signal and released admission capacity.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void configuredAdmissionAndTimeoutCancelTheSameProtocolWork() throws Exception {
         PkiServerConfiguration.Execution execution = new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
                 Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1));

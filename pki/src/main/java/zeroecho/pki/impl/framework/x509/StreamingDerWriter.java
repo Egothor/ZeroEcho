@@ -53,9 +53,13 @@ import zeroecho.core.io.CancellationSignal;
  */
 public final class StreamingDerWriter {
 
-    /** DER universal SEQUENCE tag. */
+    /**
+     * DER universal SEQUENCE tag.
+     */
     public static final int SEQUENCE_TAG = 0x30;
-    /** DER universal BIT STRING tag. */
+    /**
+     * DER universal BIT STRING tag.
+     */
     public static final int BIT_STRING_TAG = 0x03;
 
     private static final int BUFFER_SIZE = 16 * 1024;
@@ -120,6 +124,7 @@ public final class StreamingDerWriter {
      * @return copied byte count
      * @throws IOException if reading or writing fails
      * @throws ArithmeticException if the count overflows
+     * @throws IllegalArgumentException if input, output, or cancellation is null
      */
     public static long copy(InputStream input, OutputStream output, CancellationSignal cancellation)
             throws IOException {

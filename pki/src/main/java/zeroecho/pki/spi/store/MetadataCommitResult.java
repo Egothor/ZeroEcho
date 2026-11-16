@@ -52,18 +52,34 @@ import java.util.OptionalLong;
  */
 public record MetadataCommitResult(MetadataTransactionId transactionId, Outcome outcome,
         OptionalLong committedRevision, Optional<FailureCategory> failureCategory) {
-    /** Closed commit-outcome model. */
+    /**
+     * Closed commit-outcome model.
+     */
     public enum Outcome {
-        /** Every mutation was durably committed and atomically visible. */ COMMITTED,
-        /** No mutation from the transaction became committed. */ NOT_COMMITTED,
-        /** The immediate caller cannot yet determine the fixed durable outcome. */ UNKNOWN
+        /**
+         * Every mutation was durably committed and atomically visible.
+         */ COMMITTED,
+        /**
+         * No mutation from the transaction became committed.
+         */ NOT_COMMITTED,
+        /**
+         * The immediate caller cannot yet determine the fixed durable outcome.
+         */ UNKNOWN
     }
 
-    /** Stable non-sensitive metadata failure categories. */
+    /**
+     * Stable non-sensitive metadata failure categories.
+     */
     public enum FailureCategory {
-        /** Create or expected-revision precondition failed. */ CONFLICT,
-        /** Transaction identity belongs to another store. */ FOREIGN_TRANSACTION,
-        /** Transaction identity was never issued by this store. */ TRANSACTION_NOT_ISSUED,
+        /**
+         * Create or expected-revision precondition failed.
+         */ CONFLICT,
+        /**
+         * Transaction identity belongs to another store.
+         */ FOREIGN_TRANSACTION,
+        /**
+         * Transaction identity was never issued by this store.
+         */ TRANSACTION_NOT_ISSUED,
         /**
          * The transaction was durably issued but had no authoritative terminal
          * outcome when recovery closed its preceding recovery epoch.
@@ -72,14 +88,32 @@ public record MetadataCommitResult(MetadataTransactionId transactionId, Outcome 
          * uncertain outcome nor a storage failure.</p>
          */
         ABANDONED_BY_RECOVERY,
-        /** Durable storage or content I/O failed. */ STORAGE_FAILURE,
-        /** Adapter technical representability limit was exceeded. */ LIMIT_EXCEEDED,
-        /** Adapter lacks an optional requested capability. */ UNSUPPORTED_CAPABILITY,
-        /** Stored metadata failed integrity validation. */ INTEGRITY_FAILURE,
-        /** Cooperative cancellation was requested. */ CANCELLED
+        /**
+         * Durable storage or content I/O failed.
+         */ STORAGE_FAILURE,
+        /**
+         * Adapter technical representability limit was exceeded.
+         */ LIMIT_EXCEEDED,
+        /**
+         * Adapter lacks an optional requested capability.
+         */ UNSUPPORTED_CAPABILITY,
+        /**
+         * Stored metadata failed integrity validation.
+         */ INTEGRITY_FAILURE,
+        /**
+         * Cooperative cancellation was requested.
+         */ CANCELLED
     }
 
-    /** Validates result invariants and checked revision semantics. */
+    /**
+     * Validates result invariants and checked revision semantics.
+     * @param transactionId store-issued transaction identity
+     * @param outcome semantic outcome
+     * @param committedRevision committed store revision when known
+     * @param failureCategory stable safe failure category when applicable
+     * @throws NullPointerException if transactionId, outcome, committedRevision, failureCategory is null
+     * @throws IllegalArgumentException if a committed revision is negative, COMMITTED lacks its sole revision or carries a failure category, or another outcome carries a revision
+     */
     public MetadataCommitResult {
         Objects.requireNonNull(transactionId, "transactionId");
         Objects.requireNonNull(outcome, "outcome");

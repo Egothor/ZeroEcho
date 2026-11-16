@@ -44,7 +44,9 @@ import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.status.StatusObject;
 
-/** Read-only authoritative repository facade owned by one {@link PkiSession}. */
+/**
+ * Read-only authoritative repository facade owned by one {@link PkiSession}.
+ */
 public interface PkiRepository {
     /**
      * Returns an exact logical authority.
@@ -82,6 +84,7 @@ public interface PkiRepository {
      * @param issuerId issuer-generation identifier
      * @param serial positive canonical certificate serial
      * @return credential, or empty when absent
+     * @throws NullPointerException if issuerId, serial is null
      */
     default Optional<Credential> credential(PkiId issuerId, BigInteger serial) {
         java.util.Objects.requireNonNull(issuerId, "issuerId");
@@ -130,6 +133,7 @@ public interface PkiRepository {
      * Returns format-owned status representations without content access authority.
      * @param statusObjectId exact stored status identity
      * @return immutable native and optional format-specific representations
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide this capability
      */
     default List<zeroecho.pki.spi.framework.CredentialFramework.CredentialRepresentation> statusRepresentations(PkiId statusObjectId) {
         throw new UnsupportedOperationException("Status representations unavailable");
@@ -142,6 +146,7 @@ public interface PkiRepository {
      * @param cancellation shared bounded operation cancellation
      * @return caller-owned content lease with exact length and SHA-256
      * @throws java.io.IOException if bounds, integrity, representation or cancellation checks fail
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide this capability
      */
     default PkiRepositoryContent openStatusObject(PkiId statusObjectId,String representation,
             zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {

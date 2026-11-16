@@ -59,7 +59,9 @@ import zeroecho.pki.impl.core.continuation.DomainCommandEncoding;
 import zeroecho.pki.impl.core.continuation.FullCrlSigningCommand;
 import zeroecho.pki.impl.core.continuation.ManagedKeyProofBindings;
 
-/** Read-only full-bijection validation of recovered signing metadata. */
+/**
+ * Read-only full-bijection validation of recovered signing metadata.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
 final class SigningRecoveryIntegrityValidator {
@@ -100,6 +102,17 @@ final class SigningRecoveryIntegrityValidator {
         }
     }
 
+    /**
+     * Validates the complete recovered signing graph and prepares exact scheduling and hybrid ownership projections.
+     *
+     * @param root exact signing metadata root used for bounded physical frame reads
+     * @param manifest validated authoritative artifact manifest
+     * @param recovered reconstructed current metadata and retained outcomes
+     * @param stagedContent borrowed content store; may be null for metadata-only recovery without live content references
+     * @return validated finite projection inputs and tracked workspace counters
+     * @throws IntegrityException if semantic relationships, canonical payloads, exact content ownership or hybrid dependencies are inconsistent
+     * @throws IOException if referenced physical evidence cannot be read
+     */
     /* default */ static ValidatedSigningRecovery validate(Path root,
             SigningManifestCodec.Manifest manifest,
             SigningLedgerRecoveredState.State recovered, StagedContentStore stagedContent)
@@ -449,13 +462,31 @@ final class SigningRecoveryIntegrityValidator {
         return ("v1\n" + operationId.value()).getBytes(StandardCharsets.UTF_8);
     }
 
-    /** Immutable projection inputs produced by the one semantic-validation pass. */
+    /**
+     * Immutable projection inputs produced by the one semantic-validation pass.
+     * @param schedulingByOperation exact reserved scheduling plan for each recovered operation identity
+     * @param hybridExecutions validated retained hybrid CRL execution by operation identity
+     * @param hybridPublications validated hybrid publication handoff coordinates by operation identity
+     * @param peakTrackedEnvelopeWorkspaceBytes highest tracked envelope validation workspace reservation in bytes
+     * @param currentTrackedEnvelopeWorkspaceBytes current tracked envelope validation workspace reservation in bytes
+     */
     /* default */ record ValidatedSigningRecovery(
             Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation,
             Map<String, zeroecho.pki.spi.store.CrlHybridExecution> hybridExecutions,
             Map<String, String> hybridPublications,
             long peakTrackedEnvelopeWorkspaceBytes, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
             long currentTrackedEnvelopeWorkspaceBytes) { // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
+        /**
+         * Creates an immutable projection inputs produced by the one semantic-validation pass.
+         *
+         * @param schedulingByOperation exact reserved scheduling plan for each recovered operation identity
+         * @param hybridExecutions validated retained hybrid CRL execution by operation identity
+         * @param hybridPublications validated hybrid publication handoff coordinates by operation identity
+         * @param peakTrackedEnvelopeWorkspaceBytes highest tracked envelope validation workspace reservation in bytes
+         * @param currentTrackedEnvelopeWorkspaceBytes current tracked envelope validation workspace reservation in bytes
+         * @throws NullPointerException if {@code schedulingByOperation} is null
+         * @throws IllegalArgumentException if {@code (peakTrackedEnvelopeWorkspaceBytes < 0 || currentTrackedEnvelopeWorkspaceBytes < 0)}
+         */
         ValidatedSigningRecovery {
             hybridExecutions = Map.copyOf(hybridExecutions);
             hybridPublications = Map.copyOf(hybridPublications);
@@ -469,7 +500,9 @@ final class SigningRecoveryIntegrityValidator {
         }
     }
 
-    /** Cause-free marker for malformed recovered signing metadata. */
+    /**
+     * Cause-free marker for malformed recovered signing metadata.
+     */
     /* default */ static final class IntegrityException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -478,7 +511,9 @@ final class SigningRecoveryIntegrityValidator {
         }
     }
 
-    /** Marks malformed durable data independently of operational I/O failure. */
+    /**
+     * Marks malformed durable data independently of operational I/O failure.
+     */
     private static final class MalformedRecoveryDataException extends IOException {
         private static final long serialVersionUID = 1L;
     }
@@ -505,7 +540,9 @@ final class SigningRecoveryIntegrityValidator {
             zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.requireEnvelope(envelope);
         }
     }
-    /** Hybrid parents sign the alternative transcript; field 8 remains the native child's algorithm. */
+    /**
+     * Hybrid parents sign the alternative transcript; field 8 remains the native child's algorithm.
+     */
     private void validateHybridParentRole(SignWorkflowStore.AcceptanceEnvelope envelope,
             DomainCommandEncoding.Decoded command) throws IOException {
         PkiId issuer = new PkiId(command.field(6));

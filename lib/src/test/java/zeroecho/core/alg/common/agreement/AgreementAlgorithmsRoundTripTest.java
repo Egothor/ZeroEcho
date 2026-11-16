@@ -67,6 +67,9 @@ import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for agreement algorithms round trip.
+ */
 public class AgreementAlgorithmsRoundTripTest {
 
     // ----- logging helpers -----
@@ -122,6 +125,9 @@ public class AgreementAlgorithmsRoundTripTest {
                 + ")";
     }
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: activate providers (e.g., BC/BCPQC) if present.
@@ -133,6 +139,11 @@ public class AgreementAlgorithmsRoundTripTest {
         }
     }
 
+    /**
+     * Round-trips shared-secret derivation through every selected agreement algorithm.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void runAllAgreementAlgos() throws Exception {
         logBegin("AGREEMENT sweep");
@@ -441,6 +452,13 @@ public class AgreementAlgorithmsRoundTripTest {
         return null;
     }
 
+    /**
+     * Checks that a generated Diffie-Hellman pair uses compatible domain parameters.
+     *
+     * @param priv generated private key
+     * @param pub generated public key
+     * @throws GeneralSecurityException if the pair cannot be used for agreement
+     */
     public static void assertDhCompatible(PrivateKey priv, PublicKey pub) throws GeneralSecurityException {
         if (!(priv instanceof DHPrivateKey)) {
             throw new InvalidKeyException("Private key is not DH: " + (priv == null ? "null" : priv.getAlgorithm()));

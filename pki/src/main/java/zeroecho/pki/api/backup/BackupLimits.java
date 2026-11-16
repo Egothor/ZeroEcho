@@ -49,7 +49,20 @@ package zeroecho.pki.api.backup;
  */
 public record BackupLimits(long compressedBytes, long expandedBytes, long entryBytes,
         int entryCount, int pathBytes, int manifestBytes, int compressionRatio, int legacyBytes, int recordBytes) {
-    /** Validates all positive limits and ZIP32 representation bounds. */
+    /**
+     * Validates all positive limits and ZIP32 representation bounds.
+     * @param compressedBytes maximum complete archive bytes, below 4 GiB
+     * @param expandedBytes maximum total expanded bytes, including the manifest
+     * @param entryBytes maximum expanded bytes in one entry
+     * @param entryCount maximum entries, including the manifest, below 65535
+     * @param pathBytes maximum UTF-8 bytes in an entry path
+     * @param manifestBytes maximum expanded manifest bytes
+     * @param compressionRatio maximum expanded/compressed ratio per entry
+     * @param legacyBytes maximum bytes accepted by the legacy array adapter
+     * @param recordBytes maximum decode buffer for one legacy domain record
+     * @throws IllegalArgumentException if a limit is nonpositive, violates ZIP32 or path bounds, or exceeds its
+     *     enclosing archive, entry or expanded-size limit
+     */
     public BackupLimits {
         if (compressedBytes <= 0 || compressedBytes >= 0xffffffffL
                 || expandedBytes <= 0 || entryBytes <= 0 || entryBytes >= 0xffffffffL

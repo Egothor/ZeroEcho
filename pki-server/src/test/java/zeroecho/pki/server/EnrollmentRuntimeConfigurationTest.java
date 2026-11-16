@@ -48,9 +48,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration;
 
+/**
+ * Checks separately versioned enrollment custody configuration and bounded credential/resource selections.
+ */
 class EnrollmentRuntimeConfigurationTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks closed companion schema rejects unknown/missing/duplicate fields, fractional or overflowing numbers, future versions and oversized input.
+     */
     @Test
     void rejectsUnknownMissingDuplicateFractionalOverflowAndUnsupportedVersions() {
         String valid = EnrollmentTestSupport.runtimeJson();
@@ -75,6 +84,9 @@ class EnrollmentRuntimeConfigurationTest {
         assertThrows(IllegalArgumentException.class, () -> EnrollmentRuntimeConfiguration.decode(new byte[1_048_577]));
     }
 
+    /**
+     * Checks reference/count constraints, exact whole-second durations, immutable configuration collections and redacted diagnostics.
+     */
     @Test
     void validatesReferencesArraysAndExactWholeSecondDurations() {
         String valid = EnrollmentTestSupport.runtimeJson();
@@ -90,6 +102,11 @@ class EnrollmentRuntimeConfigurationTest {
         assertFalse(decode(valid).toString().contains("budgets"));
     }
 
+    /**
+     * Checks CLI companion validation accepts one valid file, rejects duplicate options/malformed input and opens no durable stores.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cliStrictlyValidatesCompanionWithoutOpeningStores() throws Exception {
         Path main = Path.of(System.getProperty("user.dir")).getParent().resolve("documentation/examples/configuration/pki-server-loopback-example.json");
@@ -104,6 +121,11 @@ class EnrollmentRuntimeConfigurationTest {
         try (java.util.stream.Stream<Path> files = Files.list(directory)) { assertEquals(1, files.count()); }
     }
 
+    /**
+     * Checks the maintained companion example selects its explicit SCEP credential set.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void parsesMaintainedCompanionExample() throws Exception {
         Path root = Path.of(System.getProperty("user.dir")).getParent();
@@ -112,6 +134,11 @@ class EnrollmentRuntimeConfigurationTest {
         assertEquals("scep-example-v1", example.activeCredentials().getFirst().credentialId());
     }
 
+    /**
+     * Checks EST generator/active selection is explicit and rejects an invented implicit-protocol variant.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void parsesExplicitEstGeneratorSelectionWithoutImplicitProtocolReuse() throws Exception {
         Path root = Path.of(System.getProperty("user.dir")).getParent();
         String json = Files.readString(root.resolve("documentation/examples/configuration/pki-enrollment-example.json")).replace("\"SCEP\"", "\"EST\"");

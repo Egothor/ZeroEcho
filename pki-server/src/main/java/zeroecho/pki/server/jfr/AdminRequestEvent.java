@@ -75,16 +75,22 @@ public final class AdminRequestEvent extends Event { // NOPMD DataClass - JFR ev
     @Description("Server principal identifier of the authenticated end-client; empty when authentication failed.")
     public String principalId;
 
-    /** HTTP status code of the response sent to the caller. */
+    /**
+     * HTTP status code of the response sent to the caller.
+     */
     @Label("HTTP Status")
     @Description("HTTP status code of the response sent to the caller.")
     public int httpStatus;
 
-    /** Whether the request was authorized and admitted for execution. */
+    /**
+     * Whether the request was authorized and admitted for execution.
+     */
     @Label("Authorized")
     @Description("True if the request passed authentication and authorization; false otherwise.")
     public boolean authorized;
-    /** Creates an uncommitted event with default field values; populate fields before committing. */
+    /**
+     * Creates an uncommitted event with default field values; populate fields before committing.
+     */
     public AdminRequestEvent() {
         super();
     }

@@ -43,7 +43,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Explicitly opt-in identity-ordered due-page traversal characterization. */
+/**
+ * Explicitly opt-in identity-ordered due-page traversal characterization.
+ */
 @EnabledIfEnvironmentVariable(
         named = "ZEROECHO_SIGNING_DUE_INDEX_CHARACTERIZATION", matches = "100000")
 final class SigningDueWorkIndexCharacterizationTest {
@@ -54,6 +56,9 @@ final class SigningDueWorkIndexCharacterizationTest {
     private static final Instant BASE = Instant.parse("2026-01-01T00:00:00Z");
     private static final Instant NOT_DUE = BASE.plusSeconds(WORK_RECORDS);
 
+    /**
+     * Characterizes clustered and evenly scattered due identities without linear scan.
+     */
     @Test
     void characterizesClusteredAndEvenlyScatteredDueIdentitiesWithoutLinearScan() {
         characterize("clustered", clusteredRanks());

@@ -55,6 +55,8 @@ public record ReissueCommand(PkiId issuanceRecordId, AttributeSet overrides) {
      * Creates a reissue command.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param issuanceRecordId issuance record id
+     * @param overrides universal attribute overrides (policy-validated; may be empty but not null)
      */
     public ReissueCommand {
         if (issuanceRecordId == null) {

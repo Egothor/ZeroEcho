@@ -86,6 +86,9 @@ import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationSnapshot;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
+/**
+ * Contract and regression tests for filesystem revocation authority.
+ */
 final class FilesystemRevocationAuthorityTest {
     private static final Instant TIME = Instant.parse("2026-07-01T12:00:00Z");
     private static final AttributeId NOTE = new AttributeId("test.note");
@@ -93,6 +96,11 @@ final class FilesystemRevocationAuthorityTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Snapshot global revisions and source survive equal times clear and checkpoint reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotGlobalRevisionsAndSourceSurviveEqualTimesClearAndCheckpointReopen() throws Exception {
         Path root = temporaryDirectory.resolve("snapshot-global-revisions");
@@ -161,6 +169,11 @@ final class FilesystemRevocationAuthorityTest {
         assertEquals(expected, actual);
     }
 
+    /**
+     * Global revision has the same cursor position and closure guards as current state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void globalRevisionHasTheSameCursorPositionAndClosureGuardsAsCurrentState() throws Exception {
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("snapshot-position"))) {
@@ -206,6 +219,11 @@ final class FilesystemRevocationAuthorityTest {
         assertThrows(IllegalStateException.class, cursor::ordinal);
     }
 
+    /**
+     * Legal transitions are contiguous durable and permanent is terminal.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void legalTransitionsAreContiguousDurableAndPermanentIsTerminal() throws Exception {
         System.out.println("legalTransitionsAreContiguousDurableAndPermanentIsTerminal");
@@ -232,6 +250,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("legalTransitionsAreContiguousDurableAndPermanentIsTerminal...ok");
     }
 
+    /**
+     * Authoritative evidence and native fields survive history reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authoritativeEvidenceAndNativeFieldsSurviveHistoryReopen() throws Exception {
         Path root = temporaryDirectory.resolve("evidence-reopen");
@@ -259,6 +282,11 @@ final class FilesystemRevocationAuthorityTest {
         }
     }
 
+    /**
+     * Every legal permanent transition is accepted.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void everyLegalPermanentTransitionIsAccepted() throws Exception {
         System.out.println("everyLegalPermanentTransitionIsAccepted");
@@ -289,6 +317,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("everyLegalPermanentTransitionIsAccepted...ok");
     }
 
+    /**
+     * Illegal and invalid commands fail before history mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void illegalAndInvalidCommandsFailBeforeHistoryMutation() throws Exception {
         System.out.println("illegalAndInvalidCommandsFailBeforeHistoryMutation");
@@ -329,6 +362,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("illegalAndInvalidCommandsFailBeforeHistoryMutation...ok");
     }
 
+    /**
+     * Same credential concurrent hold has exactly one committed winner.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sameCredentialConcurrentHoldHasExactlyOneCommittedWinner() throws Exception {
         System.out.println("sameCredentialConcurrentHoldHasExactlyOneCommittedWinner");
@@ -351,6 +389,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("sameCredentialConcurrentHoldHasExactlyOneCommittedWinner...ok");
     }
 
+    /**
+     * Conflicting transitions serialize without lost updates.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictingTransitionsSerializeWithoutLostUpdates() throws Exception {
         System.out.println("conflictingTransitionsSerializeWithoutLostUpdates");
@@ -389,6 +432,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("conflictingTransitionsSerializeWithoutLostUpdates...ok");
     }
 
+    /**
+     * Unrelated credential transition progresses while another credential lock is held.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld() throws Exception {
         System.out.println("unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld");
@@ -431,6 +479,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld...ok");
     }
 
+    /**
+     * Regressing transition time fails closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void regressingTransitionTimeFailsClosed() throws Exception {
         System.out.println("regressingTransitionTimeFailsClosed");
@@ -448,6 +501,9 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("regressingTransitionTimeFailsClosed...ok");
     }
 
+    /**
+     * Transition metadata defensively snapshots byte values.
+     */
     @Test
     void transitionMetadataDefensivelySnapshotsByteValues() {
         System.out.println("transitionMetadataDefensivelySnapshotsByteValues");
@@ -464,6 +520,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("transitionMetadataDefensivelySnapshotsByteValues...ok");
     }
 
+    /**
+     * Obsolete current and history layout cannot influence trusted history or resolver.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedHistoryOrResolver() throws Exception {
         System.out.println("obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedHistoryOrResolver");
@@ -500,6 +561,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedHistoryOrResolver...ok");
     }
 
+    /**
+     * Unversioned legacy journal store is rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unversionedLegacyJournalStoreIsRejected() throws Exception {
         System.out.println("unversionedLegacyJournalStoreIsRejected");
@@ -519,6 +585,11 @@ final class FilesystemRevocationAuthorityTest {
         System.out.println("unversionedLegacyJournalStoreIsRejected...ok");
     }
 
+    /**
+     * Durability uncertainty makes every store operation fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void durabilityUncertaintyMakesEveryStoreOperationFailClosed() throws Exception {
         System.out.println("durabilityUncertaintyMakesEveryStoreOperationFailClosed");

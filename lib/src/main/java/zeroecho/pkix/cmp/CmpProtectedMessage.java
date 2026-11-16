@@ -113,9 +113,13 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
     private static final String SHA_256 = "SHA-256";
     private static final String SHA_384 = "SHA-384";
 
-    /** Maximum complete incoming message size. */
+    /**
+     * Maximum complete incoming message size.
+     */
     public static final int MAXIMUM_MESSAGE_BYTES = 1_048_576;
-    /** Maximum supported request certificate candidates. */
+    /**
+     * Maximum supported request certificate candidates.
+     */
     public static final int MAXIMUM_EXTRA_CERTIFICATES = 33;
     private static final String PBM_OID = "1.2.840.113533.7.66.13";
     private final byte[] encoded;
@@ -345,6 +349,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
     /**
      * Parses exactly one canonical DER request and the closed supported grammar.
      * Unknown fields, multiple requests, missing protection and trailing data fail.
+     *
      * @param der bounded caller-owned message, defensively copied
      * @return immutable unauthenticated message
      * @throws IllegalArgumentException if the message is malformed or unsupported
@@ -393,49 +398,126 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
         }
     }
 
-    /** {@return a defensive copy of the complete canonical request} */
+    /**
+     * Returns a defensive copy of the complete canonical request.
+     *
+     * @return a defensive copy of the complete canonical request
+     */
     public byte[] encoded() { return encoded.clone(); }
-    /** {@return the CMP body tag} */
+    /**
+     * Returns the CMP body tag.
+     *
+     * @return the CMP body tag
+     */
     public int bodyType() { return message.getBody().getType(); }
-    /** {@return the bounded request ID, or zero for requests without a CertReqId} */
+    /**
+     * Returns the bounded request ID, or zero for requests without a CertReqId.
+     *
+     * @return the bounded request ID, or zero for requests without a CertReqId
+     */
     public BigInteger requestId() { return requestId; }
-    /** {@return the exact original CertReqMsg, when this is an enrollment request} */
+    /**
+     * Returns the exact original CertReqMsg, when this is an enrollment request.
+     *
+     * @return the exact original CertReqMsg, when this is an enrollment request
+     */
     public Optional<byte[]> certificationRequest() { return requestDer == null ? Optional.empty() : Optional.of(requestDer.clone()); }
-    /** {@return the immutable revocation reference, when this is rr} */
+    /**
+     * Returns the immutable revocation reference, when this is rr.
+     *
+     * @return the immutable revocation reference, when this is rr
+     */
     public Optional<CrmfRequest.CertificateReference> revokedCertificate() { return revoked; }
-    /** {@return the requested permanent revocation reason, or unspecified zero} */
+    /**
+     * Returns the requested permanent revocation reason, or unspecified zero.
+     *
+     * @return the requested permanent revocation reason, or unspecified zero
+     */
     public int revocationReason() { return revocationReason; }
-    /** {@return a defensive confirmation hash, when this is certConf} */
+    /**
+     * Returns a defensive confirmation hash, when this is certConf.
+     *
+     * @return a defensive confirmation hash, when this is certConf
+     */
     public Optional<byte[]> confirmationHash() { return confirmationHash == null ? Optional.empty() : Optional.of(confirmationHash.clone()); }
-    /** {@return the explicit RFC 9480 confirmation hash name, present only in version-three certConf} */
+    /**
+     * Returns the explicit RFC 9480 confirmation hash name, present only in version-three certConf.
+     *
+     * @return the explicit RFC 9480 confirmation hash name, present only in version-three certConf
+     */
     public Optional<String> confirmationHashAlgorithm() { return confirmationHashAlgorithm; }
-    /** {@return whether a certConf accepts rather than rejects the certificate} */
+    /**
+     * Returns whether a certConf accepts rather than rejects the certificate.
+     *
+     * @return whether a certConf accepts rather than rejects the certificate
+     */
     public boolean confirmationAccepted() { return confirmationAccepted; }
-    /** {@return whether this enrollment explicitly requested implicit confirmation} */
+    /**
+     * Returns whether this enrollment explicitly requested implicit confirmation.
+     *
+     * @return whether this enrollment explicitly requested implicit confirmation
+     */
     public boolean requestsImplicitConfirmation() { return implicitConfirmation; }
-    /** {@return whether the declared protection mode is standard PBM; not proof validity} */
+    /**
+     * Returns whether the declared protection mode is standard PBM; not proof validity.
+     *
+     * @return whether the declared protection mode is standard PBM; not proof validity
+     */
     public boolean isPbm() { return PBM_OID.equals(message.getHeader().getProtectionAlg().getAlgorithm().getId()); }
-    /** {@return a defensive transaction identifier} */
+    /**
+     * Returns a defensive transaction identifier.
+     *
+     * @return a defensive transaction identifier
+     */
     public byte[] transactionId() { return message.getHeader().getTransactionID().getOctets().clone(); }
-    /** {@return a defensive sender nonce} */
+    /**
+     * Returns a defensive sender nonce.
+     *
+     * @return a defensive sender nonce
+     */
     public byte[] senderNonce() { return message.getHeader().getSenderNonce().getOctets().clone(); }
-    /** {@return the optional defensive recipient nonce} */
+    /**
+     * Returns the optional defensive recipient nonce.
+     *
+     * @return the optional defensive recipient nonce
+     */
     public Optional<byte[]> recipientNonce() { return optional(message.getHeader().getRecipNonce()); }
-    /** {@return the optional defensive sender key identifier} */
+    /**
+     * Returns the optional defensive sender key identifier.
+     *
+     * @return the optional defensive sender key identifier
+     */
     public Optional<byte[]> senderKid() { return optional(message.getHeader().getSenderKID()); }
-    /** {@return the optional defensive recipient key identifier for exact credential selection} */
+    /**
+     * Returns the optional defensive recipient key identifier for exact credential selection.
+     *
+     * @return the optional defensive recipient key identifier for exact credential selection
+     */
     public Optional<byte[]> recipientKid() { return optional(message.getHeader().getRecipKID()); }
-    /** {@return the sender's immutable distinguished name} */
+    /**
+     * Returns the sender's immutable distinguished name.
+     *
+     * @return the sender's immutable distinguished name
+     */
     public X500Principal sender() { return name(message.getHeader().getSender()); }
-    /** {@return the recipient's immutable distinguished name} */
+    /**
+     * Returns the recipient's immutable distinguished name.
+     *
+     * @return the recipient's immutable distinguished name
+     */
     public X500Principal recipient() { return name(message.getHeader().getRecipient()); }
-    /** {@return the optional sender time; the server applies its freshness policy} */
+    /**
+     * Returns the optional sender time; the server applies its freshness policy.
+     *
+     * @return the optional sender time; the server applies its freshness policy
+     */
     public Optional<Instant> messageTime() {
         try { return message.getHeader().getMessageTime() == null ? Optional.empty() : Optional.of(message.getHeader().getMessageTime().getDate().toInstant()); }
         catch (java.text.ParseException impossible) { throw invalid(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
     /**
      * Returns untrusted certificate candidates; these are outside the protected bytes.
+     *
      * @return immutable list of defensive certificate DER arrays
      */
     public List<byte[]> extraCertificates() {
@@ -454,9 +536,11 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
      * A present subjectKeyIdentifier extension takes precedence and must contain
      * one through 128 bytes. If absent, SHA-256 of the exact encoded SPKI is used.
      * This identifier is only a routing constraint, never a trust assertion.
+     *
      * @param certificate selected certificate
      * @return caller-owned key identifier
      * @throws IllegalArgumentException if the extension or public key is malformed
+     * @throws NullPointerException if {@code certificate} is null
      */
     public static byte[] certificateKeyId(X509Certificate certificate) {
         Objects.requireNonNull(certificate, "certificate");
@@ -481,6 +565,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
      * Computes the CMP certificate-confirmation hash using the hash component of
      * a supported RSA or ECDSA certificate signature. RSA-PSS uses its explicit
      * digest parameters. This operation does not verify certificate trust.
+     *
      * @param certificateDer exact issued DER certificate, at most one MiB
      * @return defensive SHA-256, SHA-384 or SHA-512 digest
      * @throws IllegalArgumentException if the certificate or digest selection is unsupported
@@ -495,10 +580,12 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
      * signatures without an encoded digest require an explicit SHA-256,
      * SHA-384 or SHA-512 choice from a version-three certConf message. This
      * operation does not establish certificate trust or protocol authentication.
+     *
      * @param certificateDer exact DER certificate, at most one MiB
      * @param explicitDigest validated confirmation hash name, if supplied
      * @return digest of the complete original certificate DER
      * @throws IllegalArgumentException for malformed, inconsistent or unsupported input
+     * @throws NullPointerException if {@code explicitDigest} is null
      */
     public static byte[] certificateConfirmationHash(byte[] certificateDer, Optional<String> explicitDigest) {
         if (certificateDer == null || certificateDer.length == 0 || certificateDer.length > MAXIMUM_MESSAGE_BYTES) {
@@ -578,9 +665,11 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
      * Verifies the exact protected bytes using one explicitly selected certificate.
      * Checks its key strength and algorithm grammar; trust, usage, validity, sender
      * binding and authority remain the caller's responsibility.
+     *
      * @param certificate externally selected candidate, never an implicit trust anchor
      * @return unforgeable proof token for this exact message
      * @throws IllegalArgumentException if mode, algorithm or signature is invalid
+     * @throws NullPointerException if {@code certificate} is null
      */
     public Verified verifySignature(X509Certificate certificate) {
         Objects.requireNonNull(certificate, "certificate");
@@ -605,6 +694,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
     /**
      * Verifies binary-secret PBM after validating all work and algorithm bounds.
      * Secret bytes are never interpreted as characters or retained by the token.
+     *
      * @param policy explicit configured bounds
      * @param secret caller-owned 32..128 bytes, copied and never modified
      * @param cancellation cooperative signal checked during iterative derivation
@@ -630,7 +720,11 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
         } catch (RuntimeException failure) { throw invalid(); } // NOPMD AvoidCatchingGenericException, ExceptionAsFlowControl, PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
-    /** {@return a redacted diagnostic representation} */
+    /**
+     * Returns a redacted diagnostic representation.
+     *
+     * @return a redacted diagnostic representation
+     */
     @Override public String toString() { return "CmpProtectedMessage[redacted]"; }
 
     /**
@@ -640,18 +734,24 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
     public static final class Verified {
         private final CmpProtectedMessage request;
         private Verified(CmpProtectedMessage request) { this.request = request; }
-        /** {@return the immutable message whose protection was verified} */
+        /**
+         * Returns the immutable message whose protection was verified.
+         *
+         * @return the immutable message whose protection was verified
+         */
         public CmpProtectedMessage request() { return request; }
 
         /**
          * Creates a granted ip/cp/kup response for the retained original request.
          * A poll response supplies that original body type explicitly; its ID must match.
+         *
          * @param originalType original ir, cr or kur body tag
          * @param certificateDer issued certificate, at most one MiB
          * @param implicit whether the original enrollment explicitly requested implicit confirmation
          * @param confirmationDeadline explicit confirmation deadline when implicit is false
          * @return immutable unsigned body bound to this verified request
          * @throws IllegalArgumentException if any field or request type is inconsistent
+         * @throws NullPointerException if {@code confirmationDeadline} is null
          */
         public Response certificate(int originalType, byte[] certificateDer, boolean implicit, Instant confirmationDeadline) {
             if (certificateDer == null || certificateDer.length == 0 || certificateDer.length > MAXIMUM_MESSAGE_BYTES) {
@@ -678,6 +778,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates an initial waiting ip/cp/kup response with the exact request ID.
+         *
          * @return immutable response body without an invented certificate or signing receipt
          * @throws IllegalArgumentException unless the request is ir, cr or kur
          */
@@ -694,6 +795,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates a pollRep using an explicit configured retry interval.
+         *
          * @param retrySeconds positive retry interval, at most thirty days
          * @return immutable poll response for the exact request ID
          * @throws IllegalArgumentException if the type or interval is invalid
@@ -708,6 +810,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates a successful permanent revocation response after caller-authorized revocation.
+         *
          * @return immutable rp body bound to the verified rr
          * @throws IllegalArgumentException unless this is rr
          */
@@ -725,6 +828,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates pkiConf after the server has checked and durably recorded certConf.
+         *
          * @return immutable confirmation acknowledgement
          * @throws IllegalArgumentException unless this is certConf
          */
@@ -737,6 +841,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates the standard caCerts general response, preserving supplied chain order.
+         *
          * @param chain bounded leaf-to-anchor certificate DER list
          * @return immutable genp body; no certificate trust is inferred
          * @throws IllegalArgumentException if the request or chain is invalid
@@ -752,6 +857,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
 
         /**
          * Creates a generic authenticated rejection without caller-controlled diagnostics.
+         *
          * @return immutable error response body
          */
         public Response rejected() {
@@ -763,6 +869,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
          * Signs one response using the supplied retained server credential.
          * Response nonce and time are explicit so the caller can commit the exact
          * result before sending. The supplied chain must begin with the signer.
+         *
          * @param response body created by this proof token
          * @param signer server certificate whose key must match the private key
          * @param privateKey borrowed private key, never retained
@@ -771,6 +878,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
          * @param time explicit response time
          * @return protected DER response, bounded by the configured chain and leaf sizes
          * @throws IllegalArgumentException if the request uses PBM or signing fails
+         * @throws NullPointerException if {@code privateKey} is null
          */
         public byte[] sign(Response response, X509Certificate signer, PrivateKey privateKey,
                 List<byte[]> chain, byte[] senderNonce, Instant time) {
@@ -809,6 +917,7 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
         /**
          * Protects a response with the same verified binary PBM mode and parameters,
          * replacing its salt with caller-provided fresh random bytes.
+         *
          * @param response body created by this proof token
          * @param sender explicit authority-scoped server distinguished name
          * @param policy configured PBM bounds
@@ -879,7 +988,11 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
             }
             return builder.build();
         }
-        /** {@return a redacted diagnostic representation} */
+        /**
+         * Returns a redacted diagnostic representation.
+         *
+         * @return a redacted diagnostic representation
+         */
         @Override public String toString() { return "VerifiedCmpProtection[redacted]"; }
     }
 
@@ -895,7 +1008,11 @@ public final class CmpProtectedMessage { // NOPMD CyclomaticComplexity, TooManyM
         private Response(CmpProtectedMessage request, PKIBody body, boolean implicit, Instant deadline) {
             this.request = request; this.body = body; this.implicit = implicit; this.deadline = deadline;
         }
-        /** {@return a redacted diagnostic representation} */
+        /**
+         * Returns a redacted diagnostic representation.
+         *
+         * @return a redacted diagnostic representation
+         */
         @Override public String toString() { return "CmpResponse[redacted]"; }
     }
 

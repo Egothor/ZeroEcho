@@ -169,6 +169,8 @@ public final class ElgamalCipherContext implements EncryptionContext {
      * is provided to satisfy the {@link zeroecho.core.context.CryptoContext}
      * contract and may be used by higher layers for lifecycle hooks.
      * </p>
+     *
+     * @throws IOException declared by the context lifecycle contract; this no-op implementation does not throw it
      */
     @Override
     public void close() throws IOException {

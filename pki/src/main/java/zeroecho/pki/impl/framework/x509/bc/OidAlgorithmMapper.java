@@ -142,6 +142,7 @@ public final class OidAlgorithmMapper {
      * @return ZeroEcho canonical signature algorithm identifier, or {@code null}
      *         when the input is {@code null}, structurally incomplete, blank, or
      *         unsupported
+     * @throws NullPointerException if {@code authority} is null
      */
     public static String toZeroEchoAlgorithmId(AlgorithmIdentifier sigAlg, X509AuthoritySnapshot authority) {
         if (sigAlg == null) {

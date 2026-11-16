@@ -50,7 +50,9 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
-/** Strict current-version codec for opaque metadata mutation frame payloads. */
+/**
+ * Strict current-version codec for opaque metadata mutation frame payloads.
+ */
 final class MetadataMutationPayloadCodec {
     private static final short SCHEMA_VERSION = 1;
     private static final byte RESERVED_FLAGS = 0;
@@ -68,12 +70,34 @@ final class MetadataMutationPayloadCodec {
     private MetadataMutationPayloadCodec() {
     }
 
+    /**
+     * Builds a create-mutation payload from a bounded key prefix and borrowed repeatable value. Construction requires a known nonnegative value length and does not consume or close the value.
+     *
+     * @param key metadata key to encode
+     * @param value value to encode
+     * @param cancellation cooperative cancellation signal
+     * @return repeatable mutation payload retaining the borrowed value
+     * @throws MetadataStoreException if the value length is unavailable, invalid or exceeds supported payload bounds
+     * @throws NullPointerException if key, value or cancellation is null
+     */
     /* default */ static RepeatableContent create(
             MetadataKey key, RepeatableContent value, CancellationSignal cancellation)
             throws MetadataStoreException {
         return PayloadEncoder.create(key, value, cancellation);
     }
 
+    /**
+     * Builds a conditional replacement payload retaining the borrowed repeatable value. Construction requires a known nonnegative value length; the expected revision must be nonnegative.
+     *
+     * @param key metadata key to encode
+     * @param expectedRevision nonnegative revision required for the conditional mutation
+     * @param value value to encode
+     * @param cancellation cooperative cancellation signal
+     * @return repeatable mutation payload retaining the borrowed value
+     * @throws MetadataStoreException if the value length is unavailable, invalid or exceeds supported payload bounds
+     * @throws IllegalArgumentException if expectedRevision is negative
+     * @throws NullPointerException if key, value or cancellation is null
+     */
     /* default */ static RepeatableContent replace(
             MetadataKey key,
             long expectedRevision,
@@ -82,6 +106,15 @@ final class MetadataMutationPayloadCodec {
         return PayloadEncoder.replace(key, expectedRevision, value, cancellation);
     }
 
+    /**
+     * Builds a bounded conditional-delete payload without a value stream. The expected revision must be nonnegative.
+     *
+     * @param key metadata key to encode
+     * @param expectedRevision nonnegative revision required for the conditional mutation
+     * @return bounded repeatable delete payload
+     * @throws IllegalArgumentException if expectedRevision is negative
+     * @throws NullPointerException if key is null
+     */
     /* default */ static RepeatableContent delete(MetadataKey key, long expectedRevision) {
         return PayloadEncoder.delete(key, expectedRevision);
     }
@@ -90,12 +123,22 @@ final class MetadataMutationPayloadCodec {
      * Decoding reads only the bounded descriptor prefix. Value bytes remain in
      * the already validated frame region and no channel authority escapes.
      */
+    /**
+     * Reads the bounded mutation descriptor prefix of an already authenticated frame. The value bytes remain in the channel and are described by offsets rather than copied.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param frame frame or frame descriptor to process
+     * @return bounded mutation descriptor without copying its value bytes
+     * @throws IOException if descriptor framing, offsets or key encoding are malformed or channel I/O fails
+     */
     /* default */ static Descriptor decode(
             SeekableByteChannel channel, MetadataFrameCodec.FrameMetadata frame) throws IOException {
         return PayloadDecoder.decode(channel, frame);
     }
 
-    /** Builds bounded mutation prefixes without consuming caller content. */
+    /**
+     * Builds bounded mutation prefixes without consuming caller content.
+     */
     private static final class PayloadEncoder {
         private static RepeatableContent create(
                 MetadataKey key, RepeatableContent value, CancellationSignal cancellation)
@@ -187,7 +230,9 @@ final class MetadataMutationPayloadCodec {
         }
     }
 
-    /** Validates bounded mutation descriptors without reading value bytes. */
+    /**
+     * Validates bounded mutation descriptors without reading value bytes.
+     */
     private static final class PayloadDecoder {
         private static Descriptor decode(
                 SeekableByteChannel channel, MetadataFrameCodec.FrameMetadata frame) throws IOException {
@@ -372,7 +417,9 @@ final class MetadataMutationPayloadCodec {
         }
     }
 
-    /** Centralizes the schema limits shared by encoding and decoding. */
+    /**
+     * Centralizes the schema limits shared by encoding and decoding.
+     */
     private static final class SchemaRules {
         private static void requireIdentityLengths(int namespaceLength, int keyLength) {
             if (namespaceLength > MetadataKey.MAXIMUM_NAMESPACE_UTF8_BYTES
@@ -399,10 +446,21 @@ final class MetadataMutationPayloadCodec {
                 MetadataCommitResult.FailureCategory.INTEGRITY_FAILURE, message, cause);
     }
 
-    /** Stable mutation kinds; codes never depend on Java enum ordinals. */
+    /**
+     * Stable mutation kinds; codes never depend on Java enum ordinals.
+     */
     /* default */ enum MutationKind {
+        /**
+         * Creates a previously absent metadata identity.
+         */
         CREATE((byte) 1, MetadataFrameCodec.FrameType.MUTATION_CREATE),
+        /**
+         * Replaces an existing metadata value under its expected revision.
+         */
         REPLACE((byte) 2, MetadataFrameCodec.FrameType.MUTATION_REPLACE),
+        /**
+         * Deletes an existing metadata identity.
+         */
         DELETE((byte) 3, MetadataFrameCodec.FrameType.MUTATION_DELETE);
 
         private final byte code;
@@ -423,13 +481,30 @@ final class MetadataMutationPayloadCodec {
         }
     }
 
-    /** Bounded descriptor of a decoded mutation; it carries no channel or value bytes. */
+    /**
+     * Bounded descriptor of a decoded mutation; it carries no channel or value bytes.
+     * @param kind closed MutationKind discriminator
+     * @param key exact logical metadata identity
+     * @param expectedRevision revision expected by the mutation before its update
+     * @param valueOffset zero-based byte offset of the stored value, absent for a deletion
+     * @param valueLength encoded value length in bytes, absent for a deletion
+     */
     /* default */ record Descriptor(
             MutationKind kind,
             MetadataKey key,
             OptionalLong expectedRevision,
             OptionalLong valueOffset,
             OptionalLong valueLength) {
+        /**
+         * Creates the bounded descriptor of a decoded mutation; it carries no channel or value bytes.
+         *
+         * @param kind closed MutationKind discriminator
+         * @param key exact logical metadata identity
+         * @param expectedRevision revision expected by the mutation before its update
+         * @param valueOffset zero-based byte offset of the stored value, absent for a deletion
+         * @param valueLength encoded value length in bytes, absent for a deletion
+         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if {@code expectedRevision} is null; or if {@code valueOffset} is null; or if {@code valueLength} is null
+         */
         Descriptor {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(key, "key");
@@ -439,7 +514,9 @@ final class MetadataMutationPayloadCodec {
         }
     }
 
-    /** Composite control prefix plus an exactly bounded caller-owned value stream. */
+    /**
+     * Composite control prefix plus an exactly bounded caller-owned value stream.
+     */
     private static final class CompositePayload implements RepeatableContent {
         private final byte[] prefix;
         private final RepeatableContent value;
@@ -457,6 +534,9 @@ final class MetadataMutationPayloadCodec {
             this.cancellation = cancellation;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() throws IOException {
             cancellation.throwIfCancelled();
@@ -464,23 +544,34 @@ final class MetadataMutationPayloadCodec {
             return new ExactCompositeInputStream(prefix, valueStream, valueLength, cancellation);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(Math.addExact((long) prefix.length, valueLength));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "zeroecho-metadata-mutation-payload-v1";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // The composite owns opened streams, never the caller's content object.
         }
     }
 
-    /** Bounded stream that validates declared value length without buffering it. */
+    /**
+     * Bounded stream that validates declared value length without buffering it.
+     */
     private static final class ExactCompositeInputStream extends InputStream {
         private final ByteArrayInputStream prefix;
         private final InputStream value;
@@ -501,6 +592,9 @@ final class MetadataMutationPayloadCodec {
             this.cancellation = cancellation;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             byte[] one = new byte[1];
@@ -508,6 +602,9 @@ final class MetadataMutationPayloadCodec {
             return count < 0 ? -1 : Byte.toUnsignedInt(one[0]);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] target, int offset, int length) throws IOException {
             Objects.checkFromIndexSize(offset, length, target.length);
@@ -577,6 +674,9 @@ final class MetadataMutationPayloadCodec {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!closed) {

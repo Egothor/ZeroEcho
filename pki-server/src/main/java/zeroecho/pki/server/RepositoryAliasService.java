@@ -50,17 +50,27 @@ import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.PkiRepository;
 
-/** Durable non-authoritative repository alias administration. */
+/**
+ * Durable non-authoritative repository alias administration.
+ */
 @SuppressWarnings({ "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.LinguisticNaming",
         "PMD.ExcessiveParameterList" })
 public final class RepositoryAliasService {
-    /** Closed stable repository alias types. */
+    /**
+     * Closed stable repository alias types.
+     */
     public enum Type {
-        /** Stable route to one explicit immutable CRL. */
+        /**
+         * Stable route to one explicit immutable CRL.
+         */
         CURRENT_CRL(1),
-        /** Stable route to one explicit immutable issuer chain path. */
+        /**
+         * Stable route to one explicit immutable issuer chain path.
+         */
         CURRENT_CHAIN(2),
-        /** Stable route to one explicit immutable delta CRL. */
+        /**
+         * Stable route to one explicit immutable delta CRL.
+         */
         CURRENT_DELTA_CRL(3);
         private final int code;
         Type(int code) { this.code = code; }
@@ -75,6 +85,7 @@ public final class RepositoryAliasService {
          *
          * @param code persisted alias-type code
          * @return corresponding alias type
+         * @throws IllegalArgumentException if the code does not identify a supported repository alias type
          */
         public static Type fromCode(int code) {
             return switch (code) { case 1 -> CURRENT_CRL; case 2 -> CURRENT_CHAIN;
@@ -83,10 +94,18 @@ public final class RepositoryAliasService {
         }
     }
 
-    /** Durable alias state; removal never deletes its immutable target. */
+    /**
+     * Durable alias state; removal never deletes its immutable target.
+     */
     public enum State {
-        /** Alias resolves its exact target. */ ACTIVE(1),
-        /** Alias has been deliberately removed. */ REMOVED(2);
+        /**
+         * Alias resolves its exact target.
+         */
+        ACTIVE(1),
+        /**
+         * Alias has been deliberately removed.
+         */
+        REMOVED(2);
         private final int code;
         State(int code) { this.code = code; }
         /**
@@ -100,6 +119,7 @@ public final class RepositoryAliasService {
          *
          * @param code persisted alias-state code
          * @return corresponding alias state
+         * @throws IllegalArgumentException if the code does not identify a supported repository alias state
          */
         public static State fromCode(int code) {
             return switch (code) { case 1 -> ACTIVE; case 2 -> REMOVED;
@@ -127,7 +147,28 @@ public final class RepositoryAliasService {
     public record Record(String aliasId, RealmId realmId, PkiId authorityId, Type type, PkiId targetObjectId,
             Optional<PkiId> issuerId, Optional<PkiId> pathId, String targetCommitment, Instant createdAt,
             Instant updatedAt, String actorPrincipalId, State state, String recordCommitment) {
-        /** Validates exact alias identity and commitments. */
+        /**
+         * Validates exact alias identity and commitments.
+         * @param aliasId deterministic alias identifier
+         * @param realmId owning security realm
+         * @param authorityId exact logical authority
+         * @param type alias type
+         * @param targetObjectId exact immutable target object
+         * @param issuerId exact issuer generation for chain aliases
+         * @param pathId exact chain path for chain aliases
+         * @param targetCommitment immutable target commitment
+         * @param createdAt server-authoritative creation time
+         * @param updatedAt server-authoritative last-update time
+         * @param actorPrincipalId principal responsible for the last mutation
+         * @param state durable alias state
+         * @param recordCommitment commitment to the complete alias record
+         * @throws NullPointerException if any of {@code realmId}, {@code authorityId}, {@code type}, {@code
+         *         targetObjectId}, {@code issuerId}, {@code pathId}, {@code createdAt}, {@code updatedAt},
+         *         {@code state} is null
+         * @throws IllegalArgumentException if alias identity does not match its derived record coordinates or
+         *         the selected alias type and target shape are inconsistent or the retained alias commitment
+         *         differs from its canonical encoding
+         */
         public Record {
             Permission.requireId(aliasId, "repository alias");
             Objects.requireNonNull(realmId, "realmId");
@@ -172,6 +213,8 @@ public final class RepositoryAliasService {
      * @param disclosure effective disclosure-policy service
      * @param clock authoritative server clock
      * @param auditSink required safe audit sink
+     * @throws NullPointerException if any of {@code realmId}, {@code store}, {@code repository}, {@code
+     *         disclosure}, {@code clock} is null
      */
     public RepositoryAliasService(RealmId realmId, ServerControlStore store, PkiRepository repository,
             DisclosureService disclosure, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink) {

@@ -87,6 +87,9 @@ public final class StoreBackedEffectiveCredentialStatusResolver implements Effec
 
     // Clock implementations are external boundaries; their causes are deliberately
     // removed from the stable redacted status-resolution exception.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     @Override
     public Evaluation beginEvaluation() {
@@ -109,11 +112,17 @@ public final class StoreBackedEffectiveCredentialStatusResolver implements Effec
             this.evaluationTime = evaluationTime;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Instant evaluationTime() {
             return evaluationTime;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public EffectiveCredentialStatus resolve(Credential credential) {
             Objects.requireNonNull(credential, "credential");
@@ -183,6 +192,9 @@ public final class StoreBackedEffectiveCredentialStatusResolver implements Effec
             throw resolutionFailure();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Credential requireUsable(Credential credential, CredentialUse use) {
             Objects.requireNonNull(use, "use");

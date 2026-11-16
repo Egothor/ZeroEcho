@@ -107,11 +107,43 @@ final class EndEntityIssuancePreparation {
     private final AlgorithmIdentity signature;
     private final java.util.function.Supplier<BigInteger> serialSource;
 
+    /**
+     * Creates a preparer borrowing authoritative store and validation collaborators.
+     *
+     * <p>The caller retains collaborator lifecycle ownership; construction does not submit
+     * a signing request or publish a credential.</p>
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param clock authoritative session clock; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param verifier borrowed X.509 signature verification executor; must not be null
+     * @param bindings immutable X.509 algorithm binding registry; must not be null
+     * @param signatureAlgorithm canonical permitted signature algorithm identity
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configured algorithm or binding selection is invalid
+     */
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm) {
         this(store, clock, authority, verifier, bindings, signatureAlgorithm, authority, Optional.empty());
     }
 
+    /**
+     * Creates a preparer borrowing authoritative store and validation collaborators.
+     *
+     * <p>The caller retains collaborator lifecycle ownership; construction does not submit
+     * a signing request or publish a credential.</p>
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param clock authoritative session clock; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param verifier borrowed X.509 signature verification executor; must not be null
+     * @param bindings immutable X.509 algorithm binding registry; must not be null
+     * @param signatureAlgorithm canonical permitted signature algorithm identity
+     * @param signingAuthority frozen signing authority snapshot; must not be null
+     * @param managedKeys optional borrowed managed public-key source; container must not be null
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configured algorithm or binding selection is invalid
+     */
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
             X509AuthoritySnapshot signingAuthority, Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> managedKeys) {
@@ -138,19 +170,51 @@ final class EndEntityIssuancePreparation {
         serialSource = () -> BigInteger.ONE;
     }
 
+    /**
+     * Creates a preview preparer using serial one instead of allocating a production serial.
+     *
+     * @return preparer sharing authoritative validation collaborators with serial allocation disabled
+     */
     /* default */ EndEntityIssuancePreparation withoutSerialAllocation() {
         return new EndEntityIssuancePreparation(this);
     }
 
+    /**
+     * Creates a lifecycle preparer sharing this issuance validation and status resolver.
+     *
+     * @return new lifecycle preparer borrowing the same authoritative collaborators
+     */
     /* default */ EndEntityLifecyclePreparation lifecyclePreparation() {
         return new EndEntityLifecyclePreparation(store, status, authority, this);
     }
 
+    /**
+     * Verifies enrollment proof and freezes an issuance candidate against current authority policy.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param input bounded end-entity enrollment input; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated bounded issuance inputs with a selected serial and issuer binding
+     * @throws IOException if enrollment processing, issuer content access, or cancellation fails
+     * @throws PkiException if proof, profile, issuer, or issuance-intent checks fail
+     */
     /* default */ Prepared prepare(AccessContext access, EndEntityIssuanceRequest input, CancellationSignal cancellation)
             throws IOException {
         return prepare(access, input, Optional.empty(), cancellation);
     }
 
+    /**
+     * Verifies enrollment proof and freezes an issuance candidate against current authority policy.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param input bounded end-entity enrollment input; must not be null
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated bounded issuance inputs with a selected serial and issuer binding
+     * @throws IOException if enrollment processing, issuer content access, or cancellation fails
+     * @throws PkiException if proof, profile, issuer, or issuance-intent checks fail
+     * @throws NullPointerException if access, input, cancellation is null
+     */
     /* default */ Prepared prepare(AccessContext access, EndEntityIssuanceRequest input, Optional<IssuanceIntent> intent,
             CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(access, "access");
@@ -163,12 +227,36 @@ final class EndEntityIssuancePreparation {
         return prepareCandidate(access, candidate, evaluation, Optional.of(payload), intent, cancellation);
     }
 
+    /**
+     * Parses and verifies a PKCS#10 request before it may enter profile validation.
+     *
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param csrDer bounded DER PKCS#10 request bytes; must not be null
+     * @param profileId requested certificate profile identity
+     * @param validityOverride optional requested validity interval; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return defensive verified candidate bound to the requested issuer, profile, and validity
+     * @throws IOException if parsing, proof verification, or cancellation fails
+     * @throws PkiException if proof of possession is not verified
+     */
     /* default */ VerifiedIssuanceCandidate verifyCsr(zeroecho.pki.api.PkiId issuerCaId, byte[] csrDer, String profileId,
             Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
         return verifyRequest(issuerCaId, new X509EnrollmentPayload(
                 X509EnrollmentPayload.Kind.PKCS10, csrDer), profileId, validityOverride, cancellation);
     }
 
+    /**
+     * Parses and verifies the supplied enrollment payload before profile validation.
+     *
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param payload bounded PKCS#10 or CRMF enrollment payload; must not be null
+     * @param profileId requested certificate profile identity
+     * @param validityOverride optional requested validity interval; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return defensive verified candidate bound to the requested issuer, profile, and validity
+     * @throws IOException if parsing, proof verification, or cancellation fails
+     * @throws PkiException if proof of possession is not verified
+     */
     /* default */ VerifiedIssuanceCandidate verifyRequest(zeroecho.pki.api.PkiId issuerCaId,
             X509EnrollmentPayload payload, String profileId,
             Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
@@ -183,6 +271,18 @@ final class EndEntityIssuancePreparation {
                         profileId, validityOverride));
     }
 
+    /**
+     * Validates a proven subject against current issuer state, exact profile, and optional frozen intent.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param candidate cryptographically verified issuance candidate; must not be null
+     * @param evaluation frozen authoritative status evaluation shared by this preparation
+     * @param csrDer original enrollment payload when present; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen bounded inputs for TBS construction; no signature is emitted here
+     * @throws IOException if authoritative content access or cancellation fails
+     * @throws PkiException if issuer, profile, key, validity, or intent selection is invalid
+     */
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             CancellationSignal cancellation) throws IOException {
@@ -190,6 +290,19 @@ final class EndEntityIssuancePreparation {
     }
 
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+    /**
+     * Validates a proven subject against current issuer state, exact profile, and optional frozen intent.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param candidate cryptographically verified issuance candidate; must not be null
+     * @param evaluation frozen authoritative status evaluation shared by this preparation
+     * @param csrDer original enrollment payload when present; container must not be null
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen bounded inputs for TBS construction; no signature is emitted here
+     * @throws IOException if authoritative content access or cancellation fails
+     * @throws PkiException if issuer, profile, key, validity, or intent selection is invalid
+     */
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
@@ -197,6 +310,21 @@ final class EndEntityIssuancePreparation {
         return prepareCandidate(access, candidate, evaluation, csrDer, intent, Optional.empty(), false, cancellation);
     }
 
+    /**
+     * Validates a proven subject against current issuer state, exact profile, and optional frozen intent.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param candidate cryptographically verified issuance candidate; must not be null
+     * @param evaluation frozen authoritative status evaluation shared by this preparation
+     * @param csrDer original enrollment payload when present; container must not be null
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param sdk whether validation uses the hybrid SDK issuance path
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen bounded inputs for TBS construction; no signature is emitted here
+     * @throws IOException if authoritative content access or cancellation fails
+     * @throws PkiException if issuer, profile, key, validity, or intent selection is invalid
+     */
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             Optional<IssuanceIntent> intent, Optional<zeroecho.pki.api.Validity> frozenValidity, boolean sdk,
@@ -279,6 +407,22 @@ final class EndEntityIssuancePreparation {
                 serialSource.get(), evaluation.evaluationTime(), issuerDer, issuer.content(), issuerBinding, profile);
     }
 
+    /**
+     * Reparses hybrid enrollment evidence and freezes matching SDK issuance inputs.
+     *
+     * <p>Preview mode selects the serial-free preparer. Supplied primary and alternative
+     * keys must match the keys parsed from the original payload.</p>
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param input bounded end-entity enrollment input; must not be null
+     * @param supplied previously parsed hybrid SDK request, checked against the original payload
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param preview whether to avoid serial allocation for a preview
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated frozen hybrid SDK issuance inputs
+     * @throws IOException if request processing, public-key export, issuer access, or cancellation fails
+     * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
+     */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
             Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
@@ -286,6 +430,23 @@ final class EndEntityIssuancePreparation {
         return prepareSdk(access, input, supplied, frozenValidity, preview, status.beginEvaluation(), cancellation);
     }
 
+    /**
+     * Reparses hybrid enrollment evidence and freezes matching SDK issuance inputs.
+     *
+     * <p>Preview mode selects the serial-free preparer. Supplied primary and alternative
+     * keys must match the keys parsed from the original payload.</p>
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param input bounded end-entity enrollment input; must not be null
+     * @param supplied previously parsed hybrid SDK request, checked against the original payload
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param preview whether to avoid serial allocation for a preview
+     * @param evaluation frozen authoritative status evaluation shared by this preparation
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated frozen hybrid SDK issuance inputs
+     * @throws IOException if request processing, public-key export, issuer access, or cancellation fails
+     * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
+     */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
             Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
@@ -293,6 +454,24 @@ final class EndEntityIssuancePreparation {
         return prepareSdk(access, input, supplied, frozenValidity, preview, evaluation, Optional.empty(), cancellation);
     }
 
+    /**
+     * Reparses hybrid enrollment evidence and freezes matching SDK issuance inputs.
+     *
+     * <p>Preview mode selects the serial-free preparer. Supplied primary and alternative
+     * keys must match the keys parsed from the original payload.</p>
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param input bounded end-entity enrollment input; must not be null
+     * @param supplied previously parsed hybrid SDK request, checked against the original payload
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param preview whether to avoid serial allocation for a preview
+     * @param evaluation frozen authoritative status evaluation shared by this preparation
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated frozen hybrid SDK issuance inputs
+     * @throws IOException if request processing, public-key export, issuer access, or cancellation fails
+     * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
+     */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
             Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
@@ -316,6 +495,15 @@ final class EndEntityIssuancePreparation {
                 intent, frozenValidity, true, cancellation);
     }
 
+    /**
+     * Resolves and validates the managed responder key pair and frozen issuance intent.
+     *
+     * @param request managed OCSP responder issuance request with its exact frozen target
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return validated primary/alternative keys, core slot, revision, and intent
+     * @throws IOException if managed public-key export or cancellation fails
+     * @throws PkiException if the key suite, profile, or frozen target does not match
+     */
     /* default */ ManagedOcspSelection managedOcspSelection(zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
             CancellationSignal cancellation) throws IOException {
         cancellation.throwIfCancelled();
@@ -388,6 +576,17 @@ final class EndEntityIssuancePreparation {
         return new ManagedOcspSelection(primarySpki, alternativeSpki, primary, alternative, slot, revision, intent);
     }
 
+    /**
+     * Validates managed responder issuance and freezes its issuer and subject-key bindings.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request managed responder issuance request
+     * @param selected previously validated managed responder key and intent selection
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return bounded managed responder issuance inputs for TBS construction
+     * @throws IOException if authoritative content access or cancellation fails
+     * @throws PkiException if the frozen selection or responder policy is invalid
+     */
     /* default */ Prepared prepareManagedOcsp(AccessContext access,
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, ManagedOcspSelection selected,
             CancellationSignal cancellation) throws IOException {
@@ -483,12 +682,33 @@ final class EndEntityIssuancePreparation {
         }
         return value.value();
     }
+    /**
+     * Frozen managed responder keys and exact authoritative issuance selection.
+     *
+     * @param primarySpki resolved primary subject public-key information
+     * @param alternativeSpki resolved alternative subject public-key information
+     * @param primary validated primary subject key binding
+     * @param alternative validated alternative subject key binding
+     * @param coreSlotId selected core key slot identity
+     * @param revision frozen authoritative target revision
+     * @param intent frozen effective issuance intent
+     */
     /* default */ record ManagedOcspSelection(EncodedObject primarySpki, EncodedObject alternativeSpki,
             zeroecho.pki.api.ca.IssuerKeyBinding primary, zeroecho.pki.api.ca.IssuerKeyBinding alternative,
             String coreSlotId, long revision, IssuanceIntent intent) { }
 
+    /**
+     * Begins one authoritative status evaluation for a hybrid SDK operation.
+     *
+     * @return evaluation capturing the authoritative time for subsequent policy checks
+     */
     /* default */ EffectiveCredentialStatusResolver.Evaluation beginSdkEvaluation() { return status.beginEvaluation(); }
 
+    /**
+     * Returns the signing authority used to resolve SDK signature bindings.
+     *
+     * @return borrowed immutable signing authority snapshot
+     */
     /* default */ X509AuthoritySnapshot authority() { return signingAuthority; }
 
     private static void requireSelectedIssuance(IssuanceIntent expected, IssuerGeneration generation, IssuerChainPath path) {
@@ -553,13 +773,50 @@ final class EndEntityIssuancePreparation {
         bindingMatcher.require(actual, role, reference);
     }
 
-    /** Frozen, bounded inputs for the subsequent TBS construction step. */
+    /**
+     * Frozen, bounded inputs for the subsequent TBS construction step.
+     * @param access authenticated operation access context; must not be null
+     * @param request gate-approved end-entity request
+     * @param keyRef selected issuer signing key reference
+     * @param signature canonical selected signature identity
+     * @param signatureBinding selected native signature AlgorithmIdentifier
+     * @param serial selected positive certificate serial number
+     * @param evaluationTime frozen authoritative evaluation instant
+     * @param issuerDer issuer certificate DER, cloned on construction and access
+     * @param issuerContent durable issuer certificate reference
+     * @param issuerBinding frozen issuer cryptographic binding
+     * @param profile selected active certificate profile
+     */
     /* default */ record Prepared(AccessContext access, ValidatedCertificateRequest request, KeyRef keyRef,
             AlgorithmIdentity signature, AlgorithmIdentifier signatureBinding, BigInteger serial,
             Instant evaluationTime, byte[] issuerDer, DurableContentReference issuerContent,
             zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding, ActiveCertificateProfile profile) {
+        /**
+         * Retains frozen issuance inputs and takes a defensive copy of issuer certificate DER.
+         *
+         * @param access authenticated operation access context; must not be null
+         * @param request gate-approved end-entity request
+         * @param keyRef selected issuer signing key reference
+         * @param signature canonical selected signature identity
+         * @param signatureBinding selected native signature AlgorithmIdentifier
+         * @param serial selected positive certificate serial number
+         * @param evaluationTime frozen authoritative evaluation instant
+         * @param issuerDer issuer certificate DER, cloned on construction and access
+         * @param issuerContent durable issuer certificate reference
+         * @param issuerBinding frozen issuer cryptographic binding
+         * @param profile selected active certificate profile
+         * @throws NullPointerException if issuerDer is null
+         */
         Prepared { issuerDer = issuerDer.clone(); }
+        /**
+         * Returns an independent copy of the frozen issuer certificate DER.
+         *
+         * @return issuer certificate bytes owned by the caller
+         */
         @Override public byte[] issuerDer() { return issuerDer.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "PreparedEndEntityIssuance[redacted]"; }
     }
 }

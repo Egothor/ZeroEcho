@@ -82,6 +82,7 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
      * recipients but cannot successfully unwrap the CEK.</li>
      * </ul>
      *
+     * @param limits     trusted PBKDF2 work-factor policy; must not be null
      * @param password   the password used as input to PBKDF2; must not be
      *                   {@code null}
      * @param iterations the PBKDF2 iteration count; must be at least
@@ -91,7 +92,7 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
      * @param decoy      {@code true} if this is a decoy recipient (fake entry that
      *                   cannot unwrap a CEK); {@code false} if it is a real
      *                   recipient
-     * @throws NullPointerException     if {@code password} is {@code null}
+     * @throws NullPointerException     if {@code password} or {@code limits} is {@code null}
      * @throws IllegalArgumentException if {@code iterations} is below
      *                                  {@value Pbkdf2Limits#MINIMUM} or
      *                                  {@code kekBytes} is not exactly 16 or 32
@@ -124,6 +125,7 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
      * @return a blob containing {@code pack7(iter) || salt || wrapIv || wrappedCEK}
      * @throws GeneralSecurityException if PBKDF2 or AES-GCM fails
      * @throws IOException              if blob assembly fails
+     * @throws IllegalStateException if the owned password has been destroyed
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws GeneralSecurityException, IOException {
@@ -170,7 +172,9 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
         return decoy;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -184,7 +188,9 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

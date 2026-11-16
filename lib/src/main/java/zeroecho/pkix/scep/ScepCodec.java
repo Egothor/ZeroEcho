@@ -102,32 +102,54 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
     private static final ASN1ObjectIdentifier ID_TRANS_ID =
             new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.7");
 
-    /** SCEP messageType value for PKCSReq. */
+    /**
+     * SCEP messageType value for PKCSReq.
+     */
     public static final int MSG_PKCS_REQ = 19;
-    /** SCEP messageType value for CertRep. */
+    /**
+     * SCEP messageType value for CertRep.
+     */
     public static final int MSG_CERT_REP = 3;
-    /** SCEP messageType value for GetCertInitial. */
+    /**
+     * SCEP messageType value for GetCertInitial.
+     */
     public static final int MSG_GET_CERT_INITIAL = 20;
-    /** SCEP messageType value for GetCert. */
+    /**
+     * SCEP messageType value for GetCert.
+     */
     public static final int MSG_GET_CERT = 21;
-    /** SCEP messageType value for GetCRL. */
+    /**
+     * SCEP messageType value for GetCRL.
+     */
     public static final int MSG_GET_CRL = 22;
 
-    /** pkiStatus value for success. */
+    /**
+     * pkiStatus value for success.
+     */
     public static final String STATUS_SUCCESS = "0";
-    /** pkiStatus value for failure. */
+    /**
+     * pkiStatus value for failure.
+     */
     public static final String STATUS_FAILURE = "2";
-    /** pkiStatus value for pending. */
+    /**
+     * pkiStatus value for pending.
+     */
     public static final String STATUS_PENDING = "3";
 
-    /** failInfo value for badRequest (challenge password mismatch). */
+    /**
+     * failInfo value for badRequest (challenge password mismatch).
+     */
     public static final String FAIL_BAD_REQUEST = "2";
-    /** failInfo value for badCertId (certificate not found). */
+    /**
+     * failInfo value for badCertId (certificate not found).
+     */
     public static final String FAIL_BAD_CERT_ID = "4";
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    /** Maximum accepted encoded request size, before CMS parsing or decryption. */
+    /**
+     * Maximum accepted encoded request size, before CMS parsing or decryption.
+     */
     public static final int MAXIMUM_REQUEST_BYTES = 1_048_576;
 
     private ScepCodec() {
@@ -164,7 +186,11 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
          * @return signer certificate
          */
         public X509Certificate requesterCertificate() { return requesterCertificate; }
-        /** @return redacted message description */
+        /**
+         * Returns redacted message description.
+         *
+         * @return redacted message description
+         */
         @Override public String toString() { return "VerifiedRequest[messageType=" + messageType + "]"; }
     }
 
@@ -173,6 +199,7 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
      * one signer and one matching certificate, SHA-256/RSA, authenticated
      * id-data content, and strictly typed singular SCEP attributes.
      * Certificate possession is proven; identity authorization is the caller's job.
+     *
      * @param cmsDer complete encoded CMS message
      * @return authenticated outer envelope
      * @throws ScepCodecException for malformed or unsupported messages or invalid signatures
@@ -301,11 +328,13 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
      * Decrypts an already verified request using one exact provisioned RA recipient.
      * Requires AES-128-CBC, RSA key transport, and exactly one matching recipient;
      * there is no trial decryption or fallback to another credential.
+     *
      * @param request authenticated envelope
      * @param raCertificate exact provisioned recipient certificate
      * @param raPrivateKey matching private key borrowed under its custody lease
      * @return verified attributes and independently owned plaintext request
      * @throws ScepCodecException for an invalid envelope, recipient or decryption
+     * @throws NullPointerException if {@code request} is null
      */
     public static ScepPkiMessage decryptRequest(VerifiedRequest request, X509Certificate raCertificate, PrivateKey raPrivateKey)
             throws ScepCodecException {
@@ -355,6 +384,7 @@ public final class ScepCodec { // NOPMD CyclomaticComplexity - One closed SCEP c
 
     /**
      * Validates an IssuerAndSubject poll against the frozen issuer and original CSR.
+     *
      * @param encoded exact decrypted poll
      * @param issuer frozen issuing CA subject
      * @param subject original CSR subject

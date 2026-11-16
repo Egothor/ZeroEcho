@@ -62,22 +62,62 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Real bounded X.509 fixtures for semantic acceptance, not a permissive store adapter. */
+/**
+ * Real bounded X.509 fixtures for semantic acceptance, not a permissive store adapter.
+ */
 public final class SemanticIssuanceFixture {
+    /**
+     * Logical authority identity shared by semantic issuance fixtures.
+     */
     public static final PkiId AUTHORITY = new PkiId("authority");
+    /**
+     * Logical reference of the fixture signing key.
+     */
     public static final KeyRef KEY = new KeyRef("test-key");
+    /**
+     * Inclusive beginning of the fixture certificate validity interval.
+     */
     public static final Instant BEFORE = Instant.parse("2025-01-01T00:00:00Z");
+    /**
+     * End of the fixture certificate validity interval.
+     */
     public static final Instant AFTER = Instant.parse("2030-01-01T00:00:00Z");
     private static final KeyPair KEY_PAIR = keyPair();
 
     private SemanticIssuanceFixture() { }
 
+    /**
+     * Derives the stable credential identity for the selected semantic fixture generation.
+     *
+     * @param generation generation selector used to derive stable fixture identifiers
+     * @return generation-specific fixture credential identifier
+     */
     public static PkiId credentialId(int generation) { return new PkiId("fixture:root:" + generation); }
+    /**
+     * Derives the stable issuer-generation identity for the selected semantic fixture.
+     *
+     * @param generation generation selector used to derive stable fixture identifiers
+     * @return issuer-generation identifier bound to the fixture authority and credential
+     */
     public static PkiId issuerId(int generation) { return IssuerGeneration.idFor(AUTHORITY, credentialId(generation)); }
+    /**
+     * Creates the one-certificate issuer-chain path of the selected semantic fixture generation.
+     *
+     * @param generation generation selector used to derive stable fixture identifiers
+     * @return immutable issuer-chain path in fixture order
+     */
     public static IssuerChainPath path(int generation) {
         return IssuerChainPath.create(AUTHORITY, issuerId(generation), List.of(credentialId(generation)));
     }
 
+    /**
+     * Creates and persists the fixture issuer credential, generation, and path when absent.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param generation generation selector used to derive stable fixture identifiers
+     * @return existing or newly persisted fixture issuer credential
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static Credential issuer(PkiStore store, int generation) throws Exception {
         if (store.getCredential(credentialId(generation)).isPresent()) {
             return store.getCredential(credentialId(generation)).orElseThrow();
@@ -95,6 +135,16 @@ public final class SemanticIssuanceFixture {
         return credential;
     }
 
+    /**
+     * Builds and signs a real X.509 certificate for the selected subject, serial, and validity.
+     *
+     * @param subject distinguished-name subject of the created fixture credential
+     * @param serial positive certificate serial number chosen for the fixture
+     * @param before beginning of the fixture certificate validity interval
+     * @param after end of the fixture certificate validity interval
+     * @return new signed certificate holder
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static X509CertificateHolder certificate(String subject, BigInteger serial, Instant before, Instant after)
             throws Exception {
         return new JcaX509v3CertificateBuilder(new X500Name("CN=Acceptance Issuer"), serial,
@@ -102,13 +152,32 @@ public final class SemanticIssuanceFixture {
                 .build(new JcaContentSignerBuilder("SHA256withRSA").build(KEY_PAIR.getPrivate()));
     }
 
+    /**
+     * Computes the lowercase hexadecimal SHA-256 commitment of the supplied bytes.
+     *
+     * @param bytes content bytes to hash or sign; borrowed without modification
+     * @return 64-character SHA-256 commitment
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static String digest(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
+    /**
+     * Computes the SHA-256 commitment of the semantic fixture public-key encoding.
+     *
+     * @return lowercase hexadecimal public-key commitment
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static String publicKeyDigest() throws Exception { return digest(KEY_PAIR.getPublic().getEncoded()); }
 
-    /** Creates a real CA certificate with an explicit ordered multi-RDN subject. */
+    /**
+     * Creates a real CA certificate with an explicit ordered multi-RDN subject.
+     *
+     * @param subject exact ordered distinguished-name principal of the fixture certificate
+     * @param serial positive certificate serial number selected by the caller
+     * @return new signed X.509 CA certificate with the requested subject/serial
+     */
     public static java.security.cert.X509Certificate caCertificate(javax.security.auth.x500.X500Principal subject,
             BigInteger serial) {
         return zeroecho.pkix.Pkix.certificateBuilder().serialNumber(serial)

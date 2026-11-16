@@ -53,7 +53,9 @@ import zeroecho.pki.server.AdministrativeAuthenticationMode;
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 
-/** Lifecycle owner for the isolated, optionally enabled public repository listener. */
+/**
+ * Lifecycle owner for the isolated, optionally enabled public repository listener.
+ */
 public final class PublicRepositoryTransport implements AutoCloseable {
     private final HttpServer listener;
     private final ServerRuntime runtime;
@@ -77,6 +79,8 @@ public final class PublicRepositoryTransport implements AutoCloseable {
      * @param ready readiness predicate checked by request handlers
      * @return started public-listener lifecycle owner
      * @throws IllegalStateException if the listener cannot be initialized
+     * @throws NullPointerException if any of {@code configuration}, {@code realm}, {@code authenticator} is
+     *         null
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public static PublicRepositoryTransport start(PkiServerConfiguration.PublicListener configuration,
@@ -126,7 +130,9 @@ public final class PublicRepositoryTransport implements AutoCloseable {
      */
     public InetSocketAddress address() { return listener.getAddress(); }
 
-    /** Prevents new public stream admission. */
+    /**
+     * Prevents new public stream admission.
+     */
     public void quiesce() { runtime.quiesce(); ocspRuntime.quiesce(); }
 
     /**
@@ -144,6 +150,9 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         runtime.close();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() { shutdown(Duration.ZERO); }
 
     private static HttpsConfigurator configurator(SSLContext context, boolean proxyMode) {

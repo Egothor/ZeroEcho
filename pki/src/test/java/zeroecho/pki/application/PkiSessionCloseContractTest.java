@@ -56,9 +56,20 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.bootstrap.PkiBootstrap;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for PKI session close contract.
+ */
 class PkiSessionCloseContractTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Preserves I/O unchecked and error identity.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preservesIoUncheckedAndErrorIdentity() throws Exception {
         System.out.println("preservesIoUncheckedAndErrorIdentity");
@@ -70,6 +81,11 @@ class PkiSessionCloseContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Translates checked failures without flattening suppression.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void translatesCheckedFailuresWithoutFlatteningSuppression() throws Exception {
         System.out.println("translatesCheckedFailuresWithoutFlatteningSuppression");
@@ -84,6 +100,11 @@ class PkiSessionCloseContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Restores primary and suppressed interruption even in cyclic graphs.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restoresPrimaryAndSuppressedInterruptionEvenInCyclicGraphs() throws Exception {
         System.out.println("restoresPrimaryAndSuppressedInterruptionEvenInCyclicGraphs");
@@ -106,6 +127,11 @@ class PkiSessionCloseContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Actual session closes audit before store preserves failures and closes once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void actualSessionClosesAuditBeforeStorePreservesFailuresAndClosesOnce() throws Exception {
         System.out.println("actualSessionClosesAuditBeforeStorePreservesFailuresAndClosesOnce");
@@ -159,7 +185,9 @@ class PkiSessionCloseContractTest {
         System.out.println("...ok");
     }
 
-    /** Invokes the shared translation used by both early reactor and aggregate teardown failures. */
+    /**
+     * Invokes the shared translation used by both early reactor and aggregate teardown failures.
+     */
     private static Throwable translate(Throwable failure) throws ReflectiveOperationException {
         var method = DefaultPkiSession.class.getDeclaredMethod("rethrow", Throwable.class);
         method.setAccessible(true);

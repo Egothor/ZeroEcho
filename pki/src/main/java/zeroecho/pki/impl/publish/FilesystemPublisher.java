@@ -55,23 +55,40 @@ import zeroecho.pki.spi.publish.PublicationAttempt;
 import zeroecho.pki.spi.publish.PublicationOutcome;
 import zeroecho.pki.spi.publish.Publisher;
 
-/** Bounded-memory, idempotent publisher for one administrator-owned directory. */
+/**
+ * Bounded-memory, idempotent publisher for one administrator-owned directory.
+ */
 final class FilesystemPublisher implements Publisher {
     private static final int BUFFER_BYTES = 16 * 1024;
 
     private final PublicationTarget target;
     private final Path root;
 
+    /**
+     * Binds a publication target to a normalized administrator-owned filesystem root.
+     *
+     * <p>Construction normalizes the path but does not create or inspect the directory.</p>
+     *
+     * @param target exact configured publication destination
+     * @param root destination directory, converted to an absolute normalized path
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ FilesystemPublisher(PublicationTarget target, Path root) {
         this.target = Objects.requireNonNull(target, "target");
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationTarget target() {
         return target;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationOutcome publish(PublicationAttempt attempt, RepeatableContent payload) {
         Objects.requireNonNull(attempt, "attempt");
@@ -103,6 +120,9 @@ final class FilesystemPublisher implements Publisher {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PublicationOutcome> reconcile(PublicationAttempt attempt) {
         Objects.requireNonNull(attempt, "attempt");

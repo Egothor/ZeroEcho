@@ -58,6 +58,9 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spi.ContextAware;
 
+/**
+ * Contract and regression tests for AES GCM cross check.
+ */
 public class AesGcmCrossCheckTest {
 
     // ---- logging helpers (same pattern you use elsewhere) ----
@@ -80,6 +83,9 @@ public class AesGcmCrossCheckTest {
         System.out.println(method + "...ok");
     }
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // add providers if needed
@@ -120,6 +126,11 @@ public class AesGcmCrossCheckTest {
         return c.doFinal(ct);
     }
 
+    /**
+     * Cross-checks context-configured AES-GCM stream output against the JCA cipher.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesGcm_stream_vs_jca_ctxOnly_crosscheck() throws Exception {
         final int SIZE = 32 * 1024 + 777;

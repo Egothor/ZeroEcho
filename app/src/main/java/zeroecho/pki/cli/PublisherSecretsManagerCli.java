@@ -81,7 +81,6 @@ import zeroecho.sdk.util.BikeKeySupport;
  *       as a verification check.</dd>
  * </dl>
  */
-@SuppressWarnings("PMD")
 public final class PublisherSecretsManagerCli {
     private static final String HELP = """
             Usage: zeroecho-pki-publisher-secrets <command> [options]
@@ -123,6 +122,14 @@ public final class PublisherSecretsManagerCli {
         if (result != 0) System.exit(result);
     }
 
+    /**
+     * Dispatches a publisher-secret management command without terminating the JVM.
+     *
+     * @param arguments command and options, or an empty array to display help
+     * @param out destination for successful output and help; must not be null
+     * @param err destination for diagnostic output; must not be null
+     * @return zero on success, two for invalid invocation, or a command-specific failure status
+     */
     static int run(String[] arguments, PrintStream out, PrintStream err) {
         try {
             if (arguments.length == 0 || "--help".equals(arguments[0])) {

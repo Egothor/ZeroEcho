@@ -54,7 +54,15 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationChallenge;
 import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
 
+/**
+ * Contract and regression tests for credential confirmation challenge codec.
+ */
 class CredentialConfirmationChallengeCodecTest {
+    /**
+     * Round trips canonical challenge exactly.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundTripsCanonicalChallengeExactly() throws Exception {
         CredentialConfirmationChallenge challenge = challenge("https://pki.example.test/confirmation");
@@ -66,6 +74,11 @@ class CredentialConfirmationChallengeCodecTest {
         assertTrue(encoded.length <= CredentialConfirmationChallengeCodec.MAXIMUM_ENCODED_BYTES);
     }
 
+    /**
+     * Accepts maximum audience within global bound.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptsMaximumAudienceWithinGlobalBound() throws Exception {
         CredentialConfirmationChallenge challenge = challenge("a".repeat(512));
@@ -75,6 +88,9 @@ class CredentialConfirmationChallengeCodecTest {
         assertTrue(encoded.length <= CredentialConfirmationChallengeCodec.MAXIMUM_ENCODED_BYTES);
     }
 
+    /**
+     * Rejects corruption truncation trailing and oversized input.
+     */
     @Test
     void rejectsCorruptionTruncationTrailingAndOversizedInput() {
         byte[] encoded = CredentialConfirmationChallengeCodec.encode(
@@ -98,6 +114,9 @@ class CredentialConfirmationChallengeCodecTest {
                 new byte[CredentialConfirmationChallengeCodec.MAXIMUM_ENCODED_BYTES + 1]));
     }
 
+    /**
+     * Rejects malformed header and non whole second encoding.
+     */
     @Test
     void rejectsMalformedHeaderAndNonWholeSecondEncoding() {
         byte[] encoded = CredentialConfirmationChallengeCodec.encode(

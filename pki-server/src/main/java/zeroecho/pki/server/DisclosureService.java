@@ -47,16 +47,29 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 
-/** Durable disclosure authority and capability-based retrieval decision service. */
+/**
+ * Durable disclosure authority and capability-based retrieval decision service.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition",
         "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.CyclomaticComplexity" })
 public final class DisclosureService {
-    /** Durable one-time delivery classification without retaining the raw token. */
+    /**
+     * Durable one-time delivery classification without retaining the raw token.
+     */
     public enum DeliveryState {
-        /** Token delivery has not yet been classified. */ PENDING(1),
-        /** The raw token was delivered exactly once. */ DELIVERED(2),
-        /** Delivery may have occurred but could not be confirmed. */ DELIVERY_UNKNOWN(3);
+        /**
+         * Token delivery has not yet been classified.
+         */
+        PENDING(1),
+        /**
+         * The raw token was delivered exactly once.
+         */
+        DELIVERED(2),
+        /**
+         * Delivery may have occurred but could not be confirmed.
+         */
+        DELIVERY_UNKNOWN(3);
         private final int code;
         DeliveryState(int code) { this.code = code; }
         /**
@@ -70,20 +83,41 @@ public final class DisclosureService {
          *
          * @param code persisted delivery-state code
          * @return corresponding delivery state
+         * @throws IllegalArgumentException if the code does not identify a supported capability delivery state
          */
         public static DeliveryState fromCode(int code) {
             return switch (code) { case 1 -> PENDING; case 2 -> DELIVERED; case 3 -> DELIVERY_UNKNOWN;
                 default -> throw new IllegalArgumentException("Unknown capability delivery code"); };
         }
     }
-    /** Persisted disclosure states, independent of issuance and publication. */
+    /**
+     * Persisted disclosure states, independent of issuance and publication.
+     */
     public enum Policy {
-        /** Content is publicly retrievable and may be listed. */ PUBLIC(1),
-        /** Content is public only through a point-addressable bearer. */ PUBLIC_UNLISTED(2),
-        /** Any authenticated non-public principal may retrieve content. */ AUTHENTICATED(3),
-        /** Only the owner or an administrator may retrieve content. */ OWNER_ONLY(4),
-        /** Only explicitly authorized administrators may retrieve content. */ RESTRICTED(5),
-        /** Content must not be served. */ NOT_PUBLISHED(6);
+        /**
+         * Content is publicly retrievable and may be listed.
+         */
+        PUBLIC(1),
+        /**
+         * Content is public only through a point-addressable bearer.
+         */
+        PUBLIC_UNLISTED(2),
+        /**
+         * Any authenticated non-public principal may retrieve content.
+         */
+        AUTHENTICATED(3),
+        /**
+         * Only the owner or an administrator may retrieve content.
+         */
+        OWNER_ONLY(4),
+        /**
+         * Only explicitly authorized administrators may retrieve content.
+         */
+        RESTRICTED(5),
+        /**
+         * Content must not be served.
+         */
+        NOT_PUBLISHED(6);
         private final int code;
         Policy(int code) { this.code = code; }
         /**
@@ -97,6 +131,7 @@ public final class DisclosureService {
          *
          * @param code persisted disclosure-policy code
          * @return corresponding disclosure policy
+         * @throws IllegalArgumentException if the code does not identify a supported disclosure policy
          */
         public static Policy fromCode(int code) {
             for (Policy candidate : values()) if (candidate.code == code) return candidate;
@@ -104,14 +139,34 @@ public final class DisclosureService {
         }
     }
 
-    /** Public-object classes with independent default policies. */
+    /**
+     * Public-object classes with independent default policies.
+     */
     public enum ObjectType {
-        /** Certificate-authority certificate. */ CA_CERTIFICATE(1),
-        /** Ordered certificate-authority chain. */ CA_CHAIN(2),
-        /** End-entity certificate. */ LEAF_CERTIFICATE(3),
-        /** Complete certificate revocation list. */ CRL(4),
-        /** Other certificate status object. */ STATUS_OBJECT(5),
-        /** Delta certificate revocation list. */ DELTA_CRL(6);
+        /**
+         * Certificate-authority certificate.
+         */
+        CA_CERTIFICATE(1),
+        /**
+         * Ordered certificate-authority chain.
+         */
+        CA_CHAIN(2),
+        /**
+         * End-entity certificate.
+         */
+        LEAF_CERTIFICATE(3),
+        /**
+         * Complete certificate revocation list.
+         */
+        CRL(4),
+        /**
+         * Other certificate status object.
+         */
+        STATUS_OBJECT(5),
+        /**
+         * Delta certificate revocation list.
+         */
+        DELTA_CRL(6);
         private final int code;
         ObjectType(int code) { this.code = code; }
         /**
@@ -125,6 +180,7 @@ public final class DisclosureService {
          *
          * @param code persisted object-type code
          * @return corresponding object type
+         * @throws IllegalArgumentException if the code does not identify a supported disclosure object type
          */
         public static ObjectType fromCode(int code) {
             for (ObjectType candidate : values()) if (candidate.code == code) return candidate;
@@ -139,12 +195,26 @@ public final class DisclosureService {
      * @param ownerId canonical identity within that namespace
      */
     public record Owner(OwnerType type, String ownerId) {
-        /** Closed owner categories. */
+        /**
+         * Closed owner categories.
+         */
         public enum OwnerType {
-            /** Administrative security principal. */ SECURITY_PRINCIPAL,
-            /** Protocol-scoped ACME account. */ ACME_ACCOUNT
+            /**
+             * Administrative security principal.
+             */
+            SECURITY_PRINCIPAL,
+            /**
+             * Protocol-scoped ACME account.
+             */
+            ACME_ACCOUNT
         }
-        /** Validates the canonical owner identity. */
+        /**
+         * Validates the canonical owner identity.
+         * @param type owner namespace
+         * @param ownerId canonical identity within that namespace
+         * @throws NullPointerException if {@code type} is null
+         * @throws IllegalArgumentException if the disclosure owner identity is invalid
+         */
         public Owner {
             Objects.requireNonNull(type, "type");
             if (ownerId == null || !ownerId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
@@ -179,7 +249,19 @@ public final class DisclosureService {
      */
     public record Defaults(Policy rootCa, Policy intermediateCa, Policy caChain, Policy crl,
             Policy leaf, Policy sensitiveLeaf) {
-        /** Validates non-null defaults and prohibits public sensitive-leaf defaults. */
+        /**
+         * Validates non-null defaults and prohibits public sensitive-leaf defaults.
+         * @param rootCa root certificate default
+         * @param intermediateCa intermediate certificate default
+         * @param caChain chain default
+         * @param crl CRL default
+         * @param leaf leaf default
+         * @param sensitiveLeaf sensitive leaf default
+         * @throws NullPointerException if any of {@code rootCa}, {@code intermediateCa}, {@code caChain},
+         *         {@code crl}, {@code leaf}, {@code sensitiveLeaf} is null
+         * @throws IllegalArgumentException if the default leaf-certificate policy would expose certificate data
+         *         without explicit selection
+         */
         public Defaults {
             Objects.requireNonNull(rootCa, "rootCa");
             Objects.requireNonNull(intermediateCa, "intermediateCa");
@@ -217,7 +299,21 @@ public final class DisclosureService {
      */
     public record Record(PkiId objectId, ObjectType objectType, Policy policy, Optional<String> ownerPrincipalId,
             Optional<String> ownerAcmeAccountId, String policyCommitment, Instant updatedAt) {
-        /** Validates the durable disclosure record. */
+        /**
+         * Validates the durable disclosure record.
+         * @param objectId exact protected object identifier
+         * @param objectType protected object classification
+         * @param policy effective disclosure policy
+         * @param ownerPrincipalId optional administrative owner
+         * @param ownerAcmeAccountId optional protocol-scoped ACME owner
+         * @param policyCommitment governing profile or policy commitment
+         * @param updatedAt server-authoritative last-update time
+         * @throws NullPointerException if any of {@code objectId}, {@code objectType}, {@code policy}, {@code
+         *         ownerPrincipalId}, {@code ownerAcmeAccountId}, {@code updatedAt} is null
+         * @throws IllegalArgumentException if both principal and ACME-account owners are supplied or the
+         *         disclosure-policy commitment is noncanonical or owner-only leaf disclosure has no explicit
+         *         owner
+         */
         public Record {
             Objects.requireNonNull(objectId, "objectId");
             Objects.requireNonNull(objectType, "objectType");
@@ -271,7 +367,22 @@ public final class DisclosureService {
     public record Capability(String capabilityId, RealmId realmId, PkiId objectId, String action,
             String issuerPrincipalId, byte[] tokenCommitment, Instant expiresAt,
             DeliveryState deliveryState, boolean revoked) {
-        /** Validates and snapshots capability metadata. */
+        /**
+         * Validates and snapshots capability metadata.
+         * @param capabilityId stable non-bearer capability identifier
+         * @param realmId owning security realm
+         * @param objectId exact protected object identifier
+         * @param action bounded capability action
+         * @param issuerPrincipalId issuing administrative principal
+         * @param tokenCommitment SHA-256 commitment to the raw bearer token
+         * @param expiresAt mandatory capability expiry
+         * @param deliveryState one-time token-delivery classification
+         * @param revoked whether the capability is permanently revoked
+         * @throws NullPointerException if any of {@code realmId}, {@code objectId}, {@code tokenCommitment},
+         *         {@code expiresAt}, {@code deliveryState} is null
+         * @throws IllegalArgumentException if the capability commitment does not have the required digest
+         *         length
+         */
         public Capability {
             Permission.requireId(capabilityId, "capability");
             Objects.requireNonNull(realmId, "realmId");
@@ -326,7 +437,9 @@ public final class DisclosureService {
         }
     }
 
-    /** One-time raw-token issuance result. */
+    /**
+     * One-time raw-token issuance result.
+     */
     public static final class IssuedCapability {
         private final Capability capability;
         private final byte[] token;
@@ -336,6 +449,8 @@ public final class DisclosureService {
          *
          * @param capability persisted commitment-only capability metadata
          * @param token exact 32-byte raw bearer token
+         * @throws NullPointerException if any of {@code capability}, {@code token} is null
+         * @throws IllegalArgumentException if the capability token does not have the required byte length
          */
         public IssuedCapability(Capability capability, byte[] token) {
             this.capability = Objects.requireNonNull(capability, "capability");
@@ -352,6 +467,7 @@ public final class DisclosureService {
          * Returns and clears the raw token exactly once.
          *
          * @return defensive copy of the raw 32-byte token
+         * @throws IllegalStateException if the one-time capability token has already been consumed
          */
         public synchronized byte[] token() {
             if (consumed) throw new IllegalStateException("Capability token was already consumed");
@@ -362,10 +478,18 @@ public final class DisclosureService {
         }
     }
 
-    /** Safe retrieval result that reveals no protected-object existence. */
+    /**
+     * Safe retrieval result that reveals no protected-object existence.
+     */
     public enum Decision {
-        /** Retrieval is authorized without revealing additional state. */ ALLOWED,
-        /** Retrieval is denied without revealing object existence. */ DENIED
+        /**
+         * Retrieval is authorized without revealing additional state.
+         */
+        ALLOWED,
+        /**
+         * Retrieval is denied without revealing object existence.
+         */
+        DENIED
     }
 
     private final RealmId realmId;
@@ -384,6 +508,8 @@ public final class DisclosureService {
      * @param clock authoritative server clock
      * @param random cryptographically secure token source
      * @param auditSink required safe audit sink
+     * @throws NullPointerException if any of {@code realmId}, {@code store}, {@code defaults}, {@code clock},
+     *         {@code random} is null
      */
     public DisclosureService(RealmId realmId, ServerControlStore store, Defaults defaults, Clock clock,
             SecureRandom random, zeroecho.pki.spi.audit.AuditSink auditSink) {
@@ -402,6 +528,7 @@ public final class DisclosureService {
      * @param rootCa whether a CA certificate is a root
      * @param sensitive whether a leaf contains sensitive data
      * @return configured default disclosure policy
+     * @throws NullPointerException if {@code type} is null
      */
     public Policy defaultPolicy(ObjectType type, boolean rootCa, boolean sensitive) {
         Objects.requireNonNull(type, "type");
@@ -462,6 +589,7 @@ public final class DisclosureService {
      * @param approvalPresented whether the required approval is present
      * @param actorPrincipalId authenticated audit actor
      * @return durably updated disclosure record
+     * @throws IllegalStateException if a disclosure increase lacks the required approval
      */
     public synchronized Record change(PkiId objectId, Policy policy, boolean exposureApprovalRequired,
             boolean approvalPresented, String actorPrincipalId) {
@@ -477,6 +605,13 @@ public final class DisclosureService {
         return updated;
     }
 
+    /**
+     * Checks an explicitly supplied principal owner against authoritative retained identities.
+     *
+     * @param owner optional explicit disclosure owner; ACME-account owners are not resolved here
+     * @throws NullPointerException if the optional container is null
+     * @throws IllegalArgumentException if a selected security principal does not exist
+     */
     /* default */ synchronized void validateOwner(Optional<Owner> owner) {
         Optional<Owner> exactOwner = Objects.requireNonNull(owner, "owner");
         exactOwner.filter(value -> value.type() == Owner.OwnerType.SECURITY_PRINCIPAL)
@@ -579,6 +714,7 @@ public final class DisclosureService {
      * @param capability persisted capability metadata
      * @param token exact 32-byte raw capability token
      * @return strict point-addressable bearer credential
+     * @throws NullPointerException if {@code capability} is null
      */
     public static String bearerCredential(Capability capability, byte[] token) {
         Objects.requireNonNull(capability, "capability");
@@ -591,6 +727,7 @@ public final class DisclosureService {
      * @param capabilityId stable non-bearer capability identifier
      * @param token exact 32-byte raw capability token
      * @return strict point-addressable bearer credential
+     * @throws IllegalArgumentException if the capability token does not have the required byte length
      */
     public static String bearerCredential(String capabilityId, byte[] token) {
         Permission.requireId(capabilityId, "capability");
@@ -605,6 +742,7 @@ public final class DisclosureService {
      * @param expiresAt mandatory capability expiry
      * @param actorPrincipalId authenticated audit actor
      * @return one-time raw token and persisted commitment-only metadata
+     * @throws IllegalStateException if the object or its disclosure policy does not permit capability issuance
      */
     public synchronized IssuedCapability issueCapability(PkiId objectId, Instant expiresAt,
             String actorPrincipalId) {

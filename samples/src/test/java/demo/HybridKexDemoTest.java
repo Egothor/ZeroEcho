@@ -109,6 +109,9 @@ class HybridKexDemoTest {
 
     private static final Logger LOG = Logger.getLogger(HybridKexDemoTest.class.getName());
 
+    /**
+     * Attempts optional cryptographic provider activation before the sample scenarios.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC/BCPQC if present.
@@ -119,6 +122,11 @@ class HybridKexDemoTest {
         }
     }
 
+    /**
+     * Checks hybrid key derivation combining classic X25519 agreement with ML-KEM-768 encapsulation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void x25519_classicAgreement_plus_mlKem768_kemAdapter() throws Exception {
         logBegin("CLASSIC_AGREEMENT + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
@@ -173,6 +181,11 @@ class HybridKexDemoTest {
         logEnd();
     }
 
+    /**
+     * Checks hybrid key derivation combining X25519 pair messages with ML-KEM-768 encapsulation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void x25519_pairMessage_plus_mlKem768_kemAdapter() throws Exception {
         logBegin("PAIR_MESSAGE + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
@@ -229,6 +242,11 @@ class HybridKexDemoTest {
         logEnd();
     }
 
+    /**
+     * Checks builder-based hybrid derivation using classic X25519 agreement and ML-KEM-768.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void builder_x25519_classicAgreement_plus_mlKem768() throws Exception {
         logBegin("Builder", "CLASSIC_AGREEMENT + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
@@ -344,6 +362,11 @@ class HybridKexDemoTest {
         logEnd();
     }
 
+    /**
+     * Checks builder-based hybrid derivation using X25519 pair messages and ML-KEM-768.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void builder_x25519_pairMessage_plus_mlKem768() throws Exception {
         logBegin("Builder", "PAIR_MESSAGE + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");

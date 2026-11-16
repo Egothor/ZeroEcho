@@ -81,11 +81,18 @@ import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.server.est.KeygenPolicy;
 import zeroecho.pki.server.scep.ScepEndpoint;
 
-/** Closed strict HTTP decoding for operations exposed by the existing gateway. */
-@SuppressWarnings("PMD")
+/**
+ * Closed strict HTTP decoding for operations exposed by the existing gateway.
+ */
 public final class HttpOperationCodec {
+    /**
+     * Signals that a legacy in-memory archive exceeds its bound and requires streaming transfer.
+     */
     static final class LegacyBackupLimitException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
+        /**
+         * Creates the safe failure carrying the stable streaming-required code.
+         */
         LegacyBackupLimitException() { super("BACKUP_LEGACY_LIMIT_USE_STREAMING"); }
     }
 

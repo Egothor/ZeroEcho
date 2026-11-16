@@ -108,6 +108,8 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
      * @param server main schema-8 configuration
      * @param enrollment explicit optional companion
      * @param backup optional independently configured backup spool
+     * @throws NullPointerException if any of {@code server}, {@code enrollment}, {@code backup} is null
+     * @throws IllegalArgumentException if a configured enrollment listener has no enrollment runtime companion
      */
     public static void validateConfiguration(PkiServerConfiguration server,
             Optional<EnrollmentRuntimeConfiguration> enrollment, Optional<BackupTransferConfiguration> backup) {
@@ -136,6 +138,8 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
      * @param backup optional backup spool to exclude from custody paths
      * @return fully validated lifecycle owner
      * @throws IllegalStateException if custody, integrity or credential validation fails
+     * @throws NullPointerException if any of {@code configuration}, {@code clock}, {@code control}, {@code
+     *         endpoints} is null
      */
     public static EnrollmentRuntime open(EnrollmentRuntimeConfiguration configuration, ServerRealmConfiguration realm,
             PkiRepository repository, ServerControlStore control, EnrollmentEndpointRegistry endpoints,
@@ -191,6 +195,15 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Called only after endpoint validation while holding that registry's control monitor.
+    /**
+     * Pins validated runtime credentials only to the identical registry control owner.
+     *
+     * <p>The caller holds the registry's control monitor after endpoint validation.</p>
+     *
+     * @param authority exact control-store instance used by this runtime
+     * @throws IllegalArgumentException if the registry uses another control owner or a retained credential pin
+     *         differs
+     */
     /* default */ void pinCredentials(ServerControlStore authority) {
         if (authority != control) { // NOPMD CompareObjectsWithEquals - Registry binding requires the identical control-store monitor, not value equality.
             throw new IllegalArgumentException("Enrollment registry belongs to another control owner");
@@ -244,6 +257,7 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
      * @param authorityId frozen authority
      * @param issuerId frozen issuer generation
      * @param pathId frozen chain path
+     * @throws NullPointerException if {@code protocol} is null
      */
     // Reads the retained credential graph atomically with runtime close and rotation checks.
     // Preserves the public source/binary contract for named persisted identity coordinates.
@@ -400,6 +414,12 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Guards lazy keygen-spool access against concurrent runtime close.
+    /**
+     * Returns the installed ciphertext spool while guarding against concurrent runtime close.
+     *
+     * @return borrowed runtime-owned ciphertext spool
+     * @throws IllegalStateException if runtime is closed or ciphertext custody is unavailable
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized EnrollmentKeygenSpool keygenSpool() {
         requireOpen();
@@ -468,7 +488,9 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
             catch (IOException | GeneralSecurityException failure) { throw unavailable(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
 
-        /** Releases this borrower exactly once; it does not close shared custody. */
+        /**
+         * Releases this borrower exactly once; it does not close shared custody.
+         */
         @Override public void close() {
             if (released.compareAndSet(false, true)) {
                 synchronized (EnrollmentRuntime.this) { leases--; } // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
@@ -480,6 +502,9 @@ public final class EnrollmentRuntime implements AutoCloseable { // NOPMD Cycloma
             }
             requireValid(loaded, clock.instant());
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "EnrollmentCredentialLease[redacted]"; }
     }
 

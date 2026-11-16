@@ -33,8 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.server.confirmation;
 
-/** Exact cryptographic verification result. */
+/**
+ * Exact cryptographic verification result.
+ */
 enum VerificationResult {
+    /**
+     * The supplied proof satisfies the exact configured cryptographic profile.
+     */
     VERIFIED,
+    /**
+     * The supplied proof failed cryptographic verification or profile constraints.
+     */
     REJECTED
 }

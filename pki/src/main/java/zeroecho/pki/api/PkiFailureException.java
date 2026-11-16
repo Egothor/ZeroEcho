@@ -65,7 +65,9 @@ public final class PkiFailureException extends PkiException {
     @Serial
     private static final long serialVersionUID = -7214558134284529884L;
 
-    /** Detached non-sensitive failure description. */
+    /**
+     * Detached non-sensitive failure description.
+     */
     private final PkiFailure failure;
 
     /**

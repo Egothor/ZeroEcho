@@ -45,7 +45,9 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofProvider;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
-/** Immutable session-local lookup of explicitly trusted proof providers. */
+/**
+ * Immutable session-local lookup of explicitly trusted proof providers.
+ */
 final class KeyPossessionProofProviderComposition {
     private static final String VALIDATION_COMMITMENT = "0".repeat(64);
 
@@ -56,6 +58,14 @@ final class KeyPossessionProofProviderComposition {
         this.providersBySuiteId = Map.copyOf(providersBySuiteId);
     }
 
+    /**
+     * Indexes an explicitly trusted provider snapshot by canonical proof-suite identity.
+     *
+     * @param providers configured providers; the list is copied, while provider instances are borrowed
+     * @return immutable suite lookup without opening or closing providers
+     * @throws NullPointerException if the list or an entry is null
+     * @throws IllegalArgumentException if a suite identifier is invalid or duplicated
+     */
     /* default */ static KeyPossessionProofProviderComposition compose(
             List<KeyPossessionProofProvider> providers) {
         List<KeyPossessionProofProvider> exact = List.copyOf(providers);
@@ -74,10 +84,24 @@ final class KeyPossessionProofProviderComposition {
         new ConfirmationProofSuiteRef(suiteId, VALIDATION_COMMITMENT);
     }
 
+    /**
+     * Looks up a trusted provider without creating a fallback provider.
+     *
+     * @param suiteId exact canonical suite identifier
+     * @return configured borrowed provider, or an empty optional if absent
+     * @throws NullPointerException if the immutable map rejects a null lookup key
+     */
     /* default */ Optional<KeyPossessionProofProvider> find(String suiteId) {
         return Optional.ofNullable(providersBySuiteId.get(suiteId));
     }
 
+    /**
+     * Checks that an enabled confirmation policy matches an explicitly trusted provider descriptor.
+     *
+     * @param policy configured runtime policy, or an empty optional to disable this check
+     * @throws NullPointerException if the optional or a required descriptor is null
+     * @throws IllegalArgumentException if no provider exists or its suite, challenge length or response bound differs
+     */
     /* default */ void validatePolicy(
             Optional<CredentialConfirmationProofRuntimePolicy> policy) {
         Objects.requireNonNull(policy, "credentialConfirmationProofPolicy")
@@ -101,6 +125,11 @@ final class KeyPossessionProofProviderComposition {
         }
     }
 
+    /**
+     * Returns the immutable configured suite lookup without transferring provider ownership.
+     *
+     * @return unmodifiable canonical suite-to-provider mapping
+     */
     /* default */ Map<String, KeyPossessionProofProvider> providersBySuiteId() {
         return providersBySuiteId;
     }

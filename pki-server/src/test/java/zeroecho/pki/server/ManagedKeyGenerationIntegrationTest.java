@@ -59,7 +59,17 @@ import zeroecho.pki.server.http.HttpOperationCodec;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
 
+/**
+ * Checks managed-key generation through composed realm/provider boundaries without exposing private keys.
+ */
 class ManagedKeyGenerationIntegrationTest {
+    /**
+     * Checks only the pinned first administrator can generate while an ordinarily authorized administrator may use the resulting managed key for a real CA.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void firstAdministratorGeneratesButOrdinaryAdministratorUsesTheKeyForAnActualCa(@TempDir Path root) throws Exception {
         var configuration = configuration(root);
         PkiAdminBootstrap.bootstrap(withoutSigning(configuration), "administrator", "approver", "trusted-proxy");
@@ -112,6 +122,13 @@ class ManagedKeyGenerationIntegrationTest {
         }
     }
 
+    /**
+     * Checks strict explicit generation parameters and that legacy configuration without a first-administrator selection leaves generation disabled.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void codecUsesClosedExplicitParametersAndLegacyConfigurationDisablesGeneration(@TempDir Path root) throws Exception {
         var source = PkiAdminBootstrapTest.configuration(root);
         assertTrue(source.realm().initialAdministratorPrincipalId().isEmpty());
@@ -145,6 +162,12 @@ class ManagedKeyGenerationIntegrationTest {
         return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> new KeyringPassword("integration-test-key".toCharArray()));
     }
 
+    /**
+     * Copies test server configuration with local signing removed while preserving other explicit capabilities.
+     *
+     * @param source source server configuration
+     * @return replacement configuration without a signing provider
+     */
     static PkiServerConfiguration withoutSigning(PkiServerConfiguration source) {
         var realm = source.realm(); var session = realm.pkiSessionConfiguration();
         var bootstrap = new PkiSessionConfiguration(session.version(), session.store(), session.audit(), Optional.empty(), session.publishers(), session.bindingProviders());
@@ -154,6 +177,13 @@ class ManagedKeyGenerationIntegrationTest {
         return new PkiServerConfiguration(source.version(), source.serverName(), configured, source.listener(), source.authentication(), source.execution(), source.runtime());
     }
 
+    /**
+     * Creates isolated server/keyring configuration for real managed-key generation scenarios.
+     *
+     * @param root JUnit-managed fixture filesystem root
+     * @return configured server with explicit initial administrator and an initially empty managed keyring
+     * @throws Exception if TLS, keyring, directory or server configuration setup fails
+     */
     static PkiServerConfiguration configuration(Path root) throws Exception {
         var source = PkiAdminBootstrapTest.configuration(root);
         Path keys = root.resolve("keys");

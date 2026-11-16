@@ -58,14 +58,25 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for durable metadata log.
+ */
 final class DurableMetadataLogTest {
 
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("00112233445566778899aabbccddeeff");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Create reopen and exclusive writer lifecycle are strict.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createReopenAndExclusiveWriterLifecycleAreStrict() throws IOException {
         System.out.print("createReopenAndExclusiveWriterLifecycleAreStrict ");
@@ -92,6 +103,11 @@ final class DurableMetadataLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Capability limitations including directory I/O exception emit one safe warning.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void capabilityLimitationsIncludingDirectoryIOExceptionEmitOneSafeWarning() throws IOException {
         System.out.print("capabilityLimitationsIncludingDirectoryIOExceptionEmitOneSafeWarning ");
@@ -149,6 +165,11 @@ final class DurableMetadataLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Terminalized transaction state is bounded by simultaneous activity.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalizedTransactionStateIsBoundedBySimultaneousActivity() throws IOException {
         System.out.print("terminalizedTransactionStateIsBoundedBySimultaneousActivity ");
@@ -189,6 +210,11 @@ final class DurableMetadataLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Issuance mutations and empty terminal outcomes recover exactly.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuanceMutationsAndEmptyTerminalOutcomesRecoverExactly() throws IOException {
         System.out.print("issuanceMutationsAndEmptyTerminalOutcomesRecoverExactly ");
@@ -229,6 +255,11 @@ final class DurableMetadataLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Issuance and mutation append faults require recovery without inventing outcomes.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuanceAndMutationAppendFaultsRequireRecoveryWithoutInventingOutcomes() throws IOException {
         System.out.print("issuanceAndMutationAppendFaultsRequireRecoveryWithoutInventingOutcomes ");
@@ -296,6 +327,11 @@ final class DurableMetadataLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Terminal force and post force uncertainty resolve only by scanning.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalForceAndPostForceUncertaintyResolveOnlyByScanning() throws IOException {
         System.out.print("terminalForceAndPostForceUncertaintyResolveOnlyByScanning ");

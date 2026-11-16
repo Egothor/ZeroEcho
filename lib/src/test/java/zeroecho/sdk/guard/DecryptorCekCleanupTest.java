@@ -50,8 +50,16 @@ import zeroecho.core.io.Util;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
+/**
+ * Contract and regression tests for decryptor CEK cleanup.
+ */
 class DecryptorCekCleanupTest {
 
+    /**
+     * Rejected oversized CEK is cleared.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectedOversizedCekIsCleared() throws Exception {
         System.out.println("rejectedOversizedCekIsCleared");
@@ -67,6 +75,11 @@ class DecryptorCekCleanupTest {
         System.out.println("rejectedOversizedCekIsCleared...ok");
     }
 
+    /**
+     * Accepted CEK is cleared when ciphertext header is truncated.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void acceptedCekIsClearedWhenCiphertextHeaderIsTruncated() throws Exception {
         System.out.println("acceptedCekIsClearedWhenCiphertextHeaderIsTruncated");
@@ -82,6 +95,11 @@ class DecryptorCekCleanupTest {
         System.out.println("acceptedCekIsClearedWhenCiphertextHeaderIsTruncated...ok");
     }
 
+    /**
+     * Accepted CEK is cleared when payload setup fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void acceptedCekIsClearedWhenPayloadSetupFails() throws Exception {
         System.out.println("acceptedCekIsClearedWhenPayloadSetupFails");
@@ -98,6 +116,11 @@ class DecryptorCekCleanupTest {
         System.out.println("acceptedCekIsClearedWhenPayloadSetupFails...ok");
     }
 
+    /**
+     * Pre return failure closes upstream stream.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void preReturnFailureClosesUpstreamStream() throws Exception {
         System.out.println("preReturnFailureClosesUpstreamStream");
@@ -114,6 +137,11 @@ class DecryptorCekCleanupTest {
         System.out.println("preReturnFailureClosesUpstreamStream...ok");
     }
 
+    /**
+     * Cleanup failure is suppressed on primary failure.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cleanupFailureIsSuppressedOnPrimaryFailure() throws Exception {
         System.out.println("cleanupFailureIsSuppressedOnPrimaryFailure");

@@ -49,8 +49,17 @@ import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.application.IssuanceExecutionEvidence;
 import zeroecho.pki.server.enrollment.*;
 
-/** Real control-store atomic rejection at the SDK target/receipt trust boundary. */
+/**
+ * Real control-store atomic rejection at the SDK target/receipt trust boundary.
+ */
 class EnrollmentSdkPersistenceTest {
+    /**
+     * Checks changing frozen issuer coordinates atomically rejects SDK consumption, enrollment creation and approval creation.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void changedIssuerCannotConsumeIntentOrCreateEnrollment(@TempDir Path directory) throws Exception {
         try (var opened = ServerTestSupport.open(directory)) {
             var control = opened.store(); var realm = ServerTestSupport.REALM;

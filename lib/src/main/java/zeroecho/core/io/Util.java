@@ -79,17 +79,29 @@ public final class Util { // NOPMD
      * </p>
      */
     private static final int DEFAULT_BUFFER_SIZE = 32 * 1024;
-    /** Largest unsigned 32-bit value accepted by the packed integer decoder. */
+    /**
+     * Largest unsigned 32-bit value accepted by the packed integer decoder.
+     */
     private static final long MAX_PACKED_INTEGER = 0xffff_ffffL;
-    /** Maximum number of bytes in a packed 64-bit value. */
+    /**
+     * Maximum number of bytes in a packed 64-bit value.
+     */
     private static final int MAX_PACKED_LONG_BYTES = 10;
-    /** One-based position of the high-order packed payload group. */
+    /**
+     * One-based position of the high-order packed payload group.
+     */
     private static final int PACKED_HIGH_PAYLOAD_POSITION = 1;
-    /** Largest high-order payload permitted in a ten-byte packed long. */
+    /**
+     * Largest high-order payload permitted in a ten-byte packed long.
+     */
     private static final int MAX_PACKED_LONG_HIGH_PAYLOAD = 1;
-    /** Bit marking the final byte of a packed value. */
+    /**
+     * Bit marking the final byte of a packed value.
+     */
     private static final int PACKED_TERMINATION_BIT = 0x80;
-    /** Mask selecting the seven payload bits of a packed byte. */
+    /**
+     * Mask selecting the seven payload bits of a packed byte.
+     */
     private static final int PACKED_PAYLOAD_MASK = 0x7f;
 
     /**

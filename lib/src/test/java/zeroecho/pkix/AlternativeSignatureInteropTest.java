@@ -60,14 +60,24 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pkix.cert.CertificateBuilder;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Cross-checks both directions against the independent upstream BC certificate implementation. */
+/**
+ * Cross-checks both directions against the independent upstream BC certificate implementation.
+ */
 final class AlternativeSignatureInteropTest {
     private static final Instant START = Instant.parse("2026-10-01T00:00:00Z");
     private static final AlgorithmIdentifier PRIMARY = AlgorithmIdentifier.absent("1.3.101.112");
     private static final AlgorithmIdentifier ALTERNATIVE = AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.18");
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void providers() { BouncyCastleActivator.init(); }
 
+    /**
+     * Existing spi implementations inherit unsupported defaults.
+     *
+     * @throws Throwable if fixture setup, invocation, or cleanup fails
+     */
     @Test void existingSpiImplementationsInheritUnsupportedDefaults() throws Throwable {
         java.lang.reflect.Method builderMethod = CertificateBuilder.class.getMethod("buildAlternativeSignatureTbs");
         java.lang.reflect.Method providerMethod = zeroecho.pkix.spi.PkixProvider.class.getMethod("verifyAlternativeSignature",
@@ -86,6 +96,11 @@ final class AlternativeSignatureInteropTest {
                 () -> ((zeroecho.pkix.spi.PkixProvider) provider).verifyAlternativeSignature(null, null));
     }
 
+    /**
+     * Upstream builder verifies through zero echo facade.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void upstreamBuilderVerifiesThroughZeroEchoFacade() throws Exception {
         KeyPair primary = pair("Ed25519");
         KeyPair alternative = pair("ML-DSA-65");
@@ -103,6 +118,11 @@ final class AlternativeSignatureInteropTest {
         assertFalse(Pkix.verifyAlternativeSignature(certificate, pair("ML-DSA-65").getPublic()));
     }
 
+    /**
+     * Zero echo builder verifies through upstream and rejects legacy placeholder.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void zeroEchoBuilderVerifiesThroughUpstreamAndRejectsLegacyPlaceholder() throws Exception {
         KeyPair primary = pair("Ed25519");
         KeyPair alternative = pair("ML-DSA-65");
@@ -118,6 +138,11 @@ final class AlternativeSignatureInteropTest {
         assertFalse(Pkix.verifyAlternativeSignature(legacyCertificate, alternative.getPublic()));
     }
 
+    /**
+     * Missing partial tampered and wrong algorithm extensions fail closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void missingPartialTamperedAndWrongAlgorithmExtensionsFailClosed() throws Exception {
         KeyPair primary = pair("Ed25519");
         KeyPair alternative = pair("ML-DSA-65");

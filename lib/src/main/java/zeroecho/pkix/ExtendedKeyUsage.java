@@ -49,20 +49,38 @@ import java.util.Objects;
  */
 public record ExtendedKeyUsage(List<String> keyPurposeOids) {
 
-    /** {@code id-kp-serverAuth}. */
+    /**
+     * {@code id-kp-serverAuth}.
+     */
     public static final String SERVER_AUTH = "1.3.6.1.5.5.7.3.1";
-    /** {@code id-kp-clientAuth}. */
+    /**
+     * {@code id-kp-clientAuth}.
+     */
     public static final String CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
-    /** {@code id-kp-codeSigning}. */
+    /**
+     * {@code id-kp-codeSigning}.
+     */
     public static final String CODE_SIGNING = "1.3.6.1.5.5.7.3.3";
-    /** {@code id-kp-emailProtection}. */
+    /**
+     * {@code id-kp-emailProtection}.
+     */
     public static final String EMAIL_PROTECTION = "1.3.6.1.5.5.7.3.4";
-    /** {@code id-kp-timeStamping}. */
+    /**
+     * {@code id-kp-timeStamping}.
+     */
     public static final String TIME_STAMPING = "1.3.6.1.5.5.7.3.8";
-    /** {@code id-kp-OCSPSigning}. */
+    /**
+     * {@code id-kp-OCSPSigning}.
+     */
     public static final String OCSP_SIGNING = "1.3.6.1.5.5.7.3.9";
 
-    /** Canonicalizing constructor. */
+    /**
+     * Requires at least one purpose OID and snapshots the ordered list.
+     *
+     * @param keyPurposeOids the ordered, non-empty list of key-purpose OIDs
+     * @throws NullPointerException if the purpose list or an entry is null
+     * @throws IllegalArgumentException if the purpose list is empty
+     */
     public ExtendedKeyUsage {
         Objects.requireNonNull(keyPurposeOids, "keyPurposeOids");
         if (keyPurposeOids.isEmpty()) {

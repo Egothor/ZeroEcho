@@ -81,6 +81,7 @@ public final class HybridKexExporter implements Destroyable, AutoCloseable {
      *
      * @param rootSecret root secret (must not be null)
      * @param salt       optional HKDF salt (may be null)
+     * @throws NullPointerException if {@code rootSecret} is null
      */
     public HybridKexExporter(byte[] rootSecret, byte[] salt) {
         Objects.requireNonNull(rootSecret, "rootSecret");
@@ -98,6 +99,8 @@ public final class HybridKexExporter implements Destroyable, AutoCloseable {
      * @return derived bytes
      * @throws IllegalArgumentException if outLenBytes is out of range
      * @since 1.0
+     * @throws NullPointerException if {@code label} is null
+     * @throws IllegalStateException if HKDF-SHA-256 derivation fails
      */
     public byte[] export(String label, byte[] info, int outLenBytes) {
         lifecycleLock.lock();

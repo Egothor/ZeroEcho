@@ -56,8 +56,9 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.server.RealmId;
 
-/** Strict versioned canonical binary codec for durable ACME records. */
-@SuppressWarnings("PMD")
+/**
+ * Strict versioned canonical binary codec for durable ACME records.
+ */
 final class AcmeStateCodec {
     private static final int MAGIC = 0x5a454143;
     private static final int VERSION = 8;
@@ -71,9 +72,33 @@ final class AcmeStateCodec {
     private static final int CHALLENGE = 5;
     private static final int EVIDENCE = 6;
 
+    /**
+     * Encodes a supported durable ACME record including its stored commitment.
+     *
+     * @param record directory, account, order, authorization, challenge or evidence record
+     * @return newly allocated canonical binary encoding
+     * @throws NullPointerException if the record is null
+     * @throws IllegalArgumentException if the record type is unsupported or a field exceeds its encoding bound
+     */
     byte[] encode(Object record) { return encode(record, true); }
+    /**
+     * Computes the record commitment with the commitment field replaced by the zero digest.
+     *
+     * @param record supported durable ACME record; must not be null
+     * @return lowercase hexadecimal SHA-256 of the canonical uncommitted encoding
+     * @throws NullPointerException if the record is null
+     * @throws IllegalArgumentException if the record type or an encoded field is invalid
+     */
     String commitment(Object record) { return sha256(encode(record, false)); }
 
+    /**
+     * Copies a supported record with its canonical commitment recomputed.
+     *
+     * @param record supported durable ACME record; must not be null
+     * @return new record of the same type carrying its calculated commitment
+     * @throws NullPointerException if the record is null
+     * @throws IllegalArgumentException if the record type or an encoded field is invalid
+     */
     Object seal(Object record) {
         String value = commitment(record);
         return switch (record) {
@@ -108,6 +133,14 @@ final class AcmeStateCodec {
         };
     }
 
+    /**
+     * Decodes one complete versioned record and verifies its retained commitment.
+     *
+     * @param encoded complete canonical record encoding; not retained
+     * @return validated durable ACME record of the encoded type
+     * @throws IllegalArgumentException if bytes are null, malformed, unsupported, truncated,
+     *         contain trailing data or fail commitment verification
+     */
     Object decode(byte[] encoded) {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(encoded))) {
             if (in.readInt() != MAGIC || in.readInt() != VERSION) throw invalid();
@@ -210,6 +243,15 @@ final class AcmeStateCodec {
                 eab, created, updated, string(in), history);
     }
 
+    /**
+     * Encodes account-key history for deterministic comparison and persistence.
+     *
+     * @param history ordered key identities; entries and collection must not be null
+     * @return newly allocated binary encoding with each identity's aliases sorted
+     * @throws NullPointerException if the history or an entry is null
+     * @throws IllegalArgumentException if an encoded string exceeds its size limit
+     * @throws IllegalStateException if in-memory history encoding unexpectedly fails
+     */
     static byte[] accountKeyHistory(List<AcmeState.AccountKeyIdentity> history) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bytes)) {
             accountKeyHistory(out, history); out.flush(); return bytes.toByteArray();

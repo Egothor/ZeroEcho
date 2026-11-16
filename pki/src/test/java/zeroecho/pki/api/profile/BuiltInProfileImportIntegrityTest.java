@@ -65,6 +65,11 @@ final class BuiltInProfileImportIntegrityTest {
     private static final String SENTINEL = "profile-integrity-sentinel";
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-30T10:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Invalid built in artifacts fail before store audit or diagnostic mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidBuiltInArtifactsFailBeforeStoreAuditOrDiagnosticMutation() throws Exception {
         BuiltInCertificateProfileTemplate server = builtIn("server-tls");

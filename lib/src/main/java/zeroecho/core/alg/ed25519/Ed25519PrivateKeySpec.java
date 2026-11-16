@@ -184,6 +184,9 @@ public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec, Destroyabl
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -197,6 +200,9 @@ public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec, Destroyabl
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

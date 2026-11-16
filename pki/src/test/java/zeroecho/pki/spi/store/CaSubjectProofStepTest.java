@@ -51,11 +51,17 @@ import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.crypto.SigningProvider.DetailCode;
 import zeroecho.pki.spi.crypto.SigningProvider.ObservationState;
 
+/**
+ * Contract and regression tests for ca subject proof step.
+ */
 final class CaSubjectProofStepTest {
     private static final PkiId STEP = id("provider", "1");
     private static final KeyRef KEY = new KeyRef("private-key-coordinate");
     private static final String HASH = "a".repeat(64);
 
+    /**
+     * Descriptor is structural and requires a distinct canonical parent in the same namespace.
+     */
     @Test
     void descriptorIsStructuralAndRequiresADistinctCanonicalParentInTheSameNamespace() {
         DurableContentReference challenge = reference(Encoding.BINARY, 32, HASH, DurableContentReference.Lifecycle.OPERATION);
@@ -74,6 +80,9 @@ final class CaSubjectProofStepTest {
         assertThrows(NullPointerException.class, () -> step.requireParent(null));
     }
 
+    /**
+     * Descriptor rejects malformed identity algorithm and challenge bounds.
+     */
     @Test
     void descriptorRejectsMalformedIdentityAlgorithmAndChallengeBounds() {
         DurableContentReference valid = reference(Encoding.BINARY, 1, HASH, DurableContentReference.Lifecycle.OPERATION);
@@ -98,6 +107,9 @@ final class CaSubjectProofStepTest {
                 DurableContentReference.Lifecycle.OPERATION)));
     }
 
+    /**
+     * Algorithm text retains exact value and requires only bounded strict UTF-8.
+     */
     @Test
     void algorithmTextRetainsExactValueAndRequiresOnlyBoundedStrictUtf8() {
         DurableContentReference valid = reference(Encoding.BINARY, 1, HASH, DurableContentReference.Lifecycle.OPERATION);
@@ -114,6 +126,9 @@ final class CaSubjectProofStepTest {
         assertThrows(NullPointerException.class, () -> new SignWorkflowStore.CaSubjectProofStep(STEP, KEY, null, valid));
     }
 
+    /**
+     * Retained outcome accepts exactly terminal provider detail combinations without a signature.
+     */
     @Test
     void retainedOutcomeAcceptsExactlyTerminalProviderDetailCombinationsWithoutASignature() {
         for (ObservationState disposition : ObservationState.values()) {

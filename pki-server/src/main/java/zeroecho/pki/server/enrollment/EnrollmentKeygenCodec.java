@@ -44,15 +44,30 @@ import java.util.Arrays;
 import java.util.Optional;
 import zeroecho.pki.server.ServerControlStore;
 
-/** Strict bounded descriptor format; all noncanonical or old-version input fails closed. */
+/**
+ * Strict bounded descriptor format; all noncanonical or old-version input fails closed.
+ */
 final class EnrollmentKeygenCodec {
     private static final int VERSION = 1;
     private EnrollmentKeygenCodec() { }
+    /**
+     * Wraps a canonical key-generation descriptor in its committed private protocol record.
+     *
+     * @param value validated retained key-generation artifact descriptor
+     * @return namespace-bound descriptor record with payload SHA-256
+     */
     /* default */ static ServerControlStore.ProtocolRecord record(EnrollmentKeygenArtifact value) {
         byte[] payload = encode(value);
         return new ServerControlStore.ProtocolRecord(ServerControlStore.ENROLLMENT_KEYGEN, value.id(),
                 EnrollmentTransactionCodec.sha256(payload), payload);
     }
+    /**
+     * Decodes a bounded descriptor and requires exact canonical re-encoding.
+     *
+     * @param record private retained key-generation descriptor record
+     * @return validated canonical descriptor
+     * @throws IllegalArgumentException if namespace, version, identity, commitment or payload is invalid
+     */
     /* default */ static EnrollmentKeygenArtifact decode(ServerControlStore.ProtocolRecord record) {
         byte[] bytes = record.payload();
         if (!ServerControlStore.ENROLLMENT_KEYGEN.equals(record.namespace()) || bytes.length > EnrollmentTransactionCodec.MAXIMUM_BYTES
@@ -78,6 +93,12 @@ final class EnrollmentKeygenCodec {
             return value;
         } catch (IOException | IllegalArgumentException invalid) { throw EnrollmentTransaction.invalid(); } // NOPMD ExceptionAsFlowControl, PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
+    /**
+     * Encodes the version-one frozen key-generation inputs and mutable delivery lifecycle.
+     *
+     * @param value validated key-generation descriptor
+     * @return newly allocated canonical descriptor bytes
+     */
     /* default */ static byte[] encode(EnrollmentKeygenArtifact value) {
         return bytes(out -> {
             out.writeInt(VERSION); out.writeUTF(value.id()); out.writeLong(value.revision());
@@ -92,6 +113,17 @@ final class EnrollmentKeygenCodec {
             out.writeBoolean(value.bytesReleased());
         });
     }
+    /**
+     * Commits the exact frozen inputs of one domain-separated enrollment key generation.
+     *
+     * @param template frozen enrollment intent and authorization coordinates
+     * @param algorithm selected key algorithm identity
+     * @param bits maximum supported generated-key size, in bits
+     * @param ciphertext maximum encrypted delivery size, in bytes
+     * @param csr maximum generated request size, in bytes
+     * @param deadline absolute delivery expiry
+     * @return lowercase hexadecimal SHA-256 generation commitment
+     */
     /* default */ static String generationCommitment(EnrollmentTransaction.Intent template, String algorithm, int bits, long ciphertext,
             int csr, Instant deadline) {
         return EnrollmentTransactionCodec.sha256(bytes(out -> {
@@ -119,7 +151,9 @@ final class EnrollmentKeygenCodec {
             return bytes.toByteArray();
         } catch (IOException invalid) { throw EnrollmentTransaction.invalid(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
-    /** Encodes one canonical record into an owned output buffer. */
+    /**
+     * Encodes one canonical record into an owned output buffer.
+     */
     @FunctionalInterface private interface Encoder {
         /**
          * Writes the canonical binary representation.

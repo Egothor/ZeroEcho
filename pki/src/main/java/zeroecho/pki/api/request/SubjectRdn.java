@@ -48,6 +48,10 @@ public record SubjectRdn(SubjectRdnType type, String value) {
 
     /**
      * Validates and constructs the component.
+     * @param type supported RDN type
+     * @param value exact value, with country names canonicalized to uppercase
+     * @throws IllegalArgumentException if type or value is null, value is empty or exceeds the hard UTF-8
+     *     bound, or a country value is not two ASCII letters
      */
     public SubjectRdn {
         if (type == null) {

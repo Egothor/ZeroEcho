@@ -57,7 +57,9 @@ import zeroecho.pki.impl.hybrid.AltSignatureExtensions;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.ZeroEchoSession;
 
-/** Pure public CRL role evidence, compatibility hashes and finite signature bounds. */
+/**
+ * Pure public CRL role evidence, compatibility hashes and finite signature bounds.
+ */
 public final class CrlSigningRoleTuple {
     private CrlSigningRoleTuple() { }
 
@@ -98,6 +100,7 @@ public final class CrlSigningRoleTuple {
      * @param certificate bounded issuer certificate
      * @return supplied SKI or standard SHA-1 of subjectPublicKey BIT STRING contents
      * @throws IOException for malformed public evidence
+     * @throws IllegalStateException if the key identifier cannot be derived with the required cryptographic engine
      */
     public static byte[] keyIdentifier(X509Certificate certificate) throws IOException {
         byte[] extension = certificate.getExtensionValue("2.5.29.14");
@@ -179,6 +182,7 @@ public final class CrlSigningRoleTuple {
      * @param domain fixed semantic hash domain
      * @param values ordered bounded public values
      * @return lowercase SHA-256
+     * @throws IllegalStateException if role encoding or cryptographic commitment calculation fails
      */
     public static String hash(String domain, byte[]... values) {
         try {

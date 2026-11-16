@@ -38,13 +38,22 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 
-/** Strict opaque request-correlation identity policy. */
-@SuppressWarnings("PMD")
+/**
+ * Strict opaque request-correlation identity policy.
+ */
 public final class RequestIds {
-    /** HTTP header carrying the opaque correlation identifier. */
+    /**
+     * HTTP header carrying the opaque correlation identifier.
+     */
     public static final String HEADER = "X-ZeroEcho-Request-Id";
     private final SecureRandom random;
 
+    /**
+     * Creates a correlation-identifier source backed by caller-selected secure randomness.
+     *
+     * @param random entropy source for 144-bit request identifiers
+     * @throws NullPointerException if random is null
+     */
     RequestIds(SecureRandom random) {
         this.random = Objects.requireNonNull(random, "random");
     }

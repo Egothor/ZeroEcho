@@ -66,12 +66,25 @@ import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.PublicKeyIdentity;
 
+/**
+ * Checks realm-bound enrollment requester evidence and canonical authentication identity binding.
+ */
 class EnrollmentIdentityEvidenceTest {
     private static HttpServerTestSupport.Fixture tls;
 
+    /**
+     * Creates the shared TLS certificate fixture used to derive canonical requester identity evidence.
+     *
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @BeforeAll
     static void certificates() throws Exception { tls = HttpServerTestSupport.tls(); }
 
+    /**
+     * Checks equivalent key aliases only broaden requester exclusion, including aliases of disabled principals.
+     *
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void equivalentMappingAliasesRemainExclusionOnlyAndIncludeDisabledPrincipals() throws Exception {
         CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(ServerTestSupport.REALM, tls.clientCertificate());
@@ -115,6 +128,12 @@ class EnrollmentIdentityEvidenceTest {
         assertFalse(frozen.toString().contains("owner"));
     }
 
+    /**
+     * Checks direct TLS and validated forwarded authentication retain the actual end-client identity evidence.
+     *
+     * @param root isolated temporary storage root injected by JUnit
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void authenticatedEvidenceUsesActualDirectOrValidatedForwardedEndClient(@TempDir Path root) throws Exception {
         CertificateIdentityEvidence expected = CertificateIdentityEvidence.fromCertificate(ServerTestSupport.REALM, tls.clientCertificate());
@@ -147,6 +166,11 @@ class EnrollmentIdentityEvidenceTest {
         assertInstanceOf(PkiServerAuthenticationResult.Rejected.class, directAuth.authenticate(context(tls.clientCertificate(), headers)));
     }
 
+    /**
+     * Rejects attempts to distinguish the same proxy and forwarded RSA key through alternate encodings.
+     *
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void equivalentRsaEncodingsCannotSeparateProxyFromForwardedIdentity() throws Exception {
         java.security.SecureRandom random = java.security.SecureRandom.getInstance("SHA1PRNG", "SUN");
@@ -217,6 +241,12 @@ class EnrollmentIdentityEvidenceTest {
         }
     }
 
+    /**
+     * Checks distinct forwarded client keys retain independent requester evidence behind one trusted proxy.
+     *
+     * @param directory isolated temporary storage root injected by JUnit
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void distinctForwardedClientKeysBehindOneProxyKeepIndependentEvidence(@TempDir Path directory) throws Exception {
         PkiServerConfiguration.Authentication source = HttpServerTestSupport.proxyConfiguration(directory, tls,
@@ -254,6 +284,11 @@ class EnrollmentIdentityEvidenceTest {
                 "Client-Cert-Chain", List.of(":" + Base64.getEncoder().encodeToString(root.getEncoded()) + ":"));
     }
 
+    /**
+     * Checks unsupported enrollment identity forms leave ordinary certificate authentication available.
+     *
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void unsupportedEnrollmentIdentityDoesNotDisableOrdinaryAuthentication() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
@@ -274,6 +309,11 @@ class EnrollmentIdentityEvidenceTest {
         assertThrows(IllegalArgumentException.class, () -> PublicKeyIdentity.fromSubjectPublicKeyInfo(key.getPublic().getEncoded()));
     }
 
+    /**
+     * Checks gateway evidence is realm-bound and cannot be synthesized from an embedded actor field.
+     *
+     * @throws Exception if certificate setup, authentication, gateway processing, or cleanup fails
+     */
     @Test
     void gatewayEvidenceIsRealmBoundAndEmbeddedActorDoesNotInventEvidence() throws Exception {
         CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(ServerTestSupport.REALM, tls.clientCertificate());

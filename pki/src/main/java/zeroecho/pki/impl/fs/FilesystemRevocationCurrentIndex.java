@@ -69,8 +69,17 @@ import zeroecho.pki.spi.store.MetadataStoreId;
  */
 final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
+    /**
+     * Fixed encoded index superblock length in bytes.
+     */
     /* default */ static final int SUPERBLOCK_BYTES = 160;
+    /**
+     * Fixed encoded index cell length in bytes.
+     */
     /* default */ static final int CELL_BYTES = 160;
+    /**
+     * Number of independently recoverable cells retained for each index slot.
+     */
     /* default */ static final int CELLS_PER_SLOT = 2;
 
     private static final String ENTRY_COUNT_OVERFLOW =
@@ -137,6 +146,21 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         activeSuperblock = selected.index();
     }
 
+    /**
+     * Opens and validates the derived current index, then applies its authoritative log suffix.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex open(
             Path indexPath,
             Path logPath,
@@ -146,6 +170,23 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 DefaultPublicationOperations.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Opens and validates the derived current index, then applies its authoritative log suffix.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @param operations borrowed index publication filesystem operations; must not be null
+     * @param faults deterministic fault callback; must not be null
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex open(
             Path indexPath,
             Path logPath,
@@ -191,6 +232,21 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             return opened;
     }
 
+    /**
+     * Rebuilds the derived current index from the authoritative transition log under exclusive index ownership.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex rebuild(
             Path indexPath,
             Path logPath,
@@ -200,6 +256,23 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 DefaultPublicationOperations.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Recovers a derived current index through an exact authoritative log boundary using retained checkpoints.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param checkpointDirectory directory containing retained current-index checkpoints
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @param target exact authoritative revision, boundary, and commitment to recover through
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex recover(
             Path indexPath,
             Path checkpointDirectory,
@@ -212,6 +285,25 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 FaultInjector.NONE);
     }
 
+    /**
+     * Recovers a derived current index through an exact authoritative log boundary using retained checkpoints.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param checkpointDirectory directory containing retained current-index checkpoints
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @param target exact authoritative revision, boundary, and commitment to recover through
+     * @param operations borrowed index publication filesystem operations; must not be null
+     * @param faults deterministic fault callback; must not be null
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex recover(
             Path indexPath,
             Path checkpointDirectory,
@@ -226,6 +318,23 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 configuration, target, operations, faults);
     }
 
+    /**
+     * Rebuilds the derived current index from the authoritative transition log under exclusive index ownership.
+     *
+     * <p>The caller owns the returned index and must close it. Failed opening releases
+     * partial index/log handles and the stable index lock.</p>
+     *
+     * @param indexPath derived current-index file path; must not be null
+     * @param logPath authoritative revocation transition log path; must not be null
+     * @param expectedStoreId exact required metadata store identity; must not be null
+     * @param configuration validated bounded index configuration; must not be null
+     * @param operations borrowed index publication filesystem operations; must not be null
+     * @param faults deterministic fault callback; must not be null
+     * @return open current index covering a validated authoritative prefix
+     * @throws IOException if filesystem ownership, format, provenance, replay, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if index configuration bounds are invalid
+     */
     /* default */ static FilesystemRevocationCurrentIndex rebuild(
             Path indexPath,
             Path logPath,
@@ -274,6 +383,15 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Reads the latest authoritative transition selected by a current or frozen index view.
+     *
+     * @param credentialId exact store-local credential identity; must not be null
+     * @return matching complete authoritative frame, or empty when the credential is absent
+     * @throws IOException if index probing or authoritative frame validation fails
+     * @throws NullPointerException if credentialId is null
+     * @throws IllegalStateException if this index view is closed or unusable
+     */
     /* default */ Optional<RevocationTransitionFrameCodec.CompleteRecord> lookup(PkiId credentialId)
             throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
@@ -292,6 +410,16 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates a supplied authoritative frame before publishing its derived current-state index entry.
+     *
+     * <p>An I/O failure marks this index unusable so callers must reopen or rebuild it.</p>
+     *
+     * @param supplied complete record already retained in the authoritative log; must not be null
+     * @throws IOException if the supplied frame differs or derived index publication fails
+     * @throws NullPointerException if supplied is null
+     * @throws IllegalStateException if this index is closed or unusable
+     */
     /* default */ void update(RevocationTransitionFrameCodec.CompleteRecord supplied)
             throws IOException {
         Objects.requireNonNull(supplied, "supplied");
@@ -311,6 +439,12 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the authoritative revision covered by the selected current-index superblock.
+     *
+     * @return nonnegative covered global revision
+     * @throws IllegalStateException if this index is closed or unusable
+     */
     /* default */ long coveredGlobalRevision() {
         lifecycleLock.lock();
         try {
@@ -321,6 +455,12 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the credential entry count retained by this current or frozen index view.
+     *
+     * @return number of credential identities in the selected index state
+     * @throws IllegalStateException if the view is closed or unusable
+     */
     /* default */ long entryCount() {
         lifecycleLock.lock();
         try {
@@ -331,6 +471,11 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Tests whether an index publication failure fenced this current-index instance.
+     *
+     * @return true when its lifecycle state requires reopening or rebuilding
+     */
     /* default */ boolean unusable() {
         lifecycleLock.lock();
         try {
@@ -340,11 +485,34 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Creates a stable on-disk index snapshot and pins its authoritative log prefix.
+     *
+     * @param snapshotPath new frozen-index destination path; must not be null
+     * @param transferBufferBytes positive byte size of the bounded copy buffer
+     * @return owned frozen snapshot; caller closes it after its cursors are released
+     * @throws IOException if snapshot copying, force, or provenance validation fails
+     * @throws NullPointerException if snapshotPath is null
+     * @throws IllegalArgumentException if transferBufferBytes is nonpositive
+     * @throws IllegalStateException if the current index is closed or unusable
+     */
     /* default */ FrozenSnapshot freeze(Path snapshotPath, int transferBufferBytes)
             throws IOException {
         return freeze(snapshotPath, transferBufferBytes, FrozenFaultInjector.NONE);
     }
 
+    /**
+     * Creates a stable on-disk index snapshot and pins its authoritative log prefix.
+     *
+     * @param snapshotPath new frozen-index destination path; must not be null
+     * @param transferBufferBytes positive byte size of the bounded copy buffer
+     * @param faults deterministic fault callback; must not be null
+     * @return owned frozen snapshot; caller closes it after its cursors are released
+     * @throws IOException if snapshot copying, force, or provenance validation fails
+     * @throws NullPointerException if snapshotPath or faults is null
+     * @throws IllegalArgumentException if transferBufferBytes is nonpositive
+     * @throws IllegalStateException if the current index is closed or unusable
+     */
     /* default */ FrozenSnapshot freeze(
             Path snapshotPath,
             int transferBufferBytes,
@@ -377,6 +545,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         lifecycleLock.lock();
@@ -409,7 +580,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Validates and advances one retained index without adding facade complexity. */
+    /**
+     * Validates and advances one retained index without adding facade complexity.
+     */
     private final class IndexAccess {
     private void applySuffix() throws IOException {
         RevocationTransitionFrameCodec.ReadResult first =
@@ -651,7 +824,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Bounded recovery orchestration over one immutable authoritative prefix. */
+    /**
+     * Bounded recovery orchestration over one immutable authoritative prefix.
+     */
     private static final class RecoveryCoordinator {
         private final Path indexPath;
         private final Path checkpointDirectory;
@@ -1064,7 +1239,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** A self-consistent derived checkpoint cannot seed the exact authoritative frames. */
+    /**
+     * A self-consistent derived checkpoint cannot seed the exact authoritative frames.
+     */
     private static final class CheckpointRejectedException extends IOException {
         private static final long serialVersionUID = 2411479676961225172L;
 
@@ -1073,7 +1250,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Strict binary format, probing, arithmetic, and local filesystem primitives. */
+    /**
+     * Strict binary format, probing, arithmetic, and local filesystem primitives.
+     */
     private static final class IndexOperations {
     private static SuperblockCandidates selectSuperblocks(
             FileChannel channel, MetadataStoreId expectedStore, Configuration configuration)
@@ -1294,7 +1473,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
     }
 
-    /** Checked I/O, hashing, path, and durability utilities. */
+    /**
+     * Checked I/O, hashing, path, and durability utilities.
+     */
     private static final class IoOperations {
 
     private static String keyDigest(PkiId credentialId) throws IOException {
@@ -1515,9 +1696,21 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
     }
 
-    /** Exact construction capacity and rational load threshold. */
+    /**
+     * Exact construction capacity and rational load threshold.
+     * @param initialCapacity initial number of index slots
+     * @param loadNumerator numerator of the rational maximum load factor
+     * @param loadDenominator denominator of the rational maximum load factor
+     */
     /* default */ record Configuration(
             long initialCapacity, int loadNumerator, int loadDenominator) {
+        /**
+         * Creates the exact construction capacity and rational load threshold.
+         *
+         * @param initialCapacity initial number of index slots
+         * @param loadNumerator numerator of the rational maximum load factor
+         * @param loadDenominator denominator of the rational maximum load factor
+         */
         Configuration {
             require(initialCapacity, loadNumerator, loadDenominator);
         }
@@ -1552,95 +1745,185 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Immutable scalar prefix accepted by bounded derived-index recovery. */
+    /**
+     * Immutable scalar prefix accepted by bounded derived-index recovery.
+     */
     /* default */ interface RecoveryBoundary {
-        /** Returns the authoritative store identity. */
+        /**
+         * Returns the authoritative store identity.
+         * @return exact authoritative metadata store identity
+         */
         MetadataStoreId storeId();
 
-        /** Returns the covered global revision. */
+        /**
+         * Returns the covered global revision.
+         * @return authoritative global revocation revision at the captured boundary
+         */
         long globalRevision();
 
-        /** Returns the final covered frame start, when one exists. */
+        /**
+         * Returns the final covered frame start, when one exists.
+         * @return byte offset of the final covered record, or empty for an empty prefix
+         */
         OptionalLong finalRecordStart();
 
-        /** Returns the exact covered log boundary. */
+        /**
+         * Returns the exact covered log boundary.
+         * @return exclusive byte boundary of the captured authoritative log prefix
+         */
         long boundary();
 
-        /** Returns the covered global commitment. */
+        /**
+         * Returns the covered global commitment.
+         * @return global revocation commitment at the captured boundary
+         */
         RevocationTransitionFrameCodec.Commitment globalCommitment();
     }
 
-    /** Deterministic lifecycle fault seam; it is not a production extension point. */
+    /**
+     * Deterministic lifecycle fault seam; it is not a production extension point.
+     */
     /* default */ @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails one exact derived-index lifecycle boundary. */
+        /**
+         * Fails one exact derived-index lifecycle boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
 
-        /** Observes one checkpoint entry admitted during bounded recovery. */
+        /**
+         * Observes one checkpoint entry admitted during bounded recovery.
+         * @param index checkpoint entry ordinal observed during recovery
+         */
         default void observeRecoveryCheckpointEntry(long index) {
             // Optional structural test observation.
         }
 
-        /** Observes one checkpoint generation selected for full validation. */
+        /**
+         * Observes one checkpoint generation selected for full validation.
+         * @param revision checkpoint candidate's authoritative covered revision
+         */
         default void observeRecoveryCheckpointCandidate(long revision) {
             // Optional structural test observation.
         }
 
-        /** Observes one authoritative suffix offset read during bounded recovery. */
+        /**
+         * Observes one authoritative suffix offset read during bounded recovery.
+         * @param offset zero-based log byte offset observed during recovery
+         */
         default void observeRecoveryLogOffset(long offset) {
             // Optional structural test observation.
         }
     }
 
-    /** Exact durability and publication boundaries available to deterministic tests. */
+    /**
+     * Exact durability and publication boundaries available to deterministic tests.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for writing an index cell.
+         */
         CELL_WRITE,
+        /**
+         * Fault injection point for forcing an index cell.
+         */
         CELL_FORCE,
+        /**
+         * Fault injection point for writing the index superblock.
+         */
         SUPERBLOCK_WRITE,
+        /**
+         * Fault injection point for forcing the index superblock.
+         */
         SUPERBLOCK_FORCE,
+        /**
+         * Fault injection point for writing a rebuilt index.
+         */
         REBUILD_WRITE,
+        /**
+         * Fault injection point for forcing a rebuilt index.
+         */
         REBUILD_FORCE,
+        /**
+         * Fault injection point for forcing a grown index.
+         */
         GROW_FORCE,
+        /**
+         * Fault injection point for atomically publishing a grown index.
+         */
         GROW_ATOMIC_MOVE,
+        /**
+         * Fault injection point for atomically publishing the rebuilt index.
+         */
         PUBLISH_ATOMIC_MOVE,
+        /**
+         * Fault injection point for forcing the parent directory.
+         */
         DIRECTORY_FORCE
     }
 
-    /** publication operations isolated for deterministic atomic-publication tests. */
+    /**
+     * publication operations isolated for deterministic atomic-publication tests.
+     */
     /* default */ interface PublicationOperations {
-        /** Atomically replaces the target with a completed derived generation. */
+        /**
+         * Atomically replaces the target with a completed derived generation.
+         * @param source exact source path of the owned artifact
+         * @param target exact destination path for atomic publication
+         * @throws IOException if atomic namespace publication fails
+         */
         void atomicReplace(Path source, Path target) throws IOException;
 
-        /** Forces the containing directory when supported. */
+        /**
+         * Forces the containing directory when supported.
+         * @param directory parent directory whose namespace durability must be confirmed
+         * @throws IOException if parent-directory durability cannot be confirmed
+         */
         void forceDirectory(Path directory) throws IOException;
     }
 
-    /** Default local atomic publication operations. */
+    /**
+     * Default local atomic publication operations.
+     */
     private enum DefaultPublicationOperations implements PublicationOperations {
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void atomicReplace(Path source, Path target) throws IOException {
             Files.move(source, target,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceDirectory(Path directory) throws IOException {
             PlatformFs.forceDirectory(directory);
         }
     }
 
-    /** Terminal lifecycle state of one retained index handle. */
+    /**
+     * Terminal lifecycle state of one retained index handle.
+     */
     private enum State {
         OPEN,
         UNUSABLE,
         CLOSED
     }
 
-    /** Explicit persisted logical-slot state; tombstones preserve probe continuity. */
+    /**
+     * Explicit persisted logical-slot state; tombstones preserve probe continuity.
+     */
     private enum SlotState {
         EMPTY(0),
         OCCUPIED(1),
@@ -1820,7 +2103,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Independently checks one candidate without acquiring or transferring resource ownership. */
+    /**
+     * Independently checks one candidate without acquiring or transferring resource ownership.
+     */
     private static final class IndexValidation {
         private static void validate(
                 FileChannel index,
@@ -1937,7 +2222,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Chooses the newest completely valid generation and falls back only to its predecessor. */
+    /**
+     * Chooses the newest completely valid generation and falls back only to its predecessor.
+     */
     private static final class CandidateSelection {
         private static SelectedSuperblock select(
                 OpenResources resources,
@@ -1974,22 +2261,41 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Deterministic frozen-copy failure seam; package access is intentional for tests. */
+    /**
+     * Deterministic frozen-copy failure seam; package access is intentional for tests.
+     */
     /* default */ @FunctionalInterface
     interface FrozenFaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FrozenFaultInjector NONE = point -> { };
 
-        /** Fails at one copy or force boundary. */
+        /**
+         * Fails at one copy or force boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FrozenFaultPoint point) throws IOException;
     }
 
-    /** Finite lifecycle boundaries for the frozen derived-index copy. */
+    /**
+     * Finite lifecycle boundaries for the frozen derived-index copy.
+     */
     /* default */ enum FrozenFaultPoint {
+        /**
+         * Fault injection point for copying frozen index content.
+         */
         COPY,
+        /**
+         * Fault injection point for forcing owned file content.
+         */
         FORCE
     }
 
-    /** Immutable physical-slot copy used by bounded checkpoint construction. */
+    /**
+     * Immutable physical-slot copy used by bounded checkpoint construction.
+     */
     /* default */ static final class FrozenSnapshot implements AutoCloseable {
         private final Path path;
         private final Path logPath;
@@ -2011,11 +2317,23 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             this.state = state;
         }
 
+        /**
+         * Returns the credential entry count retained by this current or frozen index view.
+         *
+         * @return number of credential identities in the selected index state
+         * @throws IllegalStateException if the view is closed or unusable
+         */
         /* default */ long entryCount() {
             requireOpen();
             return state.entryCount();
         }
 
+        /**
+         * Returns the frozen view's exact authoritative prefix provenance.
+         *
+         * @return immutable store identity, revision, final-record start, byte boundary, and commitment
+         * @throws IllegalStateException if the frozen snapshot is closed
+         */
         /* default */ FilesystemRevocationCheckpoint.Coverage coverage() {
             requireOpen();
             return new FilesystemRevocationCheckpoint.Coverage(
@@ -2023,16 +2341,37 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                     state.coveredBoundary(), state.coveredCommitment());
         }
 
+        /**
+         * Opens a cursor over physical slots of this stable frozen index.
+         *
+         * @return cursor owned by the caller; the frozen snapshot must remain open during traversal
+         * @throws IllegalStateException if the frozen snapshot is closed
+         */
         /* default */ FrozenCursor openCursor() {
             requireOpen();
             return new PhysicalCursor(this);
         }
 
+        /**
+         * Returns the authoritative log path retained by the frozen snapshot.
+         *
+         * @return borrowed immutable log path
+         * @throws IllegalStateException if the frozen snapshot is closed
+         */
         /* default */ Path logPath() {
             requireOpen();
             return logPath;
         }
 
+        /**
+         * Reads the latest authoritative transition selected by a current or frozen index view.
+         *
+         * @param credentialId exact store-local credential identity; must not be null
+         * @return matching complete authoritative frame, or empty when the credential is absent
+         * @throws IOException if index probing or authoritative frame validation fails
+         * @throws NullPointerException if credentialId is null
+         * @throws IllegalStateException if this index view is closed or unusable
+         */
         /* default */ Optional<RevocationTransitionFrameCodec.CompleteRecord> lookup(
                 PkiId credentialId) throws IOException {
             Objects.requireNonNull(credentialId, "credentialId");
@@ -2053,6 +2392,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (closed) {
@@ -2081,19 +2423,33 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** One-entry-at-a-time physical-slot cursor over a frozen index. */
+    /**
+     * One-entry-at-a-time physical-slot cursor over a frozen index.
+     */
     /* default */ interface FrozenCursor extends AutoCloseable {
-        /** Advances to the next occupied physical slot. */
+        /**
+         * Advances to the next occupied physical slot.
+         * @return true when a current entry is available; false when the captured input is exhausted
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         boolean advance() throws IOException;
 
-        /** Returns the entry selected by the most recent successful advancement. */
+        /**
+         * Returns the entry selected by the most recent successful advancement.
+         * @return current immutable entry selected by the most recent successful advance
+         */
         RevocationCheckpointCodec.CurrentStateEntry current();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         void close();
     }
 
-    /** Cursor state remains constant regardless of frozen index population. */
+    /**
+     * Cursor state remains constant regardless of frozen index population.
+     */
     private static final class PhysicalCursor implements FrozenCursor {
         private final FrozenSnapshot owner;
         private long slot;
@@ -2105,6 +2461,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             this.owner = owner;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean advance() throws IOException {
             requireOpen();
@@ -2131,6 +2490,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             return false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationCheckpointCodec.CurrentStateEntry current() {
             requireOpen();
@@ -2140,6 +2502,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             closed = true;
@@ -2162,7 +2527,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Owns a frozen copy and independent log reader until snapshot transfer. */
+    /**
+     * Owns a frozen copy and independent log reader until snapshot transfer.
+     */
     private static final class FrozenResources implements AutoCloseable {
         private final Path path;
         private final FileChannel indexChannel;
@@ -2211,6 +2578,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             transferred = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (transferred) {
@@ -2238,7 +2608,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Stable adjacent lock whose inode is never replaced with an index generation. */
+    /**
+     * Stable adjacent lock whose inode is never replaced with an index generation.
+     */
     private static final class StableIndexLock implements AutoCloseable {
         private final FileChannel channel;
         private final FileLock lock;
@@ -2272,6 +2644,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             transferred = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (transferred) {
@@ -2304,7 +2679,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Owns a replacement channel until validated installation transfers it. */
+    /**
+     * Owns a replacement channel until validated installation transfers it.
+     */
     private static final class ReplacementChannel implements AutoCloseable {
         private final FileChannel channel;
         private boolean transferred;
@@ -2328,6 +2705,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             return channel;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!transferred) {
@@ -2336,7 +2716,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Transfers the stable lock and opened files only after validation succeeds. */
+    /**
+     * Transfers the stable lock and opened files only after validation succeeds.
+     */
     private static final class OpenResources implements AutoCloseable {
         private final StableIndexLock stableLock;
         private final FileChannel indexChannel;
@@ -2400,6 +2782,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             stableLock.transferOwnership();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (transferred) {
@@ -2427,7 +2812,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Bounded-memory temporary generation builder backed solely by its slot file. */
+    /**
+     * Bounded-memory temporary generation builder backed solely by its slot file.
+     */
     private static final class BuildIndex implements AutoCloseable {
         private final Path path;
         private final MetadataStoreId storeId;
@@ -2790,6 +3177,9 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             channel.force(true);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             channel.close();

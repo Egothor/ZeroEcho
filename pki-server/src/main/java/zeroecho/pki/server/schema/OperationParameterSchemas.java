@@ -38,7 +38,9 @@ import java.util.List;
 import zeroecho.pki.server.schema.OperationParameterSchema.FieldSpec;
 import zeroecho.pki.server.schema.OperationParameterSchema.OperationSpec;
 
-/** Complete registry of machine-readable operation parameter schemas derived from the codec. */
+/**
+ * Complete registry of machine-readable operation parameter schemas derived from the codec.
+ */
 @SuppressWarnings("PMD.AvoidDuplicateLiterals")
 public final class OperationParameterSchemas {
 
@@ -112,7 +114,11 @@ public final class OperationParameterSchemas {
      * @param fields immutable argument definitions
      */
     public record Parameters(String operationId, List<FieldSpec> fields) {
-        /** Copies the field list. */
+        /**
+         * Copies the field list.
+         * @param operationId stable operation identity
+         * @param fields immutable argument definitions
+         */
         public Parameters { fields = List.copyOf(fields); }
     }
 

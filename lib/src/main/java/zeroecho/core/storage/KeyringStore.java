@@ -132,40 +132,121 @@ import zeroecho.core.util.RandomSupport;
  */
 @SuppressWarnings("PMD.CouplingBetweenObjects") // Persistence and key-lifecycle facade intentionally joins these domain contracts.
 public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
+    /**
+     * Eight-byte magic identifying the encrypted keyring image format.
+     */
     /* default */ static final byte[] MAGIC = { 'Z', 'E', 'K', 'R', 'I', 'N', 'G', '2' };
+    /**
+     * Version number encoded in the keyring image header.
+     */
     /* default */ static final int FORMAT_VERSION = 2;
+    /**
+     * Version number of the per-entry authenticated framing.
+     */
     /* default */ static final int ENTRY_FORMAT_VERSION = 1;
+    /**
+     * Version number of the encrypted manifest framing.
+     */
     /* default */ static final int MANIFEST_FORMAT_VERSION = 1;
+    /**
+     * Maximum accepted complete keyring image size, in bytes.
+     */
     /* default */ static final int MAX_FILE_BYTES = 128 * 1024 * 1024;
+    /**
+     * Maximum number of entries accepted in a keyring image.
+     */
     /* default */ static final int MAX_ENTRY_COUNT = 16_384;
+    /**
+     * Maximum encrypted payload length per entry, in bytes.
+     */
     /* default */ static final int MAX_ENTRY_CIPHERTEXT_BYTES = 16 * 1024 * 1024;
+    /**
+     * Maximum alias length after UTF-8 encoding, in bytes.
+     */
     /* default */ static final int MAX_ALIAS_BYTES = 512;
+    /**
+     * Maximum length of an encoded metadata text field, in bytes.
+     */
     /* default */ static final int MAX_METADATA_BYTES = 4_096;
+    /**
+     * Required length of the PBKDF2 salt, in bytes.
+     */
     /* default */ static final int SALT_BYTES = 32;
+    /**
+     * Length of the password-derived AES key-encryption key, in bytes.
+     */
     /* default */ static final int KEK_BYTES = 32;
+    /**
+     * Length of the randomly generated AES master key, in bytes.
+     */
     /* default */ static final int MASTER_KEY_BYTES = 32;
+    /**
+     * Length of each AES-GCM nonce, in bytes.
+     */
     /* default */ static final int NONCE_BYTES = 12;
+    /**
+     * Encoded store-identity length, in bytes.
+     */
     /* default */ static final int UUID_BYTES = 16;
+    /**
+     * Authentication tag size supplied to AES-GCM, in bits.
+     */
     /* default */ static final int GCM_TAG_BITS = 128;
+    /**
+     * Authentication tag size in the persisted ciphertext, in bytes.
+     */
     /* default */ static final int GCM_TAG_BYTES = GCM_TAG_BITS / 8;
+    /**
+     * Length of a SHA-256 digest, in bytes.
+     */
     /* default */ static final int SHA256_BYTES = 32;
+    /**
+     * Persisted algorithm identifier for PBKDF2 with HMAC-SHA-256.
+     */
     /* default */ static final byte KDF_PBKDF2_SHA256 = 1;
+    /**
+     * Persisted algorithm identifier for AES-256-GCM.
+     */
     /* default */ static final byte AEAD_AES_256_GCM = 1;
+    /**
+     * Magic identifying the authenticated nonce-reservation sidecar.
+     */
     /* default */ static final byte[] NONCE_RESERVATION_MAGIC = { 'Z', 'E', 'K', 'N', 'O', 'N', 'C', '2' };
+    /**
+     * Version number of the nonce-reservation sidecar framing.
+     */
     /* default */ static final int NONCE_RESERVATION_VERSION = 2;
+    /**
+     * Length of the sidecar HMAC-SHA-256 tag, in bytes.
+     */
     /* default */ static final int NONCE_RESERVATION_TAG_BYTES = 32;
     private static final byte MASTER_WRAP_NONCE_DOMAIN = 1;
     private static final byte ENTRY_NONCE_DOMAIN = 2;
 
     private static final String SUFFIX_PUBLIC = ".pub";
     private static final String SUFFIX_PRIVATE = ".priv";
+    /**
+     * Smallest valid persisted nonce counter reservation.
+     */
     /* default */ static final long MIN_NONCE_HIGH_WATER = 1L;
+    /**
+     * POSIX owner read, write, and search permissions for keyring directories.
+     */
     /* default */ static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS = EnumSet.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
+    /**
+     * POSIX owner read and write permissions for keyring files.
+     */
     /* default */ static final Set<PosixFilePermission> FILE_PERMISSIONS = EnumSet.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
+    /**
+     * Create-time POSIX attributes preventing initial directory exposure.
+     */
     /* default */ static final FileAttribute<Set<PosixFilePermission>> DIRECTORY_ATTRIBUTE = PosixFilePermissions
             .asFileAttribute(DIRECTORY_PERMISSIONS);
+    /**
+     * Create-time POSIX attributes preventing initial file exposure.
+     */
     /* default */ static final FileAttribute<Set<PosixFilePermission>> FILE_ATTRIBUTE = PosixFilePermissions
             .asFileAttribute(FILE_PERMISSIONS);
     private static final KeyringRandomBytes SYSTEM_RANDOM = destination -> RandomSupport.getRandom()
@@ -195,11 +276,17 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Standard encoded key forms supported by the encrypted store.
      */
     public enum Encoding {
-        /** X.509 SubjectPublicKeyInfo public-key encoding. */
+        /**
+         * X.509 SubjectPublicKeyInfo public-key encoding.
+         */
         X509(1),
-        /** PKCS#8 PrivateKeyInfo private-key encoding. */
+        /**
+         * PKCS#8 PrivateKeyInfo private-key encoding.
+         */
         PKCS8(2),
-        /** Raw secret-key bytes. */
+        /**
+         * Raw secret-key bytes.
+         */
         RAW(3);
 
         private final int code;
@@ -208,6 +295,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             this.code = code;
         }
 
+        /**
+         * Decodes the closed persistent-format encoding identifier.
+         *
+         * @param code numeric identifier read from the keyring image
+         * @return the matching encoding
+         * @throws KeyringException if the code is not defined by this format
+         */
         /* default */ static Encoding fromCode(int code) throws KeyringException {
             for (Encoding value : values()) {
                 if (value.code == code) {
@@ -222,11 +316,17 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Key classifications supported by the encrypted store.
      */
     public enum Kind {
-        /** Public asymmetric key. */
+        /**
+         * Public asymmetric key.
+         */
         PUBLIC_KEY(1),
-        /** Private asymmetric key. */
+        /**
+         * Private asymmetric key.
+         */
         PRIVATE_KEY(2),
-        /** Symmetric secret key. */
+        /**
+         * Symmetric secret key.
+         */
         SECRET_KEY(3);
 
         private final int code;
@@ -235,6 +335,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             this.code = code;
         }
 
+        /**
+         * Decodes the closed persistent-format kind identifier.
+         *
+         * @param code numeric identifier read from the keyring image
+         * @return the matching kind
+         * @throws KeyringException if the code is not defined by this format
+         */
         /* default */ static Kind fromCode(int code) throws KeyringException {
             for (Kind value : values()) {
                 if (value.code == code) {
@@ -297,11 +404,36 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return create(path, password, protection, SYSTEM_RANDOM);
     }
 
+    /**
+     * Creates and durably publishes a new encrypted store with injectable persistence dependencies.
+     *
+     * @param path keyring location whose parent must satisfy the platform security policy
+     * @param password borrowed unlock password; must not be null
+     * @param protection validated work-factor policy; must not be null
+     * @param random source of cryptographically secure random bytes; must not be null
+     * @return exclusively owned open store; the caller must close it
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if ownership, authentication, framing, or durable persistence fails
+     * @throws GeneralSecurityException if key derivation or cryptographic initialization fails
+     */
     /* default */ static KeyringStore create(Path path, KeyringPassword password, KeyringProtection protection,
             KeyringRandomBytes random) throws IOException, GeneralSecurityException {
         return create(path, password, protection, random, KeyringFileOperations.NIO);
     }
 
+    /**
+     * Creates and durably publishes a new encrypted store with injectable persistence dependencies.
+     *
+     * @param path keyring location whose parent must satisfy the platform security policy
+     * @param password borrowed unlock password; must not be null
+     * @param protection validated work-factor policy; must not be null
+     * @param random source of cryptographically secure random bytes; must not be null
+     * @param fileOperations persistence boundary; must not be null
+     * @return exclusively owned open store; the caller must close it
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if ownership, authentication, framing, or durable persistence fails
+     * @throws GeneralSecurityException if key derivation or cryptographic initialization fails
+     */
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
     /* default */ static KeyringStore create(Path path, KeyringPassword password, KeyringProtection protection,
             KeyringRandomBytes random, KeyringFileOperations fileOperations)
@@ -393,11 +525,36 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return open(path, password, protection, SYSTEM_RANDOM);
     }
 
+    /**
+     * Opens and authenticates an existing encrypted store with injectable persistence dependencies.
+     *
+     * @param path keyring location whose parent must satisfy the platform security policy
+     * @param password borrowed unlock password; must not be null
+     * @param protection validated work-factor policy; must not be null
+     * @param random source of cryptographically secure random bytes; must not be null
+     * @return exclusively owned open store; the caller must close it
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if ownership, authentication, framing, or durable persistence fails
+     * @throws GeneralSecurityException if key derivation or cryptographic initialization fails
+     */
     /* default */ static KeyringStore open(Path path, KeyringPassword password, KeyringProtection protection,
             KeyringRandomBytes random) throws IOException, GeneralSecurityException {
         return open(path, password, protection, random, KeyringFileOperations.NIO);
     }
 
+    /**
+     * Opens and authenticates an existing encrypted store with injectable persistence dependencies.
+     *
+     * @param path keyring location whose parent must satisfy the platform security policy
+     * @param password borrowed unlock password; must not be null
+     * @param protection validated work-factor policy; must not be null
+     * @param random source of cryptographically secure random bytes; must not be null
+     * @param fileOperations persistence boundary; must not be null
+     * @return exclusively owned open store; the caller must close it
+     * @throws NullPointerException if a required dependency is null
+     * @throws IOException if ownership, authentication, framing, or durable persistence fails
+     * @throws GeneralSecurityException if key derivation or cryptographic initialization fails
+     */
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
     /* default */ static KeyringStore open(Path path, KeyringPassword password, KeyringProtection protection,
             KeyringRandomBytes random, KeyringFileOperations fileOperations)
@@ -450,6 +607,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * this enrollment API. Exhaustion durably removes the private entry while
      * preserving the public key for verification; private-key retrieval then
      * becomes unavailable. Existing imported keys cannot be enrolled.
+     *
      * @param alias unused logical alias without a key-type suffix
      * @param algorithmId registered stateful algorithm identifier
      * @param authority open independent local authority
@@ -506,6 +664,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Resolves an explicit durable signing capability for an enrolled key. No
      * missing authority record is created or reconstructed. Each future operation
      * revalidates the current state under both ownership locks.
+     *
      * @param alias enrolled logical alias
      * @param authority same independently preserved authority used for generation
      * @return handle borrowing this keyring and authority
@@ -518,6 +677,16 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return new StatefulSigner(this, authority, alias);
     }
 
+    /**
+     * Validates the authority binding and obtains the stateful signature size under the store lock.
+     *
+     * @param alias logical alias of an enrolled stateful key pair
+     * @param authority borrowed local authority; must not be null and must remain open
+     * @return fixed signature size in bytes
+     * @throws NullPointerException if the authority is null
+     * @throws IOException if store state, key lookup, authority validation, or cleanup fails
+     * @throws GeneralSecurityException if key import or verification-context creation fails
+     */
     /* default */ int statefulSignatureLength(String alias, LocalStatefulSigningAuthority authority)
             throws IOException, GeneralSecurityException {
         Objects.requireNonNull(authority, "authority");
@@ -545,6 +714,24 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
+    /**
+     * Reserves one durable leaf and signs with its extracted single-use shard.
+     *
+     * <p>The store and authority serialize the whole operation, including content I/O.
+     * Cancellation or failure after reservation consumes the reserved leaf; uncertain
+     * persistence requires recovery and is never silently retried.
+     *
+     * @param alias logical alias of the enrolled stateful key pair
+     * @param authority borrowed open durable authority
+     * @param content borrowed repeatable content; each opened stream is closed
+     * @param cancellation cooperative signal checked between reads and state transitions
+     * @param maximumMessageBytes nonnegative content-size bound, in bytes
+     * @return independently owned signature bytes after durable state advancement
+     * @throws NullPointerException if content or cancellation is null
+     * @throws IllegalArgumentException if the content-size bound is negative
+     * @throws IOException if cancellation, content, keyring state, or persistence fails
+     * @throws GeneralSecurityException if key import, shard checks, or signing fails
+     */
     /* default */ byte[] signStateful(String alias, LocalStatefulSigningAuthority authority, RepeatableContent content,
             CancellationSignal cancellation, int maximumMessageBytes) throws IOException, GeneralSecurityException {
         Objects.requireNonNull(content, "content");
@@ -749,6 +936,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * @param key         exportable secret key
      * @throws IOException              if validation or durable persistence fails
      * @throws GeneralSecurityException if entry encryption fails
+     * @throws NullPointerException if {@code key} is null
      */
     public void putSecret(String alias, String algorithmId, SecretKey key)
             throws IOException, GeneralSecurityException {
@@ -1144,6 +1332,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
 
     /**
      * Closes the keyring, clearing its master key.
+     *
+     * @throws IllegalStateException if releasing the keyring ownership fence fails
      */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -1285,6 +1475,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         KeyringSecuritySupport.validateExistingFile(file, expectedOwner);
     }
 
+    /**
+     * Destroys a temporary key specification without masking an existing failure.
+     *
+     * @param spec temporary specification; non-destroyable values and null are ignored
+     * @param primary existing failure receiving a suppressed cleanup error, or null
+     * @throws GeneralSecurityException if destruction fails and no primary failure exists
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static void destroyTemporarySpec(zeroecho.core.spec.AlgorithmKeySpec spec, Throwable primary)
             throws GeneralSecurityException {
@@ -1304,13 +1501,20 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
+    /**
+     * Clears a temporary byte array when one is present.
+     *
+     * @param value array to overwrite with zero bytes, or null for no operation
+     */
     /* default */ static void wipe(byte[] value) {
         if (value != null) {
             Arrays.fill(value, (byte) 0);
         }
     }
 
-    /** Coordinates durable image and nonce-reservation persistence. */
+    /**
+     * Coordinates durable image and nonce-reservation persistence.
+     */
     private final class Persistence { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
         private void persistSnapshot(Map<String, EncryptedEntry> candidate) throws IOException, GeneralSecurityException {
             byte[] manifestNonce = null;
@@ -1623,7 +1827,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    /** Encodes and decodes the closed keyring binary formats. */
+    /**
+     * Encodes and decodes the closed keyring binary formats.
+     */
     private final class FormatCodec {
         private byte[] encodeImage(Map<String, EncryptedEntry> candidate, byte[] manifestNonce, byte[] manifestCipher)
                 throws IOException, KeyringException {
@@ -1883,7 +2089,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    /** Performs cryptographic, identifier, and filesystem validation support. */
+    /**
+     * Performs cryptographic, identifier, and filesystem validation support.
+     */
     private static final class SecuritySupport {
         private static void validateNonce(byte[] nonce, int prefix, long highWater) throws KeyringException {
             if (nonce.length != NONCE_BYTES) {
@@ -2020,7 +2228,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     private record EncryptedWireEntry(byte[] entryId, byte[] nonce, byte[] ciphertext) {
     }
 
-    /** Immutable encrypted entry retained while the store is open. */
+    /**
+     * Immutable encrypted entry retained while the store is open.
+     */
     private static final class EncryptedEntry implements KeyringSigningConfigurationKdf.EntryView {
         private final byte[] entryId;
         private final int position;
@@ -2074,7 +2284,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     private record Decoded(Header header, byte[] masterKey, Manifest manifest, Map<String, EncryptedEntry> entries) {
     }
 
-    /** Value-semantic nonce used only for duplicate detection. */
+    /**
+     * Value-semantic nonce used only for duplicate detection.
+     */
     private static final class Nonce {
         private final byte[] bytes;
 
@@ -2093,7 +2305,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    /** Process-lifetime ownership of the sibling lock file. */
+    /**
+     * Process-lifetime ownership of the sibling lock file.
+     */
     private static final class Ownership implements AutoCloseable {
         /**
          * The single sentinel byte the ownership fence locks. Locking a byte beyond

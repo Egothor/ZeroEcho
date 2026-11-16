@@ -46,11 +46,21 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Strict plan binding coverage for credential-revocation justification. */
+/**
+ * Strict plan binding coverage for credential-revocation justification.
+ */
 class PkiRevocationRegistryTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Preserves optional revocation justification separately from the standardized revocation reason.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void bindsOptionalJustificationWithoutConflatingTheStandardizedReason() throws Exception {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -67,6 +77,9 @@ class PkiRevocationRegistryTest {
         assertEquals(Optional.of("ticket-100"), justified.operatorJustification());
     }
 
+    /**
+     * Rejects fields outside the closed revocation argument schema.
+     */
     @Test
     void rejectsUnknownRevocationArgument() {
         PkiOperationRegistry registry = new PkiOperationRegistry();
@@ -82,6 +95,11 @@ class PkiRevocationRegistryTest {
         return new PkiOperationValue.ObjectValue(values);
     }
 
+    /**
+     * Binds certificate hold and release commands without accepting caller-selected reason or time.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void bindsHoldAndReleaseWithoutCallerReasonOrTime() throws Exception {
         PkiOperationRegistry registry = new PkiOperationRegistry();

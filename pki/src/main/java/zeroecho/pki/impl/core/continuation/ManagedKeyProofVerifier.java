@@ -67,13 +67,24 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.ZeroEchoSession;
 
-/** Verifies bounded proof challenges without publishing any PKI artifact. */
+/**
+ * Verifies bounded proof challenges without publishing any PKI artifact.
+ */
 final class ManagedKeyProofVerifier {
     private final PkiStore store;
     private final X509AuthoritySnapshot authority;
     private final BcX509VerificationExecutor executor;
     private final long pureEdDsaMaximum;
 
+    /**
+     * Creates a managed-proof verifier borrowing the store, binding authority, and executor.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param executor borrowed native signature verification executor
+     * @param maximum finite maximum pure-EdDSA challenge length in bytes
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ ManagedKeyProofVerifier(PkiStore store, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor executor, long maximum) {
         this.store = java.util.Objects.requireNonNull(store, "store");
@@ -82,6 +93,15 @@ final class ManagedKeyProofVerifier {
         this.pureEdDsaMaximum = maximum;
     }
 
+    /**
+     * Checks a retained managed-key proof against its exact frozen challenge and workflow binding.
+     *
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param workflow completed proof workflow carrying the retained signature
+     * @return encoded verified proof result
+     * @throws PkiException if proof infrastructure or challenge content is temporarily unavailable
+     * @throws IllegalArgumentException if the workflow or signature is invalid
+     */
     /* default */ EncodedObject verify(DomainContinuationStore.Record domain, SignWorkflowStore.Workflow workflow) {
         DomainCommandEncoding.Decoded command = ManagedKeyProofBindings.requireWorkflow(workflow, domain);
         EncodedObject signature = workflow.result().orElseThrow();
@@ -98,6 +118,13 @@ final class ManagedKeyProofVerifier {
         }
     }
 
+    /**
+     * Verifies the currently claimed primary or alternative subject-key proof for a composite operation.
+     *
+     * @param workflow dispatched workflow with an active CA proof-verification lease
+     * @throws IllegalArgumentException if the proof is not claimed or its signature/bindings differ
+     * @throws PkiException if proof verification infrastructure is unavailable
+     */
     /* default */ void verifyComposite(SignWorkflowStore.Workflow workflow) {
         if (workflow.state() != SignWorkflowStore.State.DISPATCHED
                 || workflow.stage() != SignWorkflowStore.Stage.CA_PROOF_VERIFYING

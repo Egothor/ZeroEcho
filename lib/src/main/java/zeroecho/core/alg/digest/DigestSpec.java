@@ -101,24 +101,44 @@ public final class DigestSpec implements ContextSpec, Describable {
      * </p>
      */
     public enum Algorithm {
-        /** SHA-256 digest from the SHA-2 family. */
+        /**
+         * SHA-256 digest from the SHA-2 family.
+         */
         SHA_256("SHA-256", false),
-        /** SHA-384 digest from the SHA-2 family. */
+        /**
+         * SHA-384 digest from the SHA-2 family.
+         */
         SHA_384("SHA-384", false),
-        /** SHA-512 digest from the SHA-2 family. */
+        /**
+         * SHA-512 digest from the SHA-2 family.
+         */
         SHA_512("SHA-512", false),
-        /** SHA3-256 digest from the SHA-3 family. */
+        /**
+         * SHA3-256 digest from the SHA-3 family.
+         */
         SHA3_256("SHA3-256", false),
-        /** SHA3-512 digest from the SHA-3 family. */
+        /**
+         * SHA3-512 digest from the SHA-3 family.
+         */
         SHA3_512("SHA3-512", false),
-        /** SHAKE128 extendable-output function (XOF). */
+        /**
+         * SHAKE128 extendable-output function (XOF).
+         */
         SHAKE128("SHAKE128", true),
-        /** SHAKE256 extendable-output function (XOF). */
+        /**
+         * SHAKE256 extendable-output function (XOF).
+         */
         SHAKE256("SHAKE256", true);
 
         private final String jca;
         private final boolean xof;
 
+        /**
+         * Creates immutable provider metadata for a digest variant.
+         *
+         * @param jca canonical JCA algorithm name
+         * @param xof whether output length is selected by the caller
+         */
         Algorithm(String jca, boolean xof) {
             this.jca = jca;
             this.xof = xof;

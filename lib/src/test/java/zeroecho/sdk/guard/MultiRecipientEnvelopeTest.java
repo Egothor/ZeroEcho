@@ -81,6 +81,9 @@ import zeroecho.sdk.content.api.PlainContent;
  */
 public class MultiRecipientEnvelopeTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void addProviders() {
         Security.addProvider(new BouncyCastlePQCProvider()); // ML-KEM
@@ -91,6 +94,11 @@ public class MultiRecipientEnvelopeTest {
     // Password guardian
     // ------------------------------------------------------------------------------------
 
+    /**
+     * Password guardian aes256 GCM.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Password guardian + AES-256-GCM")
     void testPasswordGuardian_Aes256Gcm() throws Exception {
@@ -144,6 +152,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Password recipient with aes128 KEK round trips.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void passwordRecipientWithAes128KekRoundTrips() throws Exception {
         System.out.println("passwordRecipientWithAes128KekRoundTrips");
@@ -180,6 +193,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("passwordRecipientWithAes128KekRoundTrips...ok");
     }
 
+    /**
+     * Password guardian aes256 CBC.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Password guardian + AES-256-CBC/PKCS7")
     void testPasswordGuardian_Aes256Cbc() throws Exception {
@@ -230,6 +248,11 @@ public class MultiRecipientEnvelopeTest {
     // Single ElGamal recipient (via EncryptionContext)
     // ------------------------------------------------------------------------------------
 
+    /**
+     * Single ElGamal guardian aes256 GCM.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Single ElGamal(PKCS1 default) recipient + AES-256-GCM")
     void testSingleElgamalGuardian_Aes256Gcm() throws Exception {
@@ -277,6 +300,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Single ElGamal guardian aes256 CBC.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Single ElGamal(PKCS1 default) recipient + AES-256-CBC")
     void testSingleElgamalGuardian_Aes256Cbc() throws Exception {
@@ -328,6 +356,11 @@ public class MultiRecipientEnvelopeTest {
     // Single RSA recipient (via EncryptionContext)
     // ------------------------------------------------------------------------------------
 
+    /**
+     * Single RSA guardian aes256 GCM.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Single RSA-OAEP(default) recipient + AES-256-GCM")
     void testSingleRsaGuardian_Aes256Gcm() throws Exception {
@@ -377,6 +410,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Single RSA guardian aes256 CBC.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Single RSA-OAEP(default) recipient + AES-256-CBC/PKCS7")
     void testSingleRsaGuardian_Aes256Cbc() throws Exception {
@@ -430,6 +468,11 @@ public class MultiRecipientEnvelopeTest {
     // Multi-recipient (Password + RSA + KEM/ML-KEM + ElGamal) via contexts
     // ------------------------------------------------------------------------------------
 
+    /**
+     * KEM recipient with128 bit KEK round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testKemRecipientWith128BitKekRoundTrip() throws Exception {
         System.out.println("testKemRecipientWith128BitKekRoundTrip");
@@ -445,6 +488,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("testKemRecipientWith128BitKekRoundTrip...ok");
     }
 
+    /**
+     * Mixed KEM recipient KEK sizes round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testMixedKemRecipientKekSizesRoundTrip() throws Exception {
         System.out.println("testMixedKemRecipientKekSizesRoundTrip");
@@ -463,6 +511,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("testMixedKemRecipientKekSizesRoundTrip...ok");
     }
 
+    /**
+     * Default KEM opener continues after same algorithm decoy.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void defaultKemOpenerContinuesAfterSameAlgorithmDecoy() throws Exception {
         System.out.println("defaultKemOpenerContinuesAfterSameAlgorithmDecoy");
@@ -500,6 +553,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("defaultKemOpenerContinuesAfterSameAlgorithmDecoy...ok");
     }
 
+    /**
+     * Default encryption opener continues after same algorithm decoy.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void defaultEncryptionOpenerContinuesAfterSameAlgorithmDecoy() throws Exception {
         System.out.println("defaultEncryptionOpenerContinuesAfterSameAlgorithmDecoy");
@@ -537,6 +595,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("defaultEncryptionOpenerContinuesAfterSameAlgorithmDecoy...ok");
     }
 
+    /**
+     * Multi recipients kyber512 aes256 GCM all unlocks.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Multi recipients (PWD+RSA+ML-KEM kyber512+ElGamal) + AES-256-GCM")
     void testMultiRecipients_Kyber512_Aes256Gcm_AllUnlocks() throws Exception {
@@ -593,6 +656,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Multi recipients kyber768 aes256 CBC all unlocks.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Multi recipients (PWD+RSA+ML-KEM kyber768+ElGamal) + AES-256-CBC/PKCS7")
     void testMultiRecipients_Kyber768_Aes256Cbc_AllUnlocks() throws Exception {
@@ -654,6 +722,11 @@ public class MultiRecipientEnvelopeTest {
     // Signed payload inside multi-recipient AES/GCM envelope (Ed25519 & SPHINCS+)
     // ====================================================================================
 
+    /**
+     * Signed payload Ed25519 multi recipients AES GCM.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Signed payload (Ed25519) → Multi-recipient envelope (RSA + ML-KEM + PWD + ElGamal) → AES-256-GCM")
     void testSignedPayload_Ed25519_MultiRecipients_AesGcm() throws Exception {
@@ -783,6 +856,11 @@ public class MultiRecipientEnvelopeTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Signed payload sphincs plus multi recipients AES GCM.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Signed payload (SPHINCS+) → Multi-recipient envelope (RSA + ML-KEM + PWD + ElGamal) → AES-256-GCM")
     void testSignedPayload_SphincsPlus_MultiRecipients_AesGcm() throws Exception {
@@ -934,7 +1012,9 @@ public class MultiRecipientEnvelopeTest {
         return () -> AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader();
     }
 
-    /** Minimal source builder so we can compose pull-style chains. */
+    /**
+     * Minimal source builder so we can compose pull-style chains.
+     */
     private static final class BytesSourceBuilder implements DataContentBuilder<PlainContent> {
         private final byte[] data;
 
@@ -978,7 +1058,9 @@ public class MultiRecipientEnvelopeTest {
         assertArrayEquals(original, decrypted);
     }
 
-    /** Reads all bytes and prints the size in a finally block. */
+    /**
+     * Reads all bytes and prints the size in a finally block.
+     */
     private static byte[] readAllBytesAndPrint(InputStream in, String label) throws IOException {
         byte[] result = new byte[0];
         try {
@@ -996,7 +1078,9 @@ public class MultiRecipientEnvelopeTest {
         return data;
     }
 
-    /** Minimal PlainContent over a byte[]. */
+    /**
+     * Minimal PlainContent over a byte[].
+     */
     private static final class BytesContent implements PlainContent {
         private final byte[] data;
 

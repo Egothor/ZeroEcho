@@ -70,7 +70,16 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
+/**
+ * Contract and regression tests for authority metadata store.
+ */
 final class AuthorityMetadataStoreTest {
+    /**
+     * Conflicting prune defers cleanup after successful current commit.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void conflictingPruneDefersCleanupAfterSuccessfulCurrentCommit(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             CaRecord active = FilesystemPkiStoreTest.TestObjects.minimalCaRecord(store, "prune-conflict", CaState.ACTIVE);
@@ -98,6 +107,12 @@ final class AuthorityMetadataStoreTest {
         }
     }
 
+    /**
+     * Prune uncertainty and storage failure are not best effort success.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void pruneUncertaintyAndStorageFailureAreNotBestEffortSuccess(@TempDir Path root) throws Exception {
         for (PruneInterleaving.Mode mode : List.of(PruneInterleaving.Mode.UNKNOWN, PruneInterleaving.Mode.STORAGE_FAILURE)) {
             try (FilesystemPkiStore store = new FilesystemPkiStore(root.resolve(mode.name()), FsPkiStoreOptions.defaults())) {
@@ -111,6 +126,12 @@ final class AuthorityMetadataStoreTest {
         }
     }
 
+    /**
+     * Historical snapshot retains unpublished signing generation but not unrelated authority.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void historicalSnapshotRetainsUnpublishedSigningGenerationButNotUnrelatedAuthority(@TempDir Path root) throws Exception {
         Path sourceRoot = root.resolve("source");
         Path targetRoot = root.resolve("target");
@@ -145,6 +166,12 @@ final class AuthorityMetadataStoreTest {
         }
     }
 
+    /**
+     * Historical snapshot remints content and keeps only selected ca state.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void historicalSnapshotRemintsContentAndKeepsOnlySelectedCaState(@TempDir Path root) throws Exception {
         Path sourceRoot = root.resolve("source");
         Path targetRoot = root.resolve("target");
@@ -170,6 +197,12 @@ final class AuthorityMetadataStoreTest {
         }
     }
 
+    /**
+     * Current and history commit together with timestamp collision ordering.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentAndHistoryCommitTogetherWithTimestampCollisionOrdering(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             new IntermediateCreationFixture().initialize(store, 1);
@@ -224,7 +257,9 @@ final class AuthorityMetadataStoreTest {
         }
     }
 
-    /** Interleaves one real revision change immediately before the cleanup commit. */
+    /**
+     * Interleaves one real revision change immediately before the cleanup commit.
+     */
     private static final class PruneInterleaving implements TransactionalMetadataStore {
         private enum Mode { CONFLICT, UNKNOWN, STORAGE_FAILURE }
         private final TransactionalMetadataStore delegate;

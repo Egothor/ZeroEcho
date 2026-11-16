@@ -38,8 +38,19 @@ import java.util.Objects;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.impl.core.CrlScope;
 
-/** Immutable scope claim; a lookup must compare structural scope, never only its digest. */
+/**
+ * Immutable scope claim; a lookup must compare structural scope, never only its digest.
+ * @param scope exact structural CRL scope, checked independently of its digest
+ * @param authorityId owning logical authority identity
+ */
 record CrlScopeOwner(CrlScope scope, PkiId authorityId) {
+    /**
+     * Creates an immutable scope claim; a lookup must compare structural scope, never only its digest.
+     *
+     * @param scope exact structural CRL scope, checked independently of its digest
+     * @param authorityId owning logical authority identity
+     * @throws NullPointerException if {@code scope} is null
+     */
     CrlScopeOwner {
         Objects.requireNonNull(scope, "scope");
         CrlScopeMetadataCodec.requireId(authorityId);

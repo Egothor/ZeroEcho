@@ -44,11 +44,19 @@ import java.util.Set;
  */
 public record SubjectPolicy(boolean allowEmpty, List<SubjectRdnRule> rules) {
 
-    /** Maximum number of subject RDNs. */
+    /**
+     * Maximum number of subject RDNs.
+     */
     public static final int HARD_MAXIMUM_RDN_COUNT = 32;
 
     /**
      * Validates and constructs the policy.
+     * @param allowEmpty whether an empty subject is permitted
+     * @param rules ordered immutable supported RDN rules
+     * @throws IllegalArgumentException if rules is null, RDN types repeat, or their combined maximum exceeds
+     *     HARD_MAXIMUM_RDN_COUNT
+     * @throws NullPointerException if rules contains a null entry
+     * @throws ArithmeticException if the sum of configured occurrence maxima overflows an integer
      */
     public SubjectPolicy {
         if (rules == null) {

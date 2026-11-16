@@ -56,10 +56,18 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.sdk.content.api.ExportableDataContent.ExportMode;
 
+/**
+ * Structured upload tests for opaque values, endpoint validation, and credential redaction.
+ */
 class PiwigoExportDataContentTest {
     private static final String CREDENTIAL_SENTINEL = "M7_SECRET_5c9d7f";
     private static final byte[] IMAGE = { 0x01, 0x23, 0x45, 0x67 };
 
+    /**
+     * Checks that structured Piwigo upload preserves opaque credential, category, and filename values.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void validStructuredUploadPreservesOpaqueValues() throws Exception {
         System.out.println("validStructuredUploadPreservesOpaqueValues");
@@ -89,6 +97,11 @@ class PiwigoExportDataContentTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks multipart field encoding and binary image transfer without shell interpretation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void multipartEncodingPreservesSafeSemantics() throws Exception {
         System.out.println("multipartEncodingPreservesSafeSemantics");
@@ -111,6 +124,9 @@ class PiwigoExportDataContentTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects unsafe endpoint variants consistently across supported construction paths.
+     */
     @Test
     void rejectsUnsafeEndpointsConsistently() {
         System.out.println("rejectsUnsafeEndpointsConsistently");
@@ -147,6 +163,9 @@ class PiwigoExportDataContentTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects image filenames that could inject multipart headers.
+     */
     @Test
     void rejectsMultipartHeaderInjection() {
         System.out.println("rejectsMultipartHeaderInjection");
@@ -169,6 +188,9 @@ class PiwigoExportDataContentTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects executable export modes for structured Piwigo upload.
+     */
     @Test
     void rejectsExecutableScriptModes() {
         System.out.println("rejectsExecutableScriptModes");
@@ -187,6 +209,11 @@ class PiwigoExportDataContentTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that diagnostic strings and logs omit Piwigo credentials.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void redactsCredentialsFromDiagnosticsAndLogs() throws Exception {
         System.out.println("redactsCredentialsFromDiagnosticsAndLogs");

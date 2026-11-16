@@ -64,9 +64,20 @@ import zeroecho.pki.server.acme.AcmeState;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 
+/**
+ * Checks named-module provider discovery, explicit selection and supported legacy SPI binary compatibility.
+ */
 class ServerSpiCompatibilityTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Compiles and runs an external named provider module without adding exports from the server implementation packages.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void externalNamedModuleImplementsAndRunsEverySupportedSpiWithoutExports() throws Exception {
         Path classes = compileFixture("module", true, null);
@@ -83,6 +94,11 @@ class ServerSpiCompatibilityTest {
         }
     }
 
+    /**
+     * Checks real SPI selectors adapt supported fields and keep unconfigured challenge/EAB providers inactive.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void actualSelectorsAdaptAllFieldsAndActivateOnlyConfiguredProviders() throws Exception {
         try (URLClassLoader loader = loader(compileFixture("selected", false, null))) {
@@ -127,6 +143,11 @@ class ServerSpiCompatibilityTest {
         }
     }
 
+    /**
+     * Checks that duplicate cross-generation or blank provider identities fail discovery before a configured selection is attempted.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void crossGenerationDuplicateAndBlankIdentitiesFailBeforeSelection() throws Exception {
         try (URLClassLoader duplicate = loader(compileFixture("duplicate", false, "duplicate"))) {
@@ -143,6 +164,11 @@ class ServerSpiCompatibilityTest {
         }
     }
 
+    /**
+     * Checks unchanged legacy provider bytecode against the requested baseline using original authentication context APIs.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void unchangedLegacyProviderBytecodeUsesOriginalContextConstructorsAndAccessors() throws Exception {
         Path root = Files.createDirectories(directory.resolve("legacy"));

@@ -74,17 +74,40 @@ import zeroecho.pki.server.ServerControlStore;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.PublicKeyIdentity;
 
-/** Bounded credential graph validation and strict immutable public commitments. */
+/**
+ * Bounded credential graph validation and strict immutable public commitments.
+ */
 final class EnrollmentCredentialValidation { // NOPMD CyclomaticComplexity - One credential validation boundary binds chains, keys and persisted identity; individual methods remain checked.
     private static final int SINGLE_CERTIFICATE_COUNT = 1;
     private static final int CERTIFICATE_BYTES = 262_144;
 
+    /**
+     * Validated public credential graph and its exact immutable configuration fingerprint.
+     *
+     * @param configuration configured credential-set coordinates
+     * @param signerChain immutable signer-first response certificate chain
+     * @param trustAnchors immutable requester trust-anchor certificates
+     * @param notBefore latest not-before instant across all validated certificates
+     * @param notAfter earliest not-after instant across all validated certificates
+     * @param fingerprint lowercase SHA-256 binding public configuration and resolved credentials
+     */
     /* default */ record Loaded(EnrollmentRuntimeConfiguration.CredentialSet configuration,
             List<X509Certificate> signerChain, List<X509Certificate> trustAnchors,
             Instant notBefore, Instant notAfter, String fingerprint) { }
 
     private EnrollmentCredentialValidation() { }
 
+    /**
+     * Resolves and validates a credential set, its certificate graph and signer/key binding.
+     *
+     * @param set configured authority, signer, requester trust and key references
+     * @param realm trusted owning realm identity
+     * @param repository authoritative issuer and authority repository
+     * @param rings already opened caller-owned keyrings
+     * @return validated immutable public credential snapshot
+     * @throws IllegalArgumentException if files, certificates, trust paths, key bindings or configuration are
+     *         invalid
+     */
     /* default */ static Loaded load(EnrollmentRuntimeConfiguration.CredentialSet set, String realm,
             PkiRepository repository, Map<String, KeyringStore> rings) {
         try {
@@ -145,6 +168,13 @@ final class EnrollmentCredentialValidation { // NOPMD CyclomaticComplexity - One
         verifyPair(key, leaf, realm, set.credentialId());
     }
 
+    /**
+     * Requires the loaded credential set to select the active authority's current issuance head and path.
+     *
+     * @param loaded previously validated credential-set snapshot
+     * @param repository authoritative current authority/issuer repository
+     * @throws IllegalArgumentException if authority/issuer is missing, inactive or no longer selected
+     */
     /* default */ static void requireCurrent(Loaded loaded, PkiRepository repository) {
         EnrollmentRuntimeConfiguration.CredentialSet set = loaded.configuration();
         CaRecord authority = repository.authority(new PkiId(set.authorityId())).orElseThrow(EnrollmentCredentialValidation::invalid);
@@ -157,6 +187,13 @@ final class EnrollmentCredentialValidation { // NOPMD CyclomaticComplexity - One
         }
     }
 
+    /**
+     * Checks retained credential-set pins and atomically creates pins for newly configured sets.
+     *
+     * @param control exact durable realm control authority
+     * @param loaded complete validated credential-set map by identity
+     * @throws IllegalArgumentException if retained configuration, payload or commitment differs
+     */
     /* default */ static void pin(ServerControlStore control, Map<String, Loaded> loaded) {
         synchronized (control) { // NOPMD AvoidSynchronizedStatement - Shares the authoritative control-store monitor across admission and durable state transitions.
             int offset = 0;

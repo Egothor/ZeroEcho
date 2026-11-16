@@ -62,10 +62,20 @@ import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
 import zeroecho.pki.impl.framework.x509.bc.SimpleAttributeSet;
 
-/** Durable explicit repository-alias authority coverage. */
+/**
+ * Durable explicit repository-alias authority coverage.
+ */
 final class RepositoryAliasServiceTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks current-CRL alias idempotency, expected-current conflict protection and durable restart recovery.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void currentCrlUsesExpectedCurrentAndSurvivesRecovery() throws Exception {
         System.out.println("currentCrlUsesExpectedCurrentAndSurvivesRecovery");
@@ -95,6 +105,11 @@ final class RepositoryAliasServiceTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks delta-CRL aliases accept only delta objects and retain the exact target/publication behavior.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void currentDeltaCrlAliasRequiresDeltaCrlTypeAndIsPublicByDefault() throws Exception {
         System.out.println("currentDeltaCrlAliasRequiresDeltaCrlTypeAndIsPublicByDefault");
@@ -116,6 +131,11 @@ final class RepositoryAliasServiceTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks public chain aliases bind exact issuer/path commitments without changing the authority selected issuance path.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void currentChainBindsExactIssuerPathWithoutChangingIssuanceAuthority() throws Exception {
         System.out.println("currentChainBindsExactIssuerPathWithoutChangingIssuanceAuthority");
@@ -203,17 +223,35 @@ final class RepositoryAliasServiceTest {
                             new SimpleAttributeSet()));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<CaRecord> authority(PkiId id) {
             return authority.caId().equals(id) ? Optional.of(authority) : Optional.empty();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public List<CaRecord> authorities(Optional<PkiId> after, int limit) { return List.of(authority); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<IssuerGeneration> issuer(PkiId id) {
             return issuer.issuerId().equals(id) ? Optional.of(issuer) : Optional.empty();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<IssuerChainPath> chainPath(PkiId id) {
             return path.pathId().equals(id) ? Optional.of(path) : Optional.empty();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<Credential> credential(PkiId id) { return Optional.empty(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<StatusObject> statusObject(PkiId id) {
             if (status.statusObjectId().equals(id)) return Optional.of(status);
             if (deltaStatus.isPresent() && deltaStatus.get().statusObjectId().equals(id)) return deltaStatus;
@@ -223,7 +261,13 @@ final class RepositoryAliasServiceTest {
             }
             return Optional.empty();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiRepositoryContent openCredential(PkiId id) { throw new UnsupportedOperationException(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiRepositoryContent openStatusObject(PkiId id) { throw new UnsupportedOperationException(); }
 
         private static DurableContentReference reference(PkiId id) {

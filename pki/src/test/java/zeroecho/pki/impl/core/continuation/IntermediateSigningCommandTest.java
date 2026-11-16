@@ -58,12 +58,20 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.IntermediateProofProvenanceFixture;
 
+/**
+ * Contract and regression tests for intermediate signing command.
+ */
 final class IntermediateSigningCommandTest {
     private static final String NAMESPACE = "store.provider";
     private static final ConfigurationCommitment CONFIGURATION = new ConfigurationCommitment(new byte[32]);
     private static final Instant NOW = Instant.EPOCH;
     private static final String HASH = "1".repeat(64);
 
+    /**
+     * Retains exact canonical nested proof without lookup.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void retainsExactCanonicalNestedProofWithoutLookup(String operation) {
@@ -81,6 +89,11 @@ final class IntermediateSigningCommandTest {
         assertEquals(template.commandCommitment(), encoded.commandCommitment());
     }
 
+    /**
+     * Rejects changed scope SPKI proof identity and noncanonical provenance.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void rejectsChangedScopeSpkiProofIdentityAndNoncanonicalProvenance(String operation) {
@@ -116,6 +129,11 @@ final class IntermediateSigningCommandTest {
         assertThrows(RuntimeException.class, () -> DomainContinuationValidation.validate(template(operation, truncatedProof)));
     }
 
+    /**
+     * Frozen tbs length and digest reject candidate substitution.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void frozenTbsLengthAndDigestRejectCandidateSubstitution(String operation) {
@@ -131,6 +149,11 @@ final class IntermediateSigningCommandTest {
         }
     }
 
+    /**
+     * Rejects consuming provider parent key and fairness mismatches.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void rejectsConsumingProviderParentKeyAndFairnessMismatches(String operation) {
@@ -145,6 +168,11 @@ final class IntermediateSigningCommandTest {
         }
     }
 
+    /**
+     * Exact aggregate bound includes framing before encoding.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void exactAggregateBoundIncludesFramingBeforeEncoding(String operation) {
@@ -158,6 +186,11 @@ final class IntermediateSigningCommandTest {
         assertThrows(IllegalStateException.class, () -> IntermediateSigningCommand.template(operation, "creation", fields));
     }
 
+    /**
+     * Rejects legacy21 fields and requires operation specific subject scope.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void rejectsLegacy21FieldsAndRequiresOperationSpecificSubjectScope(String operation) {
@@ -177,6 +210,11 @@ final class IntermediateSigningCommandTest {
         }
     }
 
+    /**
+     * Parent subject key inequality applies only to creation.
+     *
+     * @param operation named operation variant under test
+     */
     @ParameterizedTest
     @ValueSource(strings = {"CREATE_INTERMEDIATE", "ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void parentSubjectKeyInequalityAppliesOnlyToCreation(String operation) {
@@ -191,11 +229,17 @@ final class IntermediateSigningCommandTest {
         }
     }
 
+    /**
+     * Rejects discriminators outside the three operation schema.
+     */
     @Test void rejectsDiscriminatorsOutsideTheThreeOperationSchema() {
         List<String> fields = DomainCommandEncoding.decode(valid(IntermediateSigningCommand.CREATE).command()).fields();
         assertThrows(IllegalStateException.class, () -> IntermediateSigningCommand.template("CREATE_ROOT", "creation", fields));
     }
 
+    /**
+     * Dual proof container binds independent alternative role and rejects swapped proofs.
+     */
     @Test void dualProofContainerBindsIndependentAlternativeRoleAndRejectsSwappedProofs() {
         var original = DomainCommandEncoding.decode(valid(IntermediateSigningCommand.ISSUE).command());
         var primary = nested(original.fields());

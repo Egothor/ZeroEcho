@@ -57,6 +57,7 @@ final class KemKeyDerivation {
      * @param outputBytes  requested KEK size
      * @return newly allocated KEK bytes
      * @throws GeneralSecurityException if HKDF fails
+     * @throws NullPointerException if {@code algorithmId} is null
      */
     /* default */ static byte[] derive(byte[] sharedSecret, byte[] salt, String algorithmId, int outputBytes)
             throws GeneralSecurityException {

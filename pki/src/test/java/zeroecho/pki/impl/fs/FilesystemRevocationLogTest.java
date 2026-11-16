@@ -67,6 +67,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for filesystem revocation log.
+ */
 final class FilesystemRevocationLogTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -77,9 +80,17 @@ final class FilesystemRevocationLogTest {
     private static final PkiId SECOND = new PkiId("credential:second");
     private static final Set<PkiId> AUTHORIZED = Set.of(FIRST, SECOND);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * New log reopen identity and exclusive writer lifecycle are strict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void newLogReopenIdentityAndExclusiveWriterLifecycleAreStrict() throws Exception {
         System.out.print("newLogReopenIdentityAndExclusiveWriterLifecycleAreStrict ");
@@ -105,6 +116,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * First and interleaved credential transitions recover deterministically.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void firstAndInterleavedCredentialTransitionsRecoverDeterministically() throws Exception {
         System.out.print("firstAndInterleavedCredentialTransitionsRecoverDeterministically ");
@@ -139,6 +155,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Existing revocation legality and time rules remain strict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void existingRevocationLegalityAndTimeRulesRemainStrict() throws Exception {
         System.out.print("existingRevocationLegalityAndTimeRulesRemainStrict ");
@@ -158,6 +179,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Wrong revision and commitment chains fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void wrongRevisionAndCommitmentChainsFailClosed() throws Exception {
         System.out.print("wrongRevisionAndCommitmentChainsFailClosed ");
@@ -194,6 +220,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Incomplete final record is repaired without second scan or prefix change.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void incompleteFinalRecordIsRepairedWithoutSecondScanOrPrefixChange() throws Exception {
         System.out.print("incompleteFinalRecordIsRepairedWithoutSecondScanOrPrefixChange ");
@@ -222,6 +253,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Corrupt complete record is never truncated.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptCompleteRecordIsNeverTruncated() throws Exception {
         System.out.print("corruptCompleteRecordIsNeverTruncated ");
@@ -246,6 +282,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Complete record after force uncertainty is authoritative on reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void completeRecordAfterForceUncertaintyIsAuthoritativeOnReopen() throws Exception {
         System.out.print("completeRecordAfterForceUncertaintyIsAuthoritativeOnReopen ");
@@ -272,6 +313,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Append failure fences the writer and retains the prior prefix.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void appendFailureFencesTheWriterAndRetainsThePriorPrefix() throws Exception {
         System.out.print("appendFailureFencesTheWriterAndRetainsThePriorPrefix ");
@@ -294,6 +340,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Authority preamble and entry type failures fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void authorityPreambleAndEntryTypeFailuresFailClosed() throws Exception {
@@ -316,6 +367,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * First record chain is bound to the authenticated store preamble.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void firstRecordChainIsBoundToTheAuthenticatedStorePreamble() throws Exception {
         System.out.print("firstRecordChainIsBoundToTheAuthenticatedStorePreamble ");
@@ -343,6 +399,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Advisory parent force failure emits one redacted warning and creation succeeds.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void advisoryParentForceFailureEmitsOneRedactedWarningAndCreationSucceeds() throws Exception {
         System.out.print("advisoryParentForceFailureEmitsOneRedactedWarningAndCreationSucceeds ");
@@ -399,6 +460,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Limited capabilities still attempt parent force and logging failure is advisory.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void limitedCapabilitiesStillAttemptParentForceAndLoggingFailureIsAdvisory() throws Exception {
         System.out.print("limitedCapabilitiesStillAttemptParentForceAndLoggingFailureIsAdvisory ");
@@ -447,6 +513,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Streaming sink is provisional and no history collection is retained.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void streamingSinkIsProvisionalAndNoHistoryCollectionIsRetained() throws Exception {
         System.out.print("streamingSinkIsProvisionalAndNoHistoryCollectionIsRetained ");
@@ -484,6 +555,11 @@ final class FilesystemRevocationLogTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Recovery sink failures remain callback failures and always abort.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoverySinkFailuresRemainCallbackFailuresAndAlwaysAbort() throws Exception {
         System.out.print("recoverySinkFailuresRemainCallbackFailuresAndAlwaysAbort ");

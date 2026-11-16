@@ -61,7 +61,20 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
         Optional<Path> clientCertificate, Optional<Path> clientKey, Optional<Path> trustStore,
         Optional<String> trustStorePasswordEnv) {
 
-    /** Validates the closed connection target. */
+    /**
+     * Checks HTTPS/host and exclusive client-identity option combinations without opening files or connecting.
+     *
+     * @param baseUri validated {@code https} base URL
+     * @param clientKeystore PKCS#12 holding the client certificate and private key
+     * @param clientKeystorePasswordEnv environment variable holding the keystore password
+     * @param clientCertificate PEM client certificate chain (alternative to a keystore)
+     * @param clientKey PEM PKCS#8 private key (alternative to a keystore)
+     * @param trustStore PKCS#12 or PEM bundle of CAs that verify the server certificate
+     * @param trustStorePasswordEnv environment variable holding the truststore password
+     * @throws NullPointerException if the URI or an optional container is null
+     * @throws IllegalArgumentException if the URI lacks HTTPS/host, certificate/key pairing is incomplete or
+     *     store/password options conflict
+     */
     PkiRemoteTarget {
         Objects.requireNonNull(baseUri, "baseUri");
         Objects.requireNonNull(clientKeystore, "clientKeystore");
@@ -88,7 +101,11 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
         }
     }
 
-    /** @return {@code true} when the client identity is a PEM certificate and key pair */
+    /**
+     * Reports the configured PEM client-identity representation.
+     *
+     * @return true when the validated option combination contains a certificate/key pair
+     */
     /* default */ boolean usesPemClientIdentity() {
         return clientCertificate.isPresent();
     }
@@ -97,7 +114,12 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
      * Parses and validates a remote target from the raw option values, applying the
      * documented mode-selection rule.
      *
-     * @param url base URL value, {@code null} when {@code --url} is absent
+     * <p>This parser requires a selected remote URL; mode selection is performed by
+     * the caller. Paths and environment variable names are retained without reading
+     * credentials, opening files or validating TLS trust. The constructor checks
+     * HTTPS and host shape, not every later request-target restriction.</p>
+     *
+     * @param url required selected remote base URL
      * @param clientKeystore keystore path value or {@code null}
      * @param clientKeystorePasswordEnv keystore password environment name or {@code null}
      * @param clientCertificate PEM certificate path value or {@code null}
@@ -105,7 +127,8 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
      * @param trustStore truststore path value or {@code null}
      * @param trustStorePasswordEnv truststore password environment name or {@code null}
      * @return the validated target
-     * @throws IllegalArgumentException when the URL is malformed or the option combination is invalid
+     * @throws NullPointerException if the URL is null
+     * @throws IllegalArgumentException when URL/path syntax or the option combination is invalid
      */
     /* default */ static PkiRemoteTarget parse(String url, String clientKeystore, String clientKeystorePasswordEnv,
             String clientCertificate, String clientKey, String trustStore, String trustStorePasswordEnv) {

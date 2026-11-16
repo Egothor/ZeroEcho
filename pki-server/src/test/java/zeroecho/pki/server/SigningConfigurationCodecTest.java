@@ -42,6 +42,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Checks strict server signing-capability configuration and canonical policy projection.
+ */
 class SigningConfigurationCodecTest {
     private static final String SIGNING = """
         "signing": {
@@ -58,6 +61,11 @@ class SigningConfigurationCodecTest {
         },
         """;
 
+    /**
+     * Checks the current provider, bounded lane topology, exact managed-key group and pure-EdDSA byte bound survive decoding.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void decodesOnlyCurrentProviderAndFiniteTopology() throws Exception {
         PkiServerConfiguration result = decode(SIGNING);
@@ -70,6 +78,11 @@ class SigningConfigurationCodecTest {
         assertEquals(1048576L, signing.pureEdDsaMaximumTbsBytes().orElseThrow());
     }
 
+    /**
+     * Checks removed routing/default/workflow fields are rejected rather than translated by compatibility adapters.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsRemovedRoutingAndDefaultFieldsWithoutAdapters() throws Exception {
         for (String field : java.util.List.of("workflow", "framework", "signingServices", "caRouting",
@@ -81,6 +94,11 @@ class SigningConfigurationCodecTest {
                 SIGNING.replace("\"provider\":", "\"workflow\":")));
     }
 
+    /**
+     * Checks topology decoding requires its catch-all lane and rejects duplicate exact-key ownership.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsMissingCatchAllAndOverlappingExactKeys() throws Exception {
         assertThrows(IllegalArgumentException.class, () -> decode(
@@ -89,6 +107,11 @@ class SigningConfigurationCodecTest {
                 SIGNING.replace("[\"key:a\"]", "[\"key:a\",\"key:a\"]")));
     }
 
+    /**
+     * Checks SDK listener activation requires canonical origin spelling and supported body bounds while omitted activation stays disabled.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void sdkListenerOptInIsExplicitCanonicalAndBodyBounded() throws Exception {
         String example = Files.readString(Path.of("..", "documentation", "examples", "configuration", "pki-server-production-example.json"));
         var document = (zeroecho.pki.application.PkiOperationValue.ObjectValue) zeroecho.pki.server.http.StrictJson.parse(
@@ -115,11 +138,21 @@ class SigningConfigurationCodecTest {
                 signing + "\"publishers\": []").getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Checks resolving startup publisher custody preserves an explicitly configured first administrator and realm binding.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void startupPublisherResolutionPreservesConfiguredFirstAdministratorAndRealm() throws Exception {
         assertStartupPublisherResolutionPreservesConfiguration(true);
     }
 
+    /**
+     * Checks startup publisher resolution does not synthesize a first administrator when configuration omits one.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void startupPublisherResolutionKeepsAbsentFirstAdministratorDisabled() throws Exception {
         assertStartupPublisherResolutionPreservesConfiguration(false);

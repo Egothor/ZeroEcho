@@ -43,7 +43,9 @@ import java.util.concurrent.Semaphore;
 
 import zeroecho.pki.server.PkiServerConfiguration;
 
-/** Bounded restart-local ACME rate and finalization admission authority. */
+/**
+ * Bounded restart-local ACME rate and finalization admission authority.
+ */
 @SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel", "PMD.ControlStatementBraces" })
 public final class AcmeRateAdmission {
     private final Duration window;
@@ -107,7 +109,9 @@ public final class AcmeRateAdmission {
      */
     public boolean tryAcquireFinalization() { return finalizations.tryAcquire(); }
 
-    /** Releases one previously acquired finalization permit. */
+    /**
+     * Releases one previously acquired finalization permit.
+     */
     public void releaseFinalization() { finalizations.release(); }
 
     /**

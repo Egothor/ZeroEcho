@@ -67,6 +67,7 @@ public class PlainString implements PlainContent {
      * Constructs a PlainString with the given string.
      *
      * @param str the plain text content; must not be null
+     * @throws NullPointerException if {@code str} is null
      */
     public PlainString(final String str) {
         Objects.requireNonNull(str, "plain string must not be null");

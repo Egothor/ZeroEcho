@@ -46,10 +46,17 @@ import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Fast contract tests for the controlled production-ledger recovery artifact. */
+/**
+ * Fast contract tests for the controlled production-ledger recovery artifact.
+ */
 final class SigningRecoveryBenchmarkTest {
     private static final Instant CREATED_AT = Instant.ofEpochMilli(1_800_000_000_000L);
 
+    /**
+     * Configuration enforces fixed segment and suffix bounds.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void configurationEnforcesFixedSegmentAndSuffixBounds(@TempDir Path temporary) {
         SigningRecoveryBenchmark.Configuration maximum = configuration(temporary.resolve("max"),
@@ -67,6 +74,12 @@ final class SigningRecoveryBenchmarkTest {
         assertEquals("CONFIGURATION_INVALID", rejected(temporary, 4, 1_000_001));
     }
 
+    /**
+     * Tiny controlled image recovers exact production state.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void tinyControlledImageRecoversExactProductionState(@TempDir Path temporary)
             throws Exception {
@@ -130,6 +143,12 @@ final class SigningRecoveryBenchmarkTest {
         assertFalse(json.contains("threshold"));
     }
 
+    /**
+     * Existing image and tampered descriptor fail closed.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void existingImageAndTamperedDescriptorFailClosed(@TempDir Path temporary) throws Exception {
         Path workRoot = temporary.resolve("image");
@@ -148,6 +167,12 @@ final class SigningRecoveryBenchmarkTest {
         assertEquals("DESCRIPTOR_INVALID", tampered.reasonCode());
     }
 
+    /**
+     * Missing or empty descriptor field fails with stable reason.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void missingOrEmptyDescriptorFieldFailsWithStableReason(@TempDir Path temporary)
             throws Exception {
@@ -165,6 +190,12 @@ final class SigningRecoveryBenchmarkTest {
         assertDescriptorInvalid(workRoot);
     }
 
+    /**
+     * Oversized descriptor and malformed manifest fail before unbounded allocation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void oversizedDescriptorAndMalformedManifestFailBeforeUnboundedAllocation(
             @TempDir Path temporary) throws Exception {

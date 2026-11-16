@@ -52,6 +52,7 @@ public record ConfirmationRealmBinding(String value) {
      *
      * @throws NullPointerException if {@code value} is {@code null}
      * @throws IllegalArgumentException if {@code value} is not canonical
+     * @param value 1 through 128 canonical lowercase ASCII characters
      */
     public ConfirmationRealmBinding {
         Objects.requireNonNull(value, "value");

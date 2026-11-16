@@ -76,6 +76,13 @@ public final class PkiProfileBootstrap {
         System.exit(execute(arguments, System.err));
     }
 
+    /**
+     * Imports profile files through a locally opened session and reports a classified exit status.
+     *
+     * @param arguments exactly the config, profiles-directory, and store-directory option pairs
+     * @param diagnostics destination for progress and sanitized failure messages; must not be null
+     * @return success, invocation, configuration, or execution status from {@link PkiExitCodes}
+     */
     /* default */ // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
                   // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
                   // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.

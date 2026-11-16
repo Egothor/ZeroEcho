@@ -53,6 +53,9 @@ import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectKind;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectLayout;
 
+/**
+ * Contract and regression tests for streaming DER reader.
+ */
 final class StreamingDerReaderTest {
 
     private static final byte[] CRL = {
@@ -66,6 +69,11 @@ final class StreamingDerReaderTest {
             0x03, 0x02, 0x00, (byte) 0xaa
     };
 
+    /**
+     * Unsigned certificate tbs spans refer to original DER and reject malformed bounds.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unsignedCertificateTbsSpansReferToOriginalDerAndRejectMalformedBounds() throws Exception {
         byte[] tbs = java.util.HexFormat.of().parseHex("301a020101300406022a033000300030003009300406022a03030100");
@@ -100,6 +108,11 @@ final class StreamingDerReaderTest {
                 28, 5, 6, 17, Integer.MAX_VALUE));
     }
 
+    /**
+     * Validates canonical CRL and locates signed fields.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validatesCanonicalCrlAndLocatesSignedFields() throws Exception {
         System.out.println("validatesCanonicalCrlAndLocatesSignedFields");
@@ -124,6 +137,9 @@ final class StreamingDerReaderTest {
         System.out.println("validatesCanonicalCrlAndLocatesSignedFields...ok");
     }
 
+    /**
+     * CRL inspection rejects structurally valid v1 certificate.
+     */
     @Test
     void crlInspectionRejectsStructurallyValidV1Certificate() {
         System.out.println("crlInspectionRejectsStructurallyValidV1Certificate");
@@ -144,6 +160,11 @@ final class StreamingDerReaderTest {
         System.out.println("crlInspectionRejectsStructurallyValidV1Certificate...ok");
     }
 
+    /**
+     * CRL inspection returns exact optional next update.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crlInspectionReturnsExactOptionalNextUpdate() throws Exception {
         System.out.println("crlInspectionReturnsExactOptionalNextUpdate");
@@ -162,6 +183,9 @@ final class StreamingDerReaderTest {
         System.out.println("crlInspectionReturnsExactOptionalNextUpdate...ok");
     }
 
+    /**
+     * CRL inspection rejects malformed optional times entries and extensions.
+     */
     @Test
     void crlInspectionRejectsMalformedOptionalTimesEntriesAndExtensions() {
         System.out.println("crlInspectionRejectsMalformedOptionalTimesEntriesAndExtensions");
@@ -190,6 +214,9 @@ final class StreamingDerReaderTest {
         System.out.println("crlInspectionRejectsMalformedOptionalTimesEntriesAndExtensions...ok");
     }
 
+    /**
+     * Rejects trailing indefinite and non minimal length.
+     */
     @Test
     void rejectsTrailingIndefiniteAndNonMinimalLength() {
         System.out.println("rejectsTrailingIndefiniteAndNonMinimalLength");
@@ -206,6 +233,9 @@ final class StreamingDerReaderTest {
         System.out.println("rejectsTrailingIndefiniteAndNonMinimalLength...ok");
     }
 
+    /**
+     * Rejects non canonical primitive forms.
+     */
     @Test
     void rejectsNonCanonicalPrimitiveForms() {
         System.out.println("rejectsNonCanonicalPrimitiveForms");
@@ -222,6 +252,11 @@ final class StreamingDerReaderTest {
         System.out.println("rejectsNonCanonicalPrimitiveForms...ok");
     }
 
+    /**
+     * Bounded entry rejects oversize and hostile high tags.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedEntryRejectsOversizeAndHostileHighTags() throws Exception {
         System.out.println("boundedEntryRejectsOversizeAndHostileHighTags");
@@ -238,6 +273,11 @@ final class StreamingDerReaderTest {
         System.out.println("boundedEntryRejectsOversizeAndHostileHighTags...ok");
     }
 
+    /**
+     * Validates reachable enumerated times and X.509 strings.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validatesReachableEnumeratedTimesAndX509Strings() throws Exception {
         System.out.println("validatesReachableEnumeratedTimesAndX509Strings");
@@ -257,6 +297,11 @@ final class StreamingDerReaderTest {
         System.out.println("validatesReachableEnumeratedTimesAndX509Strings...ok");
     }
 
+    /**
+     * Subject public key info requires zero pad bits.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void subjectPublicKeyInfoRequiresZeroPadBits() throws Exception {
         System.out.println("subjectPublicKeyInfoRequiresZeroPadBits");
@@ -269,6 +314,11 @@ final class StreamingDerReaderTest {
         System.out.println("subjectPublicKeyInfoRequiresZeroPadBits...ok");
     }
 
+    /**
+     * Enforces canonical set ordering.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void enforcesCanonicalSetOrdering() throws Exception {
         System.out.println("enforcesCanonicalSetOrdering");
@@ -283,6 +333,11 @@ final class StreamingDerReaderTest {
         System.out.println("enforcesCanonicalSetOrdering...ok");
     }
 
+    /**
+     * Set ordering uses fixed source passes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void setOrderingUsesFixedSourcePasses() throws Exception {
         System.out.println("setOrderingUsesFixedSourcePasses");
@@ -297,6 +352,11 @@ final class StreamingDerReaderTest {
         System.out.println("setOrderingUsesFixedSourcePasses...ok");
     }
 
+    /**
+     * Dense empty primitive input uses one streaming pass.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void denseEmptyPrimitiveInputUsesOneStreamingPass() throws Exception {
         System.out.println("denseEmptyPrimitiveInputUsesOneStreamingPass");
@@ -317,6 +377,11 @@ final class StreamingDerReaderTest {
         System.out.println("denseEmptyPrimitiveInputUsesOneStreamingPass...ok");
     }
 
+    /**
+     * CRL semantics extracts full and delta numbers without changing layout.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crlSemanticsExtractsFullAndDeltaNumbersWithoutChangingLayout() throws Exception {
         StreamingDerReader reader = new StreamingDerReader();
@@ -337,6 +402,9 @@ final class StreamingDerReaderTest {
         assertEquals(java.util.Optional.of(java.math.BigInteger.valueOf(3)), semantic.deltaIndicator());
     }
 
+    /**
+     * CRL semantics rejects missing duplicate wrong criticality and malformed numbers.
+     */
     @Test
     void crlSemanticsRejectsMissingDuplicateWrongCriticalityAndMalformedNumbers() {
         StreamingDerReader reader = new StreamingDerReader();
@@ -374,6 +442,11 @@ final class StreamingDerReaderTest {
                 SignedObjectKind.CRL, CancellationSignal.NONE));
     }
 
+    /**
+     * CRL semantics does not collect entry extensions and closes on cancellation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crlSemanticsDoesNotCollectEntryExtensionsAndClosesOnCancellation() throws Exception {
         StreamingDerReader reader = new StreamingDerReader();
@@ -493,7 +566,9 @@ final class StreamingDerReaderTest {
         return result;
     }
 
-    /** Repeatable test content that accounts for every fixed comparison pass. */
+    /**
+     * Repeatable test content that accounts for every fixed comparison pass.
+     */
     private static final class CountingContent implements RepeatableContent {
         private final byte[] encoded;
         private final AtomicInteger opens = new AtomicInteger();

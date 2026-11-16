@@ -44,7 +44,14 @@ import java.util.Objects;
  */
 public record CsrAttribute(String oid, List<byte[]> derValues) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Retains validated components and defensively copies mutable inputs.
+     *
+     * @param oid the attribute type OID
+     * @param derValues the exact DER of each attribute value
+     * @throws NullPointerException if the OID, value list, or any encoded value is null
+     * @throws IllegalArgumentException if the attribute OID is blank
+     */
     public CsrAttribute {
         Objects.requireNonNull(oid, "oid");
         Objects.requireNonNull(derValues, "derValues");
@@ -69,6 +76,7 @@ public record CsrAttribute(String oid, List<byte[]> derValues) {
      * Decodes one standard PKCS#9 challengePassword DirectoryString, bounded to
      * 255 characters. This validates syntax only; the returned secret must not
      * enter diagnostics or ordinary request projections.
+     *
      * @return challenge text
      * @throws IllegalArgumentException for a different OID, multiplicity, type or size
      */

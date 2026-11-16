@@ -68,8 +68,16 @@ import zeroecho.pki.server.PkiServerConfiguration;
  * {@code cacerts}, {@code simpleenroll}, {@code simplereenroll}, {@code csrattrs},
  * {@code serverkeygen}.</p>
  *
- * <p>All EST operations require mutual TLS. Requests without a valid client certificate
- * are rejected with HTTP 401.</p>
+ * <p>Routed native EST and enabled SDK operations require a peer X.509 certificate
+ * from the HTTPS session; absent peer identity produces HTTP 401. Readiness,
+ * admission and disabled-route checks can return before that identity check.
+ * The listener's TLS policy establishes peer validation; the handler does not
+ * authenticate a supplied Java certificate object independently.</p>
+ *
+ * <p>Enabled SDK sidepaths require the exact configured origin/media type and
+ * closed action grammar. Runtime cancellation and timeout handling do not prove
+ * that a durable enrollment was rolled back. The realm service/coordinator owns
+ * exact replay, admission and retained operation recovery.</p>
  *
  * @since 1.0
  */
@@ -86,7 +94,9 @@ public final class EstHttpHandler implements HttpHandler {
     private final Duration maximumDeadline;
     private final Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk;
 
-    /** Creates an EST boundary with mutual TLS and runtime admission control.
+    /**
+     * Creates an EST boundary with mutual TLS and runtime admission control.
+     *
      * @param realm owning realm
      * @param service EST operations
      * @param runtime admission controller
@@ -94,6 +104,9 @@ public final class EstHttpHandler implements HttpHandler {
      * @param ready readiness predicate
      * @param configuredMaximumBodyBytes listener request-body bound, capped at 64 KiB
      * @param maximumDeadline positive execution deadline, at most one hour
+     * @throws NullPointerException if a required dependency, deadline or SDK option container is null
+     * @throws IllegalArgumentException if the body limit is not positive or deadline is outside zero-exclusive
+     *     through one hour
      */
     public EstHttpHandler(ServerRealmContext realm, EstService service, ServerRuntime runtime,
             RequestIds requestIds, BooleanSupplier ready, int configuredMaximumBodyBytes, Duration maximumDeadline) {
@@ -102,10 +115,18 @@ public final class EstHttpHandler implements HttpHandler {
 
     /**
      * Adds explicitly configured SDK sidepaths while preserving the existing native boundary.
-     * @param realm owning realm @param service EST operations @param runtime bounded execution
-     * @param requestIds request correlation @param ready readiness predicate
+     *
+     * @param realm owning realm
+     * @param service EST operations
+     * @param runtime bounded execution
+     * @param requestIds request correlation
+     * @param ready readiness predicate
      * @param configuredMaximumBodyBytes existing body limit, still capped at64KiB
-     * @param maximumDeadline existing execution deadline @param hybridSdk explicit configured SDK origin
+     * @param maximumDeadline existing execution deadline
+     * @param hybridSdk explicit configured SDK origin
+     * @throws NullPointerException if a required dependency, deadline or SDK option container is null
+     * @throws IllegalArgumentException if the body limit is not positive or deadline is outside zero-exclusive
+     *     through one hour
      */
     public EstHttpHandler(ServerRealmContext realm, EstService service, ServerRuntime runtime,
             RequestIds requestIds, BooleanSupplier ready, int configuredMaximumBodyBytes, Duration maximumDeadline,
@@ -126,6 +147,18 @@ public final class EstHttpHandler implements HttpHandler {
         }
     }
 
+    /**
+     * Handles one exchange using readiness/rate admission and a bounded runtime task.
+     *
+     * <p>Request bodies and ordinary response streams are closed by the routed
+     * helpers. Encrypted key delivery is claimed once for this exchange, streamed
+     * with its lease and cancellation signal, and not replaced by an error body
+     * after delivery was claimed. Admission capacity is released in a finally
+     * block; this does not undo any already durable protocol operation.</p>
+     *
+     * @param exchange HTTPS exchange supplied by the server listener
+     * @throws IOException if request/response transport cannot complete
+     */
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request";

@@ -40,8 +40,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Checks sole-listener registration, coalesced notification and lifecycle-safe wake removal.
+ */
 final class RealmReconciliationWakeSignalTest {
 
+    /**
+     * Checks exclusive listener registration, exact-owner release and best-effort wake callback failure isolation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void retainsOneListenerAndDiscardsCallbackFailure() throws Exception {
         RealmReconciliationWakeSignal signal = new RealmReconciliationWakeSignal();

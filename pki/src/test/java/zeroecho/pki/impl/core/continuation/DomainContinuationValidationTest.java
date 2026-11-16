@@ -47,10 +47,16 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for domain continuation validation.
+ */
 final class DomainContinuationValidationTest {
     private static final PkiId OPERATION_ID = new PkiId("signing:validation-test");
     private static final String DIGEST = "1".repeat(64);
 
+    /**
+     * Live intermediate record rejects substituted content length and digest.
+     */
     @Test
     void liveIntermediateRecordRejectsSubstitutedContentLengthAndDigest() {
         Instant now = Instant.parse("2026-08-20T10:00:00Z");
@@ -78,6 +84,9 @@ final class DomainContinuationValidationTest {
         }
     }
 
+    /**
+     * Recovered record requires key and canonical commitment.
+     */
     @Test
     void recoveredRecordRequiresKeyAndCanonicalCommitment() {
         DomainContinuationStore.Record valid = record(command("2026-08-20T10:00:00Z"), null);
@@ -90,6 +99,9 @@ final class DomainContinuationValidationTest {
                 OPERATION_ID, hostileCommitment, 4096));
     }
 
+    /**
+     * Recovered record rejects noncanonical command and lifecycle.
+     */
     @Test
     void recoveredRecordRejectsNoncanonicalCommandAndLifecycle() {
         DomainContinuationStore.Record noncanonicalInstant = record(command("2026-08-20T10:00:00.000Z"), null);

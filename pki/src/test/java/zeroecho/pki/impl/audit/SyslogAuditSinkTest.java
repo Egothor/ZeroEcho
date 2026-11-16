@@ -64,8 +64,16 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for syslog audit sink.
+ */
 public final class SyslogAuditSinkTest {
 
+    /**
+     * Close aborts in flight tcp record without reconnect.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void closeAbortsInFlightTcpRecordWithoutReconnect() throws Exception {
@@ -142,6 +150,11 @@ public final class SyslogAuditSinkTest {
 
     // ── UDP send ──────────────────────────────────────────────────────────────
 
+    /**
+     * Udp send received datagram contains rfc5424 fields.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(5)
     void udpSend_receivedDatagram_containsRfc5424Fields() throws Exception {
@@ -174,6 +187,11 @@ public final class SyslogAuditSinkTest {
         System.out.println("  ok");
     }
 
+    /**
+     * Udp send concurrent records all received.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(5)
     void udpSend_concurrentRecords_allReceived() throws Exception {
@@ -217,11 +235,17 @@ public final class SyslogAuditSinkTest {
 
     // ── Provider config ───────────────────────────────────────────────────────
 
+    /**
+     * Checks that the syslog audit provider exposes its stable provider identifier.
+     */
     @Test
     void provider_id_isSyslog() {
         assertEquals("syslog", new SyslogAuditSinkProvider().id());
     }
 
+    /**
+     * Provider missing host throws illegal argument.
+     */
     @Test
     void provider_missingHost_throwsIllegalArgument() {
         SyslogAuditSinkProvider provider = new SyslogAuditSinkProvider();
@@ -229,6 +253,9 @@ public final class SyslogAuditSinkTest {
         assertThrows(IllegalArgumentException.class, () -> provider.validateConfig(config));
     }
 
+    /**
+     * Provider invalid port throws illegal argument.
+     */
     @Test
     void provider_invalidPort_throwsIllegalArgument() {
         SyslogAuditSinkProvider provider = new SyslogAuditSinkProvider();
@@ -236,6 +263,9 @@ public final class SyslogAuditSinkTest {
         assertThrows(IllegalArgumentException.class, () -> provider.validateConfig(config));
     }
 
+    /**
+     * Provider invalid protocol throws illegal argument.
+     */
     @Test
     void provider_invalidProtocol_throwsIllegalArgument() {
         SyslogAuditSinkProvider provider = new SyslogAuditSinkProvider();
@@ -243,6 +273,11 @@ public final class SyslogAuditSinkTest {
         assertThrows(IllegalArgumentException.class, () -> provider.validateConfig(config));
     }
 
+    /**
+     * Provider allocate creates udp sink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(5)
     void provider_allocate_createsUdpSink() throws Exception {
@@ -272,6 +307,11 @@ public final class SyslogAuditSinkTest {
 
     // ── Close guard ───────────────────────────────────────────────────────────
 
+    /**
+     * Record after close throws illegal state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(5)
     void record_afterClose_throwsIllegalState() throws Exception {

@@ -75,12 +75,26 @@ public final class CredentialPublicationGate {
      * @param principalId canonical server principal identity
      */
     public record AuditActor(String principalId) {
-        /** Validates the actor using the server principal-identity contract. */
+        /**
+         * Validates the actor using the server principal-identity contract.
+         * @param principalId canonical server principal identity
+         */
         public AuditActor {
             principalId = Permission.requirePrincipal(principalId);
         }
     }
 
+    /**
+     * Composes authoritative confirmation initialization and disclosure publication checks.
+     *
+     * @param repository authoritative credential and issuer repository
+     * @param profiles authoritative frozen profile resolver
+     * @param confirmations credential confirmation lifecycle service
+     * @param disclosure durable disclosure policy service
+     * @param clock confirmation/publication time source
+     * @param lifecycleGuard rejects access after the realm closes
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ CredentialPublicationGate(PkiRepository repository, ProfileService profiles,
             CredentialConfirmationService confirmations, DisclosureService disclosure, Clock clock,
             Runnable lifecycleGuard) {
@@ -101,6 +115,7 @@ public final class CredentialPublicationGate {
      * @return newly registered or exactly matching existing disclosure record
      * @throws IllegalArgumentException if the credential or its frozen profile is unavailable
      * @throws IllegalStateException if authoritative state conflicts or the realm is closed
+     * @throws NullPointerException if any of {@code credentialId}, {@code owner}, {@code auditActor} is null
      */
     public DisclosureService.Record register(PkiId credentialId, Optional<DisclosureService.Owner> owner,
             AuditActor auditActor) {
@@ -118,6 +133,16 @@ public final class CredentialPublicationGate {
                 exactActor.principalId());
     }
 
+    /**
+     * Resolves exact credential authorization coordinates before publication admission.
+     *
+     * @param realmId trusted realm owning the publication
+     * @param credentialId authoritative issued credential identity
+     * @param owner explicit optional owner; never inferred from the current actor
+     * @return certificate resource bound to authoritative authority and profile coordinates
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalArgumentException if credential/profile/owner prerequisites are invalid
+     */
     /* default */ Permission.Resource publicationResource(RealmId realmId, PkiId credentialId,
             Optional<DisclosureService.Owner> owner) {
         Objects.requireNonNull(realmId, "realmId");

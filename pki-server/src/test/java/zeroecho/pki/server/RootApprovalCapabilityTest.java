@@ -49,9 +49,20 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 import zeroecho.pki.spi.bootstrap.PkiBootstrap;
 
+/**
+ * Checks explicit root-approval capability selection independently of ordinary administrative privileges.
+ */
 class RootApprovalCapabilityTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks deny, expiry, disabled state, foreign scope and unmet conditions all constrain explicit own-decision capability.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void explicitDenyExpiredDisabledWrongScopeAndConditionalGrantsBlockOwnDecision() throws Exception {
         for (String mode : List.of("deny", "expired", "disabled", "scope", "condition", "principal")) {
@@ -86,6 +97,11 @@ class RootApprovalCapabilityTest {
         }
     }
 
+    /**
+     * Checks embedded approval service construction does not activate runtime own-decision authority merely because a capability is stored.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void embeddedConstructorRemainsSeparatedEvenWithStoredOwnCapability() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -101,6 +117,11 @@ class RootApprovalCapabilityTest {
         }
     }
 
+    /**
+     * Checks own-decision privilege cannot replace the ordinary permission needed to approve the target.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void ownPrivilegeDoesNotReplaceOrdinaryApprovalPermission() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -116,6 +137,11 @@ class RootApprovalCapabilityTest {
         }
     }
 
+    /**
+     * Checks root contributes only one eligible threshold decision and cannot duplicate its vote or ignore eligibility.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rootStillNeedsEligibilityAndDistinctThresholdDecisions() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -139,6 +165,11 @@ class RootApprovalCapabilityTest {
         }
     }
 
+    /**
+     * Checks a principal named root receives no implicit ability to decide its own request.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rootNameAloneDoesNotConferOwnDecisionCapability() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -154,6 +185,9 @@ class RootApprovalCapabilityTest {
         }
     }
 
+    /**
+     * Checks own-decision capability retains persistence code 10 and is absent from every implicit built-in role action set.
+     */
     @Test
     void rootCapabilityHasStableCodeAndNoBuiltInRoleImplicitlyIncludesIt() {
         assertEquals(10, Permission.Action.APPROVAL_DECIDE_OWN.code());

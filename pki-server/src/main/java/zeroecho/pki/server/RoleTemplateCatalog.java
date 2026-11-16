@@ -48,12 +48,16 @@ import tools.jackson.core.JsonToken;
 import tools.jackson.core.TokenStreamFactory;
 import tools.jackson.core.json.JsonFactory;
 
-/** Strict deterministic loader for versioned built-in role templates. */
+/**
+ * Strict deterministic loader for versioned built-in role templates.
+ */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ControlStatementBraces",
         "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.ExceptionAsFlowControl",
         "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace", "PMD.UseEnumCollections" })
 public final class RoleTemplateCatalog {
-    /** Classpath resource holding the normative role templates. */
+    /**
+     * Classpath resource holding the normative role templates.
+     */
     public static final String RESOURCE = "zeroecho/pki/server/security/role-templates-v1.json";
     private static final int MAXIMUM_RESOURCE_BYTES = 131_072;
     private static final TokenStreamFactory JSON = JsonFactory.builder().build();
@@ -66,7 +70,15 @@ public final class RoleTemplateCatalog {
      * @param actions finite permission actions supplied by the template
      */
     public record Template(String templateId, int version, Set<Permission.Action> actions) {
-        /** Validates the stable template. */
+        /**
+         * Validates the stable template.
+         * @param templateId stable template identifier
+         * @param version positive template version
+         * @param actions finite permission actions supplied by the template
+         * @throws NullPointerException if {@code actions} is null
+         * @throws IllegalArgumentException if the role-template version is not positive or the role template
+         *         has no actions
+         */
         public Template {
             Permission.requireId(templateId, "role template");
             if (version <= 0) throw new IllegalArgumentException("Role template version must be positive");
@@ -89,7 +101,18 @@ public final class RoleTemplateCatalog {
     public record Assignment(String assignmentId, String principalId, String templateId,
             int templateVersion, Permission.Scope scope, java.util.Optional<java.time.Instant> expiresAt,
             boolean enabled) {
-        /** Validates the exact scoped assignment. */
+        /**
+         * Validates the exact scoped assignment.
+         * @param assignmentId stable assignment identifier
+         * @param principalId grantee principal
+         * @param templateId exact template identifier
+         * @param templateVersion exact template version
+         * @param scope non-wildcard realm and optional subscopes
+         * @param expiresAt optional mandatory assignment expiry
+         * @param enabled whether the assignment participates in authorization
+         * @throws NullPointerException if any of {@code scope}, {@code expiresAt} is null
+         * @throws IllegalArgumentException if the selected template version is not positive
+         */
         public Assignment {
             Permission.requireId(assignmentId, "assignment");
             Permission.requirePrincipal(principalId);
@@ -126,6 +149,9 @@ public final class RoleTemplateCatalog {
      *
      * @param loader class loader owning server resources
      * @return immutable deterministic catalog
+     * @throws NullPointerException if {@code loader} is null
+     * @throws IllegalArgumentException if the role-template resource exceeds its byte bound
+     * @throws IllegalStateException if the built-in role-template resource cannot be read
      */
     public static RoleTemplateCatalog load(ClassLoader loader) {
         Objects.requireNonNull(loader, "loader");
@@ -146,6 +172,11 @@ public final class RoleTemplateCatalog {
      *
      * @param encoded bounded UTF-8 JSON document
      * @return immutable deterministic catalog
+     * @throws NullPointerException if {@code encoded} is null
+     * @throws IllegalArgumentException if the role-template document is empty or oversized or the document
+     *         contains an unknown or duplicate field or the document framing does not match the closed schema
+     *         or the required template set is incomplete or ambiguous or the role-template document is
+     *         malformed
      */
     public static RoleTemplateCatalog parse(byte[] encoded) {
         Objects.requireNonNull(encoded, "encoded");
@@ -205,6 +236,7 @@ public final class RoleTemplateCatalog {
      *
      * @param assignment persisted assignment
      * @return deterministic finite grants, or an empty list when disabled
+     * @throws NullPointerException if {@code assignment} is null
      */
     public List<Permission.Grant> instantiate(Assignment assignment) {
         Assignment exact = Objects.requireNonNull(assignment, "assignment");

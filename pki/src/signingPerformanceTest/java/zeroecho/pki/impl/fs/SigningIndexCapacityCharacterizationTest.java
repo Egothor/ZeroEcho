@@ -48,7 +48,9 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Explicitly opt-in approved-tier production projection characterization. */
+/**
+ * Explicitly opt-in approved-tier production projection characterization.
+ */
 @EnabledIfEnvironmentVariable(named = "ZEROECHO_SIGNING_INDEX_CAPACITY", matches = "1000000")
 final class SigningIndexCapacityCharacterizationTest {
     private static final int RETAINED_RECORDS = 100_000;
@@ -56,6 +58,11 @@ final class SigningIndexCapacityCharacterizationTest {
     private static final int GENERIC_RECORDS = SigningMvccIndex.FOUR_GIB_MAXIMUM_KEYS
             - RETAINED_RECORDS - DUE_RECORDS;
 
+    /**
+     * Characterizes approved tier with production work projection.
+     *
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void characterizesApprovedTierWithProductionWorkProjection() throws Exception {
         SigningGenerationRegistry generations = new SigningGenerationRegistry();

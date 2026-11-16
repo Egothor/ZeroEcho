@@ -167,6 +167,7 @@ public final class JulAuditListenerStd implements AuditListener {
          *
          * @param logger the target logger; must not be null
          * @return this builder for chaining
+         * @throws NullPointerException if {@code logger} is null
          */
         public Builder logger(Logger logger) {
             this.logger = Objects.requireNonNull(logger);
@@ -178,6 +179,7 @@ public final class JulAuditListenerStd implements AuditListener {
          *
          * @param level the level to use for info events; must not be null
          * @return this builder for chaining
+         * @throws NullPointerException if {@code level} is null
          */
         public Builder infoLevel(Level level) {
             this.infoLevel = Objects.requireNonNull(level);
@@ -189,6 +191,7 @@ public final class JulAuditListenerStd implements AuditListener {
          *
          * @param level the level to use for warnings; must not be null
          * @return this builder for chaining
+         * @throws NullPointerException if {@code level} is null
          */
         public Builder warnLevel(Level level) {
             this.warnLevel = Objects.requireNonNull(level);
@@ -200,6 +203,7 @@ public final class JulAuditListenerStd implements AuditListener {
          *
          * @param level the level to use for progress events; must not be null
          * @return this builder for chaining
+         * @throws NullPointerException if {@code level} is null
          */
         public Builder progressLevel(Level level) {
             this.progressLevel = Objects.requireNonNull(level);

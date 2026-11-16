@@ -68,16 +68,25 @@ public final class ImmutableByteContent implements RepeatableContent {
         this.contentId = "sha256:" + digest(this.bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public InputStream openStream() {
         return new ByteArrayInputStream(bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OptionalLong length() {
         return OptionalLong.of(bytes.length);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String contentId() {
         return contentId;
@@ -92,6 +101,9 @@ public final class ImmutableByteContent implements RepeatableContent {
         return bytes.clone();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         // Immutable caller-visible values own no external resources.

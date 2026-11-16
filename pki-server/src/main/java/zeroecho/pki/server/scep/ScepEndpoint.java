@@ -62,13 +62,28 @@ public record ScepEndpoint(
         String enrollmentProfileId,
         String challengePasswordHash) implements zeroecho.pki.server.enrollment.EnrollmentEndpoint {
 
-    /** Maximum permitted label length. */
+    /**
+     * Maximum permitted label length.
+     */
     public static final int MAX_LABEL_LENGTH = 64;
 
-    /** Expected hex-encoded SHA-256 length. */
+    /**
+     * Expected hex-encoded SHA-256 length.
+     */
     private static final int SHA256_HEX_LENGTH = 64;
 
-    /** Validates all fields. */
+    /**
+     * Validates all fields.
+     * @param label URL-safe identifier, 1\u201364 characters, matching {@code [A-Za-z0-9._-]+}
+     * @param authorityId the CA authority identifier whose chain is served on this endpoint
+     * @param profileId the issuance profile identifier applied to enrollment requests
+     * @param enrollmentProfileId mandatory enrollment policy identity, distinct from the issuance profile
+     * @param challengePasswordHash SHA-256 hex digest of the challenge password (64 lower-case hex chars)
+     * @throws NullPointerException if any of {@code label}, {@code authorityId}, {@code profileId}, {@code
+     *         challengePasswordHash} is null
+     * @throws IllegalArgumentException if the authority identity is blank or the profile identity is blank or
+     *         the challenge-password commitment is not a lowercase hexadecimal SHA-256
+     */
     public ScepEndpoint {
         Objects.requireNonNull(label, "label");
         Objects.requireNonNull(authorityId, "authorityId");

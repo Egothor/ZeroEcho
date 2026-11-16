@@ -55,19 +55,33 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Production DNS-01 validator using one explicit absolute-name JNDI DNS resolver. */
-@SuppressWarnings("PMD")
+/**
+ * Production DNS-01 validator using one explicit absolute-name JNDI DNS resolver.
+ */
 public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
-    /** Stable built-in provider identity. */
+    /**
+     * Stable built-in provider identity.
+     */
     public static final String ID = "zeroecho.dns-01.jndi.v1";
 
-    /** Creates the stateless built-in JNDI DNS-01 challenge provider. */
+    /**
+     * Creates the stateless built-in JNDI DNS-01 challenge provider.
+     */
     public JndiDns01ChallengeProvider() {
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String id() { return ID; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Set<AcmeState.ChallengeType> challengeTypes() { return Set.of(AcmeState.ChallengeType.DNS_01); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Result validate(Context context, ProviderConfig configuration, CancellationSignal cancellation) {
         Settings settings = settings(configuration);

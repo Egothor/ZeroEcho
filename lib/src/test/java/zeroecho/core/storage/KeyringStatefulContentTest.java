@@ -56,10 +56,24 @@ import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for keyring stateful content.
+ */
 class KeyringStatefulContentTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path root;
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void provider() { BouncyCastleActivator.init(); }
 
+    /**
+     * Content limits cancellation and failures burn only admitted leaves.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void contentLimitsCancellationAndFailuresBurnOnlyAdmittedLeaves() throws Exception {
         try (KeyringPassword password = KeyringStatefulSigningTest.password();
                 KeyringStore store = KeyringStore.create(root.resolve("keys/store"), password);
@@ -102,6 +116,11 @@ class KeyringStatefulContentTest {
         }
     }
 
+    /**
+     * Close waits for admitted signature and borrowed handle then fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void closeWaitsForAdmittedSignatureAndBorrowedHandleThenFails() throws Exception {
         CountDownLatch reading = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

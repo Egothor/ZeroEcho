@@ -49,6 +49,13 @@ public record SubjectAlternativeNameRule(SubjectAlternativeNameType type, int mi
 
     /**
      * Validates and constructs the rule.
+     * @param type SAN type
+     * @param minimum minimum occurrences
+     * @param maximum maximum occurrences
+     * @param allowIpv4 whether IPv4 is allowed for {@link SubjectAlternativeNameType#IP_ADDRESS}
+     * @param allowIpv6 whether IPv6 is allowed for {@link SubjectAlternativeNameType#IP_ADDRESS}
+     * @throws IllegalArgumentException if type or occurrence bounds are invalid, an enabled IP rule permits
+     *     neither address family, or a non-IP rule declares IP-family flags
      */
     public SubjectAlternativeNameRule {
         if (type == null || minimum < 0 || maximum < minimum

@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.spi.store;
 
-import java.time.Instant;
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -214,23 +214,70 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      */
     void putCa(CaRecord record);
 
-    /** @param caId logical authority @return exact current immutable epoch fence, empty only when authority is absent */
+    /**
+     * Reads the exact selected-head fence for a logical authority.
+     *
+     * <p>The snapshot binds generation, path, cryptographic binding and epoch from
+     * the same current head. Reading it neither selects a new generation nor grants
+     * authority to use one; a later mutation must compare the complete fence again.
+     *
+     * @param caId exact logical authority identifier
+     * @return the current immutable head fence, or an empty optional when the authority is absent
+     * @throws RuntimeException if current head evidence is inconsistent or cannot be read safely
+     */
     Optional<zeroecho.pki.api.ca.CaHeadSnapshot> getCaHeadSnapshot(PkiId caId);
 
-    /** @param transitionId exact root candidate transition @return retained immutable candidate */
+    /**
+     * Reads a retained root-anchor candidate by its transition identity.
+     *
+     * <p>A returned candidate is not proof of activation, current-head selection or
+     * external trust installation. Candidate evidence remains separate from the
+     * activation acknowledgment obtained through {@link #getRootTrustAnchorActivation}.
+     *
+     * @param transitionId exact root-candidate transition identifier
+     * @return the immutable retained candidate, or an empty optional when absent
+     * @throws RuntimeException if retained transition evidence is corrupt or unavailable
+     */
     Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransition(PkiId transitionId);
 
-    /** @param issuerId exact candidate generation @return retained transition associated with this candidate */
+    /**
+     * Reads the retained root transition associated with an exact candidate generation.
+     *
+     * <p>The association is based on retained candidate membership, not a search for
+     * a compatible current head. This lookup does not activate the candidate or
+     * reinterpret historical evidence after later head changes.
+     *
+     * @param issuerId exact candidate issuer-generation identifier
+     * @return its immutable transition evidence, or an empty optional when no association exists
+     * @throws RuntimeException if candidate-index evidence is inconsistent or unavailable
+     */
     Optional<zeroecho.pki.api.ca.RootTrustAnchorTransition> getRootTrustAnchorTransitionForIssuer(PkiId issuerId);
 
-    /** @param transitionId exact root transition @return successful immutable activation receipt, if activated */
+    /**
+     * Reads the successful activation acknowledgment retained for a root transition.
+     *
+     * <p>The receipt records the approved activation outcome; it does not establish
+     * that this generation remains the selected head or that an external client has
+     * installed the new trust anchor. The lookup performs no activation or replay.
+     *
+     * @param transitionId exact root-transition identifier
+     * @return the immutable activation receipt, or an empty optional if none is retained
+     * @throws RuntimeException if retained activation evidence is corrupt or unavailable
+     */
     Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> getRootTrustAnchorActivation(PkiId transitionId);
 
     /**
      * Atomically registers candidate membership and immutable evidence without selecting it.
      * Exact replay returns the retained value even after a later legitimate head change.
+     *
+     * <p>The candidate's issued certificate, generation, path and original head
+     * evidence must agree. Registration does not replace the selected head or
+     * acknowledge external trust distribution; activation is a separate operation.
+     *
      * @param transition completed candidate evidence and original expected head
      * @return exact newly retained or already retained candidate
+     * @throws RuntimeException if immutable evidence conflicts, referenced candidate
+     *         content is invalid, or durable registration cannot be confirmed
      */
     zeroecho.pki.api.ca.RootTrustAnchorTransition registerRootCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition);
 
@@ -243,6 +290,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param replacement complete replacement CA record
      * @return false for a stale fence or a replacement state differing from current authority,
      *         true for an exact successful update or idempotent re-selection
+     * @throws RuntimeException if referenced evidence is invalid or persistence cannot be
+     *         confirmed; an uncertain outcome must not be treated as a stale comparison
      */
     boolean compareAndSetCaHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement);
 
@@ -264,10 +313,18 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
     /**
      * Atomically selects a registered root candidate and retains its approved acknowledgment receipt.
      * Exact receipt replay cannot rewind a later head; altered retries conflict.
+     *
+     * <p>Activation checks the complete original fence and retained candidate evidence.
+     * The acknowledgment records the approved distribution decision, not independent
+     * observation of clients' trust stores. A caller must reconcile an uncertain
+     * outcome rather than retrying with a changed transition or receipt.
+     *
      * @param transitionId registered candidate
      * @param expected original head fence captured before approval
      * @param activation complete approved acknowledgment receipt
      * @return retained activation receipt
+     * @throws RuntimeException if candidate, fence or acknowledgment evidence conflicts,
+     *         the candidate is ineligible, or durable activation cannot be confirmed
      */
     zeroecho.pki.api.ca.RootTrustAnchorActivation activateRootCandidate(PkiId transitionId,
             zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation);
@@ -361,7 +418,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded identifier page
      */
-    List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include,
+            zeroecho.core.io.CancellationSignal cancellation);
 
     /**
      * Lists request metadata in ascending request-ID order. Subject data is not suitable for selection responses.
@@ -371,14 +429,21 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded page
      */
-    List<RequestSelection> listRequestsPage(Optional<String> after, int limit, java.util.function.Predicate<RequestSelection> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<RequestSelection> listRequestsPage(Optional<String> after, int limit,
+            java.util.function.Predicate<RequestSelection> include, zeroecho.core.io.CancellationSignal cancellation);
 
-    /** Safe immutable request-selection metadata; contains no subject, SAN, CSR or key bytes.
+    /**
+     * Carries reduced request-selection metadata without subject, SAN, CSR or key bytes.
+     *
+     * <p>The row supports bounded inventory and authorization predicates. Its
+     * identifiers are metadata, not capabilities to disclose the underlying request.
+     *
      * @param requestId authoritative request identity
      * @param formatId parsed format
      * @param profileId persisted optional requested profile
      */
-    record RequestSelection(PkiId requestId, zeroecho.pki.api.FormatId formatId, Optional<String> profileId) { }
+    record RequestSelection(PkiId requestId, zeroecho.pki.api.FormatId formatId, Optional<String> profileId) {
+    }
 
     /**
      * Lists credentials for one authority in ascending credential-ID order.
@@ -389,13 +454,16 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded page
      */
-    List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit,
+            java.util.function.Predicate<Credential> include, zeroecho.core.io.CancellationSignal cancellation);
 
     /**
      * Reports whether the explicitly configured derived credential search index is ready.
      * @return false when disabled, unavailable or fenced
      */
-    default boolean credentialSearchAvailable() { return false; }
+    default boolean credentialSearchAvailable() {
+        return false;
+    }
 
     /**
      * Searches current authoritative credentials using the configured derived index.
@@ -424,7 +492,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded page
      */
-    List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit,
+            java.util.function.Predicate<IssuerGeneration> include, zeroecho.core.io.CancellationSignal cancellation);
 
     /**
      * Lists status metadata for one authority in ascending status-ID order.
@@ -435,7 +504,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded page
      */
-    List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<StatusObject> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit,
+            java.util.function.Predicate<StatusObject> include, zeroecho.core.io.CancellationSignal cancellation);
 
     /**
      * Lists publication metadata in ascending publication-ID order.
@@ -445,7 +515,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @param cancellation cooperative signal checked for every scanned candidate
      * @return immutable bounded page
      */
-    List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit, java.util.function.Predicate<PublicationRecord> include, zeroecho.core.io.CancellationSignal cancellation);
+    List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit,
+            java.util.function.Predicate<PublicationRecord> include, zeroecho.core.io.CancellationSignal cancellation);
 
 
     /**
@@ -828,7 +899,9 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * Reports whether optional terminal signing and internal-proof evidence is enabled.
      * @return true only when the underlying store maintains the opt-in feed
      */
-    default boolean supportsSigningEvidenceFeed() { return false; }
+    default boolean supportsSigningEvidenceFeed() {
+        return false;
+    }
 
     /**
      * Opens the append-ordered best-effort signing/proof evidence feed. Each marker
@@ -853,6 +926,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide the issuance evidence feed
      */
     default AuditEvidenceFeed openIssuanceEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Issuance evidence feed is not supported by this store");
@@ -869,6 +943,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide the status evidence feed
      */
     default AuditEvidenceFeed openStatusEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Status evidence feed is not supported by this store");
@@ -885,6 +960,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide the publication evidence feed
      */
     default AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Publication evidence feed is not supported by this store");
@@ -1150,7 +1226,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
     Optional<StatusSchedule> getStatusSchedule(PkiId caId, StatusObjectType statusType);
 
     /**
-     * Lists all enabled status-generation schedules in ascending caId+statusType order.
+     * Lists enabled status-generation schedules in ascending authority-ID then status-family order.
      *
      * @param after exclusive opaque composite cursor from {@link #statusScheduleCursor}; empty starts at the beginning
      * @param limit maximum rows, 1 through 1001
@@ -1180,26 +1256,47 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      */
     boolean replaceStatusSchedule(StatusSchedule expected, StatusSchedule replacement);
 
-    /** Reports support for atomic schedule claims, signing acceptance and effects.
+    /**
+     * Reports support for the complete durable scheduling protocol.
+     *
+     * <p>A supported implementation coordinates claims, signing acceptance, effect
+     * publication and terminal progress. A provider that supports only schedule
+     * configuration must leave this capability false. The default returns false.
+     *
      * @return true only when the complete durable protocol is supported
      */
-    default boolean supportsStatusScheduling() { return false; }
+    default boolean supportsStatusScheduling() {
+        return false;
+    }
 
     private static UnsupportedOperationException schedulingUnavailable() {
         return new UnsupportedOperationException("Durable scheduling unavailable");
     }
 
-    /** Reads worker progress separately from operator configuration.
+    /**
+     * Reads durable worker progress separately from operator schedule configuration.
+     *
+     * <p>An existing state may include an unfinished occurrence even when its
+     * configuration is disabled. Reading progress neither claims work nor advances it.
+     * The default implementation does not support durable scheduling.
+     *
      * @param caId authority identity
      * @param type status family
-     * @return durable state or empty
+     * @return durable state, or an empty optional when none is retained
      * @throws UnsupportedOperationException if scheduling is unsupported
      */
     default Optional<StatusScheduleState> getStatusScheduleState(PkiId caId, StatusObjectType type) {
         throw schedulingUnavailable();
     }
 
-    /** Lists enabled schedules and unfinished claims, including claims subsequently disabled.
+    /**
+     * Lists enabled schedules and unfinished claims, including claims disabled after admission.
+     *
+     * <p>The bounded page preserves recovery visibility for already-claimed work;
+     * listing itself neither claims an occurrence nor accepts a signing operation.
+     * Results follow the same authority-ID then status-family order as configuration
+     * paging; the cursor must be passed back unchanged rather than compared as raw text.
+     *
      * @param after exclusive cursor returned by {@link #statusScheduleCursor}
      * @param limit maximum rows, from 1 through 1001
      * @param cancellation cooperative cancellation
@@ -1211,9 +1308,18 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         throw schedulingUnavailable();
     }
 
-    /** Encodes an unambiguous configuration pagination cursor.
+    /**
+     * Encodes the canonical exclusive cursor for one schedule's composite identity.
+     *
+     * <p>The cursor contains a domain-separated authority digest and status-family
+     * discriminator. It is a pagination coordinate, not an authorization token.
+     * Its encoded text is not itself a sortable authority name; callers return it
+     * unchanged to the paging operation, which applies the documented row order.
+     *
      * @param schedule row whose successor is requested
      * @return opaque cursor
+     * @throws NullPointerException if the schedule is null
+     * @throws IllegalStateException if the required SHA-256 implementation is unavailable
      */
     static String statusScheduleCursor(StatusSchedule schedule) {
         try {
@@ -1226,7 +1332,13 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         }
     }
 
-    /** Claims a due occurrence through compare-and-replace.
+    /**
+     * Claims one due occurrence by comparing the exact previously observed worker state.
+     *
+     * <p>The provider evaluates its authoritative clock and current configuration.
+     * A returned claim is retained durable metadata; it is not signing acceptance
+     * or permission to recreate a prior uncertain occurrence.
+     *
      * @param expected complete previously read state
      * @return new claim or empty on conflict, disablement or an unexpired due time
      * @throws UnsupportedOperationException if scheduling is unsupported
@@ -1235,7 +1347,13 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         throw schedulingUnavailable();
     }
 
-    /** Co-commits a claim's receipt with ordinary signing acceptance and reservations.
+    /**
+     * Co-commits a schedule claim's receipt with ordinary signing acceptance and reservations.
+     *
+     * <p>The exact authorized claim must match the signing command. Implementations
+     * preserve normal acceptance disposition and uncertainty semantics; callers
+     * reconcile the original identity rather than reaccepting an uncertain occurrence.
+     *
      * @param command validated signing acceptance
      * @param claim immutable authorized schedule claim
      * @return acceptance disposition
@@ -1246,7 +1364,14 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         throw schedulingUnavailable();
     }
 
-    /** Publishes a canonical status and any scheduled execution marker atomically.
+    /**
+     * Publishes a canonical status from its retained signing continuation.
+     *
+     * <p>Implementations reporting {@link #supportsStatusScheduling()} must publish
+     * any scheduled effect marker atomically with the status. The compatibility
+     * default delegates to {@link #putStatusObject(StatusObject)} and supplies no
+     * durable scheduling protocol; it must not be advertised as scheduled support.
+     *
      * @param object canonical signed status object
      * @param operationId durable signing operation identity
      * @param commandCommitment exact continuation command commitment
@@ -1255,7 +1380,13 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         putStatusObject(object);
     }
 
-    /** Advances a committed occurrence without regenerating its effect.
+    /**
+     * Advances progress after an occurrence's effect has been durably committed.
+     *
+     * <p>The implementation compares the exact retained execution. It must not
+     * regenerate the published status or create another signing acceptance to advance
+     * progress after a lost acknowledgment.
+     *
      * @param expected exact committed execution
      * @return true if advanced, false on a concurrent progress change
      * @throws UnsupportedOperationException if scheduling is unsupported
@@ -1264,7 +1395,13 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
         throw schedulingUnavailable();
     }
 
-    /** Records a stable failure of accepted scheduled work, prohibiting automatic reacceptance.
+    /**
+     * Records a stable failure of accepted scheduled work without permitting automatic reacceptance.
+     *
+     * <p>The exact accepted execution and terminal outcome remain authoritative.
+     * Recording a non-sensitive failure code does not authorize retrying the same
+     * occurrence as a new signing operation.
+     *
      * @param expected exact accepted execution
      * @param detailCode stable non-sensitive failure code
      * @return true if recorded, false on a concurrent progress change
@@ -1276,12 +1413,16 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
 
     /**
      * Reports whether this store supports backup export and verification.
-     * This does not imply restoration support; restoration is currently unavailable.
+     * This capability does not imply restoration support. Restore preparation,
+     * staging and cold activation have separate optional contracts and must be
+     * checked independently; an export-capable provider need not implement them.
      *
      * @return {@code true} when {@link #createBackup} and {@link #verifyBackup}
      *         are available; {@code false} by default
      */
-    default boolean supportsBackup() { return false; }
+    default boolean supportsBackup() {
+        return false;
+    }
 
     /**
      * Creates a bounded file-backed backup. The caller owns and closes the result.

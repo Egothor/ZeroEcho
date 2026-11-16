@@ -82,195 +82,335 @@ public final class BootstrapAlgorithmIdentities {
     private static final AlgorithmIdentity.Family RSA_KEY = family("rsa");
     private static final AlgorithmIdentity.Family EC_KEY = family("ec");
 
-    /** SHA-256 digest identity. */
+    /**
+     * SHA-256 digest identity.
+     */
     public static final AlgorithmIdentity SHA256 = identity(AlgorithmIdentity.Kind.DIGEST, SHA2_256,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SHA-384 digest identity. */
+    /**
+     * SHA-384 digest identity.
+     */
     public static final AlgorithmIdentity SHA384 = identity(AlgorithmIdentity.Kind.DIGEST, SHA2_384,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SHA-512 digest identity. */
+    /**
+     * SHA-512 digest identity.
+     */
     public static final AlgorithmIdentity SHA512 = identity(AlgorithmIdentity.Kind.DIGEST, SHA2_512,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** MGF1 mask-generation identity. */
+    /**
+     * MGF1 mask-generation identity.
+     */
     public static final AlgorithmIdentity MGF1 = identity(AlgorithmIdentity.Kind.MASK_GENERATION, MGF1_FAMILY,
             AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** RSA PKCS#1 v1.5 with SHA-256. */
+    /**
+     * RSA PKCS#1 v1.5 with SHA-256.
+     */
     public static final AlgorithmIdentity RSA_PKCS1_SHA256 = digestSignature(RSA_PKCS1, SHA256);
-    /** RSA PKCS#1 v1.5 with SHA-384. */
+    /**
+     * RSA PKCS#1 v1.5 with SHA-384.
+     */
     public static final AlgorithmIdentity RSA_PKCS1_SHA384 = digestSignature(RSA_PKCS1, SHA384);
-    /** RSA PKCS#1 v1.5 with SHA-512. */
+    /**
+     * RSA PKCS#1 v1.5 with SHA-512.
+     */
     public static final AlgorithmIdentity RSA_PKCS1_SHA512 = digestSignature(RSA_PKCS1, SHA512);
-    /** RSA-PSS SHA-256/MGF1-SHA-256/salt-32/trailer-1 bootstrap identity. */
+    /**
+     * RSA-PSS SHA-256/MGF1-SHA-256/salt-32/trailer-1 bootstrap identity.
+     */
     public static final AlgorithmIdentity RSA_PSS_SHA256 = rsaPss(SHA256, SHA256, 32);
-    /** ECDSA with SHA-256, independent of the EC curve. */
+    /**
+     * ECDSA with SHA-256, independent of the EC curve.
+     */
     public static final AlgorithmIdentity ECDSA_SHA256 = digestSignature(ECDSA, SHA256);
-    /** ECDSA with SHA-384, independent of the EC curve. */
+    /**
+     * ECDSA with SHA-384, independent of the EC curve.
+     */
     public static final AlgorithmIdentity ECDSA_SHA384 = digestSignature(ECDSA, SHA384);
-    /** ECDSA with SHA-512, independent of the EC curve. */
+    /**
+     * ECDSA with SHA-512, independent of the EC curve.
+     */
     public static final AlgorithmIdentity ECDSA_SHA512 = digestSignature(ECDSA, SHA512);
-    /** Ed25519 signature identity. */
+    /**
+     * Ed25519 signature identity.
+     */
     public static final AlgorithmIdentity ED25519_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             ED25519_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** Ed448 signature identity. */
+    /**
+     * Ed448 signature identity.
+     */
     public static final AlgorithmIdentity ED448_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE, ED448_FAMILY,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ZeroEcho SPHINCS+ default signature identity. */
+    /**
+     * ZeroEcho SPHINCS+ default signature identity.
+     */
     public static final AlgorithmIdentity SPHINCS_PLUS_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SPHINCS_PLUS_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** ML-DSA-44 signature identity (FIPS 204, security level 2). */
+    /**
+     * ML-DSA-44 signature identity (FIPS 204, security level 2).
+     */
     public static final AlgorithmIdentity ML_DSA_44_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             ML_DSA_44_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ML-DSA-65 signature identity (FIPS 204, security level 3). */
+    /**
+     * ML-DSA-65 signature identity (FIPS 204, security level 3).
+     */
     public static final AlgorithmIdentity ML_DSA_65_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             ML_DSA_65_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ML-DSA-87 signature identity (FIPS 204, security level 5). */
+    /**
+     * ML-DSA-87 signature identity (FIPS 204, security level 5).
+     */
     public static final AlgorithmIdentity ML_DSA_87_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             ML_DSA_87_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** SLH-DSA-SHA2-128s signature identity (FIPS 205, SHA2, 128-bit, small). */
+    /**
+     * SLH-DSA-SHA2-128s signature identity (FIPS 205, SHA2, 128-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_128S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_128S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-128f signature identity (FIPS 205, SHA2, 128-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-128f signature identity (FIPS 205, SHA2, 128-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_128F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_128F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-192s signature identity (FIPS 205, SHA2, 192-bit, small). */
+    /**
+     * SLH-DSA-SHA2-192s signature identity (FIPS 205, SHA2, 192-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_192S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_192S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-192f signature identity (FIPS 205, SHA2, 192-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-192f signature identity (FIPS 205, SHA2, 192-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_192F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_192F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-256s signature identity (FIPS 205, SHA2, 256-bit, small). */
+    /**
+     * SLH-DSA-SHA2-256s signature identity (FIPS 205, SHA2, 256-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_256S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_256S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-256f signature identity (FIPS 205, SHA2, 256-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-256f signature identity (FIPS 205, SHA2, 256-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_256F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHA2_256F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-128s signature identity (FIPS 205, SHAKE, 128-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-128s signature identity (FIPS 205, SHAKE, 128-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_128S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_128S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-128f signature identity (FIPS 205, SHAKE, 128-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-128f signature identity (FIPS 205, SHAKE, 128-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_128F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_128F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-192s signature identity (FIPS 205, SHAKE, 192-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-192s signature identity (FIPS 205, SHAKE, 192-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_192S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_192S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-192f signature identity (FIPS 205, SHAKE, 192-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-192f signature identity (FIPS 205, SHAKE, 192-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_192F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_192F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-256s signature identity (FIPS 205, SHAKE, 256-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-256s signature identity (FIPS 205, SHAKE, 256-bit, small).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_256S_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_256S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-256f signature identity (FIPS 205, SHAKE, 256-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-256f signature identity (FIPS 205, SHAKE, 256-bit, fast).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_256F_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
             SLH_DSA_SHAKE_256F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** RSA public-key identity. */
+    /**
+     * RSA public-key identity.
+     */
     public static final AlgorithmIdentity RSA_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, RSA_KEY,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** EC P-256 public-key identity. */
+    /**
+     * EC P-256 public-key identity.
+     */
     public static final AlgorithmIdentity EC_P256_PUBLIC_KEY = namedKey(EC_KEY, "p-256");
-    /** EC P-384 public-key identity. */
+    /**
+     * EC P-384 public-key identity.
+     */
     public static final AlgorithmIdentity EC_P384_PUBLIC_KEY = namedKey(EC_KEY, "p-384");
-    /** EC P-521 public-key identity. */
+    /**
+     * EC P-521 public-key identity.
+     */
     public static final AlgorithmIdentity EC_P521_PUBLIC_KEY = namedKey(EC_KEY, "p-521");
-    /** Ed25519 public-key identity. */
+    /**
+     * Ed25519 public-key identity.
+     */
     public static final AlgorithmIdentity ED25519_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             ED25519_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** Ed448 public-key identity. */
+    /**
+     * Ed448 public-key identity.
+     */
     public static final AlgorithmIdentity ED448_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, ED448_FAMILY,
             AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ZeroEcho SPHINCS+ default public-key identity. */
+    /**
+     * ZeroEcho SPHINCS+ default public-key identity.
+     */
     public static final AlgorithmIdentity SPHINCS_PLUS_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SPHINCS_PLUS_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** ML-DSA-44 public-key identity (FIPS 204). */
+    /**
+     * ML-DSA-44 public-key identity (FIPS 204).
+     */
     public static final AlgorithmIdentity ML_DSA_44_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             ML_DSA_44_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ML-DSA-65 public-key identity (FIPS 204). */
+    /**
+     * ML-DSA-65 public-key identity (FIPS 204).
+     */
     public static final AlgorithmIdentity ML_DSA_65_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             ML_DSA_65_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** ML-DSA-87 public-key identity (FIPS 204). */
+    /**
+     * ML-DSA-87 public-key identity (FIPS 204).
+     */
     public static final AlgorithmIdentity ML_DSA_87_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             ML_DSA_87_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** SLH-DSA-SHA2-128s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-128s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_128S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_128S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-128f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-128f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_128F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_128F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-192s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-192s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_192S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_192S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-192f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-192f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_192F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_192F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-256s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-256s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_256S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_256S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHA2-256f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-256f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHA2_256F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
             SLH_DSA_SHA2_256F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-128s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-128s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_128S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_128S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-128f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-128f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_128F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_128F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-192s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-192s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_192S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_192S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-192f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-192f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_192F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_192F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-256s public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-256s public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_256S_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_256S_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
-    /** SLH-DSA-SHAKE-256f public-key identity (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-256f public-key identity (FIPS 205).
+     */
     public static final AlgorithmIdentity SLH_DSA_SHAKE_256F_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, // NOPMD LongVariable - Exported canonical algorithm identity name preserves source compatibility.
             SLH_DSA_SHAKE_256F_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
-    /** Current ECDSA P-256 signing suite. */
+    /**
+     * Current ECDSA P-256 signing suite.
+     */
     public static final AlgorithmSuite ECDSA_SHA256_P256 = new AlgorithmSuite(ECDSA_SHA256, EC_P256_PUBLIC_KEY);
-    /** Current ECDSA P-384 signing suite. */
+    /**
+     * Current ECDSA P-384 signing suite.
+     */
     public static final AlgorithmSuite ECDSA_SHA384_P384 = new AlgorithmSuite(ECDSA_SHA384, EC_P384_PUBLIC_KEY);
-    /** Current ECDSA P-521 signing suite. */
+    /**
+     * Current ECDSA P-521 signing suite.
+     */
     public static final AlgorithmSuite ECDSA_SHA512_P521 = new AlgorithmSuite(ECDSA_SHA512, EC_P521_PUBLIC_KEY);
-    /** Current immutable PKI signing default. */
+    /**
+     * Current immutable PKI signing default.
+     */
     public static final AlgorithmSuite PKI_SIGNATURE_DEFAULT_V1 = new AlgorithmSuite(RSA_PKCS1_SHA256, RSA_PUBLIC_KEY);
 
-    /** ML-DSA-44 signing suite (FIPS 204, security level 2). */
+    /**
+     * ML-DSA-44 signing suite (FIPS 204, security level 2).
+     */
     public static final AlgorithmSuite ML_DSA_44 = new AlgorithmSuite(ML_DSA_44_SIGNATURE, ML_DSA_44_PUBLIC_KEY);
-    /** ML-DSA-65 signing suite (FIPS 204, security level 3). */
+    /**
+     * ML-DSA-65 signing suite (FIPS 204, security level 3).
+     */
     public static final AlgorithmSuite ML_DSA_65 = new AlgorithmSuite(ML_DSA_65_SIGNATURE, ML_DSA_65_PUBLIC_KEY);
-    /** ML-DSA-87 signing suite (FIPS 204, security level 5). */
+    /**
+     * ML-DSA-87 signing suite (FIPS 204, security level 5).
+     */
     public static final AlgorithmSuite ML_DSA_87 = new AlgorithmSuite(ML_DSA_87_SIGNATURE, ML_DSA_87_PUBLIC_KEY);
 
-    /** SLH-DSA-SHA2-128s signing suite (FIPS 205, SHA2, 128-bit, small). */
+    /**
+     * SLH-DSA-SHA2-128s signing suite (FIPS 205, SHA2, 128-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_128S = new AlgorithmSuite(SLH_DSA_SHA2_128S_SIGNATURE, SLH_DSA_SHA2_128S_PUBLIC_KEY);
-    /** SLH-DSA-SHA2-128f signing suite (FIPS 205, SHA2, 128-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-128f signing suite (FIPS 205, SHA2, 128-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_128F = new AlgorithmSuite(SLH_DSA_SHA2_128F_SIGNATURE, SLH_DSA_SHA2_128F_PUBLIC_KEY);
-    /** SLH-DSA-SHA2-192s signing suite (FIPS 205, SHA2, 192-bit, small). */
+    /**
+     * SLH-DSA-SHA2-192s signing suite (FIPS 205, SHA2, 192-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_192S = new AlgorithmSuite(SLH_DSA_SHA2_192S_SIGNATURE, SLH_DSA_SHA2_192S_PUBLIC_KEY);
-    /** SLH-DSA-SHA2-192f signing suite (FIPS 205, SHA2, 192-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-192f signing suite (FIPS 205, SHA2, 192-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_192F = new AlgorithmSuite(SLH_DSA_SHA2_192F_SIGNATURE, SLH_DSA_SHA2_192F_PUBLIC_KEY);
-    /** SLH-DSA-SHA2-256s signing suite (FIPS 205, SHA2, 256-bit, small). */
+    /**
+     * SLH-DSA-SHA2-256s signing suite (FIPS 205, SHA2, 256-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_256S = new AlgorithmSuite(SLH_DSA_SHA2_256S_SIGNATURE, SLH_DSA_SHA2_256S_PUBLIC_KEY);
-    /** SLH-DSA-SHA2-256f signing suite (FIPS 205, SHA2, 256-bit, fast). */
+    /**
+     * SLH-DSA-SHA2-256f signing suite (FIPS 205, SHA2, 256-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHA2_256F = new AlgorithmSuite(SLH_DSA_SHA2_256F_SIGNATURE, SLH_DSA_SHA2_256F_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-128s signing suite (FIPS 205, SHAKE, 128-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-128s signing suite (FIPS 205, SHAKE, 128-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_128S = new AlgorithmSuite(SLH_DSA_SHAKE_128S_SIGNATURE, SLH_DSA_SHAKE_128S_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-128f signing suite (FIPS 205, SHAKE, 128-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-128f signing suite (FIPS 205, SHAKE, 128-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_128F = new AlgorithmSuite(SLH_DSA_SHAKE_128F_SIGNATURE, SLH_DSA_SHAKE_128F_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-192s signing suite (FIPS 205, SHAKE, 192-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-192s signing suite (FIPS 205, SHAKE, 192-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_192S = new AlgorithmSuite(SLH_DSA_SHAKE_192S_SIGNATURE, SLH_DSA_SHAKE_192S_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-192f signing suite (FIPS 205, SHAKE, 192-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-192f signing suite (FIPS 205, SHAKE, 192-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_192F = new AlgorithmSuite(SLH_DSA_SHAKE_192F_SIGNATURE, SLH_DSA_SHAKE_192F_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-256s signing suite (FIPS 205, SHAKE, 256-bit, small). */
+    /**
+     * SLH-DSA-SHAKE-256s signing suite (FIPS 205, SHAKE, 256-bit, small).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_256S = new AlgorithmSuite(SLH_DSA_SHAKE_256S_SIGNATURE, SLH_DSA_SHAKE_256S_PUBLIC_KEY);
-    /** SLH-DSA-SHAKE-256f signing suite (FIPS 205, SHAKE, 256-bit, fast). */
+    /**
+     * SLH-DSA-SHAKE-256f signing suite (FIPS 205, SHAKE, 256-bit, fast).
+     */
     public static final AlgorithmSuite SLH_DSA_SHAKE_256F = new AlgorithmSuite(SLH_DSA_SHAKE_256F_SIGNATURE, SLH_DSA_SHAKE_256F_PUBLIC_KEY);
 
     private static final List<AlgorithmIdentity> IDENTITIES = List.of(SHA256, SHA384, SHA512, MGF1, RSA_PKCS1_SHA256,
@@ -359,6 +499,7 @@ public final class BootstrapAlgorithmIdentities {
      *
      * @param alias legacy provider spelling
      * @return exact bootstrap identity, or empty when unknown or forbidden
+     * @throws NullPointerException if {@code alias} is null
      */
     public static Optional<AlgorithmIdentity> fromCompatibilityAlias(String alias) {
         Objects.requireNonNull(alias, "alias");
@@ -379,6 +520,7 @@ public final class BootstrapAlgorithmIdentities {
      *
      * @param value canonical identity or finite legacy alias
      * @return exact identity, or empty when unsupported
+     * @throws NullPointerException if {@code value} is null
      */
     public static Optional<AlgorithmIdentity> resolve(String value) {
         Objects.requireNonNull(value, "value");

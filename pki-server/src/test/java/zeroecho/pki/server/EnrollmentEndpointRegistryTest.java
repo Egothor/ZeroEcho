@@ -75,10 +75,20 @@ import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.server.est.KeygenPolicy;
 import zeroecho.pki.server.scep.ScepEndpoint;
 
-/** Durable endpoint identity, revision, policy-admission, and recovery contracts. */
+/**
+ * Durable endpoint identity, revision, policy-admission, and recovery contracts.
+ */
 class EnrollmentEndpointRegistryTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks protocol bindings and explicit deregistration tombstones survive reopen and re-registration advances revision/commitment.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void persistsAllProtocolBindingsAndTombstonesAcrossRestart() throws Exception {
         Path log;
@@ -114,6 +124,11 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks uncertain durable acknowledgement is not reported as success while restart observes the committed endpoint revision.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void uncertainAcknowledgementNeverReturnsSuccessAndReopensTheCommittedRecord() throws Exception {
         Path log = directory.resolve("uncertain.log");
@@ -146,6 +161,11 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks active enrollment-policy compatibility gates registration/admission while retained historical bindings remain recoverable.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void enforcesMandatoryCurrentPolicyOnRegistrationAndAdmission() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -178,6 +198,9 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks endpoint secret, policy and EST generation settings each affect the exact approval commitment.
+     */
     @Test
     void validatesEveryEndpointFieldInApprovalCommitment() {
         ScepEndpoint original = new ScepEndpoint("endpoint", "authority", "certificate", "policy", "a".repeat(64));
@@ -190,6 +213,11 @@ class EnrollmentEndpointRegistryTest {
                         new KeygenPolicy(true, List.of("RSA"), 2048, false))));
     }
 
+    /**
+     * Checks racing incompatible profile replacement and endpoint registration cannot both commit under shared authority.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void incompatibleProfileUpdateAndEndpointRegistrationCannotBothCommit() throws Exception {
         Path log;
@@ -223,6 +251,11 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks removing an active binding permits explicit policy replacement and later endpoint revision advancement.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void tombstoningAllowsExplicitPolicyReconfiguration() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -239,6 +272,11 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks unsupported or malformed retained endpoint payload prevents registry startup.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsUnsupportedAndCorruptEndpointPayloadAtStartup() throws Exception {
         for (int variant = 0; variant < 4; variant++) {
@@ -262,6 +300,9 @@ class EnrollmentEndpointRegistryTest {
         }
     }
 
+    /**
+     * Checks EST, SCEP and CMP DTO construction rejects empty, null or blank mandatory enrollment-policy identity.
+     */
     @Test
     void rejectsMissingMandatoryProfileAtPublicDtoBoundary() {
         assertThrows(IllegalArgumentException.class, () -> new EstEndpoint("endpoint", "authority", "certificate", "", KeygenPolicy.DISABLED));

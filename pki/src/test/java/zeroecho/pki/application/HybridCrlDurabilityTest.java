@@ -67,11 +67,19 @@ import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Real FS/WAL/local-provider restart tests; injected process stops are not HTTP or Podman tests. */
+/**
+ * Real FS/WAL/local-provider restart tests; injected process stops are not HTTP or Podman tests.
+ */
 final class HybridCrlDurabilityTest {
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "crl-durability"),
             new Purpose("STATUS_GENERATE"), Optional.empty(), Optional.empty());
 
+    /**
+     * One work slot supports both handoffs and completed replay.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void oneWorkSlotSupportsBothHandoffsAndCompletedReplay(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         PkiId parent;
@@ -98,6 +106,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Restart before adoption after link and after status never resigns.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void restartBeforeAdoptionAfterLinkAndAfterStatusNeverResigns(@TempDir Path root) throws Exception {
         for (var stop : Stop.values()) {
             var rig = new Rig(root.resolve(stop.name()), null);
@@ -145,6 +159,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Lost acknowledgement of forced adoption recovers without duplicate signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lostAcknowledgementOfForcedAdoptionRecoversWithoutDuplicateSigning(@TempDir Path root) throws Exception {
         var fault = new FilesystemPkiStoreTestAccess.AdoptionForceFault();
         var rig = new Rig(root, fault);
@@ -181,6 +201,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Saturated resident budget cannot steal accepted parents future capacity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void saturatedResidentBudgetCannotStealAcceptedParentsFutureCapacity(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         rig.maximumWork = 16;
@@ -220,6 +246,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Existing native child identity rejects parent before alternative dispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void existingNativeChildIdentityRejectsParentBeforeAlternativeDispatch(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         rig.maximumWork = 4;
@@ -256,6 +288,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Alternative result above captured algorithm bound cannot become successful.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void alternativeResultAboveCapturedAlgorithmBoundCannotBecomeSuccessful(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         var armed = new AtomicBoolean();
@@ -293,6 +331,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Current backup retains historical full base after joint workflow purge.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentBackupRetainsHistoricalFullBaseAfterJointWorkflowPurge(@TempDir Path root) throws Exception {
         var rig = new Rig(root.resolve("source"), null);
         var unsupportedHistorical = root.resolve("historical-snapshot");
@@ -351,6 +395,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Cancellation of linked pending native child never publishes status.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationOfLinkedPendingNativeChildNeverPublishesStatus(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         var armed = new AtomicBoolean();
@@ -387,6 +437,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Scheduled committed hybrid effect replays without regeneration.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void scheduledCommittedHybridEffectReplaysWithoutRegeneration(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         var armed = new AtomicBoolean();
@@ -444,6 +500,12 @@ final class HybridCrlDurabilityTest {
         }
     }
 
+    /**
+     * Encoded future metadata limit rejects real parent before alternative signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void encodedFutureMetadataLimitRejectsRealParentBeforeAlternativeSigning(@TempDir Path root) throws Exception {
         var rig = new Rig(root, null);
         try (var session = rig.fixture.open()) {

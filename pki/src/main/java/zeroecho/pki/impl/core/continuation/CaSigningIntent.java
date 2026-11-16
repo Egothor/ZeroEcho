@@ -106,6 +106,8 @@ public final class CaSigningIntent {
      * @param command exact supported intermediate command
      * @param algorithm exact bounded nonblank canonical algorithm text
      * @return the same commitment as the typed entry for identical text
+     * @throws NullPointerException if command, algorithm is null
+     * @throws IllegalStateException if the canonical algorithm commitment cannot be encoded or hashed
      */
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })

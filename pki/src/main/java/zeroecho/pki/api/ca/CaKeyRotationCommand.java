@@ -39,12 +39,13 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.attr.AttributeSet;
 
 /**
- * Command to rotate a CA key reference and issue new corresponding CA
- * credentials.
+ * Requests explicit changes to a CA's outgoing signing roles and corresponding credentials.
  *
  * <p>
- * Key rotation changes the underlying key material. Historical key references
- * and credentials must remain discoverable for audit and validation of
+ * Each selected role can change its managed key reference, its signature algorithm,
+ * or both. Unspecified members retain the exact authoritative issuer binding;
+ * an algorithm-only selection therefore need not replace key material. Historical
+ * key references and credentials remain necessary for audit and validation of
  * previously issued credentials.
  * Profile selection comes from authoritative CA state. Construction validates
  * structure only; it neither generates keys nor proves possession or authorizes
@@ -53,11 +54,23 @@ import zeroecho.pki.api.attr.AttributeSet;
  *
  */
 public sealed interface CaKeyRotationCommand {
-    /** {@return CA entity identifier} */
+    /**
+     * Identifies the authority whose outgoing subject-key roles will be rotated.
+     *
+     * @return the logical CA identifier
+     */
     PkiId caId();
-    /** {@return explicitly selected outgoing role changes} */
+    /**
+     * Returns the explicitly requested primary and alternative role changes.
+     *
+     * @return the immutable role selection, normalized before approval
+     */
     CaRotationSelection selection();
-    /** {@return expected original selected head, present after normalization} */
+    /**
+     * Returns the original selected head against which execution must be checked.
+     *
+     * @return the expected head, present after normalization and otherwise possibly empty
+     */
     Optional<CaHeadSnapshot> expectedHead();
     /**
      * Projects the primary managed key for the existing primary-only API.
@@ -68,7 +81,11 @@ public sealed interface CaKeyRotationCommand {
         return selection().primary().flatMap(CaRotationSelection.RoleChange::keyRef)
                 .orElseThrow(() -> new IllegalStateException("Primary rotation selection is not normalized"));
     }
-    /** {@return immutable universal attributes} */
+    /**
+     * Returns the universal attributes carried by the rotation request.
+     *
+     * @return the immutable attributes, possibly empty
+     */
     AttributeSet attributes();
 
     /**
@@ -86,6 +103,10 @@ public sealed interface CaKeyRotationCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if any component is null or bounded text is invalid
+         * @param caId root CA identifier, strict UTF-8 at most 4,096 bytes
+         * @param selection explicit outgoing role changes, normalized before approval
+         * @param expectedHead exact expected original head, or empty before normalization
+         * @param attributes immutable universal attributes, possibly empty
          */
         public Root {
             CaCommandInputs.identifier(caId);
@@ -94,15 +115,30 @@ public sealed interface CaKeyRotationCommand {
             CaCommandInputs.required(attributes);
         }
         /**
-         * Preserves the primary-key-only command without changing its algorithm.
-         * @param caId exact root authority @param newKeyRef explicit managed key
-         * @param attributes immutable attributes
+         * Creates a primary-key-only root rotation without selecting a new algorithm.
+         *
+         * <p>The expected head is initially empty and must be captured during
+         * normalization. This constructor neither generates the key nor authorizes
+         * rotation or verifies the required fresh possession proof.
+         *
+         * @param caId exact root authority identifier
+         * @param newKeyRef explicitly provisioned managed primary key
+         * @param attributes immutable universal attributes, possibly empty
+         * @throws NullPointerException if the managed key reference is null
+         * @throws IllegalArgumentException if a required component or bounded identifier is invalid
          */
         public Root(PkiId caId, KeyRef newKeyRef, AttributeSet attributes) {
             this(caId, CaRotationSelection.primaryKey(newKeyRef), Optional.empty(), attributes);
         }
-        /** {@return a diagnostic representation without command coordinates or attributes} */
-        @Override public String toString() { return "CaKeyRotationCommand.Root[redacted]"; }
+        /**
+         * Returns a diagnostic label without exposing rotation coordinates or attributes.
+         *
+         * @return the fixed redacted root-rotation label
+         */
+        @Override
+        public String toString() {
+            return "CaKeyRotationCommand.Root[redacted]";
+        }
     }
 
     /**
@@ -120,6 +156,11 @@ public sealed interface CaKeyRotationCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if any component is null, bounded text is invalid
+         * @param caId intermediate CA identifier, strict UTF-8 at most 4,096 bytes
+         * @param selection explicit outgoing subject role changes
+         * @param issuerCaId independently selected parent authority
+         * @param expectedHead exact original subject head, or empty before normalization
+         * @param attributes immutable universal attributes, possibly empty
          */
         public Intermediate {
             CaCommandInputs.identifier(caId);
@@ -129,14 +170,30 @@ public sealed interface CaKeyRotationCommand {
             CaCommandInputs.required(attributes);
         }
         /**
-         * Preserves the primary-key-only command with independent parent selection.
-         * @param caId exact subject authority @param newKeyRef explicit subject key
-         * @param issuerCaId exact parent authority @param attributes immutable attributes
+         * Creates a primary-key-only intermediate rotation with an explicit parent authority.
+         *
+         * <p>The expected subject head is initially empty and must be captured during
+         * normalization. Parent selection remains independent of the new subject key;
+         * construction does not authorize either authority's use or perform a key proof.
+         *
+         * @param caId exact intermediate authority identifier
+         * @param newKeyRef explicitly provisioned managed primary subject key
+         * @param issuerCaId independently selected parent authority identifier
+         * @param attributes immutable universal attributes, possibly empty
+         * @throws NullPointerException if the managed key reference is null
+         * @throws IllegalArgumentException if a required component or bounded identifier is invalid
          */
         public Intermediate(PkiId caId, KeyRef newKeyRef, PkiId issuerCaId, AttributeSet attributes) {
             this(caId, CaRotationSelection.primaryKey(newKeyRef), issuerCaId, Optional.empty(), attributes);
         }
-        /** {@return a diagnostic representation without command coordinates or attributes} */
-        @Override public String toString() { return "CaKeyRotationCommand.Intermediate[redacted]"; }
+        /**
+         * Returns a diagnostic label without exposing rotation coordinates or attributes.
+         *
+         * @return the fixed redacted intermediate-rotation label
+         */
+        @Override
+        public String toString() {
+            return "CaKeyRotationCommand.Intermediate[redacted]";
+        }
     }
 }

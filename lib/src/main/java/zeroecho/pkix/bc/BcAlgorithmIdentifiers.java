@@ -65,6 +65,14 @@ final class BcAlgorithmIdentifiers {
     private BcAlgorithmIdentifiers() {
     }
 
+    /**
+     * Converts an algorithm identifier while preserving absent, NULL, or exact DER parameters.
+     *
+     * @param identifier non-null provider-independent identifier
+     * @return equivalent Bouncy Castle identifier
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if the OID or parameter DER is invalid
+     */
     /* default */ static org.bouncycastle.asn1.x509.AlgorithmIdentifier toBc(AlgorithmIdentifier identifier) {
         ASN1ObjectIdentifier oid = new ASN1ObjectIdentifier(identifier.oid());
         return switch (identifier.parameterForm()) {
@@ -81,6 +89,14 @@ final class BcAlgorithmIdentifiers {
         };
     }
 
+    /**
+     * Converts an ASN.1 identifier while preserving its parameter representation.
+     *
+     * @param identifier non-null Bouncy Castle identifier
+     * @return provider-independent identifier with canonical DER parameters when present
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if parameter encoding fails
+     */
     /* default */ static AlgorithmIdentifier fromBc(org.bouncycastle.asn1.x509.AlgorithmIdentifier identifier) {
         String oid = identifier.getAlgorithm().getId();
         if (identifier.getParameters() == null) {

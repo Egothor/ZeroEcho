@@ -50,6 +50,9 @@ public record RevocationInputs(PkiId credentialId, RevocationReason reason, Attr
      * Creates revocation inputs.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param credentialId credential id to revoke/hold/unhold
+     * @param reason revocation reason
+     * @param attributes additional revocation attributes (may be empty but not null)
      */
     public RevocationInputs {
         if (credentialId == null) {

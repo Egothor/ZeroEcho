@@ -83,7 +83,21 @@ public record WorkflowStateRecord(PkiId opId, String type, Principal owner,
         OrchestrationDurabilityPolicy durabilityPolicy, Instant createdAt, Instant updatedAt, Instant expiresAt,
         Encoding payloadEncoding, Optional<EncodedObject> payload) {
 
-    /** Validates the complete persisted workflow snapshot. */
+    /**
+     * Validates the complete persisted workflow snapshot.
+     * @param opId async operation identifier (never {@code null})
+     * @param type operation type string (never {@code null})
+     * @param owner operation owner (never {@code null})
+     * @param durabilityPolicy durability policy (never {@code null})
+     * @param createdAt creation time (never {@code null})
+     * @param updatedAt last update time (never {@code null})
+     * @param expiresAt expiration/deadline (never {@code null})
+     * @param payloadEncoding encoding of {@link #payload()} (never {@code null})
+     * @param payload optional persisted continuation payload
+     * @throws NullPointerException if opId, type, owner, durabilityPolicy, createdAt, updatedAt, expiresAt,
+     *     payloadEncoding, payload is null
+     * @throws IllegalArgumentException if type is blank or expiresAt precedes createdAt
+     */
     public WorkflowStateRecord {
         Objects.requireNonNull(opId, "opId");
         Objects.requireNonNull(type, "type");
@@ -112,6 +126,7 @@ public record WorkflowStateRecord(PkiId opId, String type, Principal owner,
      *
      * @param now current time (never {@code null})
      * @return {@code true} if {@code now} is strictly after {@link #expiresAt()}
+     * @throws NullPointerException if now is null
      */
     public boolean isExpiredAt(Instant now) {
         Objects.requireNonNull(now, "now");

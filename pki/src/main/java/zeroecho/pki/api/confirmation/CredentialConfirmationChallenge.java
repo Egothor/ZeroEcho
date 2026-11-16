@@ -80,9 +80,13 @@ public record CredentialConfirmationChallenge(ConfirmationRealmBinding realm, St
         ConfirmationProofSuiteBinding proofSuiteBinding, byte[] rawChallenge,
         Instant issuedAt, Instant expiresAt, String recordCommitment) {
 
-    /** Exact raw challenge length in bytes. */
+    /**
+     * Exact raw challenge length in bytes.
+     */
     public static final int RAW_CHALLENGE_BYTES = 32;
-    /** Maximum strict UTF-8 server-audience length in bytes. */
+    /**
+     * Maximum strict UTF-8 server-audience length in bytes.
+     */
     public static final int MAXIMUM_SERVER_AUDIENCE_UTF8_BYTES = 512;
 
     /**
@@ -91,6 +95,18 @@ public record CredentialConfirmationChallenge(ConfirmationRealmBinding realm, St
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if any component or the record commitment is invalid
+     * @param realm exact portable realm identity
+     * @param serverAudience exact strict UTF-8 server audience, 1 through 512 bytes and without ISO controls
+     * @param credentialId exact credential identity
+     * @param expectedLifecycleRevision expected lifecycle revision, exactly {@link CredentialConfirmationLifecycle#INITIAL_REVISION}
+     * @param expectedLifecycleRecordCommitment exact expected pending lifecycle-record commitment
+     * @param initialDisclosurePolicy exact non-public disclosure policy frozen into the lifecycle
+     * @param confirmationPolicyCommitment exact immutable profile confirmation-policy commitment
+     * @param proofSuiteBinding exact proof-suite coordinates
+     * @param rawChallenge exactly 32 challenge bytes, defensively owned
+     * @param issuedAt authoritative whole-second issue time in the supported UTC range
+     * @param expiresAt authoritative whole-second expiry time strictly after {@code issuedAt}
+     * @param recordCommitment lowercase hexadecimal SHA-256 commitment of every preceding component
      */
     public CredentialConfirmationChallenge {
         Objects.requireNonNull(realm, "realm");
@@ -193,7 +209,11 @@ public record CredentialConfirmationChallenge(ConfirmationRealmBinding realm, St
         return !exact.isBefore(issuedAt) && exact.isBefore(expiresAt);
     }
 
-    /** Compares challenge bytes by content while preserving normal record component semantics. */
+    /**
+     * Compares challenge bytes by content while preserving normal record component semantics.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -216,7 +236,10 @@ public record CredentialConfirmationChallenge(ConfirmationRealmBinding realm, St
                 && recordCommitment.equals(candidate.recordCommitment);
     }
 
-    /** Returns a content-based hash code for every record component. */
+    /**
+     * Returns a content-based hash code for every record component.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         int result = Objects.hash(realm, serverAudience, credentialId, expectedLifecycleRevision,
@@ -225,7 +248,10 @@ public record CredentialConfirmationChallenge(ConfirmationRealmBinding realm, St
         return 31 * result + Arrays.hashCode(rawChallenge);
     }
 
-    /** Returns a safe structural description without disclosing raw challenge bytes. */
+    /**
+     * Returns a safe structural description without disclosing raw challenge bytes.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CredentialConfirmationChallenge[realm=" + realm + ", serverAudience=" + serverAudience

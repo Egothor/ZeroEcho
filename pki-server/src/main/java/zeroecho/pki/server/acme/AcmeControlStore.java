@@ -42,8 +42,9 @@ import java.time.Instant;
 
 import zeroecho.pki.server.ServerControlStore;
 
-/** Typed ACME record facade over the realm's sole transactional control authority. */
-@SuppressWarnings("PMD")
+/**
+ * Typed ACME record facade over the realm's sole transactional control authority.
+ */
 public final class AcmeControlStore {
     private final ServerControlStore control;
     private final AcmeStateCodec codec = new AcmeStateCodec();
@@ -52,6 +53,7 @@ public final class AcmeControlStore {
      * Binds ACME state to the lifecycle-owned realm control store.
      *
      * @param control lifecycle-owned realm control store
+     * @throws NullPointerException if {@code control} is null
      */
     public AcmeControlStore(ServerControlStore control) {
         this.control = Objects.requireNonNull(control, "control");
@@ -146,6 +148,8 @@ public final class AcmeControlStore {
      * Callers retain the control monitor through the subsequent policy mutation.
      * Suspended policies remain compatible and can be administratively reactivated.
      * @param replacement candidate enrollment policy
+     * @throws IllegalStateException if an active ACME directory would become incompatible with the replacement
+     *         profile
      */
     public void requireCompatibleEnrollmentProfile(zeroecho.pki.server.enrollment.EnrollmentProfile replacement) {
         synchronized (control) {
@@ -168,7 +172,11 @@ public final class AcmeControlStore {
      * @param created durably created records in request order
      */
     public record Transition(List<Object> replaced, List<Object> created) {
-        /** Defensively snapshots transition results. */
+        /**
+         * Defensively snapshots transition results.
+         * @param replaced durably replaced records in request order
+         * @param created durably created records in request order
+         */
         public Transition { replaced = List.copyOf(replaced); created = List.copyOf(created); }
     }
 
@@ -179,7 +187,13 @@ public final class AcmeControlStore {
      * @param next replacement record with the same type and identity
      */
     public record Replacement(Object prior, Object next) {
-        /** Validates stable type and identity before persistence. */
+        /**
+         * Validates stable type and identity before persistence.
+         * @param prior caller-observed current record
+         * @param next replacement record with the same type and identity
+         * @throws NullPointerException if any of {@code prior}, {@code next} is null
+         * @throws IllegalArgumentException if a replacement changes the immutable ACME record identity
+         */
         public Replacement {
             Objects.requireNonNull(prior, "prior"); Objects.requireNonNull(next, "next");
             if (!prior.getClass().equals(next.getClass()) || !identity(prior).equals(identity(next))) {
@@ -195,6 +209,7 @@ public final class AcmeControlStore {
      * @param type exact ACME record class
      * @param recordId stable record identifier
      * @return validated record or empty when absent
+     * @throws IllegalStateException if retained record identity or canonical commitment differs
      */
     public <T> Optional<T> get(Class<T> type, String recordId) {
         String namespace = namespace(type);
@@ -212,6 +227,7 @@ public final class AcmeControlStore {
      * Validates an account from a stable startup snapshot without a second lookup.
      * @param record exact account namespace record
      * @return strictly decoded account
+     * @throws IllegalStateException if the retained account differs from the supplied snapshot
      */
     public AcmeState.Account decodeAccount(ServerControlStore.ProtocolRecord record) {
         Object decoded = codec.decode(record.payload());
@@ -242,6 +258,7 @@ public final class AcmeControlStore {
      * @param offset zero-based page offset
      * @param limit positive page-size limit
      * @return bounded validated record page
+     * @throws IllegalStateException if a retained page entry does not match its record coordinates
      */
     public <T> ServerControlStore.Page<T> page(Class<T> type, int offset, int limit) {
         ServerControlStore.Page<ServerControlStore.ProtocolRecord> page =
@@ -262,6 +279,9 @@ public final class AcmeControlStore {
      * control record without re-running validation or issuance.
      *
      * @param clock authoritative recovery clock
+     * @throws NullPointerException if {@code clock} is null
+     * @throws IllegalStateException if a retained account is bound to another directory or retained validation
+     *         evidence is bound to another authorization
      */
     public void validateAndRecover(Clock clock) {
         Instant now = Objects.requireNonNull(clock, "clock").instant();
@@ -371,7 +391,13 @@ public final class AcmeControlStore {
      */
     public record Graph(AcmeState.Order order, List<AcmeState.Authorization> authorizations,
             List<AcmeState.Challenge> challenges) {
-        /** Defensively snapshots the graph. */
+        /**
+         * Defensively snapshots the graph.
+         * @param order sealed order record
+         * @param authorizations sealed order authorizations
+         * @param challenges sealed authorization challenges
+         * @throws NullPointerException if {@code order} is null
+         */
         public Graph {
             Objects.requireNonNull(order, "order"); authorizations = List.copyOf(authorizations);
             challenges = List.copyOf(challenges);

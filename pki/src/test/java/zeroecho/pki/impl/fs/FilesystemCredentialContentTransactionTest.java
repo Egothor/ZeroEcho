@@ -58,12 +58,20 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 
-/** Tests transactional credential ownership and restart reconciliation. */
+/**
+ * Tests transactional credential ownership and restart reconciliation.
+ */
 @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
 final class FilesystemCredentialContentTransactionTest {
 
     private static final String STORE_DIRECTORY = "store";
 
+    /**
+     * Non X.509 exact duplicate still rejects.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void nonX509ExactDuplicateStillRejects(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
@@ -73,6 +81,9 @@ final class FilesystemCredentialContentTransactionTest {
         }
     }
 
+    /**
+     * Metadata keys do not collapse sanitized credential ids.
+     */
     @Test
     void metadataKeysDoNotCollapseSanitizedCredentialIds() {
         zeroecho.pki.spi.store.MetadataKey punctuation = AuthorityMetadataCodec.credentialKey(new zeroecho.pki.api.PkiId("credential:a"));
@@ -80,6 +91,12 @@ final class FilesystemCredentialContentTransactionTest {
         assertFalse(punctuation.equals(underscore), "full credential identifiers must produce distinct keys");
     }
 
+    /**
+     * Credential owner persists across restart.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void credentialOwnerPersistsAcrossRestart(@TempDir Path tempDir) throws Exception {
         System.out.println("credentialOwnerPersistsAcrossRestart");
@@ -105,6 +122,12 @@ final class FilesystemCredentialContentTransactionTest {
         System.out.println("credentialOwnerPersistsAcrossRestart...ok");
     }
 
+    /**
+     * Exact credential owner is required without mutation.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactCredentialOwnerIsRequiredWithoutMutation(@TempDir Path tempDir) throws Exception {
         System.out.println("exactCredentialOwnerIsRequiredWithoutMutation");
@@ -135,6 +158,12 @@ final class FilesystemCredentialContentTransactionTest {
         System.out.println("exactCredentialOwnerIsRequiredWithoutMutation...ok");
     }
 
+    /**
+     * Uncommitted record and owner are absent on restart.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncommittedRecordAndOwnerAreAbsentOnRestart(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
@@ -167,6 +196,12 @@ final class FilesystemCredentialContentTransactionTest {
         }
     }
 
+    /**
+     * Legacy intent without published record rejects without reclamation.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void legacyIntentWithoutPublishedRecordRejectsWithoutReclamation(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
@@ -182,6 +217,12 @@ final class FilesystemCredentialContentTransactionTest {
         assertTrue(Files.exists(root.resolve("staged-content").resolve(credential.content().contentId() + ".content")));
     }
 
+    /**
+     * Legacy intent alongside committed metadata rejects without repair.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void legacyIntentAlongsideCommittedMetadataRejectsWithoutRepair(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
@@ -198,6 +239,12 @@ final class FilesystemCredentialContentTransactionTest {
         assertTrue(Files.exists(root.resolve("staged-content").resolve(credential.content().contentId() + ".content")));
     }
 
+    /**
+     * Handoff intent rejects trailing data.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void handoffIntentRejectsTrailingData(@TempDir Path tempDir) throws Exception {
         System.out.println("handoffIntentRejectsTrailingData");
@@ -215,6 +262,12 @@ final class FilesystemCredentialContentTransactionTest {
         System.out.println("handoffIntentRejectsTrailingData...ok");
     }
 
+    /**
+     * Corrupted content is rejected before ownership handoff.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptedContentIsRejectedBeforeOwnershipHandoff(@TempDir Path tempDir) throws Exception {
         System.out.println("corruptedContentIsRejectedBeforeOwnershipHandoff");

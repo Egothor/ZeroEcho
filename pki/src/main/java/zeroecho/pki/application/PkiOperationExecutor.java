@@ -47,10 +47,18 @@ public interface PkiOperationExecutor {
 
     /**
      * Freezes omitted operation fences before approval/hash capture without writes.
+     *
+     * <p>The default requires a non-null operation and returns it unchanged.
+     * Implementations that normalize selection coordinates must do so before
+     * approval rather than retargeting an already approved operation at execution.
+     *
      * @param operation selected immutable operation
      * @return explicit normalized selection, or unchanged other operation
+     * @throws NullPointerException if the operation is null
      */
-    default PkiOperation normalize(PkiOperation operation) { return java.util.Objects.requireNonNull(operation, "operation"); }
+    default PkiOperation normalize(PkiOperation operation) {
+        return java.util.Objects.requireNonNull(operation, "operation");
+    }
 
     /**
      * Activates a root candidate with trusted server-retained execution evidence.
@@ -69,7 +77,14 @@ public interface PkiOperationExecutor {
 
     /**
      * Observes an exact committed activation receipt without executing or checking today's head.
-     * @param operation retained approved selection @param expected exact trusted expected receipt
+     *
+     * <p>A matching retained receipt yields the original activation result even
+     * if a later legitimate operation selected another head. This is receipt
+     * reconciliation, not a new activation or a statement about current trust stores.
+     * An unavailable observer must not be interpreted as authoritative absence.
+     *
+     * @param operation retained approved root selection
+     * @param expected exact trusted expected activation receipt
      * @param cancellation cooperative read cancellation
      * @return original successful result if the exact receipt committed, otherwise empty
      * @throws UnsupportedOperationException if receipt observation is unavailable; not evidence of absence
@@ -103,8 +118,7 @@ public interface PkiOperationExecutor {
     PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation);
 
     /**
-     * Executes one typed operation synchronously, co-committing server-derived issuance evidence into
-     * the durable record of issuance-family operations.
+     * Executes one typed operation with optional server-derived issuance evidence.
      *
      * <p>The evidence is written atomically with the issued credential (see
      * {@code IssuanceExecutionEvidence}); operations that are not issuance-family ignore it. The
@@ -114,6 +128,7 @@ public interface PkiOperationExecutor {
      * @param issuanceEvidence closed issuance-evidence attribute set (may be empty but not null)
      * @param cancellation cooperative cancellation signal
      * @return successful result or safely classified failure
+     * @throws NullPointerException if the issuance-evidence container is null
      */
     default PkiOperationOutcome execute(PkiOperation operation,
             zeroecho.pki.api.attr.AttributeSet issuanceEvidence, CancellationSignal cancellation) {

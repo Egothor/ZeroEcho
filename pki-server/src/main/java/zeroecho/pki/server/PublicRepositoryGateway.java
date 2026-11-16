@@ -52,16 +52,32 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
 
-/** Transport-neutral, read-only disclosed repository gateway. */
+/**
+ * Transport-neutral, read-only disclosed repository gateway.
+ */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.ExcessiveParameterList" })
 public final class PublicRepositoryGateway {
-    /** Cache policy classes with distinct privacy semantics. */
+    /**
+     * Cache policy classes with distinct privacy semantics.
+     */
     public enum CacheClass {
-        /** Immutable public content may be cached indefinitely. */ PUBLIC_IMMUTABLE,
-        /** Public alias responses require revalidation. */ PUBLIC_ALIAS,
-        /** Authenticated responses must remain private. */ PRIVATE_AUTHENTICATED,
-        /** Capability-authorized responses must not be stored. */ NO_STORE_CAPABILITY
+        /**
+         * Immutable public content may be cached indefinitely.
+         */
+        PUBLIC_IMMUTABLE,
+        /**
+         * Public alias responses require revalidation.
+         */
+        PUBLIC_ALIAS,
+        /**
+         * Authenticated responses must remain private.
+         */
+        PRIVATE_AUTHENTICATED,
+        /**
+         * Capability-authorized responses must not be stored.
+         */
+        NO_STORE_CAPABILITY
     }
 
     /**
@@ -74,7 +90,13 @@ public final class PublicRepositoryGateway {
      */
     public record Authority(PkiId authorityId, zeroecho.pki.api.ca.CaKind kind,
             List<PkiId> issuerIds, PkiId currentIssuanceIssuerId) {
-        /** Snapshots finite issuer identities. */
+        /**
+         * Snapshots finite issuer identities.
+         * @param authorityId exact logical authority identifier
+         * @param kind authority kind
+         * @param issuerIds immutable issuer-generation identifiers
+         * @param currentIssuanceIssuerId current issuance generation
+         */
         public Authority { issuerIds = List.copyOf(issuerIds); }
     }
 
@@ -91,7 +113,16 @@ public final class PublicRepositoryGateway {
      */
     public record Chain(PkiId authorityId, PkiId issuerId, PkiId pathId,
             List<PkiId> orderedCredentialIds, String commitment, String etag, CacheClass cacheClass) {
-        /** Snapshots exact order. */
+        /**
+         * Snapshots exact order.
+         * @param authorityId exact logical authority identifier
+         * @param issuerId exact issuer generation
+         * @param pathId exact chain-path identifier
+         * @param orderedCredentialIds leaf-to-root credential identifiers
+         * @param commitment immutable path commitment
+         * @param etag response entity tag
+         * @param cacheClass cache policy
+         */
         public Chain { orderedCredentialIds = List.copyOf(orderedCredentialIds); }
     }
 
@@ -105,12 +136,23 @@ public final class PublicRepositoryGateway {
      */
     public record Content(PkiRepositoryContent lease, String mediaType, String etag, CacheClass cacheClass)
             implements AutoCloseable {
-        /** Validates response metadata. */
+        /**
+         * Validates response metadata.
+         * @param lease content lease owned by this descriptor
+         * @param mediaType response media type
+         * @param etag response entity tag
+         * @param cacheClass cache policy
+         * @throws NullPointerException if any of {@code lease}, {@code cacheClass} is null
+         */
         public Content {
             Objects.requireNonNull(lease); Permission.requireBounded(mediaType, 128, "media type");
             Permission.requireBounded(etag, 256, "ETag"); Objects.requireNonNull(cacheClass);
         }
-        /** Closes the underlying immutable-content lease. */
+        /**
+         * Closes the underlying immutable-content lease.
+         *
+         * @throws java.io.IOException if the lease cannot release its retained resources
+         */
         @Override public void close() throws java.io.IOException { lease.close(); }
     }
 
@@ -123,7 +165,15 @@ public final class PublicRepositoryGateway {
      */
     public record Access(Optional<SecurityPrincipal> principal, Optional<String> capabilityBearer,
             String correlationId) {
-        /** Validates mutually exclusive principal and capability authority. */
+        /**
+         * Validates mutually exclusive principal and capability authority.
+         * @param principal optional authenticated principal
+         * @param capabilityBearer optional point-addressable capability bearer
+         * @param correlationId bounded non-secret request correlation identifier
+         * @throws NullPointerException if any of {@code principal}, {@code capabilityBearer} is null
+         * @throws IllegalArgumentException if principal authentication and capability bearer authority are
+         *         supplied together
+         */
         public Access {
             principal = Objects.requireNonNull(principal); capabilityBearer = Objects.requireNonNull(capabilityBearer);
             Permission.requireBounded(correlationId, 256, "correlation ID");
@@ -144,7 +194,21 @@ public final class PublicRepositoryGateway {
     private final RepositoryAliasService aliases;
     private final Runnable openCheck;
 
-    /** Creates one gateway over the realm's existing authorities. */
+    /**
+     * Composes public repository projection over the realm's existing authorization authorities.
+     *
+     * @param realmId trusted owning realm
+     * @param exposure authority exposure policy
+     * @param repository authoritative public credential repository
+     * @param control durable realm control authority
+     * @param roles built-in role-template catalog
+     * @param authorization scoped permission evaluator
+     * @param breakGlass explicit break-glass capability service
+     * @param disclosure retained disclosure policy service
+     * @param aliases public repository alias service
+     * @param openCheck realm lifecycle guard
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ PublicRepositoryGateway(RealmId realmId, AuthorityExposurePolicy exposure,
             PkiRepository repository,
             ServerControlStore control, RoleTemplateCatalog roles, AuthorizationEngine authorization,
@@ -163,6 +227,8 @@ public final class PublicRepositoryGateway {
      * @param after optional exclusive authority cursor
      * @param limit positive maximum result count
      * @return bounded immutable authority page
+     * @throws NullPointerException if {@code after} is null
+     * @throws IllegalArgumentException if the requested authority-page limit is outside 1 through 1,000
      */
     public List<Authority> authorities(Optional<PkiId> after, int limit) {
         openCheck.run();

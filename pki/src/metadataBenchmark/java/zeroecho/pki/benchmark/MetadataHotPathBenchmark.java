@@ -63,7 +63,9 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 
-/** Isolated metadata measurements; no key generation or cryptographic operation is timed. */
+/**
+ * Isolated metadata measurements; no key generation or cryptographic operation is timed.
+ */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Fork(2)
@@ -71,9 +73,14 @@ import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 @Measurement(iterations = 5, time = 1)
 public class MetadataHotPathBenchmark {
 
-    /** One pre-resolved identity at a representative catalog position or parameterized rule. */
+    /**
+     * One pre-resolved identity at a representative catalog position or parameterized rule.
+     */
     @State(Scope.Thread)
     public static class ResolutionState {
+        /**
+         * JMH-selected algorithm scenario used to compare implicit and explicit metadata resolution.
+         */
         @Param({"RSA_SHA256", "ED448", "ML_DSA_44", "SLH_DSA_SHAKE_256F", "RSA_PSS_SALT48", "EC_P384"})
         public String scenario;
 
@@ -82,7 +89,9 @@ public class MetadataHotPathBenchmark {
         private X509AlgorithmRole role;
         private String bindingId;
 
-        /** Resolves workload inputs outside measured operations and checks both lookup forms. */
+        /**
+         * Resolves workload inputs outside measured operations and checks both lookup forms.
+         */
         @Setup(Level.Trial)
         public void setup() {
             catalog = StandardX509Bindings.catalog();
@@ -110,12 +119,16 @@ public class MetadataHotPathBenchmark {
         }
     }
 
-    /** Captures algorithm providers once; each measured walk obtains their current descriptor lists. */
+    /**
+     * Captures algorithm providers once; each measured walk obtains their current descriptor lists.
+     */
     @State(Scope.Thread)
     public static class CatalogState {
         private List<CryptoAlgorithm> algorithms;
 
-        /** Loads providers and reports actual workload size outside the timed region. */
+        /**
+         * Loads providers and reports actual workload size outside the timed region.
+         */
         @Setup(Level.Trial)
         public void setup() {
             List<CryptoAlgorithm> loaded = new ArrayList<>();
@@ -132,19 +145,34 @@ public class MetadataHotPathBenchmark {
         }
     }
 
-    /** Measures implicit role-and-identity lookup. */
+    /**
+     * Measures implicit role-and-identity lookup.
+     *
+     * @param state thread-scoped JMH state containing the selected cryptographic metadata scenario
+     * @return resolved algorithm metadata from the implicit runtime lookup path
+     */
     @Benchmark
     public X509AlgorithmIdentifier implicitResolution(ResolutionState state) {
         return state.catalog.resolve(state.identity, state.role);
     }
 
-    /** Measures explicit binding identifier lookup. */
+    /**
+     * Measures explicit binding identifier lookup.
+     *
+     * @param state thread-scoped JMH state containing the selected cryptographic metadata scenario
+     * @return resolved algorithm metadata from the explicitly selected binding path
+     */
     @Benchmark
     public X509AlgorithmIdentifier explicitResolution(ResolutionState state) {
         return state.catalog.resolve(state.bindingId, state.identity, state.role);
     }
 
-    /** Measures complete standard descriptor retrieval and consumption. */
+    /**
+     * Measures complete standard descriptor retrieval and consumption.
+     *
+     * @param state thread-scoped JMH state containing the selected cryptographic metadata scenario
+     * @param blackhole JMH result sink preventing elimination of the metadata traversal
+     */
     @Benchmark
     public void standardBindingWalk(CatalogState state, Blackhole blackhole) {
         for (X509AlgorithmBinding binding : StandardX509Bindings.descriptors()) {
@@ -152,7 +180,12 @@ public class MetadataHotPathBenchmark {
         }
     }
 
-    /** Measures complete built-in parameter metadata retrieval and consumption. */
+    /**
+     * Measures complete built-in parameter metadata retrieval and consumption.
+     *
+     * @param state thread-scoped JMH state containing the selected cryptographic metadata scenario
+     * @param blackhole JMH result sink preventing elimination of the metadata traversal
+     */
     @Benchmark
     public void cryptoParameterWalk(CatalogState state, Blackhole blackhole) {
         for (CryptoAlgorithm algorithm : state.algorithms) {

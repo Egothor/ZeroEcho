@@ -46,16 +46,35 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pkix.AlgorithmIdentifier;
 
-/** Shared exact representation matching for frozen request and issuance policies. */
+/**
+ * Shared exact representation matching for frozen request and issuance policies.
+ */
 final class X509ProfileBindingMatcher {
     private final X509AuthoritySnapshot authority;
     private final X509AlgorithmBindingRegistry bindings;
 
+    /**
+     * Captures immutable public algorithm authority and the exact configured binding registry.
+     *
+     * @param authority session public X.509 authority
+     * @param bindings configured standard and contributed semantic bindings
+     * @throws NullPointerException if either argument is null
+     */
     /* default */ X509ProfileBindingMatcher(X509AuthoritySnapshot authority, X509AlgorithmBindingRegistry bindings) {
         this.authority = Objects.requireNonNull(authority, "authority");
         this.bindings = Objects.requireNonNull(bindings, "bindings");
     }
 
+    /**
+     * Resolves an exact profile binding and its configured ASN.1 representation.
+     *
+     * @param algorithm exact canonical public-key or signature identity
+     * @param role required semantic binding role
+     * @param reference exact contributed profile reference, or empty to select the standard binding
+     * @return exact resolved algorithm identifier
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if selection is unavailable, mismatched or ambiguously names a standard rule as contributed
+     */
     /* default */ AlgorithmIdentifier select(AlgorithmIdentity algorithm, X509AlgorithmBinding.Role role,
             Optional<X509AlgorithmBindingPolicy.BindingReference> reference) {
         X509AlgorithmBinding selected = reference.map(value -> bindings.require(value.bindingId(), value.semanticCommitment()))
@@ -71,6 +90,15 @@ final class X509ProfileBindingMatcher {
         return BcX509AlgorithmAdapter.toLib(encoded);
     }
 
+    /**
+     * Requires the supplied algorithm representation to equal the profile-selected binding.
+     *
+     * @param actual exact algorithm identifier observed in the request
+     * @param role expected public-key or signature binding role
+     * @param reference exact contributed profile reference, or empty for the standard representation
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if decoding, binding resolution or exact representation matching fails
+     */
     /* default */ void require(AlgorithmIdentifier actual, X509AlgorithmBinding.Role role,
             Optional<X509AlgorithmBindingPolicy.BindingReference> reference) {
         X509AlgorithmRole x509Role = role == X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY

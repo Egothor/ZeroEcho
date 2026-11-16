@@ -73,6 +73,12 @@ public record KeyPossessionProofChallengeContext(ConfirmationRealmBinding realm,
      *
      * @throws NullPointerException if a reference coordinate is {@code null}
      * @throws IllegalArgumentException if an audience, identity, time, or nonce bound is invalid
+     * @param realm exact persisted realm binding
+     * @param serverAudience exact strict UTF-8 audience, 1 through 512 bytes and without ISO controls
+     * @param credentialId exact credential identity
+     * @param proofSuiteBinding exact persisted proof-suite binding
+     * @param rawChallenge exact persisted 32-byte nonce
+     * @param expiresAt authoritative whole-second challenge expiry in the supported UTC range
      */
     public KeyPossessionProofChallengeContext {
         Objects.requireNonNull(realm, "realm");
@@ -97,7 +103,11 @@ public record KeyPossessionProofChallengeContext(ConfirmationRealmBinding realm,
         return rawChallenge.clone();
     }
 
-    /** Compares nonce bytes by content. */
+    /**
+     * Compares nonce bytes by content.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -114,14 +124,20 @@ public record KeyPossessionProofChallengeContext(ConfirmationRealmBinding realm,
                 && expiresAt.equals(candidate.expiresAt);
     }
 
-    /** Returns a content-based hash code for every coordinate. */
+    /**
+     * Returns a content-based hash code for every coordinate.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return 31 * Objects.hash(realm, serverAudience, credentialId, proofSuiteBinding, expiresAt)
                 + Arrays.hashCode(rawChallenge);
     }
 
-    /** Returns a structural description with nonce bytes redacted. */
+    /**
+     * Returns a structural description with nonce bytes redacted.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "KeyPossessionProofChallengeContext[realm=" + realm

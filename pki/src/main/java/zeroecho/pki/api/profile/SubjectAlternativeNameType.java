@@ -37,12 +37,20 @@ package zeroecho.pki.api.profile;
  * Closed set of requester-supplied Subject Alternative Name types.
  */
 public enum SubjectAlternativeNameType {
-    /** DNS service name. */
+    /**
+     * DNS service name.
+     */
     DNS_NAME,
-    /** Raw IPv4 or IPv6 address. */
+    /**
+     * Raw IPv4 or IPv6 address.
+     */
     IP_ADDRESS,
-    /** Hierarchical absolute URI. */
+    /**
+     * Hierarchical absolute URI.
+     */
     URI,
-    /** RFC 822 mailbox name. */
+    /**
+     * RFC 822 mailbox name.
+     */
     RFC822_NAME
 }

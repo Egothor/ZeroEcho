@@ -43,8 +43,15 @@ import zeroecho.pki.api.ca.*;
 import zeroecho.pki.api.profile.*;
 import zeroecho.pki.api.request.*;
 
-/** Public target projections bind exact keys, provider and complete path without private data. */
+/**
+ * Public target projections bind exact keys, provider and complete path without private data.
+ */
 final class SdkIssuancePreviewTest {
+    /**
+     * Snapshots effective names and retains absolute validity and both issuer bindings.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotsEffectiveNamesAndRetainsAbsoluteValidityAndBothIssuerBindings() throws Exception {
         var names = new ArrayList<SubjectRdn>(); names.add(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Preview"));
         var value = preview("a".repeat(64), names, true);
@@ -59,6 +66,11 @@ final class SdkIssuancePreviewTest {
         assertTrue(value.bindingSetCommitment().matches("sha512:[0-9a-f]{128}"));
         assertNotEquals(value.bindingSetCommitment(), preview("b".repeat(64), value.subject(), true).bindingSetCommitment());
     }
+    /**
+     * Represents absent alternative and empty subject without creating key references.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void representsAbsentAlternativeAndEmptySubjectWithoutCreatingKeyReferences() throws Exception {
         var value = preview("a".repeat(64), List.of(), false);
         assertTrue(value.subject().isEmpty());

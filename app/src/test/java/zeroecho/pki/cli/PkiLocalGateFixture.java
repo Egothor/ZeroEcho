@@ -73,27 +73,63 @@ import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.application.PkiSigningOperation;
 
-/** Test-owned filesystem, real keyring, and bounded process utilities for opt-in local gates. */
+/**
+ * Test-owned filesystem, real keyring, and bounded process utilities for opt-in local gates.
+ */
 final class PkiLocalGateFixture {
+    /**
+     * Public test-only keyring password; never use it for a deployed store.
+     */
     static final String PASSWORD = "local-validation-generated-test-keyring";
+    /**
+     * Environment variable populated only in owned child processes with the test password.
+     */
     static final String UNLOCK_ENVIRONMENT = "ZEROECHO_LOCAL_VALIDATION_UNLOCK";
+    /**
+     * Ten-second local signing claim lease used by fixture sessions.
+     */
     static final Duration CLAIM_LEASE = Duration.ofSeconds(10);
+    /**
+     * Five-second bound on one signing-provider call in fixture sessions.
+     */
     static final Duration CALL_TIMEOUT = Duration.ofSeconds(5);
 
     private PkiLocalGateFixture() { }
 
+    /**
+     * Creates a new owner-only temporary directory below the supplied parent.
+     *
+     * @param parent parent directory, created if absent
+     * @param prefix generated-directory name prefix
+     * @return newly created directory with POSIX mode 0700
+     * @throws Exception if directory creation or POSIX permission application fails
+     */
     static Path privateDirectory(Path parent, String prefix) throws Exception {
         Files.createDirectories(parent);
         return Files.createTempDirectory(parent, prefix,
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
     }
 
+    /**
+     * Generates a fresh RSA key pair for an isolated signing fixture.
+     *
+     * @return newly generated 2048-bit RSA key pair
+     * @throws Exception if RSA generation is unavailable or fails
+     */
     static KeyPair rsaKey() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         return generator.generateKeyPair();
     }
 
+    /**
+     * Creates a real encrypted keyring and writes a bounded local signing configuration.
+     *
+     * @param directory fixture directory for keys, configuration, and persistent store
+     * @param pair RSA key pair stored under the fixture root aliases
+     * @return path to the generated local JSON configuration
+     * @throws Exception if keyring creation, key storage, or configuration writing fails
+     */
     static Path configuration(Path directory, KeyPair pair) throws Exception {
         Files.createDirectories(directory, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
         Path keyring = directory.resolve("keys.bin");
@@ -121,12 +157,28 @@ final class PkiLocalGateFixture {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
+    /**
+     * Creates an independently destroyable copy of the public fixture password.
+     *
+     * @return new password owned by the caller, which must close it
+     */
     static KeyringPassword unlock() { return new KeyringPassword(PASSWORD.toCharArray()); }
 
+    /**
+     * Supplies the test password through the runtime unlock-provider boundary.
+     *
+     * @return runtime dependencies creating a fresh password for every unlock
+     */
     static PkiSessionRuntimeDependencies dependencies() {
         return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(PkiLocalGateFixture::unlock);
     }
 
+    /**
+     * Imports and activates the bundled root profile with a shortened test validity limit.
+     *
+     * @param session open fixture session; remains owned by the caller
+     * @throws Exception if the resource cannot be read, imported, or activated
+     */
     static void seedProfile(PkiSession session) throws Exception {
         try (InputStream input = PkiLocalGateFixture.class.getResourceAsStream("/zeroecho/pki/profiles/v1/root-ca.json")) {
             String profile = new String(input.readAllBytes(), StandardCharsets.UTF_8).replace("PT87600H", "PT2400H");
@@ -135,16 +187,35 @@ final class PkiLocalGateFixture {
         }
     }
 
+    /**
+     * Builds a root-authority operation using the fixture profile and private-key alias.
+     *
+     * @param subject common-name value appended to the test distinguished name
+     * @return typed root creation operation; no work is submitted by this helper
+     */
     static PkiSigningOperation rootOperation(String subject) {
         return new PkiSigningOperation.CreateAuthority(new FormatId("x509"), new SubjectRef("CN=" + subject),
                 "root-ca", new KeyRef("zeroecho-lib:root.prv"));
     }
 
+    /**
+     * Creates the fixture local-operator context for root-authority creation.
+     *
+     * @return access context with the ca.create purpose and no approval selectors
+     */
     static AccessContext access() {
         return new AccessContext(new Principal("LOCAL_OPERATOR", "local-validation-operator"),
                 new Purpose("ca.create"), Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Prepares and durably accepts a root signing operation without executing it.
+     *
+     * @param session fixture session with signing preparation and acceptance capabilities
+     * @param subject common-name value for the root operation
+     * @return accepted operation identity for later inspection or completion
+     * @throws IllegalStateException if the backend does not accept the prepared request
+     */
     static PkiId accept(PkiSession session, String subject) {
         PreparedSemanticSigningRequest prepared = session.signingCommands().orElseThrow().prepare(rootOperation(subject), access(),
                 Optional.empty(), CancellationSignal.NONE);
@@ -155,6 +226,17 @@ final class PkiLocalGateFixture {
         return accepted.receipt().operationId();
     }
 
+    /**
+     * Runs the packaged PKI CLI with JSON output and a 90-second process deadline.
+     *
+     * @param executable packaged CLI executable
+     * @param configuration fixture local JSON configuration
+     * @param logs existing directory for captured output and errors
+     * @param label basename for process output files
+     * @param arguments PKI operation and its arguments
+     * @return exit status, captured output, and elapsed monotonic time
+     * @throws Exception if process startup, bounded waiting, or log reading fails
+     */
     static ProcessResult cli(Path executable, Path configuration, Path logs, String label, String... arguments) throws Exception {
         List<String> command = new ArrayList<>(List.of(executable.toString(), "pki", "--config", configuration.toString(),
                 "--output", "json"));
@@ -162,6 +244,16 @@ final class PkiLocalGateFixture {
         return process(command, logs, label, 90);
     }
 
+    /**
+     * Runs a fixture entry point in an isolated JVM with a ten-minute deadline.
+     *
+     * @param entrypoint class with the child-process main method
+     * @param logs existing directory for captured output and errors
+     * @param label basename for process output files
+     * @param arguments child entry-point arguments
+     * @return exit status, captured output, and elapsed monotonic time
+     * @throws Exception if classpath discovery, startup, waiting, or log reading fails
+     */
     static ProcessResult child(Class<?> entrypoint, Path logs, String label, String... arguments) throws Exception {
         List<String> command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-Xms128m", "-Xmx512m", "-cp", childClasspath(), entrypoint.getName()));
@@ -213,10 +305,25 @@ final class PkiLocalGateFixture {
         return String.join(File.pathSeparator, entries);
     }
 
+    /**
+     * Decodes the first step in a fixture process's JSON plan result.
+     *
+     * @param result completed process result containing a nonempty steps array
+     * @return first step as a typed JSON object
+     * @throws Exception if output decoding fails or the expected result shape is absent
+     */
     static PkiOperationValue.ObjectValue firstStep(ProcessResult result) throws Exception {
         PkiOperationValue.ObjectValue document = PkiCliConfiguration.object(PkiCliJson.parse(result.output().getBytes(StandardCharsets.UTF_8)));
         return PkiCliConfiguration.object(((PkiOperationValue.ListValue) document.fields().get("steps")).values().getFirst());
     }
 
+    /**
+     * Captures one completed owned process without retaining process or stream handles.
+     *
+     * @param exit process exit status
+     * @param output complete captured standard output
+     * @param errors complete captured standard error
+     * @param elapsedNanos process elapsed time in monotonic nanoseconds
+     */
     record ProcessResult(int exit, String output, String errors, long elapsedNanos) { }
 }

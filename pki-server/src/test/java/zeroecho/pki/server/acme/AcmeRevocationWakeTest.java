@@ -97,11 +97,17 @@ import zeroecho.pki.server.ServerControlStore;
 import zeroecho.pki.server.ServerRealmConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 
+/**
+ * Checks reconciliation wake ordering around successful ACME revocation and subsequent observation.
+ */
 final class AcmeRevocationWakeTest {
     private static final String ACCOUNT_ID = "account:test";
     private static final String ACCOUNT_COMMITMENT = "1".repeat(64);
     private static final PkiId CREDENTIAL_ID = new PkiId("credential:test");
 
+    /**
+     * Checks successful ACME revocation emits exactly one reconciliation wake after committed-outcome validation and before the follow-up repository lookup.
+     */
     @Test
     void signalsExactlyOnceAfterCompletedCheckAndBeforeLookup() {
         byte[] certificate = { 1, 2, 3 };
@@ -223,9 +229,15 @@ final class AcmeRevocationWakeTest {
 
     private record TestEvidenceExecutor(AtomicReference<PkiOperationOutcome> outcome)
             implements zeroecho.pki.application.PkiOperationExecutor, RevocationEvidenceExecutor {
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
             return outcome.get();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
                 RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
             return outcome.get();

@@ -97,23 +97,35 @@ import zeroecho.core.util.RandomSupport;
  * @since 1.0
  */
 abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements EncryptionContext, ContextAware {
-    /** Required ChaCha nonce length (12 bytes). */
+    /**
+     * Required ChaCha nonce length (12 bytes).
+     */
     private static final int NONCE_LEN = 12; // both variants
-    /** Algorithm definition that created this context. */
+    /**
+     * Algorithm definition that created this context.
+     */
     protected final CryptoAlgorithm algorithm;
-    /** Symmetric key used by this context. */
+    /**
+     * Symmetric key used by this context.
+     */
     protected final SecretKey key;
     /**
      * Operation mode flag - {@code true} for encryption, {@code false} for
      * decryption.
      */
     protected final boolean encrypt;
-    /** Algorithm-specific specification (e.g., AEAD parameters). */
+    /**
+     * Algorithm-specific specification (e.g., AEAD parameters).
+     */
     protected final S spec;
-    /** Secure random source for nonce generation. */
+    /**
+     * Secure random source for nonce generation.
+     */
     protected final SecureRandom rnd;
     private final AtomicReference<OperationState> operationState = new AtomicReference<>(OperationState.NEW);
-    /** Optional per-operation context for exchanging headers, IVs, etc. */
+    /**
+     * Optional per-operation context for exchanging headers, IVs, etc.
+     */
     protected CtxInterface ctx; // optional
 
     /**
@@ -134,25 +146,33 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
         this.rnd = (rnd != null ? rnd : RandomSupport.getRandom());
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CryptoAlgorithm algorithm() {
         return algorithm;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.security.Key key() {
         return key;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setContext(CtxInterface context) {
         this.ctx = context;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CtxInterface context() {
         return ctx;
@@ -189,6 +209,8 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
      * @return transformed stream (ciphertext for encryption, plaintext for
      *         decryption)
      * @throws IOException if cipher initialization fails
+     * @throws NullPointerException if {@code upstream} is null
+     * @throws ProviderFailureException if the ChaCha cipher cannot initialize the stream
      */
     @Override
     public InputStream attach(InputStream upstream) throws IOException {
@@ -281,12 +303,16 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
         }
     }
 
-    /** Single-use encryption lifecycle states. */
+    /**
+     * Single-use encryption lifecycle states.
+     */
     private enum OperationState {
         NEW, ENCRYPTING, COMPLETED, FAILED
     }
 
-    /** Marks the owning encryption context terminal as its stream is consumed. */
+    /**
+     * Marks the owning encryption context terminal as its stream is consumed.
+     */
     private final class LifecycleInputStream extends FilterInputStream {
         private boolean endOfInput;
 

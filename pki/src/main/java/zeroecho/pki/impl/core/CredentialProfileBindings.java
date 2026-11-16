@@ -44,12 +44,22 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  */
 final class CredentialProfileBindings {
 
+    /**
+     * Stable sanitized failure code for a credential category or profile-reference mismatch.
+     */
     // Shared exact binding validation stays inside the trusted PKI core.
     /* default */ static final String MISMATCH_CODE = "CREDENTIAL_PROFILE_BINDING_MISMATCH";
 
     private CredentialProfileBindings() {
     }
 
+    /**
+     * Requires an exact end-entity credential category and profile reference.
+     *
+     * @param binding credential binding to inspect; a missing or different category is rejected
+     * @param expected exact profile identity, version and commitment
+     * @throws Mismatch if the category or profile reference differs
+     */
     /* default */ static void requireEndEntityBinding(CredentialProfileBinding binding,
             CertificateProfileRef expected) {
         if (!(binding instanceof EndEntityProfileBinding endEntity) || !endEntity.reference().equals(expected)) {
@@ -57,6 +67,13 @@ final class CredentialProfileBindings {
         }
     }
 
+    /**
+     * Requires an exact CA credential category and profile reference.
+     *
+     * @param binding credential binding to inspect; a missing or different category is rejected
+     * @param expected exact profile identity, version and commitment
+     * @throws Mismatch if the category or profile reference differs
+     */
     /* default */ static void requireCaBinding(CredentialProfileBinding binding, CertificateProfileRef expected) {
         if (!(binding instanceof CaProfileBinding ca) || !ca.reference().equals(expected)) {
             throw mismatch();

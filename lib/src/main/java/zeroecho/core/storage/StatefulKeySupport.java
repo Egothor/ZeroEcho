@@ -58,10 +58,17 @@ import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 
-/** Provider mechanics only; the keyring owns every durable transition. */
+/**
+ * Provider mechanics only; the keyring owns every durable transition.
+ */
 final class StatefulKeySupport {
     private StatefulKeySupport() { }
 
+    /**
+     * Attempts to destroy a temporary provider key without replacing an operation failure.
+     *
+     * @param key temporary private key, or null for no operation
+     */
     /* default */ static void destroy(PrivateKey key) {
         if (key != null) {
             try {
@@ -73,6 +80,13 @@ final class StatefulKeySupport {
         }
     }
 
+    /**
+     * Generates a stateful LMS or XMSS pair using its default specification.
+     *
+     * @param algorithm selected stateful algorithm; must not be null
+     * @return newly generated pair; durable enrollment remains the keyring caller's responsibility
+     * @throws GeneralSecurityException if the capability is unsupported or generation fails
+     */
     /* default */ static KeyPair generate(CryptoAlgorithm algorithm) throws GeneralSecurityException {
         if (!algorithm.requiresStatefulSigning()) {
             throw new GeneralSecurityException("Stateful signing capability required");
@@ -86,6 +100,13 @@ final class StatefulKeySupport {
         throw new GeneralSecurityException("Unsupported stateful signing capability");
     }
 
+    /**
+     * Reads the provider-reported count of unused one-time signature leaves.
+     *
+     * @param key LMS or XMSS private key
+     * @return number of unused leaves
+     * @throws GeneralSecurityException if the key is not a supported stateful private key
+     */
     /* default */ static long remaining(PrivateKey key) throws GeneralSecurityException {
         if (key instanceof LMSPrivateKey lms) {
             return lms.getUsagesRemaining();
@@ -96,6 +117,14 @@ final class StatefulKeySupport {
         throw new GeneralSecurityException("Unsupported stateful private key");
     }
 
+    /**
+     * Reads the next leaf index, using the supplied capacity for an exhausted key.
+     *
+     * @param key LMS or XMSS private key
+     * @param capacity total leaf capacity of this enrolled key
+     * @return next leaf index, or capacity when no leaves remain
+     * @throws GeneralSecurityException if the key is unsupported
+     */
     /* default */ static long index(PrivateKey key, long capacity) throws GeneralSecurityException {
         if (remaining(key) == 0) {
             return capacity;
@@ -109,6 +138,13 @@ final class StatefulKeySupport {
         throw new GeneralSecurityException("Unsupported stateful private key");
     }
 
+    /**
+     * Extracts a one-use shard and advances the borrowed provider key by one leaf.
+     *
+     * @param key mutable LMS or XMSS parent private key
+     * @return owned single-use private-key shard
+     * @throws GeneralSecurityException if the key is unsupported
+     */
     /* default */ static PrivateKey reserve(PrivateKey key) throws GeneralSecurityException {
         if (key instanceof LMSPrivateKey lms) {
             return lms.extractKeyShard(1);
@@ -119,6 +155,15 @@ final class StatefulKeySupport {
         throw new GeneralSecurityException("Unsupported stateful private key");
     }
 
+    /**
+     * Obtains the fixed signature size from a temporary verification context.
+     *
+     * @param algorithm selected LMS algorithm, or XMSS algorithm for the other supported case
+     * @param key corresponding public verification key
+     * @return signature length in bytes
+     * @throws GeneralSecurityException if verification-context initialization fails
+     * @throws IOException if closing the temporary context fails
+     */
     /* default */ static int signatureLength(CryptoAlgorithm algorithm, PublicKey key) throws GeneralSecurityException, IOException {
         try (SignatureContext verifier = algorithm instanceof LmsAlgorithm
                 ? new LmsSignatureContext(algorithm, key) : new XmssSignatureContext(algorithm, key)) {
@@ -126,6 +171,18 @@ final class StatefulKeySupport {
         }
     }
 
+    /**
+     * Consumes a reserved one-use shard to sign bounded repeatable content.
+     *
+     * @param shard owned LMS or XMSS single-use shard
+     * @param content borrowed content; each opened stream is closed
+     * @param cancellation signal checked before reads and signing
+     * @param maximumMessageBytes maximum permitted content length, in bytes
+     * @param expectedLength required signature length, in bytes
+     * @return newly allocated signature after verifying shard exhaustion and encoded size
+     * @throws IOException if content reads, progress, cancellation, or the input-size limit fail
+     * @throws GeneralSecurityException if signing or a postcondition fails
+     */
     /* default */ static byte[] sign(PrivateKey shard, RepeatableContent content, CancellationSignal cancellation,
             int maximumMessageBytes, int expectedLength) throws IOException, GeneralSecurityException {
         Signature signer = Signature.getInstance(shard instanceof LMSPrivateKey ? "LMS" : "XMSS", "BCPQC");

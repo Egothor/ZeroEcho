@@ -59,6 +59,17 @@ final class SmartBlockStream extends AbstractChunkTransformInputStream {
 
     private final Cipher cipher;
 
+    /**
+     * Creates a buffered block transform over the supplied stream and initialized cipher.
+     *
+     * @param upstream source stream, owned by this wrapper; must not be null
+     * @param cipher cipher initialized for the required transformation
+     * @param inChunkSize positive input block size in bytes
+     * @param outChunkSize positive output block size in bytes
+     * @param bufferedBlocks positive number of blocks buffered per read
+     * @throws IllegalArgumentException if any size or buffering count is not positive
+     * @throws NullPointerException if the upstream stream is null
+     */
     /* package */ SmartBlockStream(InputStream upstream, Cipher cipher, int inChunkSize, int outChunkSize,
             int bufferedBlocks) {
         super(upstream, inChunkSize, outChunkSize, bufferedBlocks);

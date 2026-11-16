@@ -58,7 +58,15 @@ import zeroecho.pki.server.schema.OperationDescriptorCatalog.Presentation;
 import zeroecho.pki.server.schema.OperationDescriptorCatalog.TransportSemantics;
 import zeroecho.pki.server.schema.OperationParameterSchemas.Parameters;
 
+/**
+ * Checks completeness and consistency of the closed operation descriptor/schema catalog.
+ */
 class OperationDescriptorCatalogTest {
+    /**
+     * Checks all three sealed operation families have exact matching security, parameter and generated presentation projections.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void exactCoverageOfAllThreeSealedFamiliesAndAllProjections() throws Exception {
         Set<String> typed = new HashSet<>();
         OperationDescriptorCatalog catalog = OperationDescriptorCatalog.current();
@@ -108,6 +116,9 @@ class OperationDescriptorCatalogTest {
         assertFalse(catalog.require("backup.restore").available());
     }
 
+    /**
+     * Checks incomplete/duplicate/unknown catalog entries and inconsistent field/scope definitions fail closed.
+     */
     @Test void incompleteDuplicateUnknownAndInvalidFieldDefinitionsFailClosed() {
         List<OperationSecurityDescriptors.Descriptor> security = OperationSecurityDescriptors.definitions();
         List<Parameters> parameters = OperationParameterSchemas.definitions();
@@ -130,6 +141,9 @@ class OperationDescriptorCatalogTest {
         assertThrows(IllegalArgumentException.class, () -> new OperationDescriptorCatalog(security, parameters, badAuthority));
     }
 
+    /**
+     * Checks a custom descriptor subset preserves its supplied policy/family while operations outside that subset remain denied.
+     */
     @Test void customSecuritySubsetRetainsItsOwnPolicyAndFamily() {
         OperationSecurityDescriptors.Descriptor original = OperationDescriptorCatalog.current().require("ca.inspect").security();
         OperationSecurityDescriptors.Descriptor custom = new OperationSecurityDescriptors.Descriptor(original.operationId(),

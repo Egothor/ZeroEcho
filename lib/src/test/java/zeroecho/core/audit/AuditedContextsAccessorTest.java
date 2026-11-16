@@ -60,7 +60,13 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
 
+/**
+ * Contract and regression tests for audited contexts accessor.
+ */
 public class AuditedContextsAccessorTest {
+    /**
+     * Checks that audited proxies retain the wrapped context's typed specification accessor.
+     */
     @Test
     void specAccessorBinding() {
         System.out.println("specAccessorBinding");
@@ -84,6 +90,11 @@ public class AuditedContextsAccessorTest {
         System.out.println("specAccessorBinding...ok");
     }
 
+    /**
+     * Checks that audit wrapping binds tag-length access to the correct context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tagLengthAccessorBinding() throws Exception {
         System.out.println("tagLengthAccessorBinding");
@@ -121,6 +132,11 @@ public class AuditedContextsAccessorTest {
         System.out.println("tagLengthAccessorBinding...ok");
     }
 
+    /**
+     * Checks audit event ordering and failure propagation when a context accessor fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void accessorFailureOrder() throws Exception {
         System.out.println("accessorFailureOrder");
@@ -144,75 +160,146 @@ public class AuditedContextsAccessorTest {
         System.out.println("accessorFailureOrder...ok");
     }
 
+    /**
+     * Additional typed accessor exposed by a digest fixture for proxy-binding checks.
+     */
     public interface SpecAccessor {
+        /**
+         * Returns the context specification exposed by the fixture.
+         *
+         * @return distinguishing typed fixture specification
+         */
         ContextSpec spec();
     }
 
+    /**
+     * Deliberately incompatible same-name accessors used to test reflective binding rejection.
+     */
     public interface IncompatibleAccessors {
+        /**
+         * Returns a fixture stream through the additional incompatible accessor interface.
+         *
+         * @param input caller-owned source stream
+         * @return wrapped input stream selected by the fixture
+         */
         InputStream wrap(InputStream input);
 
+        /**
+         * Exposes a deliberately incompatible specification accessor.
+         *
+         * @return fixture diagnostic text instead of a typed context specification
+         */
         String spec();
 
+        /**
+         * Exposes a deliberately incompatible tag-length accessor.
+         *
+         * @return fixture text instead of the required integer tag length
+         */
         String tagLength();
     }
 
+    /**
+     * Immutable test specification used to distinguish accessor bindings.
+     *
+     * @param name distinguishing fixture label
+     */
     public record TestSpec(String name) implements ContextSpec {
     }
 
+    /**
+     * Minimal digest fixture with a four-byte trailer and observable tag-length access.
+     */
     public static class BaseDigest implements DigestContext {
         private final AtomicInteger tagCalls = new AtomicInteger();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream wrap(InputStream upstream) {
             return new java.io.SequenceInputStream(upstream, new ByteArrayInputStream(new byte[4]));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int tagLength() {
             tagCalls.incrementAndGet();
             return 4;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void setVerificationApproach(VerificationBiPredicate<byte[]> strategy) {
             // Not needed by this test context.
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public VerificationBiPredicate<byte[]> getVerificationCore() {
             return null;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CryptoAlgorithm algorithm() {
             return new AesAlgorithm();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Key key() {
             return NullKey.INSTANCE;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // No resources.
         }
     }
 
+    /**
+     * Digest fixture whose typed specification identifies the first accessor binding.
+     */
     public static final class FirstSpecDigest extends BaseDigest implements SpecAccessor {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public ContextSpec spec() {
             return new TestSpec("first");
         }
     }
 
+    /**
+     * Digest fixture whose typed specification identifies the second accessor binding.
+     */
     public static final class SecondSpecDigest extends BaseDigest implements SpecAccessor {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public ContextSpec spec() {
             return new TestSpec("second");
         }
     }
 
+    /**
+     * Digest fixture that raises the selected failure when its tag length is accessed.
+     */
     public static final class FailingDigest extends BaseDigest {
         private final IllegalStateException failure;
 
@@ -220,43 +307,70 @@ public class AuditedContextsAccessorTest {
             this.failure = failure;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int tagLength() {
             throw failure;
         }
     }
 
+    /**
+     * Encryption fixture with incompatible specification and tag-length accessor types.
+     */
     public static final class IncompatibleAccessorsContext implements EncryptionContext, IncompatibleAccessors {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream attach(InputStream upstream) {
             return upstream;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream wrap(InputStream input) {
             return input;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String spec() {
             return "not a context spec";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String tagLength() {
             return "not an integer";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CryptoAlgorithm algorithm() {
             return new AesAlgorithm();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Key key() {
             return NullKey.INSTANCE;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // No resources.

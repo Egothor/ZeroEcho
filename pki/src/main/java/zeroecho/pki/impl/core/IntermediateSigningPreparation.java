@@ -140,6 +140,8 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param signatureAlgorithm canonical configured signature identity
      * @param pureEdDsaMaximum inclusive pure-EdDSA input bound in bytes
      * @param proofs shared session preparation using the exact SIGN/VERIFY authorities
+     * @throws NullPointerException if store, provider, authority, bindings, clock, proofs is null
+     * @throws IllegalArgumentException if signatureAlgorithm is not an exact canonical signature identity
      */
     public IntermediateSigningPreparation(PkiStore store, Clock clock, SigningProvider provider,
             X509AuthoritySnapshot authority, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
@@ -168,7 +170,7 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param input immutable intermediate creation coordinates
      * @param cancellation cooperative validation cancellation
      * @throws IOException if public metadata cannot be read or validation is cancelled
-     * @throws RuntimeException if issuer, profile, subject, key or algorithm policy rejects input
+     * @throws RuntimeException if access, input or cancellation is null; or issuer, profile, subject, key or algorithm policy rejects input
      */
     public void validate(AccessContext access, IntermediateCreateCommand input,
             CancellationSignal cancellation) throws IOException {
@@ -302,7 +304,9 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged domain request
      * @throws IOException if staging, content access or cancellation fails
-     * @throws RuntimeException if issuer, profile, proof, path or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or issuer, profile, proof, path or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, IntermediateCreateCommand input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -352,7 +356,9 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged domain request requiring adoption or retirement
      * @throws IOException if content access, staging or cancellation fails
-     * @throws RuntimeException if authoritative state, profile, proof, path or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or authoritative state, profile, proof, path or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, IntermediateCertIssueCommand input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -376,7 +382,9 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged request requiring adoption or retirement
      * @throws IOException if content access, staging or cancellation fails
-     * @throws RuntimeException if authority, profile, proof, path or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or authority, profile, proof, path or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, CaRolloverCommand.Intermediate input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {
@@ -397,7 +405,9 @@ public final class IntermediateSigningPreparation { // NOPMD - CyclomaticComplex
      * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged request requiring adoption or retirement
      * @throws IOException if content access, staging or cancellation fails
-     * @throws RuntimeException if authority, profile, proof, path or bounds are invalid
+     * @throws RuntimeException if access, input, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints; or authority, profile, proof, path or bounds are invalid
      */
     public DomainSigningRequest prepare(AccessContext access, CaKeyRotationCommand.Intermediate input,
             SigningSubmissionId submission, Duration ttl, CancellationSignal cancellation) throws IOException {

@@ -53,16 +53,26 @@ import java.util.function.LongSupplier;
 
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Opt-in prepare/recover characterization over one controlled production ledger image. */
+/**
+ * Opt-in prepare/recover characterization over one controlled production ledger image.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CommentRequired",
         "PMD.SystemPrintln", "PMD.UseObjectForClearerAPI" })
 public final class SigningRecoveryBenchmark {
+    /**
+     * Stable schema identifier emitted in this benchmark's JSON reports.
+     */
     static final String SCHEMA = "zeroecho-signing-production-recovery-v1";
 
     private SigningRecoveryBenchmark() {
     }
 
-    /** Prepares or recovers exactly one configured production-ledger image. */
+    /**
+     * Prepares or recovers exactly one configured production-ledger image.
+     *
+     * @param arguments closed --name=value options selecting the benchmark scenario and report paths
+     * @throws Exception if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static void main(String[] arguments) throws Exception {
         Configuration configuration = Configuration.parse(arguments);
         if (configuration.mode() == Mode.PREPARE_ONLY) {
@@ -80,6 +90,15 @@ public final class SigningRecoveryBenchmark {
         System.out.println(json);
     }
 
+    /**
+     * Validates a prepared image and measures one production metadata-store recovery.
+     *
+     * @param configuration validated benchmark scenario, limits, paths, and output metadata
+     * @param nanoClock monotonic nanosecond source injected for deterministic timing checks
+     * @return verified recovery timing, capacity, projection, artifact, and JVM evidence
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     * @throws NullPointerException if any of {@code configuration}, {@code nanoClock} is null
+     */
     static Result recover(Configuration configuration, LongSupplier nanoClock) throws IOException {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(nanoClock, "nanoClock");
@@ -192,13 +211,48 @@ public final class SigningRecoveryBenchmark {
                 .append(descriptor.descriptorFingerprint()).append("\"}").toString();
     }
 
+    /**
+     * Closed benchmark command modes separating image preparation from measured recovery.
+     */
     enum Mode {
+        /**
+         * Creates a fresh controlled production recovery image without timing a store open.
+         */
         PREPARE_ONLY,
+        /**
+         * Validates an existing controlled image and measures production recovery.
+         */
         RECOVER_ONLY
     }
 
+    /**
+     * Explicit scenario configuration retained with the benchmark report.
+     *
+     * @param mode whether the command prepares a new image or measures recovery of an existing one
+     * @param retainedPopulation expected current retained metadata population
+     * @param activePopulation active signing-work population recovered into the due index
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param suffixFrames committed data-frame count distributed over the sealed suffix
+     * @param createdAt fixed image creation instant used by the population fixture
+     * @param output JSON report destination outside the benchmark work image
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     */
     record Configuration(Mode mode, long retainedPopulation, long activePopulation,
             int sealedSegments, long suffixFrames, Instant createdAt, Path output, Path workRoot) {
+        /**
+         * Validates scenario bounds and normalizes the benchmark input/output paths.
+         *
+         * @param mode whether the command prepares a new image or measures recovery of an existing one
+         * @param retainedPopulation expected current retained metadata population
+         * @param activePopulation active signing-work population recovered into the due index
+         * @param sealedSegments sealed WAL segment count in the controlled image
+         * @param suffixFrames committed data-frame count distributed over the sealed suffix
+         * @param createdAt fixed image creation instant used by the population fixture
+         * @param output JSON report destination outside the benchmark work image
+         * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+         * @throws ContractException if populations, topology, identities, timing bounds, or path relationships violate this scenario
+         * @throws NullPointerException if any of {@code mode}, {@code createdAt}, {@code output}, {@code workRoot} is null
+         */
         Configuration {
             Objects.requireNonNull(mode, "mode");
             Objects.requireNonNull(createdAt, "createdAt");
@@ -223,6 +277,13 @@ public final class SigningRecoveryBenchmark {
             }
         }
 
+        /**
+         * Parses the closed benchmark option set and enforces the scenario's bounded configuration.
+         *
+         * @param arguments closed --name=value benchmark options; duplicate or unknown options are rejected
+         * @return validated normalized configuration
+         * @throws ContractException if option syntax, names, numeric values, or scenario bounds are invalid
+         */
         static Configuration parse(String[] arguments) {
             Map<String, String> values = parseArguments(arguments);
             try {
@@ -280,6 +341,11 @@ public final class SigningRecoveryBenchmark {
             return Long.parseLong(values.getOrDefault(name, Long.toString(fallback)));
         }
 
+        /**
+         * Computes the SHA-256 commitment of the canonical measurement-shaping configuration.
+         *
+         * @return lowercase hexadecimal configuration fingerprint; report/work paths are not measurement axes
+         */
         /* default */ String fingerprint() {
             String canonical = "schema=" + SCHEMA + "|mode=" + mode
                     + "|retainedPopulation=" + retainedPopulation
@@ -291,6 +357,17 @@ public final class SigningRecoveryBenchmark {
         }
     }
 
+    /**
+     * Exact artifact byte lengths and record counts validated after recovery.
+     *
+     * @param manifestBytes encoded authoritative manifest size, in bytes
+     * @param checkpointBytes encoded checkpoint size, in bytes
+     * @param checkpointEntries validated checkpoint entry count
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param sealedBytes total encoded sealed-artifact size, in bytes
+     * @param suffixFrames committed data-frame count distributed over the sealed suffix
+     * @param activeBytes encoded active-WAL size, in bytes
+     */
     record ArtifactEvidence(long manifestBytes, long checkpointBytes, int checkpointEntries,
             int sealedSegments, long sealedBytes, long suffixFrames, long activeBytes) {
         private static ArtifactEvidence capture(Path root,
@@ -326,10 +403,27 @@ public final class SigningRecoveryBenchmark {
         }
     }
 
+    /**
+     * Measured timing and validated evidence returned by this benchmark run.
+     *
+     * @param openNanos measured production store-open duration, in nanoseconds
+     * @param descriptor validated controlled-image descriptor and fingerprints
+     * @param capacity production ledger capacity observations after recovery
+     * @param projectionRecovery due-index/work-projection recovery counters
+     * @param recovery manifest-authoritative replay and artifact counters
+     * @param artifacts validated artifact size and population evidence
+     * @param jvm JVM counter observations captured around the measurement
+     */
     record Result(long openNanos, SigningControlledRecoveryImage.Descriptor descriptor,
             SigningLedgerStoreEngine.CapacityObservation capacity,
             SigningLedgerStoreEngine.RecoveryProjectionStatistics projectionRecovery,
             SigningLedgerRecovery.Statistics recovery, ArtifactEvidence artifacts, JvmDelta jvm) {
+        /**
+         * Serializes the measured result and its exact scenario/evidence coordinates as JSON.
+         *
+         * @param configuration validated benchmark scenario, limits, paths, and output metadata
+         * @return complete JSON report without an acceptance verdict
+         */
         String toJson(Configuration configuration) {
             StringBuilder json = new StringBuilder(2048).append('{');
             field(json, "schema", SCHEMA).append(',');
@@ -425,6 +519,14 @@ public final class SigningRecoveryBenchmark {
         }
     }
 
+    /**
+     * JVM telemetry differences sampled around the measured operation.
+     *
+     * @param usedHeapDeltaBytes signed change in observed used heap, in bytes
+     * @param liveThreadAllocatedBytesEstimate estimated allocation delta, in bytes, or a negative unavailable sentinel
+     * @param gcCollections observed garbage-collection count delta
+     * @param gcMillis observed garbage-collection time delta, in milliseconds
+     */
     record JvmDelta(long usedHeapDeltaBytes, long liveThreadAllocatedBytesEstimate,
             long gcCollections, long gcMillis) {
         private static JvmDelta between(JvmSample before, JvmSample after) {
@@ -467,39 +569,77 @@ public final class SigningRecoveryBenchmark {
         }
     }
 
+    /**
+     * Stable configuration-rejection exception for the benchmark command.
+     */
     static final class ContractException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         */
         ContractException(String reasonCode) {
             super("signing recovery benchmark rejected: code=" + reasonCode);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         * @param cause underlying diagnostic failure, possibly null
+         */
         ContractException(String reasonCode, Throwable cause) {
             super("signing recovery benchmark rejected: code=" + reasonCode, cause);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         String reasonCode() {
             return reasonCode;
         }
     }
 
+    /**
+     * Stable fail-closed exception for benchmark execution or evidence mismatches.
+     */
     static final class BenchmarkException extends IOException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         */
         BenchmarkException(String reasonCode) {
             super("signing recovery benchmark failed: code=" + reasonCode);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         * @param cause underlying diagnostic failure, possibly null
+         */
         BenchmarkException(String reasonCode, Throwable cause) {
             super("signing recovery benchmark failed: code=" + reasonCode, cause);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         String reasonCode() {
             return reasonCode;
         }

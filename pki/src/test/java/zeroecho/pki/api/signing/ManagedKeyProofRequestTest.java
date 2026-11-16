@@ -46,11 +46,17 @@ import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
+/**
+ * Contract and regression tests for managed key proof request.
+ */
 final class ManagedKeyProofRequestTest {
     private static final PkiId AUTHORITY = new PkiId("authority");
     private static final PkiId RESPONDER = new PkiId("responder");
     private static final KeyRef KEY = new KeyRef("managed-key");
 
+    /**
+     * Requests validate required coordinates without resolving them.
+     */
     @Test void requestsValidateRequiredCoordinatesWithoutResolvingThem() {
         assertEquals(KEY, new ManagedKeyProofRequest.CaSubject(AUTHORITY, Optional.empty(), "profile", KEY).keyRef());
         assertEquals(KEY, new ManagedKeyProofRequest.OcspResponder(AUTHORITY, RESPONDER, KEY).keyRef());
@@ -67,6 +73,9 @@ final class ManagedKeyProofRequestTest {
         }
     }
 
+    /**
+     * Limits use strict UTF-8 bytes with inclusive boundaries.
+     */
     @Test void limitsUseStrictUtf8BytesWithInclusiveBoundaries() {
         PkiId maximumId = new PkiId("\u00e9".repeat(2048));
         String maximumProfile = "\u00e9".repeat(128);
@@ -99,6 +108,9 @@ final class ManagedKeyProofRequestTest {
         }
     }
 
+    /**
+     * Purpose scope and semantic kind have exact combinations.
+     */
     @Test void purposeScopeAndSemanticKindHaveExactCombinations() {
         ManagedKeyProofScope ca = new ManagedKeyProofScope(ManagedKeyProofPurpose.CA_SUBJECT_KEY, Optional.empty());
         ManagedKeyProofScope ocsp = new ManagedKeyProofScope(ManagedKeyProofPurpose.OCSP_RESPONDER_KEY, Optional.of(RESPONDER));

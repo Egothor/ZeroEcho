@@ -158,6 +158,7 @@ public final class X509AuthoritySnapshot {
      * @param executorBindings actual process-local executors
      * @param policy restrictive policy
      * @return immutable authority snapshot
+     * @throws NullPointerException if a provider collection, provider entry, or required provider result collection is null
      */
     public static X509AuthoritySnapshot compose(List<X509BindingRuleProvider> bindingProviders,
             List<AlgorithmExecutionCapabilityProvider> capabilityProviders,
@@ -208,6 +209,7 @@ public final class X509AuthoritySnapshot {
      *
      * @param value canonical identity or approved legacy alias
      * @return exact identity
+     * @throws NullPointerException if {@code value} is null
      */
     public AlgorithmIdentity resolveIdentity(String value) {
         Objects.requireNonNull(value, "value");
@@ -225,6 +227,8 @@ public final class X509AuthoritySnapshot {
      *
      * @param identifier versioned default identifier
      * @return exact default suite
+     * @throws NullPointerException if {@code identifier} is null
+     * @throws IllegalArgumentException if identifier has no configured default suite
      */
     public AlgorithmSuite resolveDefault(String identifier) {
         AlgorithmSuite suite = defaults.get(Objects.requireNonNull(identifier, "identifier"));
@@ -259,6 +263,7 @@ public final class X509AuthoritySnapshot {
      * @param provenance explicit or default provenance
      * @param bindingId stable role-specific binding identifier
      * @return effective immutable selection bound to this snapshot
+     * @throws NullPointerException if {@code bindingId} is null
      */
     public X509AlgorithmResolver.Selection resolve(AlgorithmIdentity signature, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
@@ -278,6 +283,7 @@ public final class X509AuthoritySnapshot {
      * @param executorType required runtime executor type
      * @param <E> executor type
      * @return unforgeable process-local plan
+     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection fails or no executor of the required type is registered
      */
     public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
@@ -303,6 +309,7 @@ public final class X509AuthoritySnapshot {
      * @param bindingId stable role-specific binding identifier
      * @param executorType required runtime executor type
      * @return unforgeable process-local execution plan
+     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection fails or no executor of the required type is registered
      */
     public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
@@ -393,6 +400,7 @@ public final class X509AuthoritySnapshot {
      * @param direction required operation direction
      * @throws IllegalArgumentException if provenance, executor, implementation, or
      *                                  direction differs
+     * @throws NullPointerException if {@code plan}, {@code expectedExecutor} or {@code direction} is null
      */
     public void authorize(X509ExecutionPlan<?> plan, Object expectedExecutor,
             AlgorithmExecutionCapability.Direction direction) {
@@ -416,6 +424,7 @@ public final class X509AuthoritySnapshot {
      * @return non-forgeable process-local completion
      * @throws IllegalArgumentException if the plan is foreign or not an authorized
      *                                  SIGN plan
+     * @throws NullPointerException if {@code statusObject} is null
      */
     public X509SignedObjectCompletion completeStatusObject(StatusObject statusObject,
             X509ExecutionPlan<SigningProvider> signingPlan) {
@@ -430,6 +439,7 @@ public final class X509AuthoritySnapshot {
      * @param completion signed-object completion
      * @return immutable completed status object
      * @throws IllegalArgumentException if provenance or executor binding differs
+     * @throws NullPointerException if {@code completion} is null
      */
     public StatusObject requireStatusCompletion(X509SignedObjectCompletion completion) {
         Objects.requireNonNull(completion, "completion");
@@ -462,6 +472,7 @@ public final class X509AuthoritySnapshot {
      * @param value canonical identity or approved compatibility alias
      * @param direction execution direction
      * @return exact canonical signature identity
+     * @throws IllegalArgumentException if the identity, binding, policy, or public-key capability intersection cannot execute the signature
      */
     public AlgorithmIdentity requireExecutableSignature(String value,
             AlgorithmExecutionCapability.Direction direction) {
@@ -488,6 +499,8 @@ public final class X509AuthoritySnapshot {
      * Rejects a selection produced by a semantically different authority snapshot.
      *
      * @param selection effective selection
+     * @throws NullPointerException if {@code selection} is null
+     * @throws IllegalArgumentException if the selection was produced by a different semantic authority snapshot
      */
     public void requireAuthority(X509AlgorithmResolver.Selection selection) {
         Objects.requireNonNull(selection, "selection");
@@ -696,14 +709,29 @@ public final class X509AuthoritySnapshot {
             }
         }
 
+        /**
+         * Returns the exact nonblank implementation identity retained by this contribution.
+         *
+         * @return exact nonblank implementation identity
+         */
         /* default */ String implementationId() {
             return implementationId;
         }
 
+        /**
+         * Returns the supported execution direction retained by this contribution.
+         *
+         * @return supported execution direction
+         */
         /* default */ AlgorithmExecutionCapability.Direction direction() {
             return direction;
         }
 
+        /**
+         * Returns the exact borrowed runtime executor instance retained by this contribution.
+         *
+         * @return exact borrowed runtime executor instance
+         */
         /* default */ Object executor() {
             return executor;
         }

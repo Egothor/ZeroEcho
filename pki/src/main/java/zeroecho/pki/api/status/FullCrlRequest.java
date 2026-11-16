@@ -62,6 +62,8 @@ public record FullCrlRequest(PkiId issuerGenerationId, Duration validity) {
      *
      * @throws NullPointerException if either argument is null
      * @throws IllegalArgumentException if validity is zero or negative
+     * @param issuerGenerationId exact generation, never an implicit current selection
+     * @param validity positive requested interval from thisUpdate to nextUpdate
      */
     public FullCrlRequest {
         Objects.requireNonNull(issuerGenerationId, "issuerGenerationId");

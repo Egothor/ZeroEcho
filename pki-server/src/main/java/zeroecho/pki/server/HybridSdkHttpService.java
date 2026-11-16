@@ -38,17 +38,34 @@ import java.util.Objects;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Configured administrative HTTP boundary; native gateway authentication remains authoritative. */
+/**
+ * Administrative SDK delegation boundary over the realm's retained admission service.
+ *
+ * <p>Callers supply gateway-authenticated input. This facade creates no listener,
+ * repeats no TLS/JWS authentication and grants no authority by constructing a
+ * challenge projection. The admission service owns proof verification, exact
+ * accepted replay and atomic administrative consumption.</p>
+ */
 public final class HybridSdkHttpService {
     private final AdministrativeRequestCoordinator coordinator;
+    /**
+     * Binds public SDK transport projection to the existing durable administrative coordinator.
+     *
+     * @param coordinator realm-owned proof admission and administrative lifecycle owner
+     * @throws NullPointerException if coordinator is null
+     */
     /* default */ HybridSdkHttpService(AdministrativeRequestCoordinator coordinator) {
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
     }
     /**
      * Creates a proof challenge after existing administrative admission checks.
-     * @param request authenticated gateway invocation @param envelope canonical operation arguments
-     * @param originalDer exact original CSR @param clientNonce 32-byte client nonce
+     *
+     * @param request authenticated gateway invocation
+     * @param envelope canonical operation arguments
+     * @param originalDer exact original CSR
+     * @param clientNonce 32-byte client nonce
      * @return retained public challenge
+     * @throws IllegalArgumentException if the delegated request, proof or frozen-context constraints fail
      */
     public Challenge challenge(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope,
             byte[] originalDer, byte[] clientNonce) {
@@ -57,19 +74,32 @@ public final class HybridSdkHttpService {
     }
     /**
      * Consumes proofs through the existing durable administrative acceptance boundary.
-     * @param intentId retained intent @param requestId stable administrative request ID
-     * @param request authenticated gateway invocation @param envelope canonical operation arguments
+     *
+     * @param intentId retained intent
+     * @param requestId stable administrative request ID
+     * @param request authenticated gateway invocation
+     * @param envelope canonical operation arguments
      * @param originalDer repeated exact original request
-     * @param primaryProof client primary proof @param alternativeProof client alternative proof
-     * @param timeout existing bounded execution timeout @return durable administrative request
+     * @param primaryProof client primary proof
+     * @param alternativeProof client alternative proof
+     * @param timeout existing bounded execution timeout
+     * @return durable administrative request
+     * @throws IllegalArgumentException if the delegated request, proof or frozen-context constraints fail
      */
     public AdministrativeRequest accept(String intentId, String requestId, ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, byte[] originalDer, byte[] primaryProof, byte[] alternativeProof, Duration timeout) {
         return coordinator.sdkAdmission().accept(intentId, requestId, request, envelope, timeout, originalDer, primaryProof, alternativeProof);
     }
     /**
-     * Public immutable challenge projection.
-     * @param intentId retained identity @param primary exact F1 @param target exact F7
+     * Public immutable challenge projection returned from successful retained admission.
+     *
+     * <p>The implicit constructor retains values without null, identity, frame-kind
+     * or cross-frame validation. Arbitrarily constructed projections do not prove
+     * that the server retained or authorized a challenge.</p>
+     *
+     * @param intentId retained identity
+     * @param primary immutable F1 frame reference
+     * @param target immutable F7 frame reference
      */
     public record Challenge(String intentId, HybridSdkFrame primary, HybridSdkFrame target) { }
 }

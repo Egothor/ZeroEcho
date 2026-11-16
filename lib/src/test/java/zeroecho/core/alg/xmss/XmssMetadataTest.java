@@ -41,7 +41,15 @@ import java.security.GeneralSecurityException;
 import org.bouncycastle.pqc.jcajce.interfaces.XMSSKey;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for XMSS metadata.
+ */
 class XmssMetadataTest {
+    /**
+     * Digest sizes and invalid parameters need no signature probe.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void digestSizesAndInvalidParametersNeedNoSignatureProbe() throws Exception {
         assertEquals(2500, XmssSignatureContext.xmssSigLen(key(10, "SHA256")));
         assertEquals(2500, XmssSignatureContext.xmssSigLen(key(10, "SHAKE128")));

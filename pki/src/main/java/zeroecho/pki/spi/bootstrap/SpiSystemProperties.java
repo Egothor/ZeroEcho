@@ -73,6 +73,7 @@ public final class SpiSystemProperties {
      * @param prefix property prefix including trailing dot, e.g.
      *               {@code "zeroecho.pki.store."}
      * @return map of subKey -&gt; value (never {@code null})
+     * @throws NullPointerException if prefix is null
      */
     public static Map<String, String> readPrefixed(String prefix) {
         Objects.requireNonNull(prefix, "prefix");

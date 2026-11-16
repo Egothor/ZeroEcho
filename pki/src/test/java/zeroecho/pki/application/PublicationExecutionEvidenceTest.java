@@ -43,9 +43,14 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Closed round-trip of the terminal publication evidence vocabulary. */
+/**
+ * Closed round-trip of the terminal publication evidence vocabulary.
+ */
 class PublicationExecutionEvidenceTest {
 
+    /**
+     * Round-trips successful publication execution evidence through its canonical codec.
+     */
     @Test
     void roundTripsSuccess() {
         PublicationExecutionEvidence evidence = PublicationExecutionEvidence.terminal("CREDENTIAL", "cred-a",
@@ -58,6 +63,9 @@ class PublicationExecutionEvidenceTest {
         assertEquals(Optional.empty(), decoded.failure());
     }
 
+    /**
+     * Round trips terminal failure.
+     */
     @Test
     void roundTripsTerminalFailure() {
         PublicationExecutionEvidence evidence = PublicationExecutionEvidence.terminal("CREDENTIAL", "cred-a",
@@ -68,6 +76,9 @@ class PublicationExecutionEvidenceTest {
         assertEquals(Optional.of("EXTERNAL_TERMINAL"), decoded.failure());
     }
 
+    /**
+     * Rejects failure inconsistent with outcome.
+     */
     @Test
     void rejectsFailureInconsistentWithOutcome() {
         assertThrows(IllegalArgumentException.class, () -> PublicationExecutionEvidence.terminal("CREDENTIAL",
@@ -75,6 +86,9 @@ class PublicationExecutionEvidenceTest {
                 PublicationExecutionEvidence.Outcome.SUCCEEDED));
     }
 
+    /**
+     * Decode returns empty when no evidence present.
+     */
     @Test
     void decodeReturnsEmptyWhenNoEvidencePresent() {
         assertTrue(PublicationExecutionEvidence.decode(SimpleAttributeSet.builder().build()).isEmpty());

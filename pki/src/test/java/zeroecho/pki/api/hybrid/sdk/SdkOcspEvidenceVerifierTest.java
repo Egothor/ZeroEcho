@@ -66,12 +66,19 @@ import zeroecho.pkix.CertificateExtension;
 import zeroecho.pkix.ocsp.CertStatus;
 import zeroecho.pkix.ocsp.ResponderId;
 
-/** Real independent native/delegation and dual-evidence signatures; no live PKI claim. */
+/**
+ * Real independent native/delegation and dual-evidence signatures; no live PKI claim.
+ */
 class SdkOcspEvidenceVerifierTest {
     private static final Instant NOW = Instant.parse("2026-11-15T12:00:00Z");
     private static final zeroecho.pkix.AlgorithmIdentifier PRIMARY = zeroecho.pkix.AlgorithmIdentifier.absent("1.2.840.10045.4.3.3");
     private static final zeroecho.pkix.AlgorithmIdentifier ALT = zeroecho.pkix.AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.19");
 
+    /**
+     * Verifies native delegation both evidence roles and preserves good revoked unknown.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesNativeDelegationBothEvidenceRolesAndPreservesGoodRevokedUnknown() throws Exception {
         var fixture = new Fixture(); var evidence = fixture.bundle(fixture.fields);
         var result = SdkOcspEvidenceVerifier.verify(evidence, fixture.context(NOW, fixture.nonce));
@@ -91,6 +98,11 @@ class SdkOcspEvidenceVerifierTest {
         assertArrayEquals(fixture.response, evidence.primaryResponseDer());
     }
 
+    /**
+     * Rejects tamper wrong roles nonce stale status and untrusted coordinates.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsTamperWrongRolesNonceStaleStatusAndUntrustedCoordinates() throws Exception {
         var fixture = new Fixture(); var valid = fixture.bundle(fixture.fields);
         byte[] alternative = valid.alternativeSignature(); alternative[0] ^= 1;
@@ -115,6 +127,11 @@ class SdkOcspEvidenceVerifierTest {
         assertThrows(IllegalArgumentException.class, () -> new SdkOcspEvidence(new byte[SdkOcspProjection.MAXIMUM_RESPONSE_BYTES+1],valid.responderChain(),valid.primaryFrame(),valid.alternativeFrame(),valid.primarySignature(),valid.alternativeSignature()));
     }
 
+    /**
+     * Parses component bounded native response larger than request limit and rejects derived overflow.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void parsesComponentBoundedNativeResponseLargerThanRequestLimitAndRejectsDerivedOverflow() throws Exception {
         var fixture = new Fixture();
         // This tests native parsing/allocation, not authorization of this artificial chain.
@@ -136,6 +153,11 @@ class SdkOcspEvidenceVerifierTest {
         assertThrows(IllegalArgumentException.class, () -> SdkOcspProjection.parse(fixture.request,new byte[1455102]));
     }
 
+    /**
+     * Rejects duplicate cert id despite accepted null versus absent digest parameters.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsDuplicateCertIdDespiteAcceptedNullVersusAbsentDigestParameters() throws Exception {
         var fixture = new Fixture();
         var first = new org.bouncycastle.cert.ocsp.OCSPReq(fixture.request).getRequestList()[0].getCertID().toASN1Primitive();

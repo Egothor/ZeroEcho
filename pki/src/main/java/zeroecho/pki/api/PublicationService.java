@@ -111,7 +111,9 @@ public interface PublicationService extends AutoCloseable {
      */
     PublicationCursor openPublications(PublicationQuery query);
 
-    /** Rejects new operations while allowing an in-flight synchronous call to classify its result. */
+    /**
+     * Rejects new operations while allowing an in-flight synchronous call to classify its result.
+     */
     @Override
     void close();
 }

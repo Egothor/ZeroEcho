@@ -71,6 +71,7 @@ public interface DataContent { // NOPMD
      * @return the content data as {@code byte[]}
      * @throws RuntimeException      if reading from the stream fails
      * @throws IllegalStateException if content exceeds allowed memory limit
+     * @throws UncheckedIOException if opening, reading, or closing the content stream fails
      */
     default byte[] toBytes() {
         try (InputStream in = getStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {

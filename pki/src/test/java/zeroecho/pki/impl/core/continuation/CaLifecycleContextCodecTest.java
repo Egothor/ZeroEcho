@@ -41,7 +41,13 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaHeadSnapshot;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for ca lifecycle context codec.
+ */
 class CaLifecycleContextCodecTest {
+    /**
+     * Canonical capture commits epoch and candidate identity without current state.
+     */
     @Test void canonicalCaptureCommitsEpochAndCandidateIdentityWithoutCurrentState() {
         var context = context(1);
         String encoded = CaLifecycleContextCodec.encode(context);
@@ -55,6 +61,9 @@ class CaLifecycleContextCodecTest {
         assertNotEquals(CaLifecycleContextCodec.commitment(context), CaLifecycleContextCodec.commitment(candidate));
     }
 
+    /**
+     * Rejects padding noncanonical epoch and unknown schema.
+     */
     @Test void rejectsPaddingNoncanonicalEpochAndUnknownSchema() {
         assertThrows(IllegalArgumentException.class,
                 () -> CaLifecycleContextCodec.decode(CaLifecycleContextCodec.encode(context(1)) + "="));

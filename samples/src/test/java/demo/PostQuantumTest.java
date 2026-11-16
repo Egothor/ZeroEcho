@@ -58,17 +58,29 @@ import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Executable examples of post-quantum encapsulation and encrypted payload delivery.
+ */
 @Tag("sample")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PostQuantumTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
     private static final Logger LOG = Logger.getLogger(PostQuantumTest.class.getName());
 
+    /**
+     * Initializes cryptographic providers before executing the sample or integration scenarios.
+     */
     @BeforeAll
     void setupProviders() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Generates an ML-KEM-1024 key pair for the sample recipient.
+     *
+     * @return fresh ML-KEM key pair
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     KeyPair generateKyberKeys() throws GeneralSecurityException {
         KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
 
@@ -79,6 +91,13 @@ class PostQuantumTest {
         return kp;
     }
 
+    /**
+     * Demonstrates post-quantum key encapsulation for encrypted SDK payload delivery.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void pqcSdkLevelAPI() throws GeneralSecurityException, IOException {
         // Create a random sample message to be encrypted

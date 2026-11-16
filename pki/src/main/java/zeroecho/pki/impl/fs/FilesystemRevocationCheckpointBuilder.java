@@ -68,6 +68,21 @@ final class FilesystemRevocationCheckpointBuilder {
         // Static package implementation.
     }
 
+    /**
+     * Freezes the current index and externally sorts bounded runs before publishing a historical checkpoint.
+     *
+     * <p>Owns and closes temporary workspace, frozen-index, and merge-run resources.
+     * Cleanup failures cannot undo an already authoritative publication.</p>
+     *
+     * @param index borrowed operational current-state index; must not be null
+     * @param checkpointDirectory destination generation directory; must not be null
+     * @param configuration validated finite sorting and transfer workspace limits; must not be null
+     * @return immutable published checkpoint generation descriptor
+     * @throws IOException if freezing, sorting, merging, validation, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if workspace or transfer bounds are invalid
+     * @throws IllegalStateException if the current index is closed or unusable
+     */
     /* default */ static FilesystemRevocationCheckpoint.PublishedGeneration build(
             FilesystemRevocationCurrentIndex index,
             Path checkpointDirectory,
@@ -75,6 +90,22 @@ final class FilesystemRevocationCheckpointBuilder {
         return build(index, checkpointDirectory, configuration, FaultInjector.NONE);
     }
 
+    /**
+     * Freezes the current index and externally sorts bounded runs before publishing a historical checkpoint.
+     *
+     * <p>Owns and closes temporary workspace, frozen-index, and merge-run resources.
+     * Cleanup failures cannot undo an already authoritative publication.</p>
+     *
+     * @param index borrowed operational current-state index; must not be null
+     * @param checkpointDirectory destination generation directory; must not be null
+     * @param configuration validated finite sorting and transfer workspace limits; must not be null
+     * @param faults deterministic build/publication fault callback; must not be null
+     * @return immutable published checkpoint generation descriptor
+     * @throws IOException if freezing, sorting, merging, validation, or durable publication fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if workspace or transfer bounds are invalid
+     * @throws IllegalStateException if the current index is closed or unusable
+     */
     /* default */ static FilesystemRevocationCheckpoint.PublishedGeneration build(
             FilesystemRevocationCurrentIndex index,
             Path checkpointDirectory,
@@ -137,12 +168,28 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Explicit resource bounds and temporary location for one build. */
+    /**
+     * Explicit resource bounds and temporary location for one build.
+     * @param maxEncodedRunBytes inclusive encoded-byte bound for each sorting run
+     * @param maxOpenMergeInputs maximum number of simultaneously open merge input streams
+     * @param transferBufferBytes bounded transfer buffer capacity in bytes
+     * @param temporaryDirectory directory for owned intermediate build artifacts
+     */
     /* default */ record Configuration(
             long maxEncodedRunBytes,
             int maxOpenMergeInputs,
             int transferBufferBytes,
             Path temporaryDirectory) {
+        /**
+         * Creates the explicit resource bounds and temporary location for one build.
+         *
+         * @param maxEncodedRunBytes inclusive encoded-byte bound for each sorting run
+         * @param maxOpenMergeInputs maximum number of simultaneously open merge input streams
+         * @param transferBufferBytes bounded transfer buffer capacity in bytes
+         * @param temporaryDirectory directory for owned intermediate build artifacts
+         * @throws NullPointerException if {@code temporaryDirectory} is null
+         * @throws IllegalArgumentException if {@code (maxEncodedRunBytes <= ZERO || maxOpenMergeInputs < 2 || transferBufferBytes <= 0)}
+         */
         Configuration {
             Objects.requireNonNull(temporaryDirectory, "temporaryDirectory");
             if (maxEncodedRunBytes <= ZERO || maxOpenMergeInputs < 2
@@ -160,30 +207,58 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Deterministic builder lifecycle faults; not production API. */
+    /**
+     * Deterministic builder lifecycle faults; not production API.
+     */
     /* default */ @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails at one deterministic lifecycle boundary. */
+        /**
+         * Fails at one deterministic lifecycle boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
 
-        /** Observes the bounded entry buffer after one encoded entry is admitted. */
+        /**
+         * Observes the bounded entry buffer after one encoded entry is admitted.
+         * @param entryCount number of entries currently retained in the observed run buffer
+         * @param encodedBytes encoded byte count of the observed sorting run
+         */
         default void observeRunBuffer(long entryCount, long encodedBytes) {
             // Optional structural test observation.
         }
 
-        /** Observes one merge group after all of its bounded readers are open. */
+        /**
+         * Observes one merge group after all of its bounded readers are open.
+         * @param openInputs number of simultaneously open merge input streams
+         */
         default void observeOpenMergeInputs(int openInputs) {
             // Optional structural test observation.
         }
 
-        /** Observes one completed temporary run and its strict encoded size. */
+        /**
+         * Observes one completed temporary run and its strict encoded size.
+         * @param pass current external-sort merge pass number
+         * @param entryCount number of entries currently retained in the observed run buffer
+         * @param encodedBytes encoded byte count of the observed sorting run
+         */
         default void observeTemporaryRun(int pass, long entryCount, long encodedBytes) {
             // Optional structural test observation.
         }
 
-        /** Observes population conservation across one complete merge pass. */
+        /**
+         * Observes population conservation across one complete merge pass.
+         * @param pass current external-sort merge pass number
+         * @param inputRuns number of sorting runs consumed by the merge pass
+         * @param outputRuns number of sorting runs produced by the merge pass
+         * @param inputEntries number of input entries consumed by the merge pass
+         * @param outputEntries number of output entries produced by the merge pass
+         */
         default void observeMergePass(
                 int pass,
                 long inputRuns,
@@ -193,32 +268,72 @@ final class FilesystemRevocationCheckpointBuilder {
             // Optional structural test observation.
         }
 
-        /** Records one strict UTF-8 encoding used to create a merge head. */
+        /**
+         * Records one strict UTF-8 encoding used to create a merge head.
+         */
         default void observeMergeHeadEncoding() {
             // Optional structural test observation.
         }
 
-        /** Observes one completed strict run before it is consumed or published. */
+        /**
+         * Observes one completed strict run before it is consumed or published.
+         * @param run owned temporary sorting run after its write completed
+         * @throws IOException if the run observer injects a failure
+         */
         default void afterRunWritten(Path run) throws IOException {
             // Optional deterministic corruption seam.
         }
     }
 
-    /** Finite fault points for frozen-copy, run, merge, publication, and cleanup tests. */
+    /**
+     * Finite fault points for frozen-copy, run, merge, publication, and cleanup tests.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for the boundary before freezing checkpoint input.
+         */
         BEFORE_FREEZE,
+        /**
+         * Fault injection point for copying frozen checkpoint input.
+         */
         FROZEN_COPY,
+        /**
+         * Fault injection point for forcing the frozen input.
+         */
         FROZEN_FORCE,
+        /**
+         * Fault injection point for closing the frozen input.
+         */
         FROZEN_CLOSE,
+        /**
+         * Fault injection point for writing a sorted checkpoint run.
+         */
         RUN_WRITE,
+        /**
+         * Fault injection point for forcing a sorted checkpoint run.
+         */
         RUN_FORCE,
+        /**
+         * Fault injection point for writing the merged checkpoint.
+         */
         MERGE_WRITE,
+        /**
+         * Fault injection point for forcing the merged checkpoint.
+         */
         MERGE_FORCE,
+        /**
+         * Fault injection point for the boundary before checkpoint publication.
+         */
         BEFORE_PUBLICATION,
+        /**
+         * Fault injection point for cleanup of owned temporary artifacts.
+         */
         CLEANUP
     }
 
-    /** Forms individually authenticated sorted runs with a bounded entry buffer. */
+    /**
+     * Forms individually authenticated sorted runs with a bounded entry buffer.
+     */
     private static final class RunFormation {
         private final Workspace workspace;
         private final FilesystemRevocationCheckpoint.Coverage coverage;
@@ -289,7 +404,9 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Measures actual encoded records while retaining only one configured run. */
+    /**
+     * Measures actual encoded records while retaining only one configured run.
+     */
     private static final class RunAccumulator implements AutoCloseable {
         private final Path measurementPath;
         private final FilesystemRevocationCheckpoint.Coverage coverage;
@@ -342,6 +459,9 @@ final class FilesystemRevocationCheckpointBuilder {
                     channel, header(coverage, Long.MAX_VALUE));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             IOException failure = null;
@@ -373,13 +493,20 @@ final class FilesystemRevocationCheckpointBuilder {
             Objects.requireNonNull(entry, "entry");
         }
 
+        /**
+         * Returns an independent copy of the retained identity bytes.
+         *
+         * @return newly allocated array containing the retained identity
+         */
         @Override
         public byte[] identity() {
             return identity.clone();
         }
     }
 
-    /** Multi-pass bounded fan-in merge over strict temporary run files. */
+    /**
+     * Multi-pass bounded fan-in merge over strict temporary run files.
+     */
     private static final class MergePass {
         private final Workspace workspace;
         private final FilesystemRevocationCheckpoint.Coverage coverage;
@@ -480,7 +607,9 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Owns at most the configured fan-in of run readers. */
+    /**
+     * Owns at most the configured fan-in of run readers.
+     */
     private static final class MergeInputs implements AutoCloseable {
         private final List<RunCursor> inputs;
         private final long entryCount;
@@ -531,6 +660,9 @@ final class FilesystemRevocationCheckpointBuilder {
             return queue;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             IOException failure = null;
@@ -580,13 +712,20 @@ final class FilesystemRevocationCheckpointBuilder {
                     entry.credentialId().value()));
         }
 
+        /**
+         * Returns an independent copy of the retained identity bytes.
+         *
+         * @return newly allocated array containing the retained identity
+         */
         @Override
         public byte[] identity() {
             return identity.clone();
         }
     }
 
-    /** Sequential reader for one validated temporary run. */
+    /**
+     * Sequential reader for one validated temporary run.
+     */
     private static final class RunCursor {
         private final FileChannel channel;
         private final RevocationCheckpointCodec.SequentialDecoder decoder;
@@ -655,7 +794,9 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Final merged run transferred to the existing checkpoint publisher. */
+    /**
+     * Final merged run transferred to the existing checkpoint publisher.
+     */
     private static final class RunSource implements FilesystemRevocationCheckpoint.SortedSource {
         private final Path path;
         private final long count;
@@ -669,12 +810,18 @@ final class FilesystemRevocationCheckpointBuilder {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long entryCount() {
             requireOpen();
             return count;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public FilesystemRevocationCheckpoint.SourceCursor openCursor() throws IOException {
             requireOpen();
@@ -685,6 +832,9 @@ final class FilesystemRevocationCheckpointBuilder {
             return new SourceCursorAdapter(RunCursor.open(path));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             closed = true;
@@ -697,7 +847,9 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Transfers one temporary run reader into the checkpoint source cursor contract. */
+    /**
+     * Transfers one temporary run reader into the checkpoint source cursor contract.
+     */
     private static final class SourceCursorAdapter
             implements FilesystemRevocationCheckpoint.SourceCursor {
         private final RunCursor cursor;
@@ -706,59 +858,92 @@ final class FilesystemRevocationCheckpointBuilder {
             this.cursor = cursor;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean advance() throws IOException {
             return cursor.advance();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationCheckpointCodec.CurrentStateEntry current() {
             return cursor.current();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             cursor.close();
         }
     }
 
-    /** Zero-entry source for an authenticated genesis checkpoint. */
+    /**
+     * Zero-entry source for an authenticated genesis checkpoint.
+     */
     private static final class EmptySource implements FilesystemRevocationCheckpoint.SortedSource {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long entryCount() {
             return ZERO;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public FilesystemRevocationCheckpoint.SourceCursor openCursor() {
             return new EmptyCursor();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // No resource.
         }
     }
 
-    /** Stateless cursor paired with the zero-entry source. */
+    /**
+     * Stateless cursor paired with the zero-entry source.
+     */
     private static final class EmptyCursor implements FilesystemRevocationCheckpoint.SourceCursor {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean advance() {
             return false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationCheckpointCodec.CurrentStateEntry current() {
             throw new IllegalStateException("Empty revocation source has no current entry");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // No resource.
         }
     }
 
-    /** One isolated build directory; cleanup never touches published generations. */
+    /**
+     * One isolated build directory; cleanup never touches published generations.
+     */
     private static final class Workspace implements AutoCloseable {
         private final Path root;
         private final FaultInjector faults;
@@ -798,6 +983,9 @@ final class FilesystemRevocationCheckpointBuilder {
             outcomeAuthoritative = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (closed) {
@@ -836,7 +1024,9 @@ final class FilesystemRevocationCheckpointBuilder {
         }
     }
 
-    /** Owns the immutable index copy and preserves an established publication outcome. */
+    /**
+     * Owns the immutable index copy and preserves an established publication outcome.
+     */
     private static final class FrozenBuild implements AutoCloseable {
         private final FilesystemRevocationCurrentIndex.FrozenSnapshot snapshot;
         private final FaultInjector faults;
@@ -874,6 +1064,9 @@ final class FilesystemRevocationCheckpointBuilder {
             outcomeAuthoritative = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (closed) {

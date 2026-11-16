@@ -51,10 +51,18 @@ import java.security.spec.PSSParameterSpec;
 import java.util.Arrays;
 import java.util.Objects;
 
-/** Signature-based proof suite for the sealed standard X.509 signing-key domain. */
+/**
+ * Signature-based proof suite for the sealed standard X.509 signing-key domain.
+ */
 final class SignatureProofSuite implements KeyPossessionProofSuite {
 
+    /**
+     * Stable version-one signature-possession proof-suite identity.
+     */
     /* default */ static final ProofSuiteId SUITE_ID = new ProofSuiteId("zeroecho.signature-pop.v1");
+    /**
+     * Required random challenge length, in bytes.
+     */
     /* default */ static final int CHALLENGE_BYTES = 32;
 
     private static final int MINIMUM_RSA_BITS = 2_048;
@@ -68,10 +76,19 @@ final class SignatureProofSuite implements KeyPossessionProofSuite {
     private final int maximumRsaBits;
     private final ProofSuiteDescriptor descriptor;
 
+    /**
+     * Creates the standard signature suite accepting RSA moduli through 8,192 bits.
+     */
     /* default */ SignatureProofSuite() {
         this(DEFAULT_MAXIMUM_RSA_BITS);
     }
 
+    /**
+     * Creates a signature suite whose exact RSA bound is committed into its descriptor.
+     *
+     * @param maximumRsaBits maximum accepted RSA modulus size, from 2,048 through 16,384 bits inclusive
+     * @throws IllegalArgumentException if the RSA bound is outside the supported range
+     */
     /* default */ SignatureProofSuite(int maximumRsaBits) {
         if (maximumRsaBits < MINIMUM_RSA_BITS || maximumRsaBits > MAXIMUM_CONFIGURED_RSA_BITS) {
             throw new IllegalArgumentException("Maximum RSA modulus length must be between 2048 and 16384 bits");
@@ -95,16 +112,25 @@ final class SignatureProofSuite implements KeyPossessionProofSuite {
                 maximumResponseBytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ProofSuiteDescriptor descriptor() {
         return descriptor;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validatePublicKey(PublicKey publicKey) {
         requireProfile(Objects.requireNonNull(publicKey, "publicKey"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ProofChallengeEnvelope createChallenge(CanonicalProofTranscript transcript) {
         Objects.requireNonNull(transcript, "transcript");
@@ -117,6 +143,9 @@ final class SignatureProofSuite implements KeyPossessionProofSuite {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public VerificationResult verify(ProofChallengeEnvelope challenge, PublicKey publicKey,
             ProofResponseEnvelope response) {
@@ -243,7 +272,9 @@ final class SignatureProofSuite implements KeyPossessionProofSuite {
         }
     }
 
-    /** Exact JCA verification parameters and response bound for one supported key. */
+    /**
+     * Exact JCA verification parameters and response bound for one supported key.
+     */
     private record SignatureProfile(String jcaName, PSSParameterSpec parameters, int maximumSignatureBytes) {
     }
 

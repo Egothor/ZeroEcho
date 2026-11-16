@@ -46,7 +46,14 @@ import zeroecho.pki.api.PkiId;
  */
 public record PublicationRequest(PkiId publicationId, PublicationSourceType sourceType,
         PkiId sourceId, PublicationTarget target) {
-    /** Creates a validated publication request. */
+    /**
+     * Creates a validated publication request.
+     * @param publicationId caller-selected stable operation identity
+     * @param sourceType authoritative source-object type
+     * @param sourceId exact authoritative source-object identity
+     * @param target configured destination identity
+     * @throws NullPointerException if publicationId, sourceType, sourceId or target is null
+     */
     public PublicationRequest {
         Objects.requireNonNull(publicationId, "publicationId");
         Objects.requireNonNull(sourceType, "sourceType");

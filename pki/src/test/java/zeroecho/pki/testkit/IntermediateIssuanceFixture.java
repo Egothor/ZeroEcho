@@ -73,15 +73,40 @@ import zeroecho.pkix.BasicConstraints;
 import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.Pkix;
 
-/** Directly seeds consistent authoritative metadata and a real multi-RDN intermediate certificate. */
+/**
+ * Directly seeds consistent authoritative metadata and a real multi-RDN intermediate certificate.
+ */
 public final class IntermediateIssuanceFixture {
+    /**
+     * Logical subject authority identity used by the intermediate issuance fixture.
+     */
     public static final PkiId SUBJECT = new PkiId("existing-intermediate");
+    /**
+     * Profile identifier selected by the intermediate issuance fixture.
+     */
     public static final String PROFILE = "selected-intermediate";
+    /**
+     * Distinguished-name principal expected in the intermediate certificate.
+     */
     public static final X500Principal PRINCIPAL = new X500Principal("O=Frozen Organization,C=CZ,CN=Existing Intermediate");
+    /**
+     * Parent/key/profile fixture reused by intermediate issuance cases.
+     */
     public final IntermediateCreationFixture base = new IntermediateCreationFixture();
 
+    /**
+     * Creates the real parent/child keys used by intermediate issuance fixtures.
+     *
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public IntermediateIssuanceFixture() throws Exception { }
 
+    /**
+     * Installs real issuer credentials, generations, paths, and profiles required by the fixture.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public void initialize(PkiStore store) throws Exception {
         base.initialize(store, 2);
         CertificateProfileRef historical = RootCreationFixture.install(store, RootCreationFixture.definition("historical-intermediate",
@@ -114,20 +139,46 @@ public final class IntermediateIssuanceFixture {
                 subject, List.of(generation), generation, path.pathId()));
     }
 
+    /**
+     * Imports and activates a shorter-lived version of the historical intermediate profile.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return exact reference of the newly activated second profile version
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public CertificateProfileRef activateLifecycleVersionTwo(PkiStore store) throws Exception {
         CertificateProfileDefinition old = store.requireActiveProfile("historical-intermediate").definition();
         return RootCreationFixture.install(store, new CertificateProfileDefinition(old.certificateType(), old.profileId(), 2,
                 old.formatId(), old.displayName(), Duration.ofDays(30), old.subjectPolicy(), old.certificatePolicy(), old.algorithmBindingPolicy()));
     }
 
+    /**
+     * Creates the fixture command with the selected authority, key, and profile bindings.
+     *
+     * @return typed command ready for the test preparation or acceptance path
+     */
     public IntermediateCertIssueCommand command() {
         return new IntermediateCertIssueCommand(new FormatId("x509"), IntermediateCreationFixture.CA, SUBJECT, PROFILE,
                 IntermediateCreationFixture.CHILD_KEY, Optional.empty(), new SimpleAttributeSet());
     }
+    /**
+     * Composes the fixture authority-signing preparer with its exact key/profile executors.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param clock authoritative clock used for validity and signing observations
+     * @return signing preparer borrowing the fixture store and authoritative clock
+     */
     public IntermediateSigningPreparation preparer(PkiStore store, Clock clock) {
         return new IntermediateSigningPreparation(store, clock, base.provider, base.signing, base.bindings,
                 IntermediateCreationFixture.ALGORITHM, ManagedKeyProofCommand.MAX_CHALLENGE_BYTES, base.proofPreparation(store));
     }
+    /**
+     * Composes the fixture semantic signing service over the selected store and signing collaborators.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param clock authoritative clock used for validity and signing observations
+     * @return semantic service borrowing the fixture store, clock, and provider
+     */
     public DefaultSemanticSigningService semantic(PkiStore store, Clock clock) {
         DefaultSigningService service = new DefaultSigningService(store, base.provider, base.signing.resolveIdentity(IntermediateCreationFixture.ALGORITHM),
                 IntermediateCreationFixture.TTL, new SecureRandom(), () -> { },

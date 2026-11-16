@@ -46,7 +46,9 @@ import java.util.Objects;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
 
-/** Strict stateless hostile-byte decoder for canonical proof transcripts. */
+/**
+ * Strict stateless hostile-byte decoder for canonical proof transcripts.
+ */
 final class CanonicalProofTranscriptDecoder {
 
     private static final byte[] MAGIC = { 'Z', 'E', 'P', 'P' };
@@ -61,6 +63,16 @@ final class CanonicalProofTranscriptDecoder {
         throw new AssertionError("No instances");
     }
 
+    /**
+     * Decodes one complete bounded canonical credential-possession transcript.
+     *
+     * @param encodedBytes caller-owned encoded transcript; not retained
+     * @param expectedDescriptor exact locally configured proof suite
+     * @return reconstructed transcript whose bytes exactly match the input
+     * @throws IllegalArgumentException if bytes are null, oversized, malformed, noncanonical
+     *         or identify a different proof-suite profile
+     * @throws NullPointerException if {@code expectedDescriptor} is null
+     */
     /* default */ static CanonicalProofTranscript decode(byte[] encodedBytes,
             ProofSuiteDescriptor expectedDescriptor) {
         Objects.requireNonNull(expectedDescriptor, "expectedDescriptor");

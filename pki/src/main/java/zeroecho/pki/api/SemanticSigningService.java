@@ -78,9 +78,19 @@ import zeroecho.pki.application.IssuanceExecutionEvidence;
  * Implementations retain no per-operation runtime handle.</p>
  */
 public interface SemanticSigningService {
-    /** @return configured canonical creation default, independent of issuer generation selection
-     * @throws UnsupportedOperationException when creation is unavailable */
-    default String creationSignatureAlgorithm() { throw new UnsupportedOperationException("Creation unavailable"); }
+    /**
+     * Returns the configured canonical signature default used for CA creation.
+     *
+     * <p>This value does not select or replace the immutable outgoing algorithm of
+     * an existing issuer generation. The default implementation does not support
+     * creation and throws rather than inventing a fallback algorithm.
+     *
+     * @return the configured canonical creation signature identity
+     * @throws UnsupportedOperationException if creation is unavailable
+     */
+    default String creationSignatureAlgorithm() {
+        throw new UnsupportedOperationException("Creation unavailable");
+    }
 
     /**
      * Freezes omitted rotation members and the expected original selected head.
@@ -97,7 +107,8 @@ public interface SemanticSigningService {
 
     /**
      * Captures or checks one expected CA head before approval without staging/signing.
-     * @param caId logical subject authority @param expected supplied fence, or empty initially
+     * @param caId logical subject authority
+     * @param expected supplied fence, or an empty optional before initial normalization
      * @return exact authoritative generation/path/binding/epoch fence
      * @throws PkiException if a supplied fence is stale or current evidence is absent
      * @throws UnsupportedOperationException if this pure domain seam is unavailable
@@ -108,9 +119,15 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
+     * Validates issuance of another credential for an existing intermediate authority.
+     *
+     * <p>Authoritative subject-key, profile and issuer/path policy is evaluated
+     * without reserving a serial, signing, staging content or accepting work.
+     * This pre-approval check does not replace execution-time revalidation or
+     * authorize use of the parent and subject authorities.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command exact intermediate authority, expected key, profile and proof coordinates
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -121,9 +138,14 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
+     * Validates a same-key root or intermediate rollover against current authority policy.
+     *
+     * <p>The selected authority, key, profile and expected head are checked without
+     * serial reservation, signing, staging or acceptance. A successful check is not
+     * a possession proof and does not freeze mutable state for later execution.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command closed root or intermediate rollover request
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -134,9 +156,14 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
+     * Validates explicit outgoing role changes against the selected CA's retained binding.
+     *
+     * <p>Omitted members and the expected head are normalized from authoritative state.
+     * Validation does not generate keys, reserve a serial, sign, stage content or accept
+     * work. Execution must still revalidate the selection and required fresh proofs.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command explicit root or intermediate key/algorithm role selection
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -147,10 +174,16 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
-     * @param evidence trusted execution evidence when available
+     * Validates a new end-entity request and its prospective signing input before approval.
+     *
+     * <p>CSR, subject, profile, issuer and algorithm/input-size policy are evaluated
+     * without serial allocation, signing, durable staging or acceptance. Supplied
+     * execution evidence must come from the authenticated orchestration layer;
+     * it is not applicant-controlled authorization.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command exact bounded request payload and issuer/profile selection
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -161,10 +194,16 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
-     * @param evidence trusted execution evidence when available
+     * Validates renewal of the retained predecessor under current lifecycle policy.
+     *
+     * <p>The prospective unchanged-subject/key certificate and signing-input bounds
+     * are checked without reserving a serial, signing, staging or accepting work.
+     * The predecessor is not mutated, and a successful check does not bypass later
+     * status or policy revalidation.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command exact predecessor identity and requested renewal validity
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -175,10 +214,16 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
-     * @param evidence trusted execution evidence when available
+     * Validates a replacement request and predecessor-key reuse eligibility before approval.
+     *
+     * <p>The original proof, selected profile, predecessor and prospective signing
+     * input are evaluated without serial allocation, signing, staging or acceptance.
+     * This check neither changes predecessor status nor substitutes for the exact
+     * request and lifecycle checks repeated during preparation.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command exact predecessor, bounded replacement request and selected profile
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -189,10 +234,16 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Validates current input and policy without serial allocation, signing, staging or acceptance.
-     * @param access trusted invocation context
-     * @param command typed operation input
-     * @param evidence trusted execution evidence when available
+     * Validates reissue of a predecessor's subject, SANs and keys under current policy.
+     *
+     * <p>Authoritative predecessor, profile, issuer and signing-input bounds are
+     * evaluated without serial allocation, signing, staging or acceptance. No
+     * predecessor mutation occurs; the validation result does not reserve future
+     * issuer selection or exempt execution from rechecking current eligibility.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param command exact authoritative predecessor selected for reissue
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
      * @param cancellation cooperative cancellation
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
@@ -344,14 +395,15 @@ public interface SemanticSigningService {
             zeroecho.pki.api.ca.CaRolloverCommand command, CancellationSignal cancellation);
 
     /**
-     * Prepares a root or intermediate credential for an explicitly provisioned key.
+     * Prepares a root or intermediate credential for explicit outgoing role changes.
      * Resolves an active authority and the active version of the selected
      * credential's CA profile, preserving its authoritative subject principal.
      * Root publication requires a fresh self-signature; intermediate preparation
      * requires an exact completed parent/subject/profile/target-key proof and a
      * usable parent path. Old subject credential expiry/revocation does not veto
      * renewal. Nonempty generic attributes are rejected; validity is policy-checked
-     * and narrowed inward to whole seconds. Reusing the current key is permitted.
+     * and narrowed inward to whole seconds. Unspecified selector members retain the
+     * current binding, so an algorithm-only change can keep the same managed key.
      * Successful publication retains historical generations and selects the new
      * generation, path and key.
      *
@@ -453,7 +505,14 @@ public interface SemanticSigningService {
             CancellationSignal cancellation);
 
     /**
-     * Purely evaluates exact SDK subject and issuer coordinates.
+     * Evaluates the exact SDK issuance target without consuming proof or staging a candidate.
+     *
+     * <p>The preview binds subject keys, issuer generation and path, profile and
+     * absolute validity. A retained validity optional prevents revalidation from
+     * extending the originally approved target. The preview itself grants neither
+     * authentication nor permission to issue; the caller supplies an authorized context.
+     * The default implementation reports that SDK preview is unsupported.
+     *
      * @param access authorized invocation context
      * @param request selected issuer/profile and exact request payload
      * @param parsed parsed dual-subject request
@@ -461,6 +520,7 @@ public interface SemanticSigningService {
      * @param cancellation cooperative cancellation
      * @return immutable public preview
      * @throws UnsupportedOperationException if SDK issuance is unavailable
+     * @throws PkiException if the request, selected issuer, profile or frozen target is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             EndEntityIssuanceRequest request, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
@@ -470,6 +530,13 @@ public interface SemanticSigningService {
 
     /**
      * Prepares SDK issuance using retained proof and frozen absolute policy bounds.
+     *
+     * <p>The implementation revalidates the proof at its retained acceptance time and
+     * compares the actual target with the approved preview before alternative signing.
+     * The returned preparation owns staged content until accepted or discarded; this
+     * call does not durably accept the signing operation. The default implementation
+     * does not support SDK preparation.
+     *
      * @param access authorized invocation context
      * @param request selected issuer/profile and exact original payload
      * @param parsed parsed dual-subject request
@@ -478,6 +545,7 @@ public interface SemanticSigningService {
      * @param cancellation cooperative cancellation
      * @return exclusively caller-owned prepared signing request
      * @throws UnsupportedOperationException if SDK issuance is unavailable
+     * @throws PkiException if proof, target, policy, staging or cancellation validation fails
      */
     default PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityIssuanceRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
@@ -488,10 +556,20 @@ public interface SemanticSigningService {
 
     /**
      * Evaluates an SDK renewal target with exact predecessor and both subject keys.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
-     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     *
+     * <p>The preview includes the lifecycle binding without consuming the proof,
+     * signing or staging content. Supplied absolute validity is retained during
+     * revalidation rather than rebased on the current time. The caller must separately
+     * authorize the predecessor and issuer selection.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request exact renewal predecessor and lifecycle selection
+     * @param parsed exact dual-subject client request bound to the proof
+     * @param frozenValidity absolute retained bounds, or an empty optional initially
+     * @param cancellation cooperative cancellation signal
+     * @return immutable public preview including the exact renewal lifecycle target
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
@@ -501,11 +579,21 @@ public interface SemanticSigningService {
 
     /**
      * Revalidates fresh dual proof and the exact approved renewal snapshot before alternative signing.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
-     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     *
+     * <p>Proof lifetime is evaluated at its retained acceptance time. Current permitted
+     * use and predecessor eligibility remain subject to revalidation against the
+     * same approved target. The preparation owns staged content until accept or discard;
+     * no durable signing acceptance occurs here.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request exact renewal predecessor and lifecycle selection
+     * @param parsed exact proof-bound dual-subject client request
+     * @param approval retained accepted proof and its frozen approved preview
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged lifecycle request
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
     default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
@@ -515,10 +603,19 @@ public interface SemanticSigningService {
 
     /**
      * Evaluates an SDK reissue target with exact predecessor and both subject keys.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
-     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     *
+     * <p>The preview preserves the exact reissue lifecycle context without proof
+     * consumption, signing or staging. A retained validity optional fixes the approved
+     * absolute interval. It does not grant permission to reuse the predecessor keys.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request authoritative predecessor selected for reissue
+     * @param parsed exact proof-bound dual-subject client request
+     * @param frozenValidity absolute retained bounds, or an empty optional initially
+     * @param cancellation cooperative cancellation signal
+     * @return immutable public preview including the exact reissue lifecycle target
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
@@ -528,11 +625,20 @@ public interface SemanticSigningService {
 
     /**
      * Revalidates fresh dual proof and the exact approved reissue snapshot before alternative signing.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
-     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     *
+     * <p>The retained proof is evaluated at acceptance time, while current permitted
+     * use and the actual reissue target are checked again before staging the final
+     * candidate. The caller must accept or discard the returned single-use preparation.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request authoritative predecessor selected for reissue
+     * @param parsed exact proof-bound dual-subject client request
+     * @param approval retained accepted proof and its frozen approved preview
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged lifecycle request
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
     default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
@@ -542,10 +648,19 @@ public interface SemanticSigningService {
 
     /**
      * Evaluates an SDK replacement target with exact predecessor and both subject keys.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed exact proof-bound client request @param frozenValidity absolute retained bounds, or empty initially
-     * @param cancellation cooperative cancellation @return immutable public lifecycle preview
+     *
+     * <p>The replacement preview binds the predecessor and requested replacement
+     * keys to the selected profile, issuer and absolute validity. It evaluates policy
+     * without consuming proof, signing or staging, and does not itself authorize replacement.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request exact predecessor, replacement request and profile selection
+     * @param parsed exact proof-bound dual-subject replacement request
+     * @param frozenValidity absolute retained bounds, or an empty optional initially
+     * @param cancellation cooperative cancellation signal
+     * @return immutable public preview including the exact replacement lifecycle target
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
@@ -555,11 +670,21 @@ public interface SemanticSigningService {
 
     /**
      * Revalidates fresh dual proof and the exact approved replacement snapshot before alternative signing.
-     * @param access authorized caller @param request typed lifecycle selection
-     * @param parsed proof-bound client request @param approval retained proof accepted at its original acceptance time
-     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     *
+     * <p>The actual replacement target and current reuse eligibility must still agree
+     * with the accepted dual proof. The retained proof's lifetime is evaluated at its
+     * acceptance time. Returned staged content remains under preparation custody until
+     * accepted or discarded; preparation is not durable acceptance.
+     *
+     * @param access authenticated and authorized caller context
+     * @param request exact predecessor, replacement request and profile selection
+     * @param parsed exact proof-bound dual-subject replacement request
+     * @param approval retained accepted proof and its frozen approved preview
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return caller-owned staged lifecycle request
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
+     * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
     default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
@@ -908,12 +1033,25 @@ public interface SemanticSigningService {
     Optional<SemanticSigningOperation> findByCorrelation(SemanticSigningKind kind, String correlationId);
 
     /**
-     * Evaluates a native enrollment target only when this implementation supports it.
-     * @param access authorized invocation @param request exact typed leaf operation
-     * @param parsed proof-bound request @param frozenValidity retained absolute validity
-     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
-     * @param cancellation cooperative cancellation @return immutable public preview
+     * Evaluates SDK issuance with an optional trusted native enrollment target.
+     *
+     * <p>A present target must match the native request kind and issuance operation;
+     * it is public commitment data, not authentication supplied by the applicant.
+     * The default implementation rejects a present target and delegates administrative
+     * use to the overload without an enrollment target. Evaluation does not consume
+     * proof, allocate a serial, sign or stage content.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param request exact typed issuance request and issuer/profile selection
+     * @param parsed exact proof-bound dual-subject request
+     * @param frozenValidity retained absolute validity, or an empty optional initially
+     * @param enrollmentTarget trusted native coordinates, or an empty optional for
+     *        administrative use; the optional must not be null
+     * @param cancellation cooperative cancellation signal
+     * @return immutable public preview including any supported native target
+     * @throws NullPointerException if the enrollment-target optional is null
      * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     * @throws PkiException if the native target, issuer, profile or request does not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             zeroecho.pki.api.issuance.EndEntityIssuanceRequest request,
@@ -922,17 +1060,31 @@ public interface SemanticSigningService {
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
-        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        if (enrollmentTarget.isPresent()) {
+            throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        }
         return previewSdk(access, request, parsed, frozenValidity, cancellation);
     }
 
     /**
-     * Evaluates a native enrollment target only when this implementation supports it.
-     * @param access authorized invocation @param request exact typed leaf operation
-     * @param parsed proof-bound request @param frozenValidity retained absolute validity
-     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
-     * @param cancellation cooperative cancellation @return immutable public preview
+     * Evaluates an SDK renewal preview with optional native enrollment coordinates.
+     *
+     * <p>The lifecycle and native target must describe the same renewal request and
+     * frozen absolute validity. Native coordinates do not replace authentication or
+     * predecessor policy. The default implementation supports only an empty target
+     * by delegating to the administrative renewal overload.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param request exact typed renewal predecessor and lifecycle selection
+     * @param parsed exact proof-bound dual-subject renewal request
+     * @param frozenValidity retained absolute validity, or an empty optional initially
+     * @param enrollmentTarget trusted native coordinates, or an empty optional for
+     *        administrative use; the optional must not be null
+     * @param cancellation cooperative cancellation signal
+     * @return immutable renewal preview including any supported native target
+     * @throws NullPointerException if the enrollment-target optional is null
      * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     * @throws PkiException if lifecycle policy, keys or native target do not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
@@ -941,17 +1093,31 @@ public interface SemanticSigningService {
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
-        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        if (enrollmentTarget.isPresent()) {
+            throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        }
         return previewSdk(access, request, parsed, frozenValidity, cancellation);
     }
 
     /**
-     * Evaluates a native enrollment target only when this implementation supports it.
-     * @param access authorized invocation @param request exact typed leaf operation
-     * @param parsed proof-bound request @param frozenValidity retained absolute validity
-     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
-     * @param cancellation cooperative cancellation @return immutable public preview
+     * Evaluates an SDK reissue preview when the selected native target is supported.
+     *
+     * <p>The presence of this overload does not make reissue available through every
+     * enrollment carrier or SDK profile. Unsupported native operation mappings fail
+     * closed. The default implementation rejects any present native target and delegates
+     * an empty target to the administrative reissue overload.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param request exact predecessor selected for reissue
+     * @param parsed exact proof-bound dual-subject request
+     * @param frozenValidity retained absolute validity, or an empty optional initially
+     * @param enrollmentTarget trusted native coordinates, or an empty optional for
+     *        administrative use; the optional must not be null
+     * @param cancellation cooperative cancellation signal
+     * @return immutable reissue preview when the selected operation mapping is supported
+     * @throws NullPointerException if the enrollment-target optional is null
      * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     * @throws PkiException if the native operation mapping, target or lifecycle policy is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             zeroecho.pki.api.issuance.EndEntityReissueRequest request,
@@ -960,17 +1126,31 @@ public interface SemanticSigningService {
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
-        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        if (enrollmentTarget.isPresent()) {
+            throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        }
         return previewSdk(access, request, parsed, frozenValidity, cancellation);
     }
 
     /**
-     * Evaluates a native enrollment target only when this implementation supports it.
-     * @param access authorized invocation @param request exact typed leaf operation
-     * @param parsed proof-bound request @param frozenValidity retained absolute validity
-     * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
-     * @param cancellation cooperative cancellation @return immutable public preview
+     * Evaluates an SDK replacement preview with optional native enrollment coordinates.
+     *
+     * <p>The native target must agree with the replacement lifecycle and original
+     * request kind. It does not bypass predecessor reuse or subject-key policy.
+     * The default implementation rejects present native targets and delegates an
+     * empty target to the administrative replacement overload.
+     *
+     * @param access authenticated and authorized invocation context
+     * @param request exact predecessor and typed replacement request
+     * @param parsed exact proof-bound dual-subject replacement request
+     * @param frozenValidity retained absolute validity, or an empty optional initially
+     * @param enrollmentTarget trusted native coordinates, or an empty optional for
+     *        administrative use; the optional must not be null
+     * @param cancellation cooperative cancellation signal
+     * @return immutable replacement preview including any supported native target
+     * @throws NullPointerException if the enrollment-target optional is null
      * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     * @throws PkiException if lifecycle policy, keys or native target do not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
@@ -979,17 +1159,29 @@ public interface SemanticSigningService {
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
-        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        if (enrollmentTarget.isPresent()) {
+            throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        }
         return previewSdk(access, request, parsed, frozenValidity, cancellation);
     }
 
     /**
-     * Prepares SDK issuance under an existing durable native correlation identity.
-     * @param access genuine native caller @param request frozen correlated operation
-     * @param parsed exact original request @param approval retained dual proof and target
-     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * Prepares SDK issuance or attaches its retained operation under the native correlation identity.
+     *
+     * <p>Retained proof and exact request/target bindings are validated before lookup.
+     * An exact accepted winner returns existing work without issuing another certificate;
+     * absent work is prepared against the frozen selection. The caller owns a new
+     * candidate until accept or discard. Lookup does not grant disclosure authority.
+     *
+     * @param access genuine authenticated and authorized native caller context
+     * @param request exact correlated issuance and frozen issuer/profile/path intent
+     * @param parsed exact original dual-subject request
+     * @param approval retained accepted dual proof and frozen target
+     * @param evidence trusted native execution evidence, or an empty optional
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return retained existing operation or exclusively owned prepared candidate
      * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     * @throws PkiException if proof, correlation, target, policy, staging or cancellation validation fails
      */
     default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityIssuanceRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
@@ -999,12 +1191,22 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Prepares SDK issuance under an existing durable native correlation identity.
-     * @param access genuine native caller @param request frozen correlated operation
-     * @param parsed exact original request @param approval retained dual proof and target
-     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * Prepares a correlated SDK renewal or returns its exact retained operation.
+     *
+     * <p>Proof and request bindings are checked before retained lookup. Accepted replay
+     * does not prepare or sign another renewal; new work must still satisfy current
+     * predecessor and policy checks against the frozen approved target. A prepared
+     * result remains caller-owned until accepted or discarded.
+     *
+     * @param access genuine authenticated and authorized native caller context
+     * @param request exact correlated renewal predecessor and frozen intent
+     * @param parsed exact original dual-subject renewal request
+     * @param approval retained accepted dual proof and lifecycle target
+     * @param evidence trusted native execution evidence, or an empty optional
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return retained existing operation or exclusively owned prepared candidate
      * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     * @throws PkiException if proof, correlation, predecessor, policy, staging or cancellation validation fails
      */
     default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityRenewalRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
@@ -1014,12 +1216,22 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Prepares SDK issuance under an existing durable native correlation identity.
-     * @param access genuine native caller @param request frozen correlated operation
-     * @param parsed exact original request @param approval retained dual proof and target
-     * @param evidence trusted native execution evidence @param cancellation cancellation
+     * Prepares a correlated SDK replacement or returns its exact retained operation.
+     *
+     * <p>The exact original request, retained proof and frozen target are checked
+     * before correlation lookup. A retained winner is observed without another
+     * replacement; fresh preparation additionally checks current predecessor reuse
+     * eligibility. The caller must accept or discard any newly prepared candidate.
+     *
+     * @param access genuine authenticated and authorized native caller context
+     * @param request exact correlated replacement and frozen issuer/profile/path intent
+     * @param parsed exact original dual-subject replacement request
+     * @param approval retained accepted dual proof and lifecycle target
+     * @param evidence trusted native execution evidence, or an empty optional
+     * @param cancellation cooperative pre-acceptance cancellation
      * @return retained existing operation or exclusively owned prepared candidate
      * @throws UnsupportedOperationException if correlated SDK preparation is unavailable
+     * @throws PkiException if proof, correlation, predecessor, policy, staging or cancellation validation fails
      */
     default CorrelatedIssuancePreparation prepareSdk(AccessContext access, CorrelatedEndEntityReplacementRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
@@ -1029,11 +1241,22 @@ public interface SemanticSigningService {
     }
 
     /**
-     * Prepares a canonical managed responder issuance; default support is unavailable.
-     * @param access authorized caller @param request frozen managed responder selection
-     * @param evidence trusted execution evidence @param cancellation cancellation
+     * Prepares dedicated managed responder issuance or returns its canonical retained operation.
+     *
+     * <p>Provisioning identity derives from the actual selected managed public keys
+     * and exact issuer/profile/path target, not an arbitrary caller retry identifier.
+     * Existing accepted work is observed rather than issued again. New preparation
+     * owns the final candidate and both purpose-specific key-proof challenges until
+     * acceptance or discard. It does not generate/export keys, register a responder
+     * or activate a listener. The default implementation is unsupported.
+     *
+     * @param access authenticated caller already authorized for issuer and profile use
+     * @param request exact managed subject-key pair and frozen certificate selection
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
+     * @param cancellation cooperative pre-acceptance cancellation signal
      * @return retained existing operation or exclusively owned candidate
      * @throws UnsupportedOperationException if managed responder issuance is unavailable
+     * @throws PkiException if key, issuer, profile, correlation, staging or cancellation validation fails
      */
     default CorrelatedIssuancePreparation prepareManagedOcspResponder(AccessContext access,
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
@@ -1043,9 +1266,18 @@ public interface SemanticSigningService {
 
     /**
      * Validates a managed responder target before approval without signing, allocating a serial or staging content.
-     * It grants no permission; the caller must already have issuer/profile authorization.
-     * @param access authorized caller @param request exact selected target @param evidence trusted execution evidence
-     * @param cancellation cooperative cancellation @throws RuntimeException if policy or frozen selection differs
+     *
+     * <p>The implementation resolves actual public-key evidence and evaluates the
+     * unsigned certificate target. It grants no permission: the caller must already
+     * have issuer and profile authorization. Validation neither provisions a certificate
+     * nor registers or activates a responder. The default implementation is unsupported.
+     *
+     * @param access authenticated caller already authorized for issuer and profile use
+     * @param request exact selected managed responder target
+     * @param evidence trusted execution evidence, or an empty optional for embedded use
+     * @param cancellation cooperative validation cancellation signal
+     * @throws UnsupportedOperationException if managed responder validation is unavailable
+     * @throws RuntimeException if policy, actual public keys, execution evidence or frozen selection differs
      */
     default void validateManagedOcspResponder(AccessContext access,
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
@@ -1054,8 +1286,17 @@ public interface SemanticSigningService {
     }
     /**
      * Observes canonical managed responder issuance without signing.
-     * @param request exact managed responder target @return retained canonical operation
+     *
+     * <p>Actual managed public keys determine the canonical provisioning binding.
+     * The exact target must match retained work; observation neither repeats issuance
+     * nor authorizes disclosure. An empty result means no matching retained operation
+     * was found, not that an uncertain earlier acceptance can safely be replayed.
+     *
+     * @param request exact managed responder target and optional same-slot predecessor
+     * @return matching retained canonical operation, or an empty optional when absent
      * @throws UnsupportedOperationException if unavailable
+     * @throws PkiException if public-key evidence is unavailable, the target conflicts
+     *         with retained work or retained provisioning requires reconciliation
      */
     default Optional<SemanticSigningOperation> findManagedOcspResponder(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
@@ -1063,8 +1304,15 @@ public interface SemanticSigningService {
     }
     /**
      * Observes the authoritative acceptance receipt after exact canonical target validation.
-     * @param request exact managed responder target @return receipt of retained accepted work, or empty
+     *
+     * <p>The receipt belongs to the retained operation's actual acceptance commitment.
+     * A found operation with missing signing-workflow evidence requires reconciliation;
+     * it must not be interpreted as permission to issue a replacement operation.
+     *
+     * @param request exact managed responder target
+     * @return receipt of matching retained accepted work, or an empty optional when absent
      * @throws UnsupportedOperationException if managed responder provisioning is unavailable
+     * @throws PkiException if target validation fails or retained workflow evidence is inconsistent
      */
     default Optional<zeroecho.pki.api.signing.SigningAcceptanceReceipt> findManagedOcspResponderReceipt(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
@@ -1072,8 +1320,15 @@ public interface SemanticSigningService {
     }
     /**
      * Resolves the canonical provisioning binding and actual public key digests without signing.
-     * @param request exact managed responder target @return canonical retained selection and both public SPKI digests
+     *
+     * <p>The binding identifies the exact frozen issuer/profile/path selection and
+     * actual managed subject-key tuple. It neither reserves a provisioning slot nor
+     * grants authority to use its keys. No private key material is returned.
+     *
+     * @param request exact managed responder target
+     * @return canonical retained selection and both actual public SPKI digests
      * @throws UnsupportedOperationException if managed responder provisioning is unavailable
+     * @throws PkiException if managed public-key or selected issuer/profile evidence is unavailable or invalid
      */
     default zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding managedOcspResponderProvisioningBinding(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
@@ -1081,8 +1336,15 @@ public interface SemanticSigningService {
     }
     /**
      * Derives the retained immutable binding using actual managed public keys.
-     * @param request exact managed responder target @return stable core binding
+     *
+     * <p>This is the retained-issuance coordinate projection of
+     * {@link #managedOcspResponderProvisioningBinding}. It performs no signing or
+     * acceptance and does not replace target validation or caller authorization.
+     *
+     * @param request exact managed responder target
+     * @return stable immutable core issuance binding for canonical retained lookup
      * @throws UnsupportedOperationException if unavailable
+     * @throws PkiException if managed public-key or selected issuer/profile evidence is unavailable or invalid
      */
     default RetainedIssuanceBinding managedOcspResponderBinding(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {

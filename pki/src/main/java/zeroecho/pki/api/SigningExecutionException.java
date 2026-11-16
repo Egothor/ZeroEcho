@@ -46,17 +46,27 @@ public final class SigningExecutionException extends PkiException {
 
     private static final long serialVersionUID = -1637260155518829748L;
 
-    /** Small Increment 11 execution failure taxonomy. */
+    /**
+     * Small Increment 11 execution failure taxonomy.
+     */
     public enum Classification {
-        /** The configured admission population is fully reserved. */
+        /**
+         * The configured admission population is fully reserved.
+         */
         OVERLOADED,
-        /** Admission has stopped because the runtime is shutting down. */
+        /**
+         * Admission has stopped because the runtime is shutting down.
+         */
         SHUTTING_DOWN,
-        /** A non-cooperative execution step outlived forced shutdown. */
+        /**
+         * A non-cooperative execution step outlived forced shutdown.
+         */
         SHUTDOWN_TIMEOUT
     }
 
-    /** Stable machine-readable execution-failure classification. */
+    /**
+     * Stable machine-readable execution-failure classification.
+     */
     private final Classification classification;
 
     /**
@@ -64,6 +74,7 @@ public final class SigningExecutionException extends PkiException {
      *
      * @param classification machine-readable failure class
      * @param message safe non-blank diagnostic message
+     * @throws NullPointerException if classification is null
      */
     public SigningExecutionException(Classification classification, String message) {
         super(message);
@@ -76,6 +87,7 @@ public final class SigningExecutionException extends PkiException {
      * @param classification machine-readable failure class
      * @param message safe non-blank diagnostic message
      * @param cause internal cause containing no provider or payload data
+     * @throws NullPointerException if cause or classification is null
      */
     public SigningExecutionException(Classification classification, String message, Throwable cause) {
         super(message, Objects.requireNonNull(cause, "cause"));

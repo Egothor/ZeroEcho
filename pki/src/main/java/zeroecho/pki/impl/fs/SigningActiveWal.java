@@ -82,8 +82,14 @@ import java.util.function.BooleanSupplier;
         "PMD.PreserveStackTrace" })
 final class SigningActiveWal implements AutoCloseable {
 
+    /**
+     * Inclusive maximum number of queued active-WAL append requests.
+     */
     /* default */ static final int MAXIMUM_QUEUE_CAPACITY = 256;
     /* A large transaction remains admissible, while one force never owns a 64 MiB group. */
+    /**
+     * Inclusive maximum accumulated active-WAL batch size in bytes.
+     */
     /* default */ static final int MAXIMUM_BATCH_BYTES = 8 * 1024 * 1024;
     private static final long MAXIMUM_QUEUED_PAYLOAD_BYTES = 64L * 1024L * 1024L;
     private static final long MAXIMUM_WAIT_NANOS = Duration.ofMillis(2L).toNanos();
@@ -155,12 +161,37 @@ final class SigningActiveWal implements AutoCloseable {
         writerThread.setDaemon(true);
     }
 
+    /**
+     * Creates or restores an active WAL in its secured parent directory and starts its single writer.
+     *
+     * <p>Existing bytes are validated before appending; new files are initialized and forced together with their parent directory.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if the path does not name a file in an existing nonsymlink parent directory
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal open(Path path, Descriptor descriptor,
             Configuration configuration) throws IOException {
         return open(path, descriptor, configuration, SYSTEM_OPERATIONS, SYSTEM_CLOCK, SYSTEM_WAIT);
     }
 
-    /** Opens a read-only validated WAL state, repairing only its proven suffix. */
+    /**
+     * Reopens the validated WAL, repairing only its proven incomplete suffix and starts its single writer.
+     *
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @param validated immutable result of the prior read-only validation pass
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal reopenValidated(Path path, Descriptor descriptor,
             Configuration configuration, ValidatedState validated) throws IOException {
         SigningActiveWal result = reopenValidatedPassive(path, descriptor, configuration,
@@ -168,6 +199,22 @@ final class SigningActiveWal implements AutoCloseable {
         return startAfterOpen(result);
     }
 
+    /**
+     * Reopens the validated WAL, repairing only its proven incomplete suffix and starts its single writer.
+     *
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @param validated immutable result of the prior read-only validation pass
+     * @param operations borrowed filesystem and channel operations
+     * @param clock monotonic nanosecond source for grouping and metrics
+     * @param waitStrategy interruptible monitor wait used by the group writer
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal reopenValidated(Path path, Descriptor descriptor,
             Configuration configuration, ValidatedState validated, Operations operations,
             NanoClock clock, GroupWaitStrategy waitStrategy) throws IOException {
@@ -176,7 +223,22 @@ final class SigningActiveWal implements AutoCloseable {
         return startAfterOpen(result);
     }
 
-    /** Opens and repairs a validated WAL without starting its writer. */
+    /**
+     * Reopens the validated WAL, repairing only its proven incomplete suffix without starting the writer.
+     *
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @param validated immutable result of the prior read-only validation pass
+     * @param operations borrowed filesystem and channel operations
+     * @param clock monotonic nanosecond source for grouping and metrics
+     * @param waitStrategy interruptible monitor wait used by the group writer
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal reopenValidatedPassive(Path path,
             Descriptor descriptor, Configuration configuration, ValidatedState validated,
             Operations operations, NanoClock clock, GroupWaitStrategy waitStrategy)
@@ -185,6 +247,23 @@ final class SigningActiveWal implements AutoCloseable {
                 clock, waitStrategy, NO_RECOVERY_OPEN_FAULT);
     }
 
+    /**
+     * Reopens the validated WAL, repairing only its proven incomplete suffix without starting the writer.
+     *
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @param validated immutable result of the prior read-only validation pass
+     * @param operations borrowed filesystem and channel operations
+     * @param clock monotonic nanosecond source for grouping and metrics
+     * @param waitStrategy interruptible monitor wait used by the group writer
+     * @param faults passive-open fault observer; must not be null
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal reopenValidatedPassive(Path path,
             Descriptor descriptor, Configuration configuration, ValidatedState validated,
             Operations operations, NanoClock clock, GroupWaitStrategy waitStrategy,
@@ -247,6 +326,22 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Creates or restores an active WAL in its secured parent directory and starts its single writer.
+     *
+     * <p>Existing bytes are validated before appending; new files are initialized and forced together with their parent directory.</p>
+     *
+     * @param path active WAL path in an existing secured parent directory
+     * @param descriptor exact generation identity, first sequence, and baseline revision
+     * @param configuration validated queue, batching, timing, and segment limits
+     * @param operations borrowed filesystem and channel operations
+     * @param clock monotonic nanosecond source for grouping and metrics
+     * @param waitStrategy interruptible monitor wait used by the group writer
+     * @return owned WAL; the caller must close it
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if the path does not name a file in an existing nonsymlink parent directory
+     * @throws IOException if file identity, header, committed framing, tail repair, or channel initialization fails
+     */
     /* default */ static SigningActiveWal open(Path path, Descriptor descriptor,
             Configuration configuration, Operations operations, NanoClock clock,
             GroupWaitStrategy waitStrategy) throws IOException {
@@ -298,7 +393,11 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Starts the single writer exactly once after recovery validation completes. */
+    /**
+     * Starts the single writer exactly once after passive recovery is complete.
+     *
+     * @throws IllegalStateException if the WAL is not passive and idle, or its writer was already started
+     */
     /* default */ void startWriter() {
         synchronized (lock) {
             if (state != State.PASSIVE || writerStarted || outstandingSlots != 0
@@ -411,6 +510,22 @@ final class SigningActiveWal implements AutoCloseable {
         return result;
     }
 
+    /**
+     * Copies and admits one data frame to the bounded single-writer queue.
+     *
+     * <p>Sequences and revisions are reserved in admission order. Cancelling the acknowledgement does not retract durable work. Counter exhaustion completes the acknowledgement with a validation failure before append.</p>
+     *
+     * @param recordType data record type; BATCH_COMMIT is reserved for the writer
+     * @param transactionId non-null identity shared by the transaction records
+     * @param payload borrowed bounded payload; copied once before ownership transfer
+     * @return acknowledgement completed only after the corresponding batch is forced
+     * @throws NullPointerException if the type, transaction identity, or payload is null
+     * @throws IllegalArgumentException if the type is a commit marker or the payload exceeds the codec limit
+     * @throws UnavailableException if the WAL is not open or an exclusive reservation prevents submission
+     * @throws OverloadedException if request-count or queued-payload capacity is exhausted
+     * @throws HeadroomExhaustedException if the segment lacks space for all outstanding committed frames
+     * @throws IllegalStateException if the configured copier returns the original array or a different length
+     */
     /* default */ Acknowledgement submit(SigningWalFrameCodec.RecordType recordType,
             UUID transactionId, byte[] payload) {
         Objects.requireNonNull(recordType, "recordType");
@@ -457,7 +572,20 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Appends and forces one deterministic recovery record before the writer starts. */
+    /**
+     * Appends and forces a recovery frame synchronously before starting the writer.
+     *
+     * @param recordType data record type; BATCH_COMMIT is reserved for the writer
+     * @param transactionId non-null identity shared by the transaction records
+     * @param payload borrowed bounded payload; copied once before ownership transfer
+     * @return exact forced frame coordinates and commitment
+     * @throws NullPointerException if a required frame component is null
+     * @throws IllegalArgumentException if the type is a commit marker or the payload exceeds its bound
+     * @throws IllegalStateException if the WAL is not passive and idle, or copying violates ownership
+     * @throws RotationRequiredException if payload, batch, or segment headroom is insufficient
+     * @throws ArithmeticException if sequence, revision, or encoded-size arithmetic overflows
+     * @throws IOException if append durability fails or waiting is interrupted; interruption is restored
+     */
     /* default */ CommitResult appendRecovery(SigningWalFrameCodec.RecordType recordType,
             UUID transactionId, byte[] payload) throws IOException {
         Objects.requireNonNull(recordType, "recordType");
@@ -520,6 +648,23 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Reserves exclusive exact frame coordinates and capacity without queuing the frame.
+     *
+     * <p>Only successful admission consumes the reserved sequence and revision. Closing an unadmitted reservation releases its capacity without creating a gap.</p>
+     *
+     * @param recordType data record type; BATCH_COMMIT is reserved for the writer
+     * @param transactionId non-null identity shared by the transaction records
+     * @param payload borrowed bounded payload; copied once before ownership transfer
+     * @return owned reservation; admit it or close it to release the capacity
+     * @throws NullPointerException if a required frame component is null
+     * @throws IllegalArgumentException if the type is a commit marker or the payload exceeds its bound
+     * @throws UnavailableException if the WAL is not open
+     * @throws OverloadedException if another frame is reserved or queued-request capacity is exhausted
+     * @throws HeadroomExhaustedException if segment headroom is exhausted
+     * @throws ArithmeticException if the next sequence or revision cannot be represented
+     * @throws IllegalStateException if the copier violates independent-storage or length requirements
+     */
     /* default */ FrameReservation reserve(SigningWalFrameCodec.RecordType recordType,
             UUID transactionId, byte[] payload) {
         Objects.requireNonNull(recordType, "recordType");
@@ -987,6 +1132,16 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Stops admission, drains admitted work, and closes the owned WAL channel.
+     *
+     * <p>A passive WAL closes its channel directly. An active WAL waits for its writer
+     * to exit; there is no close timeout. Interruptions do not abandon the drain: the
+     * wait completes, restores interrupt status, and then reports IOException.
+     * Repeated successful closure is harmless.</p>
+     *
+     * @throws IOException if closure or prior writer durability failed, or the caller was interrupted while draining
+     */
     @Override
     public void close() throws IOException {
         boolean closePassive = false;
@@ -1024,7 +1179,13 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Drains and returns the writer-owned immutable final descriptor without rereading bytes. */
+    /**
+     * Drains the writer and returns its final immutable descriptor without rereading file bytes.
+     *
+     * @return final frame count, committed coordinates, byte length, and file commitment
+     * @throws IOException if closure fails, interruption occurs, or the digest state cannot be cloned
+     * @throws ArithmeticException if the final frame count cannot be represented
+     */
     /* default */ Seal orderlySeal() throws IOException {
         close();
         MessageDigest commitment;
@@ -1039,6 +1200,11 @@ final class SigningActiveWal implements AutoCloseable {
                 position, commitment.digest());
     }
 
+    /**
+     * Captures lifecycle and admission state together with the current durability counters.
+     *
+     * @return immutable constant-size observation; concurrent counters may advance after capture
+     */
     /* default */ Snapshot snapshot() {
         synchronized (lock) {
             return new Snapshot(state, queue.size(), configuration.queueCapacity(),
@@ -1050,12 +1216,20 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Returns whether the lifecycle-owned channel remains open for cleanup verification. */
+    /**
+     * Reports whether the lifecycle-owned channel remains open.
+     *
+     * @return true while the underlying channel is open, including during failed cleanup
+     */
     /* default */ boolean channelOpen() {
         return channel.isOpen();
     }
 
-    /** Returns one immutable forced prefix from the container baseline. */
+    /**
+     * Returns the forced prefix from the generation container baseline to the current durable end.
+     *
+     * @return immutable generation-bound prefix descriptor with copied commitment bytes
+     */
     /* default */ CommittedPrefixDescriptor committedPrefix() {
         ForcedEnd end = forcedEnd;
         return new CommittedPrefixDescriptor(descriptor.identity(),
@@ -1065,7 +1239,14 @@ final class SigningActiveWal implements AutoCloseable {
                 end.commitment());
     }
 
-    /** Returns the currently forced suffix after a previously validated accepted prefix. */
+    /**
+     * Returns the forced suffix following a previously accepted prefix.
+     *
+     * @param acceptedPrefix previously accepted forced prefix of this exact WAL generation
+     * @return immutable suffix ending at the currently forced boundary
+     * @throws NullPointerException if the accepted prefix is null
+     * @throws IllegalArgumentException if the prefix belongs to another generation, exceeds the forced end, or contradicts an equal endpoint
+     */
     /* default */ CommittedPrefixDescriptor committedPrefixAfter(
             CommittedPrefixDescriptor acceptedPrefix) {
         Objects.requireNonNull(acceptedPrefix, "acceptedPrefix");
@@ -1099,7 +1280,22 @@ final class SigningActiveWal implements AutoCloseable {
         maximum.accumulateAndGet(candidate, Math::max);
     }
 
+    /**
+     * Exact active-WAL generation identity and starting recovery coordinates.
+     *
+     * @param identity exact WAL generation identity
+     * @param firstSequence first sequence assigned to the generation
+     * @param baselineRevision committed revision before the first frame in this generation
+     */
     /* default */ record Descriptor(long identity, long firstSequence, long baselineRevision) {
+        /**
+         * Creates a {@code Descriptor} value from the supplied component coordinates.
+         *
+         * @param identity exact WAL generation identity
+         * @param firstSequence first sequence assigned to the generation
+         * @param baselineRevision committed revision before the first frame in this generation
+         * @throws IllegalArgumentException if generation identity, first sequence, or baseline revision is negative
+         */
         Descriptor {
             if (identity < 0L || firstSequence < 0L || baselineRevision < 0L) {
                 throw new IllegalArgumentException("signing active WAL descriptor is invalid");
@@ -1111,9 +1307,27 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Immutable result of the recovery owner's read-only validation pass. */
+    /**
+     * Immutable result of the recovery owner's read-only validation pass.
+     * @param observedLength physical WAL length in bytes observed by read-only validation
+     * @param position exclusive accepted byte boundary used to reopen the writer
+     * @param lastCommittedSequence last sequence covered by a validated batch commit
+     * @param lastCommittedRevision last revision covered by a validated batch commit
+     * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+     */
     /* default */ record ValidatedState(long observedLength, long position,
             long lastCommittedSequence, long lastCommittedRevision, byte[] rollingCommitment) {
+        /**
+         * Creates a {@code ValidatedState} value from the supplied component coordinates.
+         *
+         * @param observedLength physical WAL length in bytes observed by read-only validation
+         * @param position exclusive accepted byte boundary used to reopen the writer
+         * @param lastCommittedSequence last sequence covered by a validated batch commit
+         * @param lastCommittedRevision last revision covered by a validated batch commit
+         * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+         * @throws NullPointerException if {@code rollingCommitment} is null
+         * @throws IllegalArgumentException if observed/accepted offsets, sequence, revision, or commitment length cannot describe a validated WAL prefix
+         */
         ValidatedState {
             Objects.requireNonNull(rollingCommitment, "rollingCommitment");
             if (observedLength < SigningWalContainerCodec.HEADER_BYTES
@@ -1126,16 +1340,44 @@ final class SigningActiveWal implements AutoCloseable {
             rollingCommitment = rollingCommitment.clone();
         }
 
+        /**
+         * Returns the rolling forced-prefix commitment without exposing retained storage.
+         *
+         * @return independently owned commitment bytes
+         */
         @Override public byte[] rollingCommitment() { return rollingCommitment.clone(); }
     }
 
+    /**
+     * Explicit queue, batching, timing and segment bounds for the active WAL writer.
+     *
+     * @param queueCapacity inclusive maximum queued append request count
+     * @param maximumGroupSize inclusive maximum requests committed by one writer group
+     * @param maximumGroupWaitNanos maximum grouping delay in nanoseconds
+     * @param maximumQueuedPayloadBytes inclusive maximum queued payload byte reservation
+     * @param maximumBatchBytes inclusive maximum encoded writer batch length in bytes
+     * @param maximumSegmentBytes maximum active segment length in bytes before rotation
+     * @param payloadCopier bounded payload transfer callback used by the WAL writer
+     */
     /* default */ record Configuration(int queueCapacity, int maximumGroupSize,
             long maximumGroupWaitNanos, long maximumQueuedPayloadBytes, int maximumBatchBytes,
             long maximumSegmentBytes, PayloadCopier payloadCopier) {
+        /**
+         * Creates the standard bounded writer configuration.
+         *
+         * @return immutable configuration using secure array copies and a 256-MiB segment limit
+         */
         /* default */ static Configuration defaults() {
             return defaults(SigningWalFrameCodec.MAX_BATCH_FRAMES);
         }
 
+        /**
+         * Creates the standard bounded writer configuration with a selected request-group bound.
+         *
+         * @param maximumGroupSize positive group request bound no larger than the frame codec limit
+         * @return immutable configuration using secure array copies and a 256-MiB segment limit
+         * @throws IllegalArgumentException if the selected group size is outside the codec limit
+         */
         /* default */ static Configuration defaults(int maximumGroupSize) {
             return new Configuration(MAXIMUM_QUEUE_CAPACITY,
                     maximumGroupSize, MAXIMUM_WAIT_NANOS,
@@ -1143,6 +1385,16 @@ final class SigningActiveWal implements AutoCloseable {
                     MAXIMUM_BATCH_BYTES, 256L * 1024L * 1024L, byte[]::clone);
         }
 
+        /**
+         * Creates a bounded writer configuration, using default segment size or copying where omitted.
+         *
+         * @param queueCapacity positive queued-request bound no larger than MAXIMUM_QUEUE_CAPACITY
+         * @param maximumGroupSize positive group request bound no larger than the frame codec limit
+         * @param maximumGroupWaitNanos grouping delay from zero through two milliseconds, in nanoseconds
+         * @param maximumQueuedPayloadBytes positive aggregate queued-payload byte bound within the implementation limit
+         * @param maximumBatchBytes encoded batch byte bound large enough for one empty frame and its commit marker
+         * @throws IllegalArgumentException if a bound is outside the supported range or a supplied copier is null
+         */
         /* default */ Configuration(int queueCapacity, int maximumGroupSize,
                 long maximumGroupWaitNanos, long maximumQueuedPayloadBytes,
                 int maximumBatchBytes) {
@@ -1151,6 +1403,17 @@ final class SigningActiveWal implements AutoCloseable {
                     256L * 1024L * 1024L, byte[]::clone);
         }
 
+        /**
+         * Creates a bounded writer configuration, using default segment size or copying where omitted.
+         *
+         * @param queueCapacity positive queued-request bound no larger than MAXIMUM_QUEUE_CAPACITY
+         * @param maximumGroupSize positive group request bound no larger than the frame codec limit
+         * @param maximumGroupWaitNanos grouping delay from zero through two milliseconds, in nanoseconds
+         * @param maximumQueuedPayloadBytes positive aggregate queued-payload byte bound within the implementation limit
+         * @param maximumBatchBytes encoded batch byte bound large enough for one empty frame and its commit marker
+         * @param maximumSegmentBytes segment byte bound large enough for its header and one committed frame
+         * @throws IllegalArgumentException if a bound is outside the supported range or a supplied copier is null
+         */
         /* default */ Configuration(int queueCapacity, int maximumGroupSize,
                 long maximumGroupWaitNanos, long maximumQueuedPayloadBytes,
                 int maximumBatchBytes, long maximumSegmentBytes) {
@@ -1159,6 +1422,17 @@ final class SigningActiveWal implements AutoCloseable {
                     maximumSegmentBytes, byte[]::clone);
         }
 
+        /**
+         * Creates a bounded writer configuration, using default segment size or copying where omitted.
+         *
+         * @param queueCapacity positive queued-request bound no larger than MAXIMUM_QUEUE_CAPACITY
+         * @param maximumGroupSize positive group request bound no larger than the frame codec limit
+         * @param maximumGroupWaitNanos grouping delay from zero through two milliseconds, in nanoseconds
+         * @param maximumQueuedPayloadBytes positive aggregate queued-payload byte bound within the implementation limit
+         * @param maximumBatchBytes encoded batch byte bound large enough for one empty frame and its commit marker
+         * @param payloadCopier callback producing an independent array of exactly the supplied payload length
+         * @throws IllegalArgumentException if a bound is outside the supported range or a supplied copier is null
+         */
         /* default */ Configuration(int queueCapacity, int maximumGroupSize,
                 long maximumGroupWaitNanos, long maximumQueuedPayloadBytes,
                 int maximumBatchBytes, PayloadCopier payloadCopier) {
@@ -1167,6 +1441,18 @@ final class SigningActiveWal implements AutoCloseable {
                     256L * 1024L * 1024L, payloadCopier);
         }
 
+        /**
+         * Creates a {@code Configuration} value from the supplied component coordinates.
+         *
+         * @param queueCapacity inclusive maximum queued append request count
+         * @param maximumGroupSize inclusive maximum requests committed by one writer group
+         * @param maximumGroupWaitNanos maximum grouping delay in nanoseconds
+         * @param maximumQueuedPayloadBytes inclusive maximum queued payload byte reservation
+         * @param maximumBatchBytes inclusive maximum encoded writer batch length in bytes
+         * @param maximumSegmentBytes maximum active segment length in bytes before rotation
+         * @param payloadCopier bounded payload transfer callback used by the WAL writer
+         * @throws IllegalArgumentException if queue, grouping, wait, byte, or segment bounds are outside their supported ranges, or the payload copier is null
+         */
         Configuration {
             if (queueCapacity <= 0 || queueCapacity > MAXIMUM_QUEUE_CAPACITY
                     || maximumGroupSize <= 0
@@ -1190,35 +1476,106 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Closed active-WAL lifecycle states controlling admission and recovery.
+     */
     /* default */ enum State {
+        /**
+         * The WAL is opened without accepting new appends.
+         */
         PASSIVE,
+        /**
+         * The WAL accepts append work.
+         */
         OPEN,
+        /**
+         * The WAL is draining or closing its owned resources.
+         */
         CLOSING,
+        /**
+         * The current WAL has reached a rotation boundary.
+         */
         ROTATION_REQUIRED,
+        /**
+         * The WAL no longer accepts work and its owned resources are closed.
+         */
         CLOSED,
+        /**
+         * The WAL cannot accept work until recovery reestablishes durable state.
+         */
         RECOVERY_REQUIRED
     }
 
-    /** Deterministic passive-open boundaries used by recovery cleanup tests. */
+    /**
+     * Deterministic passive-open boundaries used by recovery cleanup tests.
+     */
     /* default */ enum RecoveryOpenStage {
+        /**
+         * Observation point after opening the passive WAL.
+         */
         AFTER_PASSIVE_WAL_OPEN,
+        /**
+         * Observation point after repairing the incomplete WAL tail.
+         */
         AFTER_TAIL_REPAIR
     }
 
-    /** Package-local fault seam for passive recovery open. */
+    /**
+     * Package-local fault seam for passive recovery open.
+     */
     /* default */
     @FunctionalInterface
     interface RecoveryOpenFaultInjector {
+        /**
+         * Observes a passive recovery-open boundary and may inject an I/O failure.
+         *
+         * @param stage passive-open boundary that has just completed
+         * @param channel borrowed open WAL channel, whose lifecycle remains with the opener
+         * @throws IOException if the test requests failure at this boundary
+         */
         void after(RecoveryOpenStage stage, WalChannel channel) throws IOException;
     }
 
+    /**
+     * Closed durability outcomes distinguishing an unattempted append from an uncertain append.
+     */
     /* default */ enum FailureOutcome {
+        /**
+         * The append may have reached storage; its outcome requires reconciliation.
+         */
         DURABILITY_UNCERTAIN,
+        /**
+         * The append was not attempted because the WAL was unavailable.
+         */
         UNAVAILABLE_NOT_ATTEMPTED
     }
 
+    /**
+     * Durable append result including its exact frame locator and forced rolling commitment.
+     *
+     * @param generationIdentity exact immutable artifact generation identity
+     * @param sequence exact persisted record sequence
+     * @param revision authoritative metadata revision
+     * @param offset zero-based encoded byte offset
+     * @param frameLength complete encoded frame length in bytes
+     * @param committedOffset exclusive byte offset covered by the forced commit result
+     * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+     */
     /* default */ record CommitResult(long generationIdentity, long sequence, long revision,
             long offset, int frameLength, long committedOffset, byte[] rollingCommitment) {
+        /**
+         * Creates a {@code CommitResult} value from the supplied component coordinates.
+         *
+         * @param generationIdentity exact immutable artifact generation identity
+         * @param sequence exact persisted record sequence
+         * @param revision authoritative metadata revision
+         * @param offset zero-based encoded byte offset
+         * @param frameLength complete encoded frame length in bytes
+         * @param committedOffset exclusive byte offset covered by the forced commit result
+         * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+         * @throws IllegalArgumentException if the generation identity is negative
+         * @throws NullPointerException if the commitment array is null
+         */
         CommitResult {
             if (generationIdentity < 0L) {
                 throw new IllegalArgumentException("signing WAL commit generation is invalid");
@@ -1226,12 +1583,40 @@ final class SigningActiveWal implements AutoCloseable {
             rollingCommitment = rollingCommitment.clone();
         }
 
+        /**
+         * Returns the rolling forced-prefix commitment without exposing retained storage.
+         *
+         * @return independently owned commitment bytes
+         */
         @Override
         public byte[] rollingCommitment() {
             return rollingCommitment.clone();
         }
     }
 
+    /**
+     * Constant-size lifecycle, queue, batching and durability counters of the active WAL writer.
+     *
+     * @param state closed lifecycle state
+     * @param queueDepth number of append requests currently queued
+     * @param queueCapacity inclusive maximum queued append request count
+     * @param outstandingRequests number of queued or in-flight append requests
+     * @param outstandingPayloadBytes payload bytes reserved by queued or in-flight requests
+     * @param outstandingEncodedBytes encoded bytes reserved by queued or in-flight requests
+     * @param groupsCommitted number of writer groups durably committed
+     * @param requestsCommitted number of append requests durably committed
+     * @param forces number of file durability force operations
+     * @param rejected number of rejected append requests
+     * @param uncertain number of append requests with uncertain durability outcomes
+     * @param maximumBatchSize largest observed writer group request count
+     * @param batchWaitNanos accumulated group wait time in nanoseconds
+     * @param maximumBatchWaitNanos largest observed group wait time in nanoseconds
+     * @param writeNanos accumulated file write time in nanoseconds
+     * @param maximumWriteNanos largest observed file write duration in nanoseconds
+     * @param forceNanos accumulated file force time in nanoseconds
+     * @param maximumForceNanos largest observed file force duration in nanoseconds
+     * @param bytesAppended total encoded bytes appended by the writer
+     */
     /* default */ record Snapshot(State state, int queueDepth, int queueCapacity,
             int outstandingRequests, long outstandingPayloadBytes,
             long outstandingEncodedBytes,
@@ -1274,6 +1659,7 @@ final class SigningActiveWal implements AutoCloseable {
          * @param retired accumulated counters of every previously sealed WAL
          * @param live    live snapshot of the current active WAL
          * @return a snapshot whose cumulative writer counters span both WALs
+         * @throws NullPointerException if the retired or live snapshot is null
          */
         /* default */ static Snapshot accumulate(Snapshot retired, Snapshot live) {
             Objects.requireNonNull(retired, "retired");
@@ -1297,6 +1683,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Read-only future for one admitted append; caller cancellation cannot retract durable work.
+     */
     /* default */ static final class Acknowledgement implements Future<CommitResult> {
         private final Object completionLock = new Object();
         private CommitResult result;
@@ -1324,6 +1713,14 @@ final class SigningActiveWal implements AutoCloseable {
             }
         }
 
+        /**
+         * Waits for this acknowledgement and restores the thread interrupt flag before propagating interruption.
+         *
+         * @return forced commit result
+         * @throws InterruptedException if the waiting thread is interrupted
+         * @throws ExecutionException if append validation or durability failed
+         * @throws CancellationException if the acknowledgement was cancelled without retracting the append
+         */
         /* default */ CommitResult await() throws InterruptedException, ExecutionException {
             try {
                 return get();
@@ -1333,6 +1730,17 @@ final class SigningActiveWal implements AutoCloseable {
             }
         }
 
+        /**
+         * Cancels observation through this acknowledgement without cancelling admitted WAL work.
+         *
+         * <p>The writer is never interrupted and its admitted mutation remains queued or
+         * in flight. Cancellation wakes acknowledgement waiters, whose result retrieval
+         * then throws CancellationException. Repeated cancellation continues to return
+         * true until the writer records completion, after which cancellation returns false.</p>
+         *
+         * @param mayInterruptIfRunning ignored; cancellation never interrupts the WAL writer
+         * @return false if writer completion is already recorded; otherwise true, including repeated cancellation
+         */
         @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
             synchronized (completionLock) {
@@ -1345,9 +1753,18 @@ final class SigningActiveWal implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean isCancelled() { synchronized (completionLock) { return cancelled; } }
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean isDone() { synchronized (completionLock) { return complete || cancelled; } }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CommitResult get() throws InterruptedException, ExecutionException {
             synchronized (completionLock) {
@@ -1358,6 +1775,9 @@ final class SigningActiveWal implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CommitResult get(long timeout, TimeUnit unit)
                 throws InterruptedException, ExecutionException, TimeoutException {
@@ -1387,6 +1807,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Exclusive short-lived reservation of exact WAL frame coordinates and queue capacity.
+     */
     /* default */ final class FrameReservation implements AutoCloseable {
         private final SigningWalFrameCodec.RecordType recordType;
         private final UUID transactionId;
@@ -1407,15 +1830,49 @@ final class SigningActiveWal implements AutoCloseable {
             this.revision = revision;
         }
 
+        /**
+         * Returns the WAL generation selected for this reservation.
+         *
+         * @return reserved generation identity
+         */
         /* default */ long generationIdentity() { return descriptor.identity(); }
+        /**
+         * Returns the sequence that successful admission will consume.
+         *
+         * @return reserved consecutive sequence
+         */
         /* default */ long sequence() { return sequence; }
+        /**
+         * Returns the metadata revision that successful admission will consume.
+         *
+         * @return reserved consecutive revision
+         */
         /* default */ long revision() { return revision; }
+        /**
+         * Returns the complete encoded data-frame size, excluding the batch commit marker.
+         *
+         * @return frame length in bytes
+         */
         /* default */ int frameLength() {
             return SigningWalFrameCodec.HEADER_BYTES + payload.length
                     + SigningWalFrameCodec.CHECKSUM_BYTES;
         }
+        /**
+         * Returns the exact pointer slot filled when this reservation commits.
+         *
+         * @return borrowed publication slot associated with the reserved frame
+         */
         /* default */ SigningRecordPointerSlot pointerSlot() { return pointerSlot; }
 
+        /**
+         * Queues this active reservation at its preallocated sequence and revision.
+         *
+         * <p>Cancelling the returned acknowledgement does not undo the admitted mutation.</p>
+         *
+         * @return acknowledgement for forced completion
+         * @throws IllegalStateException if the reservation was already admitted or closed
+         * @throws UnavailableException if the WAL stopped accepting work before admission
+         */
         /* default */ Acknowledgement admit() {
             synchronized (lock) {
                 requireActive();
@@ -1435,10 +1892,15 @@ final class SigningActiveWal implements AutoCloseable {
         }
 
         /**
-         * Admits this reservation only when the guard still holds at the WAL
-         * linearization point. A declined reservation consumes no sequence,
-         * revision, or queue position. The guard must perform bounded in-memory
-         * work only; it must not perform I/O, wait, or invoke further callbacks.
+         * Queues this active reservation only if the guard succeeds at the admission linearization point.
+         *
+         * <p>Admission consumes this reservation. A declined guard consumes no sequence, revision, or queue position. Guard work must be bounded and must not perform I/O, wait, or invoke further callbacks.</p>
+         *
+         * @param guard bounded in-memory predicate evaluated under the WAL lock; must not wait or perform I/O
+         * @return acknowledgement when admitted, or empty after releasing a declined reservation
+         * @throws IllegalStateException if the reservation was already admitted or closed
+         * @throws UnavailableException if the WAL stopped accepting work before admission
+         * @throws NullPointerException if the guard is null
          */
         /* default */ Optional<Acknowledgement> admitIf(BooleanSupplier guard) {
             Objects.requireNonNull(guard, "guard");
@@ -1479,14 +1941,26 @@ final class SigningActiveWal implements AutoCloseable {
             lock.notifyAll();
         }
 
+        /**
+         * Releases an unadmitted reservation without consuming a sequence or revision.
+         *
+         * <p>Closure is idempotent. Closing after admission does not retract queued work
+         * or cancel its acknowledgement.</p>
+         */
         @Override public void close() {
             synchronized (lock) { closeLocked(); }
         }
     }
 
+    /**
+     * Signals rejection before admission because active-WAL capacity is exhausted.
+     */
     /* default */ static class OverloadedException extends RejectedExecutionException {
         private static final long serialVersionUID = 5948806617208825056L;
 
+        /**
+         * Creates the stable rejection reported when bounded WAL admission is full.
+         */
         /* default */ OverloadedException() {
             this("signing active WAL admission is full");
         }
@@ -1496,6 +1970,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Signals rejection before admission because the active WAL cannot accept work.
+     */
     /* default */ static final class UnavailableException extends RejectedExecutionException {
         private static final long serialVersionUID = -4634554929264833338L;
 
@@ -1504,7 +1981,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Internal typed admission result indicating insufficient exact WAL headroom. */
+    /**
+     * Internal typed admission result indicating insufficient exact WAL headroom.
+     */
     /* default */ static final class HeadroomExhaustedException
             extends OverloadedException {
         private static final long serialVersionUID = 3989905282541327710L;
@@ -1514,6 +1993,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Classified append failure retaining whether durability is uncertain or append was not attempted.
+     */
     /* default */ static final class CommitFailure extends IOException {
         private static final long serialVersionUID = -8837326524687673644L;
         private final FailureOutcome outcome;
@@ -1525,11 +2007,19 @@ final class SigningActiveWal implements AutoCloseable {
             this.outcome = outcome;
         }
 
+        /**
+         * Returns whether the failed append was unattempted or may have reached durable storage.
+         *
+         * @return closed durability classification retained with this failure
+         */
         /* default */ FailureOutcome outcome() {
             return outcome;
         }
     }
 
+    /**
+     * Signals batch validation failure before any corresponding append is attempted.
+     */
     /* default */ static final class ValidationException extends IOException {
         private static final long serialVersionUID = 5713459025104324087L;
 
@@ -1538,6 +2028,9 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
+    /**
+     * Signals that the current active segment must rotate before further work can proceed.
+     */
     /* default */ static final class RotationRequiredException extends IOException {
         private static final long serialVersionUID = -5674672998685456422L;
 
@@ -1550,6 +2043,9 @@ final class SigningActiveWal implements AutoCloseable {
         private static final long serialVersionUID = 6894733508425696909L;
     }
 
+    /**
+     * Signals that durable WAL state must be reconciled by recovery before further work.
+     */
     /* default */ static final class RecoveryRequiredException extends IOException {
         private static final long serialVersionUID = 3493503317725205259L;
 
@@ -1558,40 +2054,120 @@ final class SigningActiveWal implements AutoCloseable {
         }
     }
 
-    /** Internal marker for malformed bytes discovered after the read-only preflight. */
+    /**
+     * Internal marker for malformed bytes discovered after the read-only preflight.
+     */
     /* default */ static final class MalformedRecoveryDataException extends IOException {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * Monotonic nanosecond time source used for bounded grouping delay measurements.
+     */
     @FunctionalInterface
     /* default */ interface NanoClock {
+        /**
+         * Returns monotonic relative time for grouping and latency measurements.
+         *
+         * @return nanosecond counter; only differences between readings are meaningful
+         */
         long nanoTime();
     }
 
+    /**
+     * Interruptible wait seam used while collecting one bounded writer group.
+     */
     @FunctionalInterface
     /* default */ interface GroupWaitStrategy {
+        /**
+         * Waits interruptibly on the caller-owned group monitor for a bounded interval.
+         *
+         * @param monitor monitor whose lock is held by the caller
+         * @param nanos requested maximum wait duration in nanoseconds
+         * @throws InterruptedException if the waiting thread is interrupted
+         */
         void await(Object monitor, long nanos) throws InterruptedException;
     }
 
+    /**
+     * Copies admitted payload bytes into writer-owned storage before asynchronous processing.
+     */
     @FunctionalInterface
     /* default */ interface PayloadCopier {
+        /**
+         * Copies a caller payload into independently owned writer bytes.
+         *
+         * @param payload complete payload bytes to snapshot before admission
+         * @return independent array containing the exact supplied payload
+         * @throws NullPointerException if the payload is null
+         */
         byte[] copy(byte[] payload);
     }
 
-    /** Package-local filesystem and fault-injection seam. */
+    /**
+     * Package-local filesystem and fault-injection seam.
+     */
     @SuppressWarnings("PMD.CommentRequired")
     /* default */ interface Operations {
+        /**
+         * Checks whether the candidate path exists.
+         *
+         * @param path exact candidate filesystem path
+         * @return true when the path satisfies the predicate; false otherwise
+         * @throws IOException if the filesystem check or channel allocation fails
+         */
         boolean exists(Path path) throws IOException;
+        /**
+         * Checks whether the path identifies an acceptable regular WAL file.
+         *
+         * @param path exact candidate filesystem path
+         * @return true when the path satisfies the predicate; false otherwise
+         * @throws IOException if the filesystem check or channel allocation fails
+         */
         boolean isRegularFile(Path path) throws IOException;
+        /**
+         * Creates a new owned WAL channel without replacing an existing file.
+         *
+         * @param path exact candidate filesystem path
+         * @return newly opened owned WAL channel; the caller must close it
+         * @throws IOException if the filesystem check or channel allocation fails
+         */
         WalChannel createNew(Path path) throws IOException;
+        /**
+         * Opens an existing WAL for owned read, write and positioning operations.
+         *
+         * @param path exact candidate filesystem path
+         * @return newly opened owned WAL channel; the caller must close it
+         * @throws IOException if the filesystem check or channel allocation fails
+         */
         WalChannel openExisting(Path path) throws IOException;
+        /**
+         * Confirms durability of directory namespace changes.
+         *
+         * @param directory exact parent directory to force
+         * @throws IOException if directory durability cannot be confirmed
+         */
         void forceDirectory(Path directory) throws IOException;
     }
 
-    /** Minimal owned channel seam used to classify write and force failures. */
+    /**
+     * Minimal owned channel seam used to classify write and force failures.
+     */
     /* default */ interface WalChannel extends SeekableByteChannel {
+        /**
+         * Forces previously written WAL bytes to stable storage.
+         *
+         * @param metadata whether associated file metadata must also be forced
+         * @throws IOException if the durability barrier fails
+         */
         void force(boolean metadata) throws IOException;
+        /**
+         * {@inheritDoc}
+         */
         @Override WalChannel position(long newPosition) throws IOException;
+        /**
+         * {@inheritDoc}
+         */
         @Override WalChannel truncate(long size) throws IOException;
     }
 
@@ -1610,11 +2186,35 @@ final class SigningActiveWal implements AutoCloseable {
             List<FrameBoundary> boundaries, long finalRevision, long encodedBytes) {
     }
 
+    /**
+     * Validated terminal coverage and complete-file commitment of a sealed WAL generation.
+     *
+     * @param frameCount number of frames included by the result
+     * @param lastSequence last validated sequence in the scanned prefix
+     * @param committedRevision authoritative committed revision
+     * @param length exact encoded content length in bytes
+     * @param fileCommitment integrity commitment of the complete encoded file
+     */
     /* default */ record Seal(long frameCount, long lastSequence, long committedRevision,
             long length, byte[] fileCommitment) {
+        /**
+         * Creates a {@code Seal} value from the supplied component coordinates.
+         *
+         * @param frameCount number of frames included by the result
+         * @param lastSequence last validated sequence in the scanned prefix
+         * @param committedRevision authoritative committed revision
+         * @param length exact encoded content length in bytes
+         * @param fileCommitment integrity commitment of the complete encoded file
+         * @throws NullPointerException if the commitment array is null
+         */
         Seal {
             fileCommitment = fileCommitment.clone();
         }
+        /**
+         * Returns the complete WAL file commitment without exposing retained storage.
+         *
+         * @return independently owned commitment bytes
+         */
         @Override public byte[] fileCommitment() { return fileCommitment.clone(); }
     }
 
@@ -1625,18 +2225,28 @@ final class SigningActiveWal implements AutoCloseable {
             Objects.requireNonNull(fileCommitment, "fileCommitment");
         }
 
+        /**
+         * Returns the rolling forced-prefix commitment without exposing retained storage.
+         *
+         * @return independently owned commitment bytes
+         */
         @Override
         public byte[] rollingCommitment() {
             return rollingCommitment.clone();
         }
     }
 
-    /** Atomically published only after the corresponding append is forced. */
+    /**
+     * Atomically published only after the corresponding append is forced.
+     */
     private record ForcedEnd(long offset, long sequence, long revision, byte[] commitment) {
         private ForcedEnd {
             commitment = commitment.clone();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public byte[] commitment() {
             return commitment.clone();
@@ -1645,6 +2255,9 @@ final class SigningActiveWal implements AutoCloseable {
 
     private record DigestingChannel(WalChannel delegate, MessageDigest digest)
             implements java.nio.channels.WritableByteChannel {
+        /**
+         * {@inheritDoc}
+         */
         @Override public int write(ByteBuffer source) throws IOException {
             ByteBuffer authenticated = source.asReadOnlyBuffer();
             int written = delegate.write(source);
@@ -1652,21 +2265,36 @@ final class SigningActiveWal implements AutoCloseable {
             digest.update(authenticated);
             return written;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean isOpen() { return delegate.isOpen(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { throw new UnsupportedOperationException(); }
     }
 
     private static final class SystemOperations implements Operations {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean exists(Path path) {
             return Files.exists(path, LinkOption.NOFOLLOW_LINKS);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean isRegularFile(Path path) {
             return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public WalChannel createNew(Path path) throws IOException {
             Set<OpenOption> options = Set.of(StandardOpenOption.CREATE_NEW,
@@ -1679,6 +2307,9 @@ final class SigningActiveWal implements AutoCloseable {
             return new SystemWalChannel(FileChannel.open(path, options, attributes));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public WalChannel openExisting(Path path) throws IOException {
             Set<OpenOption> options = Set.of(StandardOpenOption.READ,
@@ -1686,6 +2317,9 @@ final class SigningActiveWal implements AutoCloseable {
             return new SystemWalChannel(FileChannel.open(path, options));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceDirectory(Path directory) throws IOException {
             SigningFormatSupport.forceDirectory(directory);
@@ -1699,20 +2333,47 @@ final class SigningActiveWal implements AutoCloseable {
             this.delegate = delegate;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read(ByteBuffer target) throws IOException { return delegate.read(target); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public int write(ByteBuffer source) throws IOException { return delegate.write(source); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long position() throws IOException { return delegate.position(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public WalChannel position(long newPosition) throws IOException {
             delegate.position(newPosition);
             return this;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long size() throws IOException { return delegate.size(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public WalChannel truncate(long size) throws IOException {
             delegate.truncate(size);
             return this;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean isOpen() { return delegate.isOpen(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { delegate.close(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void force(boolean metadata) throws IOException { delegate.force(metadata); }
     }
 }

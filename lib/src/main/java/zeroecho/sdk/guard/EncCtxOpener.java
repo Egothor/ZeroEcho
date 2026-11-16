@@ -66,6 +66,9 @@ public final class EncCtxOpener implements RecipientOpener {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] tryOpen(String entryId, byte[] blob, UnlockMaterial material)
             throws IOException, GeneralSecurityException {

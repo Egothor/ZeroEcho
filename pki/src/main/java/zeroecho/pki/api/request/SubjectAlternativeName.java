@@ -46,9 +46,13 @@ import zeroecho.pki.api.profile.SubjectAlternativeNameType;
  */
 public sealed interface SubjectAlternativeName permits SubjectAlternativeName.DnsName, SubjectAlternativeName.IpAddress,
         SubjectAlternativeName.UriName, SubjectAlternativeName.Rfc822Name {
-    /** IPv4 octet count. */
+    /**
+     * IPv4 octet count.
+     */
     int IPV4_OCTET_COUNT = 4;
-    /** Maximum IPv4 octet value. */
+    /**
+     * Maximum IPv4 octet value.
+     */
     int MAXIMUM_IPV4_OCTET = 255;
 
     /**
@@ -65,16 +69,22 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
      *              wildcard
      */
     record DnsName(String value) implements SubjectAlternativeName {
-        /** Maximum encoded DNS name length. */
+        /**
+         * Maximum encoded DNS name length.
+         */
         public static final int MAXIMUM_BYTES = 253;
 
         /**
          * Canonicalizes and validates the DNS name.
+         * @param value lowercase ASCII DNS name, optionally with a complete leftmost wildcard
          */
         public DnsName {
             value = canonicalDns(value, true);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SubjectAlternativeNameType type() {
             return SubjectAlternativeNameType.DNS_NAME;
@@ -89,6 +99,9 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
     record IpAddress(byte[] bytes) implements SubjectAlternativeName {
         /**
          * Defensively snapshots and validates the address.
+         * @param bytes four or sixteen address bytes
+         * @throws IllegalArgumentException if bytes is null or contains neither four nor sixteen IP-address
+         *     octets
          */
         public IpAddress {
             if (bytes == null || bytes.length != 4 && bytes.length != 16) {
@@ -107,21 +120,33 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
             return bytes.clone();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SubjectAlternativeNameType type() {
             return SubjectAlternativeNameType.IP_ADDRESS;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean equals(Object other) {
             return other instanceof IpAddress address && Arrays.equals(bytes, address.bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int hashCode() {
             return Arrays.hashCode(bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String toString() {
             return "IpAddress[length=" + bytes.length + "]";
@@ -134,16 +159,22 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
      * @param value canonical URI text
      */
     record UriName(String value) implements SubjectAlternativeName {
-        /** Maximum encoded URI length. */
+        /**
+         * Maximum encoded URI length.
+         */
         public static final int MAXIMUM_BYTES = 2048;
 
         /**
          * Canonicalizes and validates the URI.
+         * @param value canonical URI text
          */
         public UriName {
             value = canonicalUri(value);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SubjectAlternativeNameType type() {
             return SubjectAlternativeNameType.URI;
@@ -156,16 +187,22 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
      * @param value mailbox with case-preserved local part and lowercase domain
      */
     record Rfc822Name(String value) implements SubjectAlternativeName {
-        /** Maximum encoded mailbox length. */
+        /**
+         * Maximum encoded mailbox length.
+         */
         public static final int MAXIMUM_BYTES = 320;
 
         /**
          * Canonicalizes and validates the mailbox.
+         * @param value mailbox with case-preserved local part and lowercase domain
          */
         public Rfc822Name {
             value = canonicalMailbox(value);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SubjectAlternativeNameType type() {
             return SubjectAlternativeNameType.RFC822_NAME;

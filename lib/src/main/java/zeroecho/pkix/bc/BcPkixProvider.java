@@ -120,6 +120,9 @@ public final class BcPkixProvider implements PkixProvider {
     private static final ASN1ObjectIdentifier CT_SCT_LIST_OID =
             new ASN1ObjectIdentifier("1.3.6.1.4.1.11129.2.4.2");
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verifyAlternativeSignature(X509Certificate certificate, PublicKey issuerAlternativeKey) {
         java.util.Objects.requireNonNull(certificate, "certificate");
@@ -146,6 +149,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verifyAlternativeSignatureCor3(X509Certificate certificate, PublicKey issuerAlternativeKey) {
         java.util.Objects.requireNonNull(certificate, "certificate");
@@ -191,21 +197,32 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
-    /** Creates the provider, ensuring the BouncyCastle security providers are registered. */
+    /**
+     * Creates the provider, ensuring the BouncyCastle security providers are registered.
+     */
     public BcPkixProvider() {
         zeroecho.sdk.util.BouncyCastleActivator.init();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "bc";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder certificateBuilder() {
         return new BcCertificateBuilder();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509Certificate parseCertificate(byte[] der) {
         try {
@@ -216,21 +233,33 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder certificationRequestBuilder() {
         return new BcCertificationRequestBuilder();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequest parseCertificationRequest(byte[] der) {
         return new BcCertificationRequest(der);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder crlBuilder() {
         return new BcCrlBuilder();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509CRL parseCrl(byte[] der) {
         try {
@@ -241,26 +270,41 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspResponseBuilder ocspResponseBuilder() {
         return new BcOcspResponseBuilder();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OcspRequest parseOcspRequest(byte[] der) {
         return new BcOcspRequest(der);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ContentSigner signer(PrivateKey privateKey, zeroecho.pkix.AlgorithmIdentifier algorithm) {
         return new JcaContentSigner(privateKey, algorithm);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ContentVerifier verifier(PublicKey publicKey, zeroecho.pkix.AlgorithmIdentifier algorithm) {
         return new JcaContentVerifier(publicKey, algorithm);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ContentVerifier verifier(byte[] subjectPublicKeyInfoDer, zeroecho.pkix.AlgorithmIdentifier algorithm) {
         try {
@@ -285,11 +329,17 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] subjectKeyIdentifier(PublicKey publicKey) {
         return BcExtensions.keyIdentifier(publicKey);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertId computeCertId(X509Certificate issuer, BigInteger serialNumber, String digestAlgorithmOid) {
         try {
@@ -306,6 +356,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public javax.security.auth.x500.X500Principal distinguishedName(
             List<zeroecho.pkix.RelativeDistinguishedName> relativeNames) {
@@ -316,6 +369,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String distinguishedNameString(
             List<zeroecho.pkix.RelativeDistinguishedName> relativeNames) {
@@ -339,6 +395,9 @@ public final class BcPkixProvider implements PkixProvider {
         return builder.build();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.AlgorithmIdentifier parseAlgorithmIdentifier(byte[] der) {
         try {
@@ -348,6 +407,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.AlgorithmIdentifier subjectPublicKeyAlgorithm(byte[] subjectPublicKeyInfoDer) {
         try {
@@ -358,6 +420,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicKey publicKeyFromSubjectPublicKeyInfo(byte[] subjectPublicKeyInfoDer) {
         try {
@@ -368,11 +433,17 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.ocsp.OcspResponse parseOcspResponse(byte[] der) {
         return new BcOcspResponse(der);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<zeroecho.pkix.RelativeDistinguishedName> parseDistinguishedName(byte[] nameDer) {
         org.bouncycastle.asn1.x500.X500Name name;
@@ -406,6 +477,9 @@ public final class BcPkixProvider implements PkixProvider {
         return List.copyOf(result);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<zeroecho.pkix.RelativeDistinguishedName> parseDistinguishedNameString(String name) {
         try {
@@ -416,6 +490,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] subjectPublicKeyBytes(byte[] subjectPublicKeyInfoDer) {
         try {
@@ -425,6 +502,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] subjectPublicKeyInfo(X509Certificate certificate) {
         try {
@@ -435,6 +515,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] buildSubjectPublicKeyInfo(zeroecho.pkix.AlgorithmIdentifier algorithm, byte[] publicKeyBits) {
         try {
@@ -445,6 +528,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<zeroecho.pkix.CertificateExtension> parseExtensions(byte[] der) {
         try {
@@ -455,6 +541,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] assembleCertificateOrCrl(byte[] tbs, byte[] signature, boolean crl) {
         try {
@@ -476,11 +565,17 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer, byte[] signature) {
         return assembleOcspResponse(tbsResponseData, signatureAlgorithmDer, signature, List.of());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer, byte[] signature,
             List<X509Certificate> chain) {
@@ -500,6 +595,9 @@ public final class BcPkixProvider implements PkixProvider {
         return encoded;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] encodeAlgorithmIdentifier(zeroecho.pkix.AlgorithmIdentifier algorithm) {
         try {
@@ -510,6 +608,9 @@ public final class BcPkixProvider implements PkixProvider {
     }
 
     // Bouncy Castle reports malformed GeneralName encodings through several runtime subtypes.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override
     public List<zeroecho.pkix.GeneralName> parseGeneralNames(byte[] der) {
@@ -529,6 +630,9 @@ public final class BcPkixProvider implements PkixProvider {
     // EST (RFC 7030) encoding operations
     // -------------------------------------------------------------------------
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] encodeCertsOnly(List<X509Certificate> chain) {
         try {
@@ -540,6 +644,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] encodeCsrAttrs(List<zeroecho.pkix.csr.CsrAttribute> attributes) {
         try {
@@ -565,6 +672,7 @@ public final class BcPkixProvider implements PkixProvider {
 
     /**
      * {@inheritDoc}
+     *
      * @throws zeroecho.core.err.UnsupportedRoleException if the private key uses
      *         LMS/XMSS; rejection precedes CSR parsing and signing-engine initialization
      */
@@ -592,6 +700,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] encryptPrivateKeyForRecipient(byte[] pkcs8PrivateKeyDer,
             X509Certificate recipientCertificate) {
@@ -625,6 +736,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.ct.PreCertificateResult buildPreCertificate(byte[] tbsCertificateDer,
             List<byte[]> issuerChainDer, ContentSigner signer) {
@@ -655,6 +769,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] embedScts(byte[] tbsCertificateDer,
             List<zeroecho.pkix.ct.SignedCertificateTimestamp> scts) {
@@ -703,7 +820,9 @@ public final class BcPkixProvider implements PkixProvider {
         return tbsGen.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
     }
 
-    /** Serializes the SCT list as TLS {@code SignedCertificateTimestampList} bytes. */
+    /**
+     * Serializes the SCT list as TLS {@code SignedCertificateTimestampList} bytes.
+     */
     private static byte[] serializeSctList(
             List<zeroecho.pkix.ct.SignedCertificateTimestamp> scts) throws IOException {
         ByteArrayOutputStream allScts = new ByteArrayOutputStream();
@@ -721,7 +840,9 @@ public final class BcPkixProvider implements PkixProvider {
         return result.toByteArray();
     }
 
-    /** Serializes a single SCT to its TLS wire format (RFC 6962 v1). */
+    /**
+     * Serializes a single SCT to its TLS wire format (RFC 6962 v1).
+     */
     private static byte[] serializeSct(zeroecho.pkix.ct.SignedCertificateTimestamp sct)
             throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -745,6 +866,9 @@ public final class BcPkixProvider implements PkixProvider {
         return out.toByteArray();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.ct.SignedCertificateTimestamp parseSct(byte[] jsonResponseBody) {
         String json = new String(jsonResponseBody, java.nio.charset.StandardCharsets.UTF_8).trim();
@@ -776,7 +900,9 @@ public final class BcPkixProvider implements PkixProvider {
                 jcaAlg, sigBytes);
     }
 
-    /** Extracts a quoted string value from a flat JSON object by key name. */
+    /**
+     * Extracts a quoted string value from a flat JSON object by key name.
+     */
     private static String extractJsonString(String json, String key) {
         String search = "\"" + key + "\"";
         int keyIdx = json.indexOf(search);
@@ -798,12 +924,16 @@ public final class BcPkixProvider implements PkixProvider {
         return json.substring(quoteStart + 1, quoteEnd);
     }
 
-    /** Extracts an integer value from a flat JSON object by key name. */
+    /**
+     * Extracts an integer value from a flat JSON object by key name.
+     */
     private static int extractJsonInt(String json, String key) {
         return (int) extractJsonLong(json, key);
     }
 
-    /** Extracts a long value from a flat JSON object by key name. */
+    /**
+     * Extracts a long value from a flat JSON object by key name.
+     */
     private static long extractJsonLong(String json, String key) {
         String search = "\"" + key + "\"";
         int keyIdx = json.indexOf(search);
@@ -830,7 +960,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
-    /** Maps TLS hash+sig codes back to a JCA algorithm name. */
+    /**
+     * Maps TLS hash+sig codes back to a JCA algorithm name.
+     */
     private static String tlsCodesToJcaAlg(int hashCode, int sigCode) {
         String hash = switch (hashCode) {
             case 2 -> "SHA1";
@@ -852,6 +984,9 @@ public final class BcPkixProvider implements PkixProvider {
         };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
 
     public boolean verifySct(zeroecho.pkix.ct.SignedCertificateTimestamp sct,
@@ -883,7 +1018,9 @@ public final class BcPkixProvider implements PkixProvider {
         }
     }
 
-    /** Maps a JCA algorithm name to TLS {hash_alg, sig_type} codes per RFC 5246 §7.4.1.4.1. */
+    /**
+     * Maps a JCA algorithm name to TLS {hash_alg, sig_type} codes per RFC 5246 §7.4.1.4.1.
+     */
     private static int[] jcaAlgToTlsCodes(String jcaAlgorithm) {
         String upper = jcaAlgorithm.toUpperCase(Locale.ROOT);
         int hash;

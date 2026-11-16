@@ -63,12 +63,13 @@ public final class MutualTlsContext {
      * identity and trusts only the configured anchors.
      *
      * @param keystore PKCS#12 file holding the client private key and chain
-     * @param keystorePassword keystore and key password
+     * @param keystorePassword mutable keystore/key password buffer, cleared after initialization is attempted
      * @param truststore PKCS#12 file holding the trusted remote issuer(s)
-     * @param truststorePassword trust-store password
+     * @param truststorePassword mutable trust-store password buffer, cleared after initialization is attempted
      * @param protocol TLS protocol (for example {@code TLSv1.3})
      * @return an initialised client context
-     * @throws IllegalArgumentException if any input is missing or unreadable
+     * @throws IllegalArgumentException if key/trust material cannot be read or unlocked, or TLS setup fails
+     * @throws NullPointerException if {@code keystore}, {@code keystorePassword}, {@code truststore}, {@code truststorePassword} or {@code protocol} is null
      */
     public static SSLContext fromPkcs12(Path keystore, char[] keystorePassword, Path truststore,
             char[] truststorePassword, String protocol) {

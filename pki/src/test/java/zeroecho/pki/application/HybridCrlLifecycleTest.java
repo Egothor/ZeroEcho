@@ -71,13 +71,21 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand;
 import zeroecho.pki.testkit.RootCreationFixture;
 
-/** Native filesystem/local-provider integration; trusted decisions here do not exercise HTTP approval. */
+/**
+ * Native filesystem/local-provider integration; trusted decisions here do not exercise HTTP approval.
+ */
 final class HybridCrlLifecycleTest {
     private static final String ALT = BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm();
     private static final String RSA = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384.canonicalForm();
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "hybrid-crl"),
             new Purpose("STATUS_GENERATE"), Optional.empty(), Optional.empty());
 
+    /**
+     * Revocation full delta and download representations survive reopen.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void revocationFullDeltaAndDownloadRepresentationsSurviveReopen(@TempDir Path directory) throws Exception {
         var fixture = fixture(directory);
         PkiId fullId;
@@ -111,6 +119,12 @@ final class HybridCrlLifecycleTest {
         }
     }
 
+    /**
+     * Alternative rotation same key rollover and new a2 respect historical lineage.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void alternativeRotationSameKeyRolloverAndNewA2RespectHistoricalLineage(@TempDir Path directory) throws Exception {
         var fixture = fixture(directory);
         try (var session = fixture.open()) {
@@ -155,6 +169,12 @@ final class HybridCrlLifecycleTest {
         }
     }
 
+    /**
+     * Primary and both role rotations require their own full base.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void primaryAndBothRoleRotationsRequireTheirOwnFullBase(@TempDir Path directory) throws Exception {
         for (boolean both : new boolean[] {false, true}) {
             var fixture = fixture(directory.resolve(both ? "both" : "primary"));
@@ -176,6 +196,12 @@ final class HybridCrlLifecycleTest {
         }
     }
 
+    /**
+     * Intermediate CRL uses outgoing RSA and alternative keys rather than parent keys.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void intermediateCrlUsesOutgoingRsaAndAlternativeKeysRatherThanParentKeys(@TempDir Path directory) throws Exception {
         var fixture = fixture(directory);
         try (var session = fixture.open()) {

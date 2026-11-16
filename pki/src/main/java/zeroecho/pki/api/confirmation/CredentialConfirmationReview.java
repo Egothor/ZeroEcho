@@ -54,14 +54,28 @@ import zeroecho.pki.api.PkiId;
 public record CredentialConfirmationReview(PkiId credentialId, PkiId authorityId,
         String profileId, Instant confirmationReviewAt,
         ConfirmationDisclosurePolicy initialDisclosurePolicy) {
-    /** Maximum strict UTF-8 byte length of an authority identifier in this view. */
+    /**
+     * Maximum strict UTF-8 byte length of an authority identifier in this view.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final int MAXIMUM_AUTHORITY_ID_UTF8_BYTES = 256;
-    /** Maximum strict UTF-8 byte length of a profile identifier in this view. */
+    /**
+     * Maximum strict UTF-8 byte length of a profile identifier in this view.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final int MAXIMUM_PROFILE_ID_UTF8_BYTES = 256;
 
-    /** Validates the bounded reduced view. */
+    /**
+     * Validates the bounded reduced view.
+     * @param credentialId canonical credential identity
+     * @param authorityId exact logical issuing authority
+     * @param profileId exact logical issuance profile
+     * @param confirmationReviewAt authoritative confirmation-review boundary
+     * @param initialDisclosurePolicy disclosure policy frozen at initialization
+     * @throws NullPointerException if initialDisclosurePolicy, credentialId, authorityId, profileId or confirmationReviewAt is null
+     * @throws IllegalArgumentException if credential identity is noncanonical, authority/profile text is blank,
+     *     oversized or not strict UTF-8, or review time is outside the supported UTC range
+     */
     public CredentialConfirmationReview {
         credentialId = CredentialConfirmationInitialization.requireCanonicalCredentialId(credentialId);
         authorityId = requireTextId(authorityId, MAXIMUM_AUTHORITY_ID_UTF8_BYTES, "authorityId");

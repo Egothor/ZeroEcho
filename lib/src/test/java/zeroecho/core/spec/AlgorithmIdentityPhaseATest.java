@@ -53,6 +53,9 @@ import zeroecho.core.spi.AlgorithmExecutionCapability;
  */
 public final class AlgorithmIdentityPhaseATest {
 
+    /**
+     * Exact identity algebra and canonical round trip.
+     */
     @Test
     void exactIdentityAlgebraAndCanonicalRoundTrip() {
         System.out.println("exactIdentityAlgebraAndCanonicalRoundTrip");
@@ -79,6 +82,9 @@ public final class AlgorithmIdentityPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Role and parameter contradictions fail closed.
+     */
     @Test
     void roleAndParameterContradictionsFailClosed() {
         System.out.println("roleAndParameterContradictionsFailClosed");
@@ -99,6 +105,9 @@ public final class AlgorithmIdentityPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Parameterized capability domain is provider metadata only.
+     */
     @Test
     void parameterizedCapabilityDomainIsProviderMetadataOnly() {
         System.out.println("parameterizedCapabilityDomainIsProviderMetadataOnly");

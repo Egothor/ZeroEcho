@@ -104,6 +104,9 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for managed key proof lifecycle.
+ */
 final class ManagedKeyProofLifecycleTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -113,6 +116,12 @@ final class ManagedKeyProofLifecycleTest {
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "actor"), new Purpose("PROVE"),
             Optional.empty(), Optional.empty());
 
+    /**
+     * RSA pss and Ed25519 complete without publishing and reopen after retirement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rsaPssAndEd25519CompleteWithoutPublishingAndReopenAfterRetirement(@TempDir Path root) throws Exception {
         for (boolean rsa : new boolean[] {true, false}) {
             Path directory = root.resolve(Boolean.toString(rsa));
@@ -158,6 +167,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Definite mismatch fails but content I/O remains publishing and can retry.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void definiteMismatchFailsButContentIoRemainsPublishingAndCanRetry(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Provider provider = new Provider(false);
@@ -193,6 +208,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Truncated Ed25519 and malformed RSA signatures fail without retaining diagnostics.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void truncatedEd25519AndMalformedRsaSignaturesFailWithoutRetainingDiagnostics(@TempDir Path root) throws Exception {
         for (boolean rsa : new boolean[] {false, true}) {
             try (FilesystemPkiStore store = open(root.resolve(Boolean.toString(rsa)))) {
@@ -222,6 +243,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Live and completed snapshots restore without requiring retired challenge.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void liveAndCompletedSnapshotsRestoreWithoutRequiringRetiredChallenge(@TempDir Path root) throws Exception {
         for (DomainContinuationStore.State cut : List.of(DomainContinuationStore.State.SIGNING,
                 DomainContinuationStore.State.PUBLISHING, DomainContinuationStore.State.COMPLETED)) {
@@ -256,6 +283,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Capacity unknown acceptance and concurrent terminal advancement preserve custody.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void capacityUnknownAcceptanceAndConcurrentTerminalAdvancementPreserveCustody(@TempDir Path root) throws Exception {
         Provider provider = new Provider(false);
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root.resolve("capacity"), 1, CLOCK)) {
@@ -296,6 +329,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Adoption failure retires only unowned candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void adoptionFailureRetiresOnlyUnownedCandidate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Provider provider = new Provider(false);
@@ -313,6 +352,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Completed marker corruption fails observation and reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void completedMarkerCorruptionFailsObservationAndReopen(@TempDir Path root) throws Exception {
         Provider provider = new Provider(false);
         try (FilesystemPkiStore store = open(root)) {
@@ -330,6 +375,12 @@ final class ManagedKeyProofLifecycleTest {
         assertThrows(RuntimeException.class, () -> open(root));
     }
 
+    /**
+     * Pending observation does not open challenge after concurrent completion and retirement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void pendingObservationDoesNotOpenChallengeAfterConcurrentCompletionAndRetirement(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Provider provider = new Provider(false);
@@ -372,6 +423,12 @@ final class ManagedKeyProofLifecycleTest {
         }
     }
 
+    /**
+     * Acceptance rejects frozen envelope and challenge mismatches before creating workflow.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void acceptanceRejectsFrozenEnvelopeAndChallengeMismatchesBeforeCreatingWorkflow(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Provider provider = new Provider(false);

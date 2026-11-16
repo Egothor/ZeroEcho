@@ -53,8 +53,16 @@ import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
+/**
+ * Contract and regression tests for sign request cleanup.
+ */
 final class SignRequestCleanupTest {
 
+    /**
+     * Fingerprint clears digest copies without materializing content.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void fingerprintClearsDigestCopiesWithoutMaterializingContent() throws Exception {
         System.out.println("fingerprintClearsDigestCopiesWithoutMaterializingContent");
@@ -68,6 +76,9 @@ final class SignRequestCleanupTest {
         System.out.println("fingerprintClearsDigestCopiesWithoutMaterializingContent...ok");
     }
 
+    /**
+     * Fingerprint failure creates no payload copy.
+     */
     @Test
     void fingerprintFailureCreatesNoPayloadCopy() {
         System.out.println("fingerprintFailureCreatesNoPayloadCopy");
@@ -78,6 +89,9 @@ final class SignRequestCleanupTest {
         System.out.println("fingerprintFailureCreatesNoPayloadCopy...ok");
     }
 
+    /**
+     * Fingerprint binds exact commitment and not content identifier.
+     */
     @Test
     void fingerprintBindsExactCommitmentAndNotContentIdentifier() {
         AccessContext context = new AccessContext(new Principal("SYSTEM", "commitment"), new Purpose("SIGN"),

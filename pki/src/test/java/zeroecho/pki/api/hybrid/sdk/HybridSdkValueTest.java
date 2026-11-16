@@ -38,8 +38,14 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for hybrid SDK value.
+ */
 class HybridSdkValueTest {
 
+    /**
+     * Typed reads preserve canonical bytes and reject wrong kinds.
+     */
     @Test void typedReadsPreserveCanonicalBytesAndRejectWrongKinds() {
         var value=HybridSdkValue.object(java.util.Map.of("dates",HybridSdkValue.object(java.util.Map.of(
                 "notBefore",HybridSdkValue.text("2026-11-14T12:00:00Z"),"version",HybridSdkValue.integer(Long.MAX_VALUE))),
@@ -57,6 +63,9 @@ class HybridSdkValueTest {
         assertThrows(IllegalArgumentException.class,()->fields.get("label").integerValue());
         assertThrows(IllegalArgumentException.class,()->HybridSdkValue.integer(1).textValue());
     }
+    /**
+     * Canonicalizes every closed value type and object key order.
+     */
     @Test void canonicalizesEveryClosedValueTypeAndObjectKeyOrder() {
         var value = HybridSdkValue.object(Map.of("z", HybridSdkValue.bytes(new byte[] {1, 2}), "a",
                 HybridSdkValue.list(List.of(HybridSdkValue.text("name"), HybridSdkValue.integer(-4), HybridSdkValue.bool(true)))));
@@ -66,6 +75,9 @@ class HybridSdkValueTest {
         assertThrows(IllegalArgumentException.class, () -> HybridSdkValue.object(Map.of("non ascii é", value)));
         assertThrows(IllegalArgumentException.class, () -> HybridSdkValue.decode(new byte[] {3, 2}));
     }
+    /**
+     * Rejects trailing and oversized values and excessive depth.
+     */
     @Test void rejectsTrailingAndOversizedValuesAndExcessiveDepth() {
         assertThrows(IllegalArgumentException.class, () -> HybridSdkValue.decode(new byte[] {3, 1, 0}));
         assertThrows(IllegalArgumentException.class, () -> HybridSdkValue.bytes(new byte[262145]));

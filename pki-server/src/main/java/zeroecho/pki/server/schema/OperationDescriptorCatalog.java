@@ -70,7 +70,19 @@ public final class OperationDescriptorCatalog {
      */
     public record FieldSemantics(String type, String ref, boolean allowNew, boolean hidden, boolean readOnly,
             String label, String help, String placeholder) {
-        /** Rejects null semantics. */
+        /**
+         * Rejects null semantics.
+         * @param type client semantic type compatible with the wire type
+         * @param ref existing-entity reference kind, or empty
+         * @param allowNew whether external new references may be entered
+         * @param hidden whether the field is managed by the client
+         * @param readOnly whether the editor prohibits direct edits
+         * @param label optional display label
+         * @param help optional descriptive help
+         * @param placeholder optional example text
+         * @throws NullPointerException if any of {@code type}, {@code ref}, {@code label}, {@code help}, {@code
+         *         placeholder} is null
+         */
         public FieldSemantics {
             Objects.requireNonNull(type, "type"); Objects.requireNonNull(ref, "ref");
             Objects.requireNonNull(label, "label"); Objects.requireNonNull(help, "help");
@@ -84,7 +96,14 @@ public final class OperationDescriptorCatalog {
      * @param fields immutable semantic refinements keyed by argument name
      */
     public record TransportSemantics(String scope, String authorityFrom, Map<String, FieldSemantics> fields) {
-        /** Validates scope and snapshots all refinements. */
+        /**
+         * Validates scope and snapshots all refinements.
+         * @param scope realm or authority
+         * @param authorityFrom argument supplying authority, or empty
+         * @param fields immutable semantic refinements keyed by argument name
+         * @throws NullPointerException if {@code authorityFrom} is null
+         * @throws IllegalArgumentException if the operation scope definition is inconsistent
+         */
         public TransportSemantics {
             if (!Set.of("realm", "authority").contains(scope)) { throw new IllegalArgumentException("Invalid operation scope"); }
             Objects.requireNonNull(authorityFrom, "authorityFrom");
@@ -100,7 +119,15 @@ public final class OperationDescriptorCatalog {
      * @param transport request semantics
      */
     public record Presentation(String operationId, String title, String summary, String nav, TransportSemantics transport) {
-        /** Rejects missing presentation values. */
+        /**
+         * Rejects missing presentation values.
+         * @param operationId canonical identity
+         * @param title display title
+         * @param summary display summary
+         * @param nav navigation area
+         * @param transport request semantics
+         * @throws NullPointerException if {@code transport} is null
+         */
         public Presentation {
             requireText(operationId); requireText(title); requireText(summary); requireText(nav);
             Objects.requireNonNull(transport, "transport");
@@ -115,7 +142,9 @@ public final class OperationDescriptorCatalog {
      */
     public record Entry(Descriptor security, OperationSpec parameters, Presentation presentation, boolean available) { }
 
-    /** Lazy holder avoids catalog assembly until the first consumer requests it. */
+    /**
+     * Lazy holder avoids catalog assembly until the first consumer requests it.
+     */
     private static final class Current {
         private static final OperationDescriptorCatalog INSTANCE = new OperationDescriptorCatalog(
                 OperationSecurityDescriptors.definitions(), OperationParameterSchemas.definitions(),

@@ -58,17 +58,23 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public final class AcmeChallengeEvent extends Event { // NOPMD DataClass - JFR event fields are its runtime schema.
 
-    /** Challenge type: {@code HTTP_01} or {@code DNS_01}. */
+    /**
+     * Challenge type: {@code HTTP_01} or {@code DNS_01}.
+     */
     @Label("Challenge Type")
     @Description("ACME challenge type: HTTP_01 or DNS_01.")
     public String challengeType;
 
-    /** DNS name or IP address identifier being validated. */
+    /**
+     * DNS name or IP address identifier being validated.
+     */
     @Label("Identifier")
     @Description("The DNS name or IP address identifier being validated.")
     public String identifier;
 
-    /** Whether the challenge validation succeeded. */
+    /**
+     * Whether the challenge validation succeeded.
+     */
     @Label("Succeeded")
     @Description("True if the challenge token was found and matched; false if validation failed.")
     public boolean succeeded;
@@ -80,7 +86,9 @@ public final class AcmeChallengeEvent extends Event { // NOPMD DataClass - JFR e
     @Label("Failure Reason")
     @Description("Short failure-reason code from the provider result; null when the challenge succeeded.")
     public String failureReason;
-    /** Creates an uncommitted event with default field values; populate fields before committing. */
+    /**
+     * Creates an uncommitted event with default field values; populate fields before committing.
+     */
     public AcmeChallengeEvent() {
         super();
     }

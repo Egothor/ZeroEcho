@@ -55,9 +55,13 @@ import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
 public record CredentialConfirmationProofRuntimePolicy(ConfirmationRealmBinding realm,
         CredentialConfirmationProofAudience audience, Duration challengeTimeToLive,
         ConfirmationProofSuiteBinding proofSuiteBinding) {
-    /** Minimum supported challenge lifetime. */
+    /**
+     * Minimum supported challenge lifetime.
+     */
     public static final Duration MINIMUM_CHALLENGE_TIME_TO_LIVE = Duration.ofSeconds(10L);
-    /** Maximum supported challenge lifetime. */
+    /**
+     * Maximum supported challenge lifetime.
+     */
     public static final Duration MAXIMUM_CHALLENGE_TIME_TO_LIVE = Duration.ofHours(1L);
 
     /**
@@ -65,6 +69,10 @@ public record CredentialConfirmationProofRuntimePolicy(ConfirmationRealmBinding 
      *
      * @throws NullPointerException if a component is {@code null}
      * @throws IllegalArgumentException if the audience or lifetime is outside the approved contract
+     * @param realm exact portable realm binding
+     * @param audience exact public deployment or cluster proof audience
+     * @param challengeTimeToLive whole-second challenge lifetime from 10 seconds through 1 hour
+     * @param proofSuiteBinding exact configured proof-suite binding
      */
     public CredentialConfirmationProofRuntimePolicy {
         Objects.requireNonNull(realm, "realm");

@@ -49,10 +49,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.spi.store.MetadataKey;
 
+/**
+ * Contract and regression tests for signing checkpoint codec.
+ */
 final class SigningCheckpointCodecTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Self contained round trip validates index and exact frames.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void selfContainedRoundTripValidatesIndexAndExactFrames() throws Exception {
         byte[] first = frame(12L, 1);
@@ -83,6 +91,11 @@ final class SigningCheckpointCodecTest {
         }
     }
 
+    /**
+     * Writer rejects unsorted noncontiguous and mismatched frames.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void writerRejectsUnsortedNoncontiguousAndMismatchedFrames() throws Exception {
         byte[] encoded = frame(1L, 1);
@@ -114,6 +127,11 @@ final class SigningCheckpointCodecTest {
         }
     }
 
+    /**
+     * Corruption and truncation fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptionAndTruncationFailClosed() throws Exception {
         byte[] encoded = frame(1L, 1);
@@ -142,6 +160,11 @@ final class SigningCheckpointCodecTest {
         }
     }
 
+    /**
+     * Semantic metadata order ignores canonical length prefixes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void semanticMetadataOrderIgnoresCanonicalLengthPrefixes() throws Exception {
         byte[] first = frame(0L, 1);
@@ -167,6 +190,11 @@ final class SigningCheckpointCodecTest {
         }
     }
 
+    /**
+     * Buffered reader channel calls scale with bytes rather than entries.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bufferedReaderChannelCallsScaleWithBytesRatherThanEntries() throws Exception {
         int count = 1_000;

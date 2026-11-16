@@ -54,6 +54,9 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
+/**
+ * Contract and regression tests for signing MVCC relocation candidate.
+ */
 final class SigningMvccRelocationCandidateTest {
     private static final long SOURCE_GENERATION = 1L;
     private static final long CHECKPOINT_GENERATION = 2L;
@@ -62,6 +65,9 @@ final class SigningMvccRelocationCandidateTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Detached build and prepared swap change only MVCC root ownership.
+     */
     @Test
     void detachedBuildAndPreparedSwapChangeOnlyMvccRootOwnership() {
         SigningGenerationRegistry generations = publishedGenerations(
@@ -129,6 +135,11 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, transientBudget.snapshot().reservedBytes());
     }
 
+    /**
+     * Catch up uses committed prefix exactly once before swap.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void catchUpUsesCommittedPrefixExactlyOnceBeforeSwap() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations(
@@ -201,6 +212,11 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Partial projection retry starts at accepted cursor and batches each group once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialProjectionRetryStartsAtAcceptedCursorAndBatchesEachGroupOnce()
             throws Exception {
@@ -266,6 +282,9 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Capacity failure precedes candidate materialization and cleans ownership.
+     */
     @Test
     void capacityFailurePrecedesCandidateMaterializationAndCleansOwnership() {
         SigningGenerationRegistry generations = publishedGenerations(
@@ -300,6 +319,9 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Cutover permit relies on the engine to drain new prepared apply.
+     */
     @Test
     void cutoverPermitReliesOnTheEngineToDrainNewPreparedApply() {
         String diagnosticId = "diagnostic-stale-apply-001";
@@ -356,6 +378,9 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * First snapshot after relocation accepts reset allocation epoch.
+     */
     @Test
     void firstSnapshotAfterRelocationAcceptsResetAllocationEpoch() {
         SigningGenerationRegistry generations = publishedGenerations(
@@ -400,6 +425,9 @@ final class SigningMvccRelocationCandidateTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Endpoint mismatch and prepared rollback leave live state untouched.
+     */
     @Test
     void endpointMismatchAndPreparedRollbackLeaveLiveStateUntouched() {
         SigningGenerationRegistry generations = publishedGenerations(

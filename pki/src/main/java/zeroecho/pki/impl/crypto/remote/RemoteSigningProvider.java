@@ -59,7 +59,9 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 
-/** Stateless signing provider backed by an externally idempotent remote service. */
+/**
+ * Stateless signing provider backed by an externally idempotent remote service.
+ */
 public final class RemoteSigningProvider implements SigningProvider, PublicKeyInfoSource {
     private static final long NO_FENCE = 0L;
 
@@ -80,6 +82,7 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
      * @param transport externally idempotent transport
      * @param keyRefPrefix required opaque-key prefix
      * @param operationHorizon authoritative operation identity horizon
+     * @throws NullPointerException if {@code transport} or {@code operationHorizon} is null
      */
     public RemoteSigningProvider(String id, RemoteSigningTransport transport, String keyRefPrefix,
             Duration operationHorizon) {
@@ -95,26 +98,41 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return id;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ConfigurationCommitment configurationCommitment() {
         return configurationCommitment;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedAlgorithms() {
         return supportedAlgorithms;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningInputCapabilities inputCapabilities() {
         return inputCapabilities;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateSigningDomain(String namespace, Duration horizon, Duration permittedSkew) {
         if (namespace == null || !namespace.endsWith("." + id) || !operationHorizon.equals(horizon)
@@ -139,6 +157,8 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
      * @return remote operation observation
      * @throws zeroecho.core.err.UnsupportedRoleException if the algorithm is
      *         LMS/XMSS; rejection occurs before reading content or calling the transport
+     * @throws NullPointerException if {@code request} or {@code control} is null
+     * @throws IllegalArgumentException if namespace, configuration commitment, algorithm, key reference, or content commitment is invalid
      */
     @Override
     public OperationObservation dispatch(SignRequest request, CallControl control) {
@@ -175,6 +195,9 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation reconcile(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
@@ -186,6 +209,9 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation cancel(PkiId operationId, long fencingToken, CancellationReason reason,
             CallControl control) {
@@ -204,6 +230,9 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
         byte[] bytes = transport.publicKeyInfo(remoteKeyHandle(Objects.requireNonNull(keyRef, "keyRef")),
@@ -211,6 +240,9 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         return new EncodedObject(Encoding.DER, bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         transport.close();

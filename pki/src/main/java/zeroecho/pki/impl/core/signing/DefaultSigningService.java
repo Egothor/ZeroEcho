@@ -66,7 +66,9 @@ import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Stateless thread-safe implementation over the authoritative signing store. */
+/**
+ * Stateless thread-safe implementation over the authoritative signing store.
+ */
 public final class DefaultSigningService implements SigningService { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
     private static final int MAXIMUM_CANCEL_ATTEMPTS = 8;
     private final PkiStore store;
@@ -118,6 +120,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
      * @param observationWait existing bounded observation wait
      * @param domainAuthority exact configured algorithm authority, absent for compatibility construction
      * @throws IllegalArgumentException if default/provider/lifetime policy is invalid
+     * @throws NullPointerException if domainAuthority, store, provider, defaultSignatureAlgorithm, random, requireOpen, acceptance, wakeReactor, observationWait is null
      */
     public DefaultSigningService(PkiStore store, SigningProvider provider,
             AlgorithmIdentity defaultSignatureAlgorithm, Duration signingTtl, SecureRandom random,
@@ -148,21 +151,37 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
     }
 
+    /**
+     * Requires provider support for the selected algorithm and bounded input size.
+     *
+     * @param algorithm canonical signature algorithm identity
+     * @param bytes input length in bytes
+     * @throws IllegalArgumentException if the provider cannot accept the algorithm or input length
+     */
     /* default */ void validateInput(String algorithm, long bytes) {
         provider.inputCapabilities().select(algorithm, bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SigningSubmissionId newSubmissionId() {
         requireOpen.run();
         return SigningSubmissionId.create(namespace, store.signingNow(), random);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PreparedSigningRequest prepare(SigningRequest request,
             OneShotContent candidate, CancellationSignal cancellation) {
         return prepare(request, candidate, cancellation, SignWorkflowStore.Mode.NORMAL);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PreparedSigningRequest prepareBoundedObservation(SigningRequest request,
             OneShotContent candidate, CancellationSignal cancellation) {
@@ -205,6 +224,21 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
     }
 
+    /**
+     * Validates a frozen domain request and restores its staged candidates for exclusive acceptance.
+     *
+     * <p>Checks the session namespace, lifetime, algorithm, proof binding, and content
+     * lifecycle. Does not dispatch the signature or publish a domain artifact.</p>
+     *
+     * @param request frozen domain signing request; must not be null
+     * @param fairnessAuthorityId authority identity used for fair scheduling
+     * @param outer exact durable outer command paired with this signing operation
+     * @return opaque unaccepted preparation with exclusive accept-or-discard custody
+     * @throws NullPointerException if a required request or command value is null
+     * @throws IllegalArgumentException if session bounds, algorithm, submission, or proof binding differs
+     * @throws PkiException if staged candidate restoration or proof validation fails
+     * @throws IllegalStateException if the owning session is unavailable
+     */
     /* default */ DefaultPreparedSigningRequest prepareDomain(DomainSigningRequest request,
             PkiId fairnessAuthorityId, SignWorkflowStore.OuterCommand outer) {
         requireOpen.run();
@@ -264,10 +298,29 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
                 SignWorkflowStore.Mode.NORMAL, proofStep, alternativeProof);
     }
 
+    /**
+     * Requires that the lifecycle-owning signing session is available.
+     *
+     * @throws IllegalStateException if the owning session is closed or unavailable
+     */
     /* default */ void requireAvailable() { requireOpen.run(); }
 
+    /**
+     * Returns the exact configured signing-operation lifetime.
+     *
+     * @return session signing lifetime, without changing operation deadlines
+     */
     /* default */ Duration signingTtl() { return signingTtl; }
 
+    /**
+     * Looks up an authoritative workflow only within this service's signing namespace.
+     *
+     * @param operationId canonical submission identity; must not be null
+     * @return current workflow, or empty for an absent or foreign-namespace operation
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if the submission identity is malformed
+     * @throws IllegalStateException if the owning session is unavailable
+     */
     /* default */ Optional<SignWorkflowStore.Workflow> workflow(PkiId operationId) {
         requireOpen.run();
         PkiId exact = Objects.requireNonNull(operationId, "operationId");
@@ -275,6 +328,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         return namespace.equals(parsed.namespace()) ? store.getSignWorkflow(exact) : Optional.empty();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SigningAcceptanceResult accept(PreparedSigningRequest prepared) {
         return accept(prepared, Optional.empty());
     }
@@ -284,6 +340,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
      * @param prepared owned unused preparation
      * @param claim immutable schedule authorization
      * @return durable acceptance disposition and receipt
+     * @throws NullPointerException if claim is null
      */
     public SigningAcceptanceResult acceptScheduled(PreparedSigningRequest prepared,
             zeroecho.pki.api.schedule.StatusScheduleState.Execution claim) {
@@ -309,6 +366,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         return new SigningAcceptanceResult(map(result), exact.receipt());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SigningAcceptanceResolution resolve(SigningAcceptanceReceipt receipt) {
         requireOpen.run();
         SigningAcceptanceReceipt exact = Objects.requireNonNull(receipt, "receipt");
@@ -320,10 +380,16 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         return SigningAcceptanceResolution.valueOf(result.name());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<SigningOperation> find(PkiId operationId) {
         return workflow(operationId).map(DefaultSigningService::operation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<SigningOperation> awaitBoundedObservation(PkiId operationId, CancellationSignal cancellation) {
         requireOpen.run();
@@ -341,6 +407,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<SigningOperation> cancel(PkiId operationId) {
         requireOpen.run();
         PkiId exact = Objects.requireNonNull(operationId, "operationId");
@@ -370,6 +439,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         return store.getSignWorkflow(exact).map(DefaultSigningService::operation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void discard(PreparedSigningRequest prepared) {
         requireOpen.run();
         DefaultPreparedSigningRequest exact = requirePrepared(prepared);
@@ -493,6 +565,12 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
                 workflow.providerUpdatedAt(), workflow.detailCode(), signature);
     }
 
+    /**
+     * Projects durable workflow state to its public signing state, preserving retained terminal outcomes.
+     *
+     * @param workflow authoritative workflow whose current or retired state is projected
+     * @return public pending, cancellation, success, failure, or expiry state
+     */
     /* default */ static SigningOperationState operationState(SignWorkflowStore.Workflow workflow) {
         return switch (workflow.state()) {
             case INTENT, DISPATCHED -> SigningOperationState.PENDING;
@@ -533,7 +611,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         return value;
     }
 
-    /** Local finite UTF-8 commitment-component validation. */
+    /**
+     * Local finite UTF-8 commitment-component validation.
+     */
     private static final class AcceptanceComponents {
         private static final int MAX_BYTES = 1_048_576;
         private static final int ASCII_MAX = 0x7f;
@@ -579,7 +659,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
     }
 
-    /** Borrowed wait callback implemented by the service's existing reactor. */
+    /**
+     * Borrowed wait callback implemented by the service's existing reactor.
+     */
     @FunctionalInterface
     public interface ObservationWait {
         /**
@@ -592,7 +674,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         Optional<SignWorkflowStore.Workflow> await(PkiId operationId, CancellationSignal cancellation);
     }
 
-    /** Reactor-owned acceptance operation and custody-transfer boundary. */
+    /**
+     * Reactor-owned acceptance operation and custody-transfer boundary.
+     */
     @FunctionalInterface
     public interface AcceptanceOperation {
         /**

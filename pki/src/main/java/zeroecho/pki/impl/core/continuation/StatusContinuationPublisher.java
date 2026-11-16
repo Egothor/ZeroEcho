@@ -55,19 +55,36 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Publishes one frozen status continuation with exact restart validation. */
+/**
+ * Publishes one frozen status continuation with exact restart validation.
+ */
 final class StatusContinuationPublisher {
     private static final String GENERATE_STATUS = "GENERATE_STATUS";
     private final PkiStore store;
     private final DomainContinuationPublisher support;
     private final DomainContentAccess contentAccess;
 
+    /**
+     * Creates a domain-specific publisher borrowing shared store and publication support.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param support borrowed shared publication and validation support; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ StatusContinuationPublisher(PkiStore store, DomainContinuationPublisher support) {
         this.store = Objects.requireNonNull(store, "store");
         this.support = Objects.requireNonNull(support, "support");
         this.contentAccess = new DomainContentAccess(store);
     }
 
+    /**
+     * Validates the frozen command and completed artifact before idempotent durable publication.
+     *
+     * @param command canonical decoded domain command; must not be null
+     * @param result completed encoded certificate or status result; must not be null
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     * @throws zeroecho.pki.api.PkiException if durable metadata or content storage fails
+     */
     /* default */ void publish(DomainCommandEncoding.Decoded command, EncodedObject result) {
         if (!GENERATE_STATUS.equals(command.operation())) {
             throw new DomainContinuationPublisher.PostconditionFailure("STATUS_OPERATION_INVALID");

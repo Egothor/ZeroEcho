@@ -61,6 +61,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import zeroecho.pki.spi.store.MetadataKey;
 
+/**
+ * Contract and regression tests for signing file publication recovery.
+ */
 final class SigningFilePublicationRecoveryTest {
 
     private static final MetadataKey KEY = new MetadataKey(
@@ -72,6 +75,12 @@ final class SigningFilePublicationRecoveryTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Manifest publication restart selects one complete equivalent topology.
+     *
+     * @param boundary transaction or persistence boundary selected for this failure case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "manifest publication/restart boundary: {0}")
     @EnumSource(Boundary.class)
     void manifestPublicationRestartSelectsOneCompleteEquivalentTopology(Boundary boundary)

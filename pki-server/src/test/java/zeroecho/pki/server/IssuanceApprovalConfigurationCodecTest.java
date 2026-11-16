@@ -47,7 +47,9 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
 
-/** Verifies configuration-file wiring of issuance-approval policies with tamper-evident B' commitment. */
+/**
+ * Verifies configuration-file wiring of issuance-approval policies with tamper-evident B' commitment.
+ */
 class IssuanceApprovalConfigurationCodecTest {
     private static final Path PRODUCTION_EXAMPLE = Path.of("..", "documentation", "examples", "configuration", "pki-server-production-example.json");
 
@@ -57,6 +59,11 @@ class IssuanceApprovalConfigurationCodecTest {
             "issuance-threshold", 2, Set.of("issuance-approver", "second-approver"), Set.of(), true,
             Duration.ofMillis(3_600_000L), true);
 
+    /**
+     * Checks the baseline configuration retains only high-risk policy and the canonical empty extended commitment.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void unmodifiedExampleHasEmptyExtendedApprovalCommitment() throws Exception {
         PkiServerConfiguration decoded = PkiServerConfigurationCodec.decode(
@@ -66,6 +73,11 @@ class IssuanceApprovalConfigurationCodecTest {
                 decoded.realm().extendedApprovalCommitment());
     }
 
+    /**
+     * Checks explicit single/threshold issuance policies decode only with the matching extended policy commitment.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void parsesIssuanceApprovalPoliciesWhenCommitmentMatches() throws Exception {
         String expected = ServerRealmConfiguration.extendedApprovalCommitment(Map.of(
@@ -81,6 +93,9 @@ class IssuanceApprovalConfigurationCodecTest {
         assertEquals(expected, decoded.realm().extendedApprovalCommitment());
     }
 
+    /**
+     * Checks adding issuance approval policies requires an explicit matching extended commitment.
+     */
     @Test
     void rejectsOmittedCommitmentWhenIssuancePoliciesConfigured() {
         // Symmetric with the required HIGH_RISK approvalCommitment: once issuance policies are configured,
@@ -89,6 +104,9 @@ class IssuanceApprovalConfigurationCodecTest {
                 withIssuancePolicies(null).getBytes(StandardCharsets.UTF_8)));
     }
 
+    /**
+     * Checks a nonmatching extended approval-policy commitment rejects configuration.
+     */
     @Test
     void rejectsMismatchedExtendedApprovalCommitment() {
         String wrong = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -96,6 +114,11 @@ class IssuanceApprovalConfigurationCodecTest {
                 withIssuancePolicies(wrong).getBytes(StandardCharsets.UTF_8)));
     }
 
+    /**
+     * Checks a single-approval issuance category cannot select a threshold other than one.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsSingleIssuancePolicyWithNonUnitThreshold() throws Exception {
         String production = Files.readString(PRODUCTION_EXAMPLE);

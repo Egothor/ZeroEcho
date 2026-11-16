@@ -48,11 +48,16 @@ import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.RealmId;
 
-/** Strict HTTP credential-revocation decoding coverage. */
+/**
+ * Strict HTTP credential-revocation decoding coverage.
+ */
 class HttpRevocationOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks that optional operator justification is preserved identically in revocation commands and condition-evaluation context.
+     */
     @Test
     void decodesOptionalJustificationIntoOperationAndConditionContext() {
         HttpOperationCodec.Decoded reasonOnly = decode("{\"version\":1,\"authorityId\":\"ca-a\","
@@ -70,6 +75,9 @@ class HttpRevocationOperationCodecTest {
         assertEquals(Permission.ResourceType.CERTIFICATE, justified.resource().type());
     }
 
+    /**
+     * Checks strict rejection of unknown revocation arguments and a justification exceeding the 1,024-character limit.
+     */
     @Test
     void rejectsUnknownAndOversizedJustification() {
         assertThrows(IllegalArgumentException.class, () -> decode("{\"version\":1,"
@@ -81,6 +89,9 @@ class HttpRevocationOperationCodecTest {
                 + "\"reason\":\"KEY_COMPROMISE\",\"justification\":\"" + oversized + "\"}}"));
     }
 
+    /**
+     * Checks pending-confirmation revocation with justification while rejecting caller-selected revocation reasons and cutoff timestamps.
+     */
     @Test
     void decodesPendingConfirmationRevocationWithoutClientReasonOrCutoff() {
         HttpOperationCodec.Decoded decoded = decodePending("{\"version\":1,\"authorityId\":\"ca-a\","
@@ -109,6 +120,9 @@ class HttpRevocationOperationCodecTest {
         return assertInstanceOf(PkiOperation.RevokeCredential.class, family.operation());
     }
 
+    /**
+     * Checks hold/unhold object scope and justification while rejecting caller-supplied reason, date, evidence or unknown fields.
+     */
     @Test
     void holdTransitionsDecodeStrictArgumentsAndPreserveJustification() {
         for (String name : java.util.List.of("credential.hold", "credential.unhold")) {

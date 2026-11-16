@@ -49,12 +49,18 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
 /**
- * Strict immutable configuration for one administrative HTTPS server instance.
+ * Immutable configuration values for one administrative HTTPS server and its optional listeners.
  *
- * <p>The record owns no secret values. Provider properties may contain paths and
- * names of external environment-variable references and therefore must never be
- * rendered or logged. One instance belongs to exactly one realm and creates one
- * long-lived {@link ServerRealmContext}.</p>
+ * <p>Construction checks local schemas, required values, mode separation and
+ * configured bind conflicts. It opens no socket/provider/store and does not
+ * authenticate a certificate, read an environment secret or validate live TLS
+ * material. Startup resolves provider capabilities and creates the owning realm
+ * context; a constructed record alone is not evidence of successful startup.</p>
+ *
+ * <p>Runtime capabilities use external secret references, not resolved secret
+ * values. Provider property maps and other caller-supplied strings are retained
+ * as supplied and must not be assumed secret-free or redacted by generated record
+ * diagnostics. Avoid rendering/logging complete configuration values.</p>
  *
  * @param version server schema version
  * @param serverName safe bounded operational name
@@ -70,17 +76,38 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
  * @param cmpListener optional separately bounded CMP protocol listener
  * @param auditProjection bounded audit-projection scheduling policy
  */
-@SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
         Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener,
         Optional<EstListener> estListener, Optional<ScepListener> scepListener,
         Optional<CmpListener> cmpListener, AuditProjection auditProjection) {
 
-    /** Current server configuration schema. */
+    /**
+     * Current server configuration schema.
+     */
     public static final int CURRENT_VERSION = 8;
 
-    /** Validates all security-sensitive fields before resource allocation. */
+    /**
+     * Checks schema, required configuration and listener bind separation without allocating runtime resources.
+     *
+     * @param version server schema version
+     * @param serverName safe bounded operational name
+     * @param realm exact realm configuration
+     * @param listener HTTPS listener policy
+     * @param authentication strict client-certificate mappings
+     * @param execution bounded execution and shutdown policy
+     * @param runtime process-local capability references
+     * @param publicListener optional separately bounded public repository listener
+     * @param acmeListener optional separately bounded ACME protocol listener
+     * @param estListener optional separately bounded EST protocol listener
+     * @param scepListener optional separately bounded SCEP protocol listener
+     * @param cmpListener optional separately bounded CMP protocol listener
+     * @param auditProjection bounded audit-projection scheduling policy
+     * @throws NullPointerException if a required realm/listener/authentication/execution/runtime/audit value or
+     *     optional listener container is null
+     * @throws IllegalArgumentException if the schema/name, administrative client-certificate requirement or
+     *     configured nonzero overlapping bind addresses/ports are invalid
+     */
     public PkiServerConfiguration {
         if (version != CURRENT_VERSION) throw new IllegalArgumentException("Unsupported server schema version");
         Permission.requireBounded(serverName, 128, "server name");
@@ -155,6 +182,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Creates a configuration with ACME disabled.
      *
+     * <p>ACME, EST, SCEP and CMP listeners are absent; audit projection uses its defaults.</p>
+     *
      * @param version configuration schema version
      * @param serverName nonblank server name
      * @param realm realm configuration
@@ -163,6 +192,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param execution bounded request-execution policy
      * @param runtime explicit process-local runtime capabilities
      * @param publicListener optional public repository listener
+     * @throws NullPointerException if a required supplied configuration reference or container is null
+     * @throws IllegalArgumentException if delegated local configuration constraints fail
      */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
@@ -174,6 +205,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Creates a configuration with default audit projection.
      *
+     * <p>EST, SCEP and CMP listeners are absent; audit projection uses its defaults.</p>
+     *
      * @param version configuration schema version
      * @param serverName nonblank server name
      * @param realm realm configuration
@@ -183,6 +216,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param runtime explicit process-local runtime capabilities
      * @param publicListener optional public repository listener
      * @param acmeListener optional ACME protocol listener
+     * @throws NullPointerException if a required supplied configuration reference or container is null
+     * @throws IllegalArgumentException if delegated local configuration constraints fail
      */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
@@ -194,6 +229,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Creates a configuration with the public repository and ACME listeners disabled.
      *
+     * <p>All optional listeners are absent; audit projection uses its defaults.</p>
+     *
      * @param version configuration schema version
      * @param serverName nonblank server name
      * @param realm realm configuration
@@ -201,6 +238,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param authentication administrative authentication policy
      * @param execution bounded request-execution policy
      * @param runtime explicit process-local runtime capabilities
+     * @throws NullPointerException if a required supplied configuration reference or container is null
+     * @throws IllegalArgumentException if delegated local configuration constraints fail
      */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
@@ -216,7 +255,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param idleInterval positive polling delay, at most five minutes
      */
     public record AuditProjection(int maximumRecords, int maximumSinkCalls, Duration idleInterval) {
-        /** Validates all projection bounds. */
+        /**
+         * Checks the per-pass record/sink limits and positive idle interval.
+         *
+         * @param maximumRecords maximum records examined per projection pass, from 1 through 4096
+         * @param maximumSinkCalls maximum sink calls per projection pass, from 1 through the record bound
+         * @param idleInterval positive polling delay, at most five minutes
+         * @throws NullPointerException if idleInterval is null
+         * @throws IllegalArgumentException if record/sink limits or the positive at-most-five-minute idle
+         *     interval are invalid
+         */
         public AuditProjection {
             bounded(maximumRecords, 1, 4096, "audit projection record count");
             bounded(maximumSinkCalls, 1, maximumRecords, "audit projection sink call count");
@@ -234,7 +282,12 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
-     * HTTPS listener configuration.
+     * Administrative HTTPS listener configuration.
+     *
+     * <p>The listener value retains its supplied immutable provider reference.
+     * Client-certificate-required is enforced by the enclosing server configuration,
+     * not this nested constructor. SDK routes remain disabled when hybridSdk is
+     * empty; adding the option does not create or authenticate a listener.</p>
      *
      * @param address parsed canonical literal bind address
      * @param port TCP port, where zero requests an ephemeral test port
@@ -248,19 +301,24 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
-         * @param address existing listener setting
-         * @param port existing listener setting
-         * @param tlsProvider existing listener setting
-         * @param clientCertificateRequired existing listener setting
-         * @param maximumHeaderBytes existing listener setting
-         * @param maximumBodyBytes existing listener setting
+         *
+         * @param address parsed canonical literal bind address
+         * @param port TCP port, where zero requests an ephemeral test port
+         * @param tlsProvider explicitly selected TLS material provider
+         * @param clientCertificateRequired must be {@code true}
+         * @param maximumHeaderBytes bounded aggregate decoded header bytes
+         * @param maximumBodyBytes bounded request body bytes
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public Listener(InetAddress address, int port, ProviderConfig tlsProvider,
             boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes) {
             this(address, port, tlsProvider, clientCertificateRequired, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
         }
 
-        /** Exact canonical unpadded Base64url character bound for one proof response. */
+        /**
+         * Exact canonical unpadded Base64url character bound for one proof response.
+         */
         public static final int MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS =
                 (KeyPossessionProofResponse.MAXIMUM_BYTES / 3) * 4
                 + (KeyPossessionProofResponse.MAXIMUM_BYTES % 3 == 0
@@ -283,7 +341,20 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 + 2 * SHA_256_HEX_CHARACTERS
                 + MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS;
 
-        /** Validates listener bounds and explicit TLS selection. */
+        /**
+         * Checks required address/TLS configuration, body/header bounds and optional SDK envelope capacity.
+         *
+         * @param address parsed canonical literal bind address
+         * @param port TCP port, where zero requests an ephemeral test port
+         * @param tlsProvider explicitly selected TLS material provider
+         * @param clientCertificateRequired must be {@code true}
+         * @param maximumHeaderBytes bounded aggregate decoded header bytes
+         * @param maximumBodyBytes bounded request body bytes
+         * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
+         * @throws NullPointerException if address, tlsProvider or the SDK option container is null
+         * @throws IllegalArgumentException if port, 1024-through-1048576 header budget,
+         *     MINIMUM_BODY_BYTES-through-16777216 body budget or SDK budget is invalid
+         */
         public Listener {
             Objects.requireNonNull(hybridSdk, "hybridSdk");
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
@@ -309,7 +380,13 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
-     * Strict mode-separated administrative client-certificate authentication.
+     * Mode-separated administrative client-certificate mapping policy.
+     *
+     * <p>Lists/sets are copied into unmodifiable containers retaining immutable
+     * mapping elements. Structural checks do not establish live certificate trust,
+     * principal enablement or trusted-proxy authorization. Direct mode requires
+     * nonempty direct mappings and no forwarding fields; proxy mode independently
+     * configures proxy and forwarded-client mappings/trust, with explicit exclusions.</p>
      *
      * @param mode exact deployment mode
      * @param directClientMappings direct TLS end-client mappings
@@ -333,7 +410,26 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Optional<String> forwardedCertificateChainHeaderName,
             Optional<ProviderConfig> administrativeClientTrust,
             int maximumForwardedCertificateBytes, int maximumForwardedChainBytes) {
-        /** Validates strict mode separation, mappings, headers, and technical bounds. */
+        /**
+         * Snapshots mapping lists and trusted principals and checks direct/proxy mode separation and header
+         * policy.
+         *
+         * @param mode exact deployment mode
+         * @param directClientMappings direct TLS end-client mappings
+         * @param proxyTransportMappings backend TLS proxy mappings
+         * @param forwardedClientMappings externally authenticated end-client mappings
+         * @param trustedProxyPrincipalIds explicitly admitted infrastructure principals
+         * @param forwardedCertificateFormat selected forwarding representation
+         * @param forwardedCertificateHeaderName exact leaf header name
+         * @param forwardedCertificateChainHeaderName optional exact chain header name
+         * @param administrativeClientTrust independent forwarded-client trust provider
+         * @param maximumForwardedCertificateBytes maximum decoded leaf size
+         * @param maximumForwardedChainBytes maximum aggregate decoded chain size
+         * @throws NullPointerException if mode, a mapping list/element, trusted-principal set/element or an
+         *     optional container is null
+         * @throws IllegalArgumentException if mapping counts/IDs, principal/header grammar, mode fields, trust
+         *     policy or proxy/end-client exclusion constraints are invalid
+         */
         public Authentication {
             Objects.requireNonNull(mode, "mode");
             directClientMappings = mappings(directClientMappings, "direct client");
@@ -471,7 +567,18 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     public record ClientCertificateMapping(String mappingId, String principalId,
             Optional<String> certificateSha256, Optional<String> subjectPublicKeyInfoSha256,
             Optional<String> issuerSerialSha256) {
-        /** Validates stable identities and fixed-size lowercase commitments. */
+        /**
+         * Checks identity grammar and present digest spellings without looking up a principal or certificate.
+         *
+         * @param mappingId stable mapping identity
+         * @param principalId persisted server principal identity
+         * @param certificateSha256 optional canonical certificate commitment
+         * @param subjectPublicKeyInfoSha256 optional canonical SPKI commitment
+         * @param issuerSerialSha256 optional issuer-DER and positive-serial commitment
+         * @throws NullPointerException if a digest option container is null
+         * @throws IllegalArgumentException if identity/digest grammar is invalid or no cryptographic selector
+         *     is present
+         */
         public ClientCertificateMapping {
             Permission.requireId(mappingId, "mapping");
             Permission.requirePrincipal(principalId);
@@ -508,7 +615,22 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     public record Execution(int transportWorkers, int transportQueueCapacity, int operationWorkers,
             int operationQueueCapacity, int maximumAdmittedRequests, Duration defaultDeadline,
             Duration maximumDeadline, Duration gracefulShutdown, Duration forcedShutdown) {
-        /** Validates finite positive bounds and duration ordering. */
+        /**
+         * Checks positive finite worker/queue/admission limits and deadline/shutdown duration ordering.
+         *
+         * @param transportWorkers fixed HTTPS handler worker count
+         * @param transportQueueCapacity bounded handler backlog
+         * @param operationWorkers maximum concurrently executing gateway calls
+         * @param operationQueueCapacity bounded waiting gateway calls
+         * @param maximumAdmittedRequests maximum requests admitted across parsing and execution
+         * @param defaultDeadline default request deadline
+         * @param maximumDeadline hard caller deadline ceiling
+         * @param gracefulShutdown graceful drain duration
+         * @param forcedShutdown forced cancellation and termination duration
+         * @throws NullPointerException if a deadline or shutdown duration is null
+         * @throws IllegalArgumentException if integer budgets, positive duration ceilings or
+         *     default-versus-maximum deadline ordering are invalid
+         */
         public Execution {
             bounded(transportWorkers, 1, 256, "transport worker count");
             bounded(transportQueueCapacity, 1, 65_536, "transport queue capacity");
@@ -528,9 +650,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Separately bounded public repository listener configuration.
      *
+     * <p>This listener is distinct from administrative mutual TLS. Explicit SDK
+     * OCSP opt-in requires TLS even when loopback plaintext development is otherwise
+     * permitted, and remains the separate SDK F4/F5 profile rather than standard
+     * AltSignature OCSP. A published console path requires TLS, trusted-proxy mode
+     * and exactly /public/v1. No route is published merely by constructing a value.</p>
+     *
      * @param address canonical bind address
      * @param port TCP port, including zero for an ephemeral test listener
-     * @param tlsProvider optional explicit TLS provider; absent only for explicitly permitted loopback development
+     * @param tlsProvider optional explicit TLS provider; absent only for explicitly permitted loopback
+     *     development
      * @param allowPlaintextLoopback whether the loopback-only development exception is selected
      * @param authentication direct or trusted-proxy optional-client authentication configuration
      * @param maximumHeaderBytes bounded public request-header bytes
@@ -540,7 +669,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param publicImmutableCache immutable-object public cache duration
      * @param publicAliasCache stable-alias public cache duration
      * @param authorityListExposed whether safe public authority metadata routes are enabled
-     * @param consoleBasePath explicitly provisioned same-origin public route, absent when not published to the console
+     * @param consoleBasePath explicitly provisioned same-origin public route, absent when not published to the
+     *     console
      * @param hybridSdk explicit optional SDK OCSP origin; absent preserves native-only behavior
      */
     public record PublicListener(InetAddress address, int port, Optional<ProviderConfig> tlsProvider,
@@ -550,6 +680,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             boolean authorityListExposed, Optional<String> consoleBasePath, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Creates a listener without asserting a published same-origin console route.
+         *
          * @param address bind address
          * @param port bind port, zero requests an ephemeral port
          * @param tlsProvider optional TLS configuration
@@ -562,6 +693,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @param publicImmutableCache immutable cache lifetime
          * @param publicAliasCache alias cache lifetime
          * @param authorityListExposed safe public authority listing permission
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
                 boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
@@ -572,11 +705,22 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         }
         /**
          * Preserves public listener configuration without SDK opt-in.
-         * @param address bind address @param port TCP port @param tlsProvider explicit TLS provider
-         * @param allowPlaintextLoopback loopback development exception @param authentication authentication policy
-         * @param maximumHeaderBytes header budget @param maximumBodyBytes body budget @param execution execution limits
-         * @param maximumStreamDuration finite deadline @param publicImmutableCache immutable cache lifetime
-         * @param publicAliasCache alias cache lifetime @param authorityListExposed listing opt-in @param consoleBasePath published console path
+         *
+         * @param address bind address
+         * @param port TCP port
+         * @param tlsProvider explicit TLS provider
+         * @param allowPlaintextLoopback loopback development exception
+         * @param authentication authentication policy
+         * @param maximumHeaderBytes header budget
+         * @param maximumBodyBytes body budget
+         * @param execution execution limits
+         * @param maximumStreamDuration finite deadline
+         * @param publicImmutableCache immutable cache lifetime
+         * @param publicAliasCache alias cache lifetime
+         * @param authorityListExposed listing opt-in
+         * @param consoleBasePath published console path
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
                 boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
@@ -585,7 +729,30 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
                     execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,consoleBasePath,Optional.empty());
         }
-        /** Validates public-listener transport policy and independent finite bounds. */
+        /**
+         * Checks independent transport/budget policy without opening a socket or resolving TLS material.
+         *
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider optional explicit TLS provider; absent only for explicitly permitted loopback
+         *     development
+         * @param allowPlaintextLoopback whether the loopback-only development exception is selected
+         * @param authentication direct or trusted-proxy optional-client authentication configuration
+         * @param maximumHeaderBytes bounded public request-header bytes
+         * @param maximumBodyBytes bounded public request-body bytes; repository methods still reject bodies
+         * @param execution isolated public transport and stream execution bounds
+         * @param maximumStreamDuration finite stream deadline
+         * @param publicImmutableCache immutable-object public cache duration
+         * @param publicAliasCache stable-alias public cache duration
+         * @param authorityListExposed whether safe public authority metadata routes are enabled
+         * @param consoleBasePath explicitly provisioned same-origin public route, absent when not published to
+         *     the console
+         * @param hybridSdk explicit optional SDK OCSP origin; absent preserves native-only behavior
+         * @throws NullPointerException if a required transport/execution value, duration or optional container
+         *     is null
+         * @throws IllegalArgumentException if port/budgets/durations, TLS-versus-loopback policy, console route
+         *     or SDK transport/budget constraints are invalid
+         */
         public PublicListener {
             Objects.requireNonNull(address, "address");
             hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
@@ -623,10 +790,18 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         }
     }
 
-    /** Closed ACME listener transport topologies. */
+    /**
+     * Closed ACME listener transport topologies.
+     */
     public enum AcmeTransportMode {
-        /** Client connects directly through server-authenticated TLS. */ DIRECT_TLS,
-        /** An authenticated trusted proxy terminates the external connection. */ TRUSTED_REVERSE_PROXY
+        /**
+         * Client connects directly through server-authenticated TLS.
+         */
+        DIRECT_TLS,
+        /**
+         * An authenticated trusted proxy terminates the external connection.
+         */
+        TRUSTED_REVERSE_PROXY
     }
 
     /**
@@ -670,30 +845,33 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
-         * @param listenerId existing listener setting
-         * @param address existing listener setting
-         * @param port existing listener setting
-         * @param tlsProvider existing listener setting
-         * @param transportMode existing listener setting
-         * @param proxyTransportMappings existing listener setting
-         * @param trustedProxyPrincipalIds existing listener setting
-         * @param externalBaseUri existing listener setting
-         * @param maximumHeaderBytes existing listener setting
-         * @param maximumBodyBytes existing listener setting
-         * @param execution existing listener setting
-         * @param validationExecution existing listener setting
-         * @param nonceLifetime existing listener setting
-         * @param maximumOutstandingNonces existing listener setting
-         * @param maximumAccountsPresented existing listener setting
-         * @param maximumOrdersPresented existing listener setting
-         * @param admissionWindow existing listener setting
-         * @param maximumNewAccountsPerWindow existing listener setting
-         * @param maximumNewOrdersPerAccountWindow existing listener setting
-         * @param maximumPendingOrdersPerAccount existing listener setting
-         * @param maximumChallengeValidationsPerAccountWindow existing listener setting
-         * @param maximumConcurrentFinalizations existing listener setting
-         * @param challengeProviders existing listener setting
-         * @param eabProviders existing listener setting
+         *
+         * @param listenerId stable process-local listener identity used for nonce binding
+         * @param address canonical bind address
+         * @param port TCP port, including zero for deterministic tests
+         * @param tlsProvider explicit server TLS identity and proxy trust provider
+         * @param transportMode direct server-auth TLS or authenticated trusted proxy
+         * @param proxyTransportMappings exact proxy certificate commitments
+         * @param trustedProxyPrincipalIds explicitly admitted infrastructure principals
+         * @param externalBaseUri configured public ACME URL authority for JWS binding
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded JWS/CSR request body bytes
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param validationExecution isolated challenge-validation workers and queue
+         * @param nonceLifetime finite replay-nonce lifetime
+         * @param maximumOutstandingNonces bounded process-local nonce population
+         * @param maximumAccountsPresented bounded administrative account page size
+         * @param maximumOrdersPresented bounded account order page size
+         * @param admissionWindow finite in-memory rate window
+         * @param maximumNewAccountsPerWindow bounded directory-wide account admission
+         * @param maximumNewOrdersPerAccountWindow bounded per-account order admission
+         * @param maximumPendingOrdersPerAccount bounded durable pending-order population
+         * @param maximumChallengeValidationsPerAccountWindow bounded validation admission
+         * @param maximumConcurrentFinalizations bounded listener-wide finalization concurrency
+         * @param challengeProviders explicitly enabled provider configurations
+         * @param eabProviders explicitly enabled secret-confining EAB provider configurations
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
             AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
@@ -708,7 +886,40 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(listenerId, address, port, tlsProvider, transportMode, proxyTransportMappings, trustedProxyPrincipalIds, externalBaseUri, maximumHeaderBytes, maximumBodyBytes, execution, validationExecution, nonceLifetime, maximumOutstandingNonces, maximumAccountsPresented, maximumOrdersPresented, admissionWindow, maximumNewAccountsPerWindow, maximumNewOrdersPerAccountWindow, maximumPendingOrdersPerAccount, maximumChallengeValidationsPerAccountWindow, maximumConcurrentFinalizations, challengeProviders, eabProviders, Optional.empty());
         }
 
-        /** Validates listener isolation, URL authority, proxy policy, and finite bounds. */
+        /**
+         * Snapshots proxy/provider collections and checks explicit ACME origin/topology and finite protocol
+         * budgets.
+         *
+         * @param listenerId stable process-local listener identity used for nonce binding
+         * @param address canonical bind address
+         * @param port TCP port, including zero for deterministic tests
+         * @param tlsProvider explicit server TLS identity and proxy trust provider
+         * @param transportMode direct server-auth TLS or authenticated trusted proxy
+         * @param proxyTransportMappings exact proxy certificate commitments
+         * @param trustedProxyPrincipalIds explicitly admitted infrastructure principals
+         * @param externalBaseUri configured public ACME URL authority for JWS binding
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded JWS/CSR request body bytes
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param validationExecution isolated challenge-validation workers and queue
+         * @param nonceLifetime finite replay-nonce lifetime
+         * @param maximumOutstandingNonces bounded process-local nonce population
+         * @param maximumAccountsPresented bounded administrative account page size
+         * @param maximumOrdersPresented bounded account order page size
+         * @param admissionWindow finite in-memory rate window
+         * @param maximumNewAccountsPerWindow bounded directory-wide account admission
+         * @param maximumNewOrdersPerAccountWindow bounded per-account order admission
+         * @param maximumPendingOrdersPerAccount bounded durable pending-order population
+         * @param maximumChallengeValidationsPerAccountWindow bounded validation admission
+         * @param maximumConcurrentFinalizations bounded listener-wide finalization concurrency
+         * @param challengeProviders explicitly enabled provider configurations
+         * @param eabProviders explicitly enabled secret-confining EAB provider configurations
+         * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
+         * @throws NullPointerException if a required transport/execution value, duration, option container or
+         *     copied collection element is null
+         * @throws IllegalArgumentException if identity/port/origin, direct/proxy membership, provider list or
+         *     numeric/duration/SDK constraints are invalid
+         */
         public AcmeListener {
             Objects.requireNonNull(hybridSdk, "hybridSdk");
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
@@ -798,13 +1009,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
-         * @param listenerId existing listener setting
-         * @param address existing listener setting
-         * @param port existing listener setting
-         * @param tlsProvider existing listener setting
-         * @param execution existing listener setting
-         * @param maximumHeaderBytes existing listener setting
-         * @param maximumBodyBytes existing listener setting
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes (must accommodate a PKCS#10 CSR)
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public EstListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
@@ -812,7 +1026,21 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
         }
 
-        /** Validates the EST listener configuration. */
+        /**
+         * Checks the configured EST identity, bind/TLS/execution references and listener budgets.
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes (must accommodate a PKCS#10 CSR)
+         * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
+         * @throws NullPointerException if address, tlsProvider, execution or the SDK option container is null
+         * @throws IllegalArgumentException if identity, port, header/body budget or optional SDK proof-envelope
+         *     capacity is invalid
+         */
         public EstListener {
             Objects.requireNonNull(hybridSdk, "hybridSdk");
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
@@ -850,13 +1078,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
-         * @param listenerId existing listener setting
-         * @param address existing listener setting
-         * @param port existing listener setting
-         * @param tlsProvider existing listener setting
-         * @param execution existing listener setting
-         * @param maximumHeaderBytes existing listener setting
-         * @param maximumBodyBytes existing listener setting
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public ScepListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
@@ -864,7 +1095,21 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
         }
 
-        /** Validates the SCEP listener configuration. */
+        /**
+         * Checks the configured SCEP identity, bind/TLS/execution references and listener budgets.
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes
+         * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
+         * @throws NullPointerException if address, tlsProvider, execution or the SDK option container is null
+         * @throws IllegalArgumentException if identity, port, header/body budget or optional SDK proof-envelope
+         *     capacity is invalid
+         */
         public ScepListener {
             Objects.requireNonNull(hybridSdk, "hybridSdk");
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
@@ -902,13 +1147,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
-         * @param listenerId existing listener setting
-         * @param address existing listener setting
-         * @param port existing listener setting
-         * @param tlsProvider existing listener setting
-         * @param execution existing listener setting
-         * @param maximumHeaderBytes existing listener setting
-         * @param maximumBodyBytes existing listener setting
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes
+         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
         public CmpListener(String listenerId, InetAddress address, int port,
             ProviderConfig tlsProvider, Execution execution,
@@ -916,7 +1164,21 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             this(listenerId, address, port, tlsProvider, execution, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
         }
 
-        /** Validates the CMP listener configuration. */
+        /**
+         * Checks the configured CMP identity, bind/TLS/execution references and listener budgets.
+         *
+         * @param listenerId stable process-local listener identity
+         * @param address canonical bind address
+         * @param port TCP port, including zero for an ephemeral test listener
+         * @param tlsProvider explicit server TLS identity provider
+         * @param execution isolated protocol workers, queue, admission, and deadlines
+         * @param maximumHeaderBytes bounded request-header bytes
+         * @param maximumBodyBytes bounded request-body bytes
+         * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
+         * @throws NullPointerException if address, tlsProvider, execution or the SDK option container is null
+         * @throws IllegalArgumentException if identity, port, header/body budget or optional SDK proof-envelope
+         *     capacity is invalid
+         */
         public CmpListener {
             Objects.requireNonNull(hybridSdk, "hybridSdk");
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
@@ -938,17 +1200,33 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
-     * Process-local capability references.
+     * Process-local external capability references, with no secret resolution.
+     *
+     * <p>Environment names are syntax-checked. The optional publisher-store string
+     * is retained without path validation, and store/password pairing is not
+     * enforced here. Required credential availability and backend-specific policy
+     * remain startup/runtime checks. Generated record diagnostics are not redaction.</p>
      *
      * @param keyUnlockEnvironmentVariable        optional keyring unlock environment variable
      * @param publisherSecretsStore               optional path to the encrypted publisher secrets store
      * @param publisherSecretsEnvironmentVariable optional environment variable whose value is the
-     *                                            store password; required for CLASSIC and HYBRID stores
+     * store password; required for CLASSIC and HYBRID stores
      */
     public record RuntimeCapabilities(Optional<String> keyUnlockEnvironmentVariable,
             Optional<String> publisherSecretsStore,
             Optional<String> publisherSecretsEnvironmentVariable) {
-        /** Validates external references without resolving secret values. */
+        /**
+         * Checks optional environment-variable name syntax without reading secrets or validating store
+         * contents.
+         *
+         * @param keyUnlockEnvironmentVariable optional keyring unlock environment variable
+         * @param publisherSecretsStore optional path to the encrypted publisher secrets store
+         * @param publisherSecretsEnvironmentVariable optional environment variable whose value is the
+         *     publisher secrets-store password; no environment value is read by this constructor
+         * @throws NullPointerException if an optional reference container is null
+         * @throws IllegalArgumentException if a supplied environment-variable name is not uppercase ASCII with
+         *     the permitted length/grammar
+         */
         public RuntimeCapabilities {
             keyUnlockEnvironmentVariable = Objects.requireNonNull(keyUnlockEnvironmentVariable,
                     "keyUnlockEnvironmentVariable").map(value -> {
@@ -984,6 +1262,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Duration passTimeout, Duration providerCallTimeout, Duration idleInterval) {
         /**
          * Validates one reconciliation budget.
+         *
          * @param maximumRecords number of records, from 1 to 4096
          * @param maximumProviderCalls provider calls, from 1 to maximumRecords
          * @param passTimeout positive duration no greater than five minutes
@@ -1002,8 +1281,9 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
 
         /**
          * Returns the standard bounded reconciliation policy.
+         *
          * @return a 256-record, 64-call budget with a 30-second pass timeout,
-         *         10-second provider timeout and 2-second idle interval
+         * 10-second provider timeout and 2-second idle interval
          */
         public static SigningReconciliation defaults() {
             return new SigningReconciliation(256, 64, Duration.ofSeconds(30), Duration.ofSeconds(10),
@@ -1043,17 +1323,30 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
-     * Explicit opt-in origin for the version-one HTTP SDK sidepaths.
+     * Explicit configured origin shared by version-one HTTP SDK sidepath opt-ins.
+     *
+     * <p>Administrative/enrollment routes retain their native authentication
+     * boundaries; public OCSP additionally requires its separately configured TLS
+     * listener and responder role opt-in. A canonical origin or adequate body
+     * budget alone grants no authority and proves no response freshness.</p>
+     *
      * @param canonicalOrigin configured canonical HTTPS origin including port
      */
     public record HybridSdkListener(String canonicalOrigin) {
-        /** Validates the origin without inferring transport authority. */
+        /**
+         * Checks the explicit canonical HTTPS origin without discovering or enabling a listener.
+         *
+         * @param canonicalOrigin configured canonical HTTPS origin including port
+         * @throws IllegalArgumentException if the origin is not in the canonical HTTPS form with explicit port
+         */
         public HybridSdkListener {
             zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.requireOrigin(canonicalOrigin);
         }
         /**
          * Rejects a listener unable to carry the fixed-suite proof envelope.
+         *
          * @param maximumBodyBytes existing listener wire budget
+         * @throws IllegalArgumentException if the byte budget is below 16384
          */
         public void requireBodyBudget(int maximumBodyBytes) {
             if (maximumBodyBytes < 16_384) throw new IllegalArgumentException("SDK_BODY_BUDGET_TOO_SMALL");

@@ -96,9 +96,30 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     private long reservedBytes;
     private long workspaceBytes;
     private int preparationJobs;
-    /** Durable publication boundaries exposed to deterministic fault injection. */
-    /* default */ enum Phase { METADATA_FORCED, METADATA_RENAMED, DIRECTORY_FORCED, BEFORE_DELETE }
-    /** Receives durable publication boundaries without changing their ordering. */
+    /**
+     * Durable publication boundaries exposed to deterministic fault injection.
+     */
+    /* default */ enum Phase {
+        /**
+         * The temporary metadata file has been forced to durable storage.
+         */
+        METADATA_FORCED,
+        /**
+         * The metadata file has been atomically published under its retained name.
+         */
+        METADATA_RENAMED,
+        /**
+         * The spool directory has been forced after a metadata or file change.
+         */
+        DIRECTORY_FORCED,
+        /**
+         * Artifact deletion is about to begin.
+         */
+        BEFORE_DELETE
+    }
+    /**
+     * Receives durable publication boundaries without changing their ordering.
+     */
     /* default */ @FunctionalInterface interface Observer {
         /**
          * Observes one boundary.
@@ -107,14 +128,112 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
          */
         void at(Phase phase) throws IOException;
     }
-    /** Direction in which an artifact crosses the server boundary. */
-    /* default */ enum Purpose { IMPORT, EXPORT }
-    /** Persisted lifecycle states of a transfer and its restore workflow. */
-    /* default */ enum State { RESERVED, RECEIVING, READY, VERIFYING, VERIFIED, RESTORING, STAGED, ACTIVATED, REJECTED, FAILED, UNCERTAIN, CONSUMED }
+    /**
+     * Direction in which an artifact crosses the server boundary.
+     */
+    /* default */ enum Purpose {
+        /**
+         * Archive bytes are uploaded into the server restore spool.
+         */
+        IMPORT,
+        /**
+         * Archive bytes are prepared for download from the server.
+         */
+        EXPORT
+    }
+    /**
+     * Persisted lifecycle states of a transfer and its restore workflow.
+     */
+    /* default */ enum State {
+        /**
+         * Archive capacity is reserved but bytes have not been received.
+         */
+        RESERVED,
+        /**
+         * Archive bytes are being received and verified.
+         */
+        RECEIVING,
+        /**
+         * The complete archive is retained and ready for manifest verification.
+         */
+        READY,
+        /**
+         * The retained archive is being verified by the domain backup service.
+         */
+        VERIFYING,
+        /**
+         * The archive manifest has been verified.
+         */
+        VERIFIED,
+        /**
+         * A domain restore attempt has started and its result is not yet reconciled.
+         */
+        RESTORING,
+        /**
+         * Restore state is staged but not yet activated.
+         */
+        STAGED,
+        /**
+         * The restore has been activated successfully.
+         */
+        ACTIVATED,
+        /**
+         * The restore was rejected without an unresolved outcome.
+         */
+        REJECTED,
+        /**
+         * The archive transfer failed.
+         */
+        FAILED,
+        /**
+         * The restore outcome requires authoritative reconciliation.
+         */
+        UNCERTAIN,
+        /**
+         * The resolved workflow was acknowledged and can be cleaned up.
+         */
+        CONSUMED
+    }
 
+    /**
+     * Durable artifact identity, ownership, byte commitment and restore lifecycle snapshot.
+     *
+     * @param handle opaque 64-character lowercase hexadecimal transfer handle
+     * @param owner principal that owns the transfer
+     * @param realm realm in which the transfer was reserved
+     * @param purpose import or export direction
+     * @param backupId domain backup identity
+     * @param length expected archive size in bytes; positive
+     * @param sha256 lowercase hexadecimal SHA-256 of the archive
+     * @param manifest verified manifest commitment, or empty before verification
+     * @param expiresAt absolute artifact expiry
+     * @param state retained transfer or restore state
+     * @param archiveRetained whether archive bytes remain owned by this repository
+     * @param restoreId current canonical restore UUID, or empty before restore
+     * @param previousRestoreId prior canonical restore UUID, or empty if none
+     */
     /* default */ record Descriptor(String handle, String owner, String realm, Purpose purpose,
             PkiId backupId, long length, String sha256, String manifest,
             Instant expiresAt, State state, boolean archiveRetained, String restoreId, String previousRestoreId) {
+        /**
+         * Validates descriptor syntax before metadata can be persisted.
+         *
+         * @param handle opaque transfer handle
+         * @param owner owning principal
+         * @param realm owning realm
+         * @param purpose transfer direction
+         * @param backupId source backup identity
+         * @param length positive archive size in bytes
+         * @param sha256 archive SHA-256 commitment
+         * @param manifest manifest SHA-256 commitment, or empty
+         * @param expiresAt absolute artifact expiry
+         * @param state persisted lifecycle state
+         * @param archiveRetained whether archive bytes remain retained
+         * @param restoreId current restore UUID, or empty
+         * @param previousRestoreId preceding restore UUID, or empty
+         * @throws IllegalArgumentException if a coordinate, commitment, length or restore identity is invalid
+         * @throws NullPointerException if the manifest is null
+         */
         Descriptor {
             if (!token(handle) || !bounded(owner) || !bounded(realm) || backupId == null
                     || !bounded(backupId.value()) || length < 1 || !digest(sha256)
@@ -125,18 +244,43 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
                 throw new IllegalArgumentException("Invalid backup artifact descriptor");
             }
         }
+        /**
+         * Copies this descriptor with a new workflow state and manifest commitment.
+         *
+         * @param next replacement lifecycle state
+         * @param commitment replacement manifest SHA-256, or empty before verification
+         * @return validated replacement retaining archive and restore coordinates
+         * @throws IllegalArgumentException if the replacement state or commitment is invalid
+         * @throws NullPointerException if the commitment is null
+         */
         /* default */ Descriptor state(State next, String commitment) {
             return new Descriptor(handle, owner, realm, purpose, backupId, length, sha256,
                     commitment, expiresAt, next, archiveRetained, restoreId, previousRestoreId);
         }
+        /**
+         * Copies metadata after archive bytes have been removed.
+         *
+         * @return replacement with {@code archiveRetained} set to false
+         */
         /* default */ Descriptor withoutArchive() {
             return new Descriptor(handle, owner, realm, purpose, backupId, length, sha256,
                     manifest, expiresAt, state, false, restoreId, previousRestoreId);
         }
+        /**
+         * Binds a restore attempt to the artifact without discarding the previous attempt identity.
+         *
+         * @param expected canonical UUID of the new restore attempt
+         * @param prior prior canonical restore UUID, or empty
+         * @return replacement in {@link State#RESTORING}
+         * @throws IllegalArgumentException if either UUID is invalid or the identities are equal
+         */
         /* default */ Descriptor restoring(String expected, String prior) {
             return new Descriptor(handle, owner, realm, purpose, backupId, length, sha256,
                     manifest, expiresAt, State.RESTORING, archiveRetained, expected, prior);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "BackupArtifactDescriptor[redacted]"; }
     }
     private static boolean optionalUuid(String value) {
@@ -151,6 +295,12 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Snapshots persisted restore states under the artifact-map monitor.
+    /**
+     * Snapshots restores that still need authoritative result reconciliation.
+     *
+     * @return immutable list of staged or uncertain restore descriptors
+     * @throws IOException if the repository is closed or fenced
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized java.util.List<Descriptor> unresolvedRestores() throws IOException {
         requireOpen();
@@ -159,6 +309,13 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Keeps descriptor rejection, durable publication and retained-byte accounting atomic.
+    /**
+     * Durably rejects the exact unresolved descriptor when no transfer work is active.
+     *
+     * @param expected unchanged retained descriptor to reject
+     * @throws IOException if the repository is unavailable, the snapshot is stale,
+     *         work is active or durable publication fails
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void rejectUnpublished(Descriptor expected) throws IOException {
         requireOpen();
@@ -170,11 +327,32 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
         artifacts.put(rejected.handle(), rejected);
     }
 
+    /**
+     * Opens and exclusively locks a private durable artifact spool, recovering retained workflows.
+     *
+     * @param configuration spool location and storage/concurrency budgets
+     * @param realm owning bounded realm identity
+     * @param clock source of absolute expiry times
+     * @param random source of opaque transfer-handle entropy
+     * @throws IOException if the directory is not private, is already locked or cannot be recovered
+     * @throws IllegalArgumentException if the realm identity is invalid
+     */
     /* default */ BackupArtifactRepository(BackupTransferConfiguration configuration, String realm,
             Clock clock, SecureRandom random) throws IOException {
         this(configuration, realm, clock, random, phase -> { });
     }
 
+    /**
+     * Opens a durable artifact spool with a deterministic persistence observer.
+     *
+     * @param configuration spool location and storage/concurrency budgets
+     * @param realm owning bounded realm identity
+     * @param clock source of absolute expiry times
+     * @param random source of opaque transfer-handle entropy
+     * @param observer observer of publication and deletion boundaries
+     * @throws IOException if the directory cannot be exclusively opened or recovered
+     * @throws IllegalArgumentException if the realm identity is invalid
+     */
     /* default */ BackupArtifactRepository(BackupTransferConfiguration configuration, String realm,
             Clock clock, SecureRandom random, Observer observer) throws IOException {
         this.configuration = configuration;
@@ -206,6 +384,20 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Keeps capacity checks, artifact publication and reserved-byte accounting atomic.
+    /**
+     * Reserves archive capacity and publishes a new owner-bound transfer descriptor.
+     *
+     * <p>Expired artifacts are cleaned before budget checks. No archive bytes are received.</p>
+     *
+     * @param owner principal owning the transfer
+     * @param purpose import or export direction
+     * @param backupId source backup identity
+     * @param length expected archive size in bytes
+     * @param sha256 expected lowercase hexadecimal archive SHA-256
+     * @return durably reserved descriptor with an unpredictable handle
+     * @throws IOException if capacity is exhausted or cleanup/publication fails
+     * @throws IllegalArgumentException if descriptor inputs are invalid
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor reserve(String owner, Purpose purpose, PkiId backupId,
             long length, String sha256) throws IOException {
@@ -231,6 +423,14 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Reads ownership, expiry and artifact state under the same monitor as cleanup.
+    /**
+     * Finds a live owner-bound artifact whose archive remains retained.
+     *
+     * @param owner principal that must own the transfer
+     * @param handle opaque artifact handle
+     * @return retained, unexpired artifact descriptor
+     * @throws IOException if the repository or artifact is unavailable, expired or owned by another principal
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor inspect(String owner, String handle) throws IOException {
         Descriptor descriptor = workflow(owner, handle);
@@ -241,6 +441,14 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Reads workflow ownership and terminal state under the same monitor as transitions.
+    /**
+     * Finds retained workflow metadata independently of archive expiry.
+     *
+     * @param owner principal that must own the transfer
+     * @param handle opaque artifact handle
+     * @return unconsumed workflow descriptor belonging to this realm and owner
+     * @throws IOException if the repository is unavailable or no matching unconsumed workflow exists
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor workflow(String owner, String handle) throws IOException {
         requireOpen();
@@ -253,13 +461,33 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
         return descriptor;
     }
 
-    /** The caller owns and closes the network input, including on deadline expiry. */
+    /**
+     * Receives and verifies an archive under an exclusive artifact lease.
+     *
+     * <p>The caller retains ownership of the input and must close it, including on deadline expiry.</p>
+     *
+     * @param owner principal owning the reserved artifact
+     * @param handle reserved artifact handle
+     * @param input archive stream; not closed by this method
+     * @throws IOException if the artifact cannot be leased, the size/hash differs,
+     *         transfer is interrupted or durable publication fails
+     */
     /* default */ void receive(String owner, String handle, InputStream input) throws IOException {
         try (Lease lease = source(owner, handle, State.RESERVED, false)) {
             receive(lease, input);
         }
     }
 
+    /**
+     * Streams a leased archive into the spool and publishes it only after size/hash verification.
+     *
+     * <p>The lease transitions through receiving to ready; an I/O failure marks it failed
+     * unless durable publication has fenced the repository.</p>
+     *
+     * @param lease active exclusive lease; remains owned by the caller
+     * @param input archive stream; remains owned by the caller
+     * @throws IOException if reading, persistence or commitment verification fails, or transfer is interrupted
+     */
     /* default */ void receive(Lease lease, InputStream input) throws IOException {
         Descriptor descriptor = lease.descriptor();
         String handle = descriptor.handle();
@@ -312,6 +540,17 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Atomically acquires an artifact lease and its workspace reservation.
+    /**
+     * Acquires an exclusive artifact lease and optionally reserves restore workspace.
+     *
+     * @param owner principal owning the artifact
+     * @param handle live artifact handle
+     * @param expected required current artifact state
+     * @param workspace whether to reserve the configured workspace budget
+     * @return lease that the caller must close
+     * @throws IOException if the artifact is unavailable, state differs or concurrency/workspace budgets are
+     *         exhausted
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Lease source(String owner, String handle, State expected, boolean workspace) throws IOException {
         Descriptor descriptor = inspect(owner, handle);
@@ -332,6 +571,12 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Reserves the bounded preparation-job slot and workspace before handing off ownership.
+    /**
+     * Reserves one preparation slot and its configured workspace budget.
+     *
+     * @return preparation owner that must be closed or handed off to an artifact lease
+     * @throws IOException if the repository is unavailable or concurrency/workspace budgets are exhausted
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized PreparationJob prepare() throws IOException {
         requireOpen();
@@ -346,6 +591,15 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Serializes restore-result reconciliation with artifact state publication.
+    /**
+     * Reconciles a retained restore workflow with an exact authoritative domain result.
+     *
+     * @param owner principal owning the workflow
+     * @param handle retained artifact handle
+     * @param identity observed restore identity and status
+     * @return current descriptor, or durably updated descriptor when the restore coordinates match
+     * @throws IOException if the workflow is unavailable or updated metadata cannot be persisted
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor reconcile(String owner, String handle,
             zeroecho.pki.api.backup.RestoreIdentity identity) throws IOException {
@@ -371,6 +625,13 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Serializes workflow acknowledgement with cleanup and retained-byte release.
+    /**
+     * Acknowledges a resolved restore workflow and releases its retained archive through cleanup.
+     *
+     * @param owner principal owning the workflow
+     * @param handle artifact whose workflow is activated or rejected
+     * @throws IOException if the workflow is unresolved, leased, unavailable or cannot be durably consumed
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void acknowledge(String owner, String handle) throws IOException {
         Descriptor current = workflow(owner, handle);
@@ -391,6 +652,14 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Protects artifact/lease maps and retained-byte accounting during durable cleanup.
+    /**
+     * Removes eligible expired/consumed artifacts and releases retained-byte reservations.
+     *
+     * <p>Unresolved restore metadata survives expiry; only its archive is removed. The
+     * caller's interrupt status is preserved across durable cleanup.</p>
+     *
+     * @throws IOException if the repository is unavailable or metadata/file deletion fails
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void cleanup() throws IOException {
         boolean interrupted = Thread.interrupted(); // NOPMD DoNotUseThreads - Temporarily masks caller interruption to finish durable cleanup; creates no thread.
@@ -553,6 +822,13 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
         return bytes.toByteArray();
     }
 
+    /**
+     * Computes a commitment to the complete persisted descriptor encoding.
+     *
+     * @param descriptor validated artifact metadata
+     * @return lowercase hexadecimal SHA-256 including the encoding's integrity trailer
+     * @throws IOException if metadata cannot be encoded
+     */
     /* default */ String commitment(Descriptor descriptor) throws IOException {
         return HexFormat.of().formatHex(hash().digest(encode(descriptor)));
     }
@@ -647,6 +923,15 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
     }
 
     // Serializes close with active leases and wait/notify draining before releasing the process lock.
+    /**
+     * Releases the exclusive spool lock only after preparation jobs and artifact leases have drained.
+     *
+     * <p>This method does not wait for active jobs. After they finish, an external owner
+     * may retry. The repository is marked closed before process-lock/channel closure;
+     * a later call does not repeat a failed underlying close attempt.</p>
+     *
+     * @throws IOException if preparation jobs or leases remain active, or the process lock/channel fails to close
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     @Override public synchronized void close() throws IOException {
         if (closed) {
@@ -661,10 +946,20 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
         }
     }
 
-    /** Holds bounded workspace before an export has acquired its archive identity. */
+    /**
+     * Holds bounded workspace before an export has acquired its archive identity.
+     */
     /* default */ final class PreparationJob implements AutoCloseable {
         private boolean released;
         private PreparationJob() { }
+        /**
+         * Transfers this preparation reservation into an exclusive reserved-artifact lease.
+         *
+         * @param owner principal owning the artifact
+         * @param handle reserved artifact handle
+         * @return lease that now owns the workspace reservation and must be closed
+         * @throws IOException if this job is closed or the artifact cannot be leased
+         */
         /* default */ Lease handoff(String owner, String handle) throws IOException {
             synchronized (BackupArtifactRepository.this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
                 if (released) {
@@ -683,6 +978,9 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
                 }
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             synchronized (BackupArtifactRepository.this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
                 if (!released) {
@@ -694,7 +992,9 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
         }
     }
 
-    /** Pins repository-owned bytes; closing releases only this borrowed view. */
+    /**
+     * Pins repository-owned bytes; closing releases only this borrowed view.
+     */
     /* default */ final class Lease implements BackupSource {
         private final Descriptor descriptor;
         private final boolean workspace;
@@ -704,7 +1004,21 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
             this.descriptor = descriptor;
             this.workspace = workspace;
         }
+        /**
+         * Returns the immutable descriptor snapshot captured when this lease was acquired.
+         *
+         * @return acquisition-time metadata, which does not track later transitions
+         */
         /* default */ Descriptor descriptor() { return descriptor; }
+        /**
+         * Durably begins the sole unresolved restore attempt for this repository.
+         *
+         * @param restoreId canonical UUID of the new restore attempt
+         * @param previousRestoreId prior canonical UUID, or empty
+         * @throws IOException if the lease is closed, the artifact is not verified,
+         *         another restore is unresolved or publication fails
+         * @throws IllegalArgumentException if restore identifiers are malformed or equal
+         */
         /* default */ void beginRestore(String restoreId, String previousRestoreId) throws IOException {
             synchronized (BackupArtifactRepository.this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
                 requireOpen();
@@ -728,6 +1042,14 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
                 artifacts.put(next.handle(), next);
             }
         }
+        /**
+         * Publishes replacement workflow state through this exact active lease.
+         *
+         * @param next replacement lifecycle state
+         * @param manifest manifest SHA-256 commitment, or empty before verification
+         * @throws IOException if the lease/repository is unavailable or durable publication fails
+         * @throws IllegalArgumentException if replacement descriptor values are invalid
+         */
         /* default */ void transition(State next, String manifest) throws IOException {
             synchronized (BackupArtifactRepository.this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
                 requireOpen();
@@ -739,10 +1061,22 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
                 artifacts.put(replacement.handle(), replacement);
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiId backupId() { return descriptor.backupId(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long contentLength() { return descriptor.length(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String sha256() { return descriptor.sha256(); }
         // Serializes the lease's closed state and tracked-stream registration.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized InputStream openStream() throws IOException {
             if (released) {
@@ -753,6 +1087,14 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
             return input;
         }
         // Drains this lease's tracked streams before releasing its artifact and workspace reservations.
+        /**
+         * Closes every stream opened through this lease before releasing its artifact/workspace reservation.
+         *
+         * <p>Stream failures are combined with suppressed exceptions. The reservation remains
+         * owned until all stream closes succeed, allowing a later close attempt to retry.</p>
+         *
+         * @throws IOException if any tracked source stream fails to close
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized void close() throws IOException {
             if (released) {

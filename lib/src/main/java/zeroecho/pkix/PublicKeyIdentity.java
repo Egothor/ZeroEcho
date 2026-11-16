@@ -74,7 +74,9 @@ import org.bouncycastle.math.ec.ECPoint;
  * storage are linear in the input size, plus bounded curve-point validation.</p>
  */
 public final class PublicKeyIdentity {
-    /** Maximum accepted encoded SPKI size. */
+    /**
+     * Maximum accepted encoded SPKI size.
+     */
     public static final int MAXIMUM_SPKI_BYTES = 16 * 1024;
     private final byte[] canonical;
     private final String commitment;
@@ -91,6 +93,7 @@ public final class PublicKeyIdentity {
 
     /**
      * Parses and validates one supported mathematical key without retaining input.
+     *
      * @param encoded exact DER SubjectPublicKeyInfo, defensively copied
      * @return normalized immutable key identity
      * @throws IllegalArgumentException if input is null, oversized, malformed or unsupported
@@ -169,12 +172,14 @@ public final class PublicKeyIdentity {
 
     /**
      * Returns the canonical encoding used solely for identity comparison.
+     *
      * @return a defensive copy of the canonical identity-only SPKI
      */
     public byte[] canonicalSubjectPublicKeyInfo() { return canonical.clone(); }
 
     /**
      * Returns the stable mathematical key commitment.
+     *
      * @return lowercase SHA-256 of the canonical SPKI, never an authentication grant
      */
     public String canonicalSha256() { return commitment; }
@@ -183,11 +188,16 @@ public final class PublicKeyIdentity {
      * Returns immutable, sorted legacy SPKI hashes of both supported encodings.
      * These hashes are exclusively for conservative alias exclusion. Certificate
      * hashes and issuer/serial hashes occupy separate commitment domains.
+     *
      * @return finite equivalent-encoding hashes
      */
     public Set<String> equivalentSubjectPublicKeyInfoSha256() { return equivalentCommitments; }
 
-    /** @return redacted diagnostic description */
+    /**
+     * Returns redacted diagnostic description.
+     *
+     * @return redacted diagnostic description
+     */
     @Override public String toString() { return "PublicKeyIdentity[redacted]"; }
 
     private static String digest(byte[] bytes) {

@@ -48,6 +48,8 @@ public record ExportArtifact(PkiId exportId, EncodedObject payload) {
      * Creates an export artifact.
      *
      * @throws IllegalArgumentException if inputs are null
+     * @param exportId export identifier
+     * @param payload export payload
      */
     public ExportArtifact {
         if (exportId == null) {

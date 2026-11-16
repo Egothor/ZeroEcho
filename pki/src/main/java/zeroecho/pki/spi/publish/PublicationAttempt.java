@@ -55,7 +55,20 @@ import zeroecho.pki.api.publication.PublicationTarget;
 public record PublicationAttempt(PkiId publicationId, PublicationSourceType sourceType, PkiId sourceId,
         PublicationTarget target, long attemptNumber, String attemptToken, Encoding encoding,
         long length, String sha256) {
-    /** Creates a validated immutable attempt descriptor. */
+    /**
+     * Creates a validated immutable attempt descriptor.
+     * @param publicationId operation identity
+     * @param sourceType authoritative source type
+     * @param sourceId authoritative source identity
+     * @param target configured target identity
+     * @param attemptNumber positive attempt number
+     * @param attemptToken stable canonical idempotency token
+     * @param encoding payload encoding
+     * @param length exact payload length
+     * @param sha256 exact lowercase SHA-256 commitment
+     * @throws NullPointerException if publicationId, sourceType, sourceId, target, attemptToken, encoding, sha256 is null
+     * @throws IllegalArgumentException if attemptNumber is not positive, length is negative, or attemptToken or sha256 is not 64 lowercase hexadecimal characters
+     */
     public PublicationAttempt {
         Objects.requireNonNull(publicationId, "publicationId");
         Objects.requireNonNull(sourceType, "sourceType");

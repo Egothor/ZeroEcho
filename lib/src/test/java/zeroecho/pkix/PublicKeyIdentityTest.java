@@ -61,7 +61,15 @@ import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
 import org.junit.jupiter.api.Test;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for public key identity.
+ */
 class PublicKeyIdentityTest {
+    /**
+     * RSA absent and null parameters across providers have one identity.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rsaAbsentAndNullParametersAcrossProvidersHaveOneIdentity() throws Exception {
         BouncyCastleActivator.init();
@@ -87,6 +95,11 @@ class PublicKeyIdentityTest {
         assertEquals("PublicKeyIdentity[redacted]", identity.toString());
     }
 
+    /**
+     * All supported named curves normalize compressed points across providers.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void allSupportedNamedCurvesNormalizeCompressedPointsAcrossProviders() throws Exception {
         BouncyCastleActivator.init();
@@ -111,6 +124,11 @@ class PublicKeyIdentityTest {
         }
     }
 
+    /**
+     * Rejects unsupported algorithms parameters invalid points and malformed encodings.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsUnsupportedAlgorithmsParametersInvalidPointsAndMalformedEncodings() throws Exception {
         RSAPublicKey valid = new RSAPublicKey(BigInteger.valueOf(3233), BigInteger.valueOf(17));

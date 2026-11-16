@@ -60,6 +60,9 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 
+/**
+ * Contract and regression tests for transactional metadata store contract.
+ */
 final class TransactionalMetadataStoreContractTest {
     private static final MetadataKey FIRST = new MetadataKey("example.records", "first");
     private static final MetadataKey SECOND = new MetadataKey("example.other", "second");
@@ -67,6 +70,11 @@ final class TransactionalMetadataStoreContractTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Create replace and delete are atomic across namespaces.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createReplaceAndDeleteAreAtomicAcrossNamespaces() throws Exception {
         System.out.print("createReplaceAndDeleteAreAtomicAcrossNamespaces ");
@@ -93,6 +101,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Conflict is terminal resolvable and has no partial visibility.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictIsTerminalResolvableAndHasNoPartialVisibility() throws Exception {
         System.out.print("conflictIsTerminalResolvableAndHasNoPartialVisibility ");
@@ -114,6 +127,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Unknown only hides an already fixed outcome.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownOnlyHidesAnAlreadyFixedOutcome() throws Exception {
         System.out.print("unknownOnlyHidesAnAlreadyFixedOutcome ");
@@ -135,6 +153,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Foreign and unissued transaction identities fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void foreignAndUnissuedTransactionIdentitiesFailClosed() throws Exception {
         System.out.print("foreignAndUnissuedTransactionIdentitiesFailClosed ");
@@ -159,6 +182,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Known and unknown content detach synchronously.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void knownAndUnknownContentDetachSynchronously() throws Exception {
         System.out.print("knownAndUnknownContentDetachSynchronously ");
@@ -182,6 +210,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Caller content staging does not hold store monitor.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void callerContentStagingDoesNotHoldStoreMonitor() throws Exception {
         System.out.print("callerContentStagingDoesNotHoldStoreMonitor ");
@@ -208,6 +241,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Interrupted close preserves closing admission barrier.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void interruptedClosePreservesClosingAdmissionBarrier() throws Exception {
         System.out.print("interruptedClosePreservesClosingAdmissionBarrier ");
@@ -244,6 +282,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Content length capability and technical limit are enforced.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void contentLengthCapabilityAndTechnicalLimitAreEnforced() throws Exception {
         System.out.print("contentLengthCapabilityAndTechnicalLimitAreEnforced ");
@@ -272,6 +315,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Snapshots are stable and scans are lazy and ordered.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotsAreStableAndScansAreLazyAndOrdered() throws Exception {
         System.out.print("snapshotsAreStableAndScansAreLazyAndOrdered ");
@@ -301,6 +349,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cancellation stops admission and leaves transaction reusable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationStopsAdmissionAndLeavesTransactionReusable() throws Exception {
         System.out.print("cancellationStopsAdmissionAndLeavesTransactionReusable ");
@@ -318,6 +371,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Large unknown content uses bounded streaming and remains repeatable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void largeUnknownContentUsesBoundedStreamingAndRemainsRepeatable() throws Exception {
         System.out.print("largeUnknownContentUsesBoundedStreamingAndRemainsRepeatable ");
@@ -339,6 +397,11 @@ final class TransactionalMetadataStoreContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Lifecycle rejects use after close.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void lifecycleRejectsUseAfterClose() throws Exception {
         System.out.print("lifecycleRejectsUseAfterClose ");

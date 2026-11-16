@@ -46,7 +46,17 @@ import zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProvider;
 import zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for managed key generation.
+ */
 class ManagedKeyGenerationTest {
+    /**
+     * Generates every explicit parameter set.
+     *
+     * @param parameters typed managed-key-generation parameters selected for this algorithm case
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.EnumSource(ManagedKeyGeneration.Parameters.class)
     void generatesEveryExplicitParameterSet(ManagedKeyGeneration.Parameters parameters, @TempDir Path root) throws Exception {
@@ -63,6 +73,12 @@ class ManagedKeyGenerationTest {
             assertTrue(references.contains(result.keyRef()));
         }
     }
+    /**
+     * Generates exact parameters and reopens without changing public identity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void generatesExactParametersAndReopensWithoutChangingPublicIdentity(@TempDir Path root) throws Exception {
         Path path = root.resolve("keys");
         try (KeyringPassword password = TestKeyringUnlocks.provider().acquire();

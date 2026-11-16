@@ -53,7 +53,9 @@ import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.LocalPkiSessionConfiguration;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
-/** Composition root for the synchronous {@code zeroecho pki} command family. */
+/**
+ * Composition root for the synchronous {@code zeroecho pki} command family.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidReassigningLoopVariables", "PMD.CloseResource", "PMD.CyclomaticComplexity",
         "PMD.DoNotUseThreads", "PMD.UseVarargs" })
@@ -152,11 +154,38 @@ public final class PkiCli {
         });
     }
 
+    /**
+     * Runs a PKI invocation and renders its outcome without terminating the JVM.
+     *
+     * <p>Local sessions and remote exchanges opened for the invocation are closed before
+     * returning. Operational failures are rendered as classified CLI results.</p>
+     *
+     * @param arguments command-line tokens; must not be null
+     * @param output output destination borrowed for rendering; must not be null
+     * @param opener factory for lifecycle-owned local sessions; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return classified CLI exit status
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static int execute(String[] arguments, OutputStream output, SessionOpener opener,
             CancellationSignal cancellation) {
         return execute(arguments, output, opener, cancellation, DEFAULT_EXCHANGE_FACTORY);
     }
 
+    /**
+     * Runs a PKI invocation and renders its outcome without terminating the JVM.
+     *
+     * <p>Local sessions and remote exchanges opened for the invocation are closed before
+     * returning. Operational failures are rendered as classified CLI results.</p>
+     *
+     * @param arguments command-line tokens; must not be null
+     * @param output output destination borrowed for rendering; must not be null
+     * @param opener factory for lifecycle-owned local sessions; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @param remoteExchangeFactory factory for lifecycle-owned remote exchanges; must not be null
+     * @return classified CLI exit status
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static int execute(String[] arguments, OutputStream output, SessionOpener opener,
             CancellationSignal cancellation, RemoteExchangeFactory remoteExchangeFactory) {
         Objects.requireNonNull(arguments, "arguments");
@@ -625,15 +654,23 @@ public final class PkiCli {
         }
     }
 
-    /** Lifecycle construction seam for CLI orchestration tests. */
+    /**
+     * Lifecycle construction seam for CLI orchestration tests.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     interface SessionOpener {
-        /** Opens one lifecycle-owned backend session. */
+        /**
+         * Opens one lifecycle-owned backend session.
+         * @param configuration local backend and optional signing configuration; must not be null
+         * @return newly opened session owned by the invocation
+         */
         PkiSession open(LocalPkiSessionConfiguration configuration);
     }
 
-    /** Construction seam for the remote mutual-TLS HTTP exchange, overridable in tests. */
+    /**
+     * Construction seam for the remote mutual-TLS HTTP exchange, overridable in tests.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     interface RemoteExchangeFactory {
@@ -648,7 +685,9 @@ public final class PkiCli {
         PkiHttpExchange open(PkiRemoteTarget target) throws IOException, GeneralSecurityException;
     }
 
-    /** Mutable accumulator for the remote connection and scope options during parsing. */
+    /**
+     * Mutable accumulator for the remote connection and scope options during parsing.
+     */
     // Mutable parsing accumulator; behavior belongs to the enclosing CLI parser after validation.
     @SuppressWarnings("PMD.DataClass")
     private static final class RemoteOptions {
@@ -712,7 +751,9 @@ public final class PkiCli {
         }
     }
 
-    /** One validated remote single-operation invocation. */
+    /**
+     * One validated remote single-operation invocation.
+     */
     private record Remote(PkiRemoteTarget target, String operationId, PkiOperationValue.ObjectValue arguments,
             Optional<String> authorityId, Optional<String> approvalId, Optional<String> deadline) {
     }

@@ -57,7 +57,18 @@ public record LocalSigningConfiguration(ProviderConfig provider, String signatur
     private static final long MAXIMUM_JCA_MESSAGE_BYTES = Integer.MAX_VALUE - 8L;
     private static final long EDDSA_TRANSFER_BUFFER_BYTES = 16L * 1024L;
 
-    /** Validates all bounds and rejects nonlocal providers before resource construction. */
+    /**
+     * Validates all bounds and rejects nonlocal providers before resource construction.
+     * @param provider local {@code zeroecho-lib} provider configuration
+     * @param signatureAlgorithm nonblank configured signing algorithm
+     * @param signingTtl positive signing deadline interval
+     * @param unlockEnvironmentVariable optional environment reference, never a secret
+     * @param claimLease positive claim lease, at most one day and greater than call timeout
+     * @param providerCallTimeout positive per-call timeout, at most one day
+     * @param pureEdDsaMaximumTbsBytes optional positive raw-message limit, at most the JCA array bound
+     * @throws NullPointerException if provider, unlockEnvironmentVariable, pureEdDsaMaximumTbsBytes is null
+     * @throws IllegalArgumentException if the provider is not zeroecho-lib, the signature algorithm is null/blank, signingTtl is null/nonpositive, the unlock-variable reference or finite timing/message bounds are invalid, or claimLease does not exceed providerCallTimeout
+     */
     public LocalSigningConfiguration {
         Objects.requireNonNull(provider, "provider");
         if (!"zeroecho-lib".equals(provider.backendId())) {

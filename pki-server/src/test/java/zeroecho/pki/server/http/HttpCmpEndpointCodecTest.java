@@ -52,11 +52,16 @@ import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.cmp.CmpEndpoint;
 import zeroecho.pki.server.cmp.CmpProtectionPolicy;
 
-/** Strict HTTPS decoding coverage for the CMP endpoint admin operation family. */
+/**
+ * Strict HTTPS decoding coverage for the CMP endpoint admin operation family.
+ */
 class HttpCmpEndpointCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks explicit signature-based CMP registration coordinates, preserved enrollment-policy identity and mutating administer classification.
+     */
     @Test
     void registersCmpEndpointWithSignaturePolicy() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -80,6 +85,9 @@ class HttpCmpEndpointCodecTest {
         assertTrue(DESCRIPTORS.require(ServerControlOperation.RegisterCmpEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks that an explicitly selected password-MAC endpoint policy survives strict CMP registration decoding.
+     */
     @Test
     void registersCmpEndpointWithSharedSecretPolicy() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -95,6 +103,9 @@ class HttpCmpEndpointCodecTest {
         assertEquals(CmpProtectionPolicy.SHARED_SECRET_MAC, operation.endpoint().protectionPolicy());
     }
 
+    /**
+     * Checks that an otherwise valid CMP registration rejects an additional unexpected boolean argument.
+     */
     @Test
     void rejectsRegistrationWithUnknownField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -108,6 +119,9 @@ class HttpCmpEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a CMP endpoint label containing spaces fails strict decoding.
+     */
     @Test
     void rejectsRegistrationWithInvalidLabel() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -120,6 +134,9 @@ class HttpCmpEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that an unrecognized CMP protection-policy token is rejected instead of selecting a fallback mode.
+     */
     @Test
     void rejectsRegistrationWithUnknownPolicy() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -132,6 +149,9 @@ class HttpCmpEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterCmpEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a label-only CMP removal decodes to the administer permission without accepting caller scope coordinates.
+     */
     @Test
     void deregistersEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"enterprise-cmp\"}}";
@@ -144,6 +164,9 @@ class HttpCmpEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.DeregisterCmpEndpoint.NAME).action());
     }
 
+    /**
+     * Checks that CMP removal rejects an added authority field instead of allowing input to widen its target.
+     */
     @Test
     void rejectsDeregistrationWithExtraField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -153,6 +176,9 @@ class HttpCmpEndpointCodecTest {
                 () -> decode(ServerControlOperation.DeregisterCmpEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that label-only CMP inspection selects the read action and is classified as nonmutating.
+     */
     @Test
     void inspectsEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"enterprise-cmp\"}}";
@@ -166,6 +192,9 @@ class HttpCmpEndpointCodecTest {
         assertFalse(DESCRIPTORS.require(ServerControlOperation.InspectCmpEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks that a CMP listing preserves offset zero and limit 50 and selects the endpoint read permission.
+     */
     @Test
     void listsEndpointsWithBoundedPagination() {
         String json = "{\"version\":1,\"arguments\":{\"offset\":0,\"limit\":50}}";
@@ -179,6 +208,9 @@ class HttpCmpEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.ListCmpEndpoints.NAME).action());
     }
 
+    /**
+     * Checks CMP listing rejection for offset minus one, limit zero and limit 257.
+     */
     @Test
     void rejectsListWithInvalidPaginationBounds() {
         assertThrows(IllegalArgumentException.class, () -> decode(
@@ -198,6 +230,9 @@ class HttpCmpEndpointCodecTest {
                 REALM, DESCRIPTORS::require);
     }
 
+    /**
+     * Checks that CMP registration cannot infer its enrollment policy from a certificate profile alone.
+     */
     @Test
     void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","

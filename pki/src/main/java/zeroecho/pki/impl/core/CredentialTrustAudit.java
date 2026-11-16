@@ -56,6 +56,16 @@ final class CredentialTrustAudit {
         // Utility class.
     }
 
+    /**
+     * Records a trust rejection without allowing sink failures to alter the trust decision.
+     *
+     * @param sink borrowed audit callback
+     * @param time authoritative rejection time
+     * @param credential rejected credential
+     * @param use requested credential use
+     * @param code stable rejection classification; must not be null
+     * @param status effective credential status, or null when unavailable
+     */
     // Best-effort audit callbacks are untrusted; broad catch and empty handling
     // preserve
     // the authoritative trust rejection without exposing listener diagnostics.

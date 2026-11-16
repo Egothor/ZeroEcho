@@ -48,6 +48,7 @@ public record EndEntityReissueRequest(PkiId existingCredentialId) {
     /**
      * Validates the immutable input in constant time and auxiliary memory.
      * @throws IllegalArgumentException if the identifier is null
+     * @param existingCredentialId authoritative predecessor identifier
      */
     public EndEntityReissueRequest {
         if (existingCredentialId == null) {
@@ -55,6 +56,10 @@ public record EndEntityReissueRequest(PkiId existingCredentialId) {
         }
     }
 
-    /** @return a redacted diagnostic representation */
+    /**
+     * Returns a fixed redacted diagnostic label for this lifecycle request.
+     *
+     * @return a redacted diagnostic representation
+     */
     @Override public String toString() { return "EndEntityReissueRequest[redacted]"; }
 }

@@ -64,7 +64,16 @@ import zeroecho.pki.impl.core.continuation.FullCrlStreamingPublicationTest.Fixtu
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for full CRL snapshot integration.
+ */
 class FullCrlSnapshotIntegrationTest {
+    /**
+     * Delta publication prefix replays after reopen and snapshot without resigning or reselecting.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaPublicationPrefixReplaysAfterReopenAndSnapshotWithoutResigningOrReselecting(@TempDir Path root) throws Exception {
         Path source = root.resolve("source");
         Path snapshot = root.resolve("snapshot");
@@ -128,6 +137,12 @@ class FullCrlSnapshotIntegrationTest {
         }
     }
 
+    /**
+     * Snapshot restore and reexport preserve every live and completed cut.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotRestoreAndReexportPreserveEveryLiveAndCompletedCut(@TempDir Path root) throws Exception {
         for (SnapshotCut cut : SnapshotCut.values()) {
             Path source = root.resolve(cut.name());
@@ -209,6 +224,14 @@ class FullCrlSnapshotIntegrationTest {
         }
     }
 
+    /**
+     * Requires the expected completed CRL status object and content commitment.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param operation retained signing operation or typed command being exercised
+     * @param digest expected lowercase hexadecimal SHA-256 content commitment
+     * @return completed status object matching the operation and digest
+     */
     static StatusObject completedStatus(FilesystemPkiStore store, PkiId operation, String digest) {
         DomainContinuationStore.Record domain = store.getDomainContinuation(operation).orElseThrow();
         assertEquals(DomainContinuationStore.State.COMPLETED, domain.state());
@@ -219,6 +242,15 @@ class FullCrlSnapshotIntegrationTest {
         return store.getStatusObject(id).orElseThrow();
     }
 
+    /**
+     * Reads durable content and checks its exact byte length and SHA-256 commitment.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param reference durable content reference or logical key reference selected by the fixture
+     * @param expectedLength expected complete content length in bytes
+     * @param expectedDigest expected lowercase hexadecimal SHA-256 content commitment
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void assertContent(FilesystemPkiStore store, DurableContentReference reference, long expectedLength,
             String expectedDigest) throws Exception {
         assertEquals(expectedLength, reference.length());

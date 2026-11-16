@@ -59,13 +59,26 @@ import java.util.Set;
 public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLengthConstraint, boolean keyUsageCritical,
         Set<CaKeyUsage> keyUsages, Set<String> allowedSubjectKeyAlgorithmIds) implements CertificatePolicy {
 
-    /** Maximum supported path-length constraint. */
+    /**
+     * Maximum supported path-length constraint.
+     */
     public static final int MAXIMUM_PATH_LENGTH = 32;
 
     private static final Set<String> SUPPORTED_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
             "SPHINCS+", "ML-DSA", "SLH-DSA", "LMS", "XMSS");
 
-    /** Validates and constructs the CA policy. */
+    /**
+     * Validates and constructs the CA policy.
+     * @param basicConstraintsCritical Basic Constraints criticality, required to be {@code true}
+     * @param pathLengthConstraint nonnegative maximum subordinate-CA depth
+     * @param keyUsageCritical Key Usage criticality, required to be {@code true}
+     * @param keyUsages exact CA key-usage set
+     * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho subject-key algorithm identifiers
+     * @throws IllegalArgumentException if required criticality is absent, path length is unsupported, a
+     *     collection is null, certificate/CRL signing usage is absent, or supported subject-key selection is
+     *     empty or invalid
+     * @throws NullPointerException if keyUsages or allowedSubjectKeyAlgorithmIds contains a null entry
+     */
     public CaCertificatePolicy {
         if (!basicConstraintsCritical) {
             throw new IllegalArgumentException("CA Basic Constraints must be critical");

@@ -47,6 +47,8 @@ public record RestoreRequest(BackupArtifact artifact, AttributeSet attributes) {
      * Creates a restore request.
      *
      * @throws IllegalArgumentException if inputs are null
+     * @param artifact backup artifact
+     * @param attributes optional restore hints (may be empty but not null)
      */
     public RestoreRequest {
         if (artifact == null) {

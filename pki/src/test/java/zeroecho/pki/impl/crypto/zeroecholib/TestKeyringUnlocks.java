@@ -37,20 +37,41 @@ import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.pki.spi.crypto.SigningProvider;
 
+/**
+ * Owned test-password acquisition and clock-bound signing-provider fixtures.
+ */
 public final class TestKeyringUnlocks {
     private TestKeyringUnlocks() {
     }
 
+    /**
+     * Creates a reusable provider that returns fresh owned test-password material on acquisition.
+     *
+     * @return unlock provider; the caller must close every acquired password
+     */
     public static KeyringUnlockProvider provider() {
         return () -> new KeyringPassword(new char[] { 'p', 'k', 'i', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y' });
     }
 
+    /**
+     * Creates a fixture signing provider bound to the encrypted keyring and authoritative clock.
+     *
+     * @param keyring encrypted keyring path opened by the signing-provider fixture
+     * @param clock authoritative clock used for validity and signing observations
+     * @param commitment exact signing-provider configuration commitment
+     * @return new signing provider using the supplied configuration commitment
+     */
     public static SigningProvider withClock(java.nio.file.Path keyring, java.time.Clock clock,
             SigningProvider.ConfigurationCommitment commitment) {
         return new ZeroEchoLibSigningProvider("zeroecho-lib", keyring, keyring, clock,
                 java.time.Duration.ofDays(90), "zeroecho-lib:", true, provider(), commitment);
     }
 
+    /**
+     * Creates the fixed zero-filled configuration commitment used by fixture providers.
+     *
+     * @return new fixed-length configuration commitment
+     */
     /* default */ static SigningProvider.ConfigurationCommitment configurationCommitment() {
         return new SigningProvider.ConfigurationCommitment(
                 new byte[SigningProvider.ConfigurationCommitment.BYTE_LENGTH]);

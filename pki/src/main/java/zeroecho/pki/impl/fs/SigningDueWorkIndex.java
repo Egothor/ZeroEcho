@@ -54,14 +54,22 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Bounded due-work ordering that shares the ledger's resident-byte budget. */
+/**
+ * Bounded due-work ordering that shares the ledger's resident-byte budget.
+ */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource",
         "PMD.AvoidDuplicateLiterals", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.CommentRequired", "PMD.CompareObjectsWithEquals",
         "PMD.ConfusingTernary", "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity",
         "PMD.TooManyMethods", "PMD.UseTryWithResources" })
 final class SigningDueWorkIndex implements AutoCloseable {
+    /**
+     * Maximum due-work item count for the four-gibibyte sizing profile.
+     */
     /* default */ static final int FOUR_GIB_MAXIMUM_WORK = 100_000;
+    /**
+     * Maximum ordered due-index count for the four-gibibyte sizing profile.
+     */
     /* default */ static final int FOUR_GIB_ORDERED_LIMIT = 1_000_000;
     private static final int MAX_OPERATION_ID_BYTES = 4096;
     /* Hash/tree/AVL nodes, ordering key, slots, descriptor and alignment. */
@@ -88,6 +96,16 @@ final class SigningDueWorkIndex implements AutoCloseable {
     private int outstandingAdmissions;
     private boolean closed;
 
+    /**
+     * Creates bounded due/owner indexes sharing physical-generation ownership and resident capacity.
+     *
+     * @param maximumWork positive entry count bound no greater than the supported ordered-index limit
+     * @param capacity borrowed resident index workspace budget; must not be null
+     * @param generations borrowed physical-generation ownership registry; must not be null
+     * @param referenceOwner DUE or OWNER generation-reference category
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if entry capacity or reference owner is unsupported
+     */
     /* default */ SigningDueWorkIndex(int maximumWork, SigningIndexCapacityBudget capacity,
             SigningGenerationRegistry generations,
             SigningGenerationRegistry.Owner referenceOwner) {
@@ -104,14 +122,27 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Validates and encodes one boundary identity exactly once for later reuse. */
+    /**
+     * Validates and encodes one boundary identity exactly once for later reuse.
+     * @param operationId bounded strict-UTF-8 logical operation identity; must not be null
+     * @return reusable canonical identity object; callers must retain and reuse this exact object
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if identity encoding or byte bounds are invalid
+     */
     /* default */ CanonicalOperationId admit(String operationId) {
         Objects.requireNonNull(operationId, "operationId");
         return new CanonicalOperationId(operationId,
                 SigningFormatSupport.strictUtf8(operationId, MAX_OPERATION_ID_BYTES));
     }
 
-    /** Installs identity-ordered recovered work with linear bulk construction. */
+    /**
+     * Installs identity-ordered recovered work with linear bulk construction.
+     * @param identityOrdered validated entries in strict canonical identity order; must not be null
+     * @throws NullPointerException if the entry list is null
+     * @throws IllegalArgumentException if identity ordering or entry coordinates are invalid
+     * @throws IllegalStateException if closed, nonempty, or entry count exceeds the recovery capacity
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace cannot be reserved
+     */
     /* default */ void recoverAll(List<RecoveryEntry> identityOrdered) {
         Objects.requireNonNull(identityOrdered, "identityOrdered");
         writeLock.lock();
@@ -161,10 +192,19 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Returns the fixed resident allocation for one projected due entry. */
+    /**
+     * Returns the fixed resident allocation for one projected due entry.
+     * @return fixed resident reservation size per projected entry, in bytes
+     */
     /* default */ static long entryResidentBytes() { return ENTRY_FIXED_BYTES; }
 
-    /** Reserves one new due-work entry before its operation identity exists. */
+    /**
+     * Reserves one new due-work entry before its operation identity exists.
+     * @return owned unbound entry reservation; caller binds and consumes it or closes it
+     * @throws IllegalStateException if the index is closed
+     * @throws CapacityExhaustedException if all work-entry slots are already reserved
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ Admission reserveAdmission() {
         writeLock.lock();
         try {
@@ -182,7 +222,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Internal typed boundary used by the filesystem store admission façade. */
+    /**
+     * Internal typed boundary used by the filesystem store admission façade.
+     */
     /* default */ static final class CapacityExhaustedException extends IllegalStateException {
         @java.io.Serial private static final long serialVersionUID = 1L;
 
@@ -191,7 +233,18 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Inserts or exactly replaces one non-retired work descriptor. */
+    /**
+     * Inserts or exactly replaces one non-retired work descriptor.
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @throws NullPointerException if a required descriptor field is null
+     * @throws IllegalArgumentException if identity is not reused or state is retired
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ void update(CanonicalOperationId operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer) {
         try (PreparedChange prepared = prepareUpdate(operationId, nextEligibleAt, state, pointer)) {
@@ -199,7 +252,19 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Preallocates one hidden due-work replacement for later allocation-free publication. */
+    /**
+     * Preallocates one hidden due-work replacement for later allocation-free publication.
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required descriptor, admission, or scheduling argument is null
+     * @throws IllegalArgumentException if identity reuse, admission ownership, or workflow state differs
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareUpdate(CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state,
             SigningMvccIndex.RecordPointer pointer) {
@@ -207,6 +272,21 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Preallocates a hidden non-retired work replacement, optionally consuming its bound admission.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required descriptor, admission, or scheduling argument is null
+     * @throws IllegalArgumentException if identity reuse, admission ownership, or workflow state differs
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareUpdate(CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state,
             SigningMvccIndex.RecordPointer pointer,
@@ -215,6 +295,22 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 false, admissionClass);
     }
 
+    /**
+     * Preallocates a hidden non-retired work replacement, optionally consuming its bound admission.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param admissionClass workspace admission class; must not be null
+     * @param scheduling exact immutable scheduling coordinates; must not be null when explicitly supplied
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required descriptor, admission, or scheduling argument is null
+     * @throws IllegalArgumentException if identity reuse, admission ownership, or workflow state differs
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareUpdate(CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state,
             SigningMvccIndex.RecordPointer pointer,
@@ -224,7 +320,20 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 Objects.requireNonNull(scheduling, "scheduling"), false, false, admissionClass);
     }
 
-    /** Consumes one bound admission into a hidden initial due-work entry. */
+    /**
+     * Consumes one bound admission into a hidden initial due-work entry.
+     * @param admission active bound entry reservation owned by this index; must not be null
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required descriptor, admission, or scheduling argument is null
+     * @throws IllegalArgumentException if identity reuse, admission ownership, or workflow state differs
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareUpdate(Admission admission,
             CanonicalOperationId operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer) {
@@ -233,6 +342,22 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 false, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Preallocates a hidden non-retired work replacement, optionally consuming its bound admission.
+     *
+     * @param admission active bound entry reservation owned by this index; must not be null
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param nextEligibleAt authoritative next-eligible instant; must not be null
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param scheduling exact immutable scheduling coordinates; must not be null when explicitly supplied
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required descriptor, admission, or scheduling argument is null
+     * @throws IllegalArgumentException if identity reuse, admission ownership, or workflow state differs
+     * @throws IllegalStateException if the index is closed or another change owns the entry
+     * @throws CapacityExhaustedException if work-entry capacity is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareUpdate(Admission admission,
             CanonicalOperationId operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
@@ -243,12 +368,37 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prepares a retained owner descriptor ordered by the supplied timestamp.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param orderedAt timestamp used to order retained ownership state
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @return owned retained-state change; publish or close it
+     * @throws NullPointerException if a required field is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareRetained(CanonicalOperationId operationId,
             Instant orderedAt, SigningMvccIndex.RecordPointer pointer) {
         return prepareRetained(operationId, orderedAt, pointer,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prepares a retained owner descriptor ordered by the supplied timestamp.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param orderedAt timestamp used to order retained ownership state
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned retained-state change; publish or close it
+     * @throws NullPointerException if a required field is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareRetained(CanonicalOperationId operationId,
             Instant orderedAt, SigningMvccIndex.RecordPointer pointer,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -256,6 +406,17 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 pointer, null, true, false, admissionClass);
     }
 
+    /**
+     * Prepares a guarded malformed descriptor at the earliest due time for explicit recovery handling.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @return owned malformed-state change; publish or close it
+     * @throws NullPointerException if an explicitly required argument is null
+     * @throws IllegalArgumentException if identity or admission ownership differs
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareMalformed(CanonicalOperationId operationId,
             SigningMvccIndex.RecordPointer pointer) {
         return prepareUpdate(null, operationId, Instant.MIN, SignWorkflowStore.State.INTENT,
@@ -263,6 +424,18 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prepares a guarded malformed descriptor at the earliest due time for explicit recovery handling.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param scheduling exact immutable scheduling coordinates; must not be null when explicitly supplied
+     * @return owned malformed-state change; publish or close it
+     * @throws NullPointerException if an explicitly required argument is null
+     * @throws IllegalArgumentException if identity or admission ownership differs
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareMalformed(CanonicalOperationId operationId,
             SigningMvccIndex.RecordPointer pointer,
             SignWorkflowStore.SchedulingCoordinates scheduling) {
@@ -271,6 +444,18 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prepares a guarded malformed descriptor at the earliest due time for explicit recovery handling.
+     *
+     * @param admission active bound entry reservation owned by this index; must not be null
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @return owned malformed-state change; publish or close it
+     * @throws NullPointerException if an explicitly required argument is null
+     * @throws IllegalArgumentException if identity or admission ownership differs
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareMalformed(Admission admission,
             CanonicalOperationId operationId, SigningMvccIndex.RecordPointer pointer) {
         Objects.requireNonNull(admission, "admission");
@@ -279,6 +464,19 @@ final class SigningDueWorkIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prepares a guarded malformed descriptor at the earliest due time for explicit recovery handling.
+     *
+     * @param admission active bound entry reservation owned by this index; must not be null
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param scheduling exact immutable scheduling coordinates; must not be null when explicitly supplied
+     * @return owned malformed-state change; publish or close it
+     * @throws NullPointerException if an explicitly required argument is null
+     * @throws IllegalArgumentException if identity or admission ownership differs
+     * @throws IllegalStateException if closed or the entry has a conflicting prepared change
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace is unavailable
+     */
     /* default */ PreparedChange prepareMalformed(Admission admission,
             CanonicalOperationId operationId, SigningMvccIndex.RecordPointer pointer,
             SignWorkflowStore.SchedulingCoordinates scheduling) {
@@ -331,6 +529,17 @@ final class SigningDueWorkIndex implements AutoCloseable {
      * Prepares an exclusive transfer of one published due slot. The donor remains
      * visible until publication; rollback preserves it. Only the dependency
      * graph may select a donor after validating the persisted parent/child fence.
+     * @param donor published canonical donor identity selected by validated dependency fencing
+     * @param receiver new canonical receiver identity not already present
+     * @param eligible receiver next-eligible instant
+     * @param state signing workflow state; must not be null
+     * @param pointer exact physical workflow-state pointer; must not be null
+     * @param scheduling exact immutable scheduling coordinates; must not be null when explicitly supplied
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned prepared handoff; rollback preserves the donor until publication
+     * @throws IllegalArgumentException if donor/receiver selection or identity reuse is invalid
+     * @throws IllegalStateException if closed or donor ownership/prepared state differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if handoff workspace is unavailable
      */
     /* default */ PreparedChange prepareHandoff(CanonicalOperationId donor,
             CanonicalOperationId receiver, Instant eligible, SignWorkflowStore.State state,
@@ -461,14 +670,40 @@ final class SigningDueWorkIndex implements AutoCloseable {
         return replacementSlot;
     }
 
+    /**
+     * Removes one published work entry and releases its retained capacity and generation ownership.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @return true if an existing published entry was removed
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or entry ownership is inconsistent
+     */
     /* default */ boolean remove(CanonicalOperationId operationId) {
         return removeInternal(Objects.requireNonNull(operationId, "operationId"));
     }
 
+    /**
+     * Removes retained work ownership for a completed logical operation.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or entry ownership is inconsistent
+     */
     /* default */ void retire(CanonicalOperationId operationId) {
         removeInternal(Objects.requireNonNull(operationId, "operationId"));
     }
 
+    /**
+     * Prepares removal while keeping the published descriptor visible until the change is published.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @return owned prepared removal, or an inert change if no published entry exists
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or another change owns the entry
+     */
     /* default */ PreparedChange prepareRemove(CanonicalOperationId operationId) {
         Objects.requireNonNull(operationId, "operationId");
         writeLock.lock();
@@ -496,6 +731,13 @@ final class SigningDueWorkIndex implements AutoCloseable {
      * Pinned immutable selection ordered by time and admitted canonical identity.
      * Selection takes {@code O(log W + D)} time and returns {@code O(D)} memory,
      * where {@code W} is indexed work and {@code D} is the selection bound.
+     * @param cutoffInclusive inclusive next-eligible-time cutoff; must not be null
+     * @param maximumResults positive upper bound on returned descriptors
+     * @return owned immutable time-ordered selection with pinned descriptor generations; caller closes it
+     * @throws NullPointerException if cutoffInclusive is null
+     * @throws IllegalArgumentException if maximumResults is nonpositive
+     * @throws IllegalStateException if the index is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if selection workspace is unavailable
      */
     /* default */ Selection selectThrough(Instant cutoffInclusive, int maximumResults) {
         Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
@@ -553,6 +795,15 @@ final class SigningDueWorkIndex implements AutoCloseable {
      * {@code Theta(log W + D + D log(W / D))} time, returns {@code O(D)} immutable
      * memory, and uses {@code O(D + log W)} total auxiliary memory. An empty index
      * returns an empty page in constant time and memory.
+     * @param cutoffInclusive inclusive next-eligible-time cutoff; must not be null
+     * @param exclusiveCursor optional identity excluded from the next page; container must not be null
+     * @param inclusiveHighWatermark optional included upper identity bound; container must not be null
+     * @param maximumResults positive upper bound on returned descriptors
+     * @return owned identity-ordered page, high watermark, and end flag; caller closes it
+     * @throws NullPointerException if cutoff or an optional container is null
+     * @throws IllegalArgumentException if the limit or cursor encoding is invalid
+     * @throws IllegalStateException if the index is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if page workspace is unavailable
      */
     /* default */ IdentitySelection pageThrough(Instant cutoffInclusive,
             java.util.Optional<String> exclusiveCursor,
@@ -586,7 +837,10 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Nodes inspected by the last identity page, including its high-watermark search. */
+    /**
+     * Nodes inspected by the last identity page, including its high-watermark search.
+     * @return node visits from the most recent identity page, including its high-watermark search
+     */
     /* default */ long lastIdentityPageNodesVisited() {
         readLock.lock();
         try {
@@ -596,6 +850,14 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Tests whether the exact reused canonical identity has a published descriptor.
+     *
+     * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+     * @return true if the canonical identity currently owns a published descriptor
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if an equal identity was supplied as a different canonical object
+     */
     /* default */ boolean contains(CanonicalOperationId operationId) {
         Objects.requireNonNull(operationId, "operationId");
         readLock.lock();
@@ -608,6 +870,12 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes work-entry counts and tracked resident reservations under the index read lock.
+     *
+     * @return immutable entry, capacity, identity-byte, and reservation statistics
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ Statistics statistics() {
         readLock.lock();
         try {
@@ -619,6 +887,14 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Closes admission and releases published generation references and resident index workspace.
+     *
+     * <p>Deactivates all outstanding admission tokens and releases their reservations,
+     * then clears the due and identity maps. Repeated calls are no-ops. Borrowed budgets
+     * and the generation registry remain open; separately owned prepared changes and
+     * selection pins retain their own cleanup obligations.</p>
+     */
     @Override
     public void close() {
         writeLock.lock();
@@ -787,7 +1063,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         return slots;
     }
 
-    /** Stable fixed-width radix order; identity order breaks equal timestamps. */
+    /**
+     * Stable fixed-width radix order; identity order breaks equal timestamps.
+     */
     private static List<OperationSlot> orderRecoveryByDueTime(List<OperationSlot> identityOrdered) {
         OperationSlot[] ordered = identityOrdered.toArray(OperationSlot[]::new);
         OperationSlot[] scratch = new OperationSlot[ordered.length];
@@ -1029,7 +1307,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Opaque one-shot ownership of one not-yet-published due-work entry. */
+    /**
+     * Opaque one-shot ownership of one not-yet-published due-work entry.
+     */
     /* default */ final class Admission implements AutoCloseable {
         private final SigningDueWorkIndex owner = SigningDueWorkIndex.this;
         private final SigningIndexCapacityBudget.Reservation reservation;
@@ -1040,26 +1320,68 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.reservation = reservation;
         }
 
+        /**
+         * Binds this active unbound capacity reservation to the reusable canonical operation identity.
+         *
+         * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+         * @throws NullPointerException if operationId is null
+         * @throws IllegalStateException if closed or the reservation is inactive or already bound
+         */
         /* default */ void bind(CanonicalOperationId operationId) {
             bindAdmission(this, operationId);
         }
 
+        /**
+         * Releases this still-active admission and its reserved entry workspace exactly once.
+         *
+         * <p>Already consumed or closed admissions are no-ops. Closing this token does not
+         * remove a published descriptor or close the borrowed due index.</p>
+         */
         @Override
         public void close() {
             closeAdmission(this);
         }
     }
 
-    /** One decoded active state supplied in strict canonical-identity order. */
+    /**
+     * One decoded active state supplied in strict canonical-identity order.
+     * @param operationId exact signing operation identity
+     * @param nextEligibleAt authoritative next-eligible timestamp used for due ordering
+     * @param state closed lifecycle state
+     * @param pointer exact retained physical record pointer
+     * @param scheduling exact key and authority coordinates used for fair scheduling
+     * @param malformed whether retained state is malformed and requires guarded handling
+     */
     /* default */ record RecoveryEntry(CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state,
             SigningMvccIndex.RecordPointer pointer,
             SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) {
+        /**
+         * Creates a recovered work descriptor without optional scheduling coordinates.
+         *
+         * @param operationId canonical identity object reused for every reference to this logical operation; must not be null
+         * @param nextEligibleAt authoritative next-eligible instant; must not be null
+         * @param state signing workflow state; must not be null
+         * @param pointer exact physical workflow-state pointer; must not be null
+         * @param malformed whether the retained state must use guarded malformed handling
+         * @throws NullPointerException if a required descriptor component is null
+         */
         /* default */ RecoveryEntry(CanonicalOperationId operationId, Instant nextEligibleAt,
                 SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
                 boolean malformed) {
             this(operationId, nextEligibleAt, state, pointer, null, malformed);
         }
+        /**
+         * Creates one decoded active state supplied in strict canonical-identity order.
+         *
+         * @param operationId exact signing operation identity
+         * @param nextEligibleAt authoritative next-eligible timestamp used for due ordering
+         * @param state closed lifecycle state
+         * @param pointer exact retained physical record pointer
+         * @param scheduling exact key and authority coordinates used for fair scheduling
+         * @param malformed whether retained state is malformed and requires guarded handling
+         * @throws NullPointerException if {@code operationId} is null; or if {@code nextEligibleAt} is null; or if {@code state} is null; or if {@code pointer} is null
+         */
         RecoveryEntry {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(nextEligibleAt, "nextEligibleAt");
@@ -1072,7 +1394,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
             SigningIndexCapacityBudget.Reservation reservation) {
     }
 
-    /** One validated identity object reused by all lifecycle transitions. */
+    /**
+     * One validated identity object reused by all lifecycle transitions.
+     */
     /* default */ static final class CanonicalOperationId {
         private final String value;
         private final byte[] bytes;
@@ -1084,29 +1408,54 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.hashCode = Arrays.hashCode(bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean equals(Object other) {
             return this == other || other instanceof CanonicalOperationId operation
                     && Arrays.equals(bytes, operation.bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int hashCode() {
             return hashCode;
         }
 
+        /**
+         * Returns the validated canonical operation identity text.
+         *
+         * @return validated canonical operation identity text
+         */
         /* default */ String value() { return value; }
 
+        /**
+         * Measures the canonical identity object and owned encoded-byte storage.
+         *
+         * @return tracked shared identity reservation in bytes
+         */
         /* default */ long sharedResidentBytes() {
             return Math.addExact(160L, Math.multiplyExact(bytes.length, 2L));
         }
 
+        /**
+         * Compares canonical identities by unsigned strict-UTF-8 byte order.
+         *
+         * @param other canonical identity to compare; must not be null
+         * @return negative, zero, or positive according to unsigned encoded identity ordering
+         * @throws NullPointerException if other is null
+         */
         /* default */ int compareTo(CanonicalOperationId other) {
             return Arrays.compareUnsigned(bytes, other.bytes);
         }
     }
 
-    /** Allocation-free ordering key after admission. */
+    /**
+     * Allocation-free ordering key after admission.
+     */
     private static final class DueKey implements Comparable<DueKey> {
         private final Instant nextEligibleAt;
         private final CanonicalOperationId operationId;
@@ -1116,6 +1465,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.operationId = operationId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int compareTo(DueKey other) {
             int time = nextEligibleAt.compareTo(other.nextEligibleAt);
@@ -1124,7 +1476,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Stable operation-map slot allocated before its first publication. */
+    /**
+     * Stable operation-map slot allocated before its first publication.
+     */
     private static final class OperationSlot {
         private final CanonicalOperationId operationId;
         private DueKey published;
@@ -1136,7 +1490,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Mutable identity AVL node augmented with the subtree's earliest eligibility. */
+    /**
+     * Mutable identity AVL node augmented with the subtree's earliest eligibility.
+     */
     private static final class IdentityNode {
         private final OperationSlot operationSlot;
         private IdentityNode parent;
@@ -1162,13 +1518,17 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Hidden ordered slot whose pending descriptor is invisible to selection. */
+    /**
+     * Hidden ordered slot whose pending descriptor is invisible to selection.
+     */
     private static final class DescriptorSlot {
         private WorkDescriptor published;
         private WorkDescriptor pending;
     }
 
-    /** Read-only sorted view that lets {@link TreeMap} use its linear bulk builder. */
+    /**
+     * Read-only sorted view that lets {@link TreeMap} use its linear bulk builder.
+     */
     private static final class SortedRecoveryMap extends AbstractMap<DueKey, DescriptorSlot>
             implements SortedMap<DueKey, DescriptorSlot> {
         private final List<Map.Entry<DueKey, DescriptorSlot>> entries;
@@ -1178,18 +1538,39 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.entries = List.copyOf(entries);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Comparator<? super DueKey> comparator() { return null; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public DueKey firstKey() { return entries.getFirst().getKey(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public DueKey lastKey() { return entries.getLast().getKey(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public SortedMap<DueKey, DescriptorSlot> subMap(DueKey fromKey, DueKey toKey) {
             throw new UnsupportedOperationException("recovery map is a bulk-build view");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public SortedMap<DueKey, DescriptorSlot> headMap(DueKey toKey) {
             throw new UnsupportedOperationException("recovery map is a bulk-build view");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public SortedMap<DueKey, DescriptorSlot> tailMap(DueKey fromKey) {
             throw new UnsupportedOperationException("recovery map is a bulk-build view");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Set<Map.Entry<DueKey, DescriptorSlot>> entrySet() {
             return new AbstractSet<>() {
                 @Override public Iterator<Map.Entry<DueKey, DescriptorSlot>> iterator() {
@@ -1200,7 +1581,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Rollback-capable due projection prepared before WAL admission. */
+    /**
+     * Rollback-capable due projection prepared before WAL admission.
+     */
     /* default */ final class PreparedChange implements AutoCloseable {
         private final OperationSlot operationSlot;
         private final DueKey previousKey;
@@ -1238,6 +1621,14 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this(null, null, null, null, null, false, null, 0L, null, null);
         }
 
+        /**
+         * Publishes this prepared change and transfers its retained capacity and generation ownership.
+         *
+         * <p>An already inactive change is a no-op. A handoff publishes its donor removal
+         * before installing the receiver.</p>
+         *
+         * @throws IllegalStateException if the index is closed or prepared ownership is inconsistent
+         */
         /* default */ void publish() {
             writeLock.lock();
             try {
@@ -1290,6 +1681,12 @@ final class SigningDueWorkIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Rolls back the unpublished descriptor, pending identity slot, and any prepared handoff donor.
+         *
+         * <p>Releases owned generation references and workspace reservations. Published or
+         * already closed changes are no-ops; the due index remains open.</p>
+         */
         @Override public void close() {
             writeLock.lock();
             try {
@@ -1311,9 +1708,30 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Lightweight due-work coordinates retaining the exact signing-state record pointer.
+     *
+     * @param operationId exact signing operation identity
+     * @param nextEligibleAt authoritative next-eligible timestamp used for due ordering
+     * @param state closed lifecycle state
+     * @param pointer exact retained physical record pointer
+     * @param scheduling exact key and authority coordinates used for fair scheduling
+     * @param malformed whether retained state is malformed and requires guarded handling
+     */
     /* default */ record WorkDescriptor(String operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
             SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) {
+        /**
+         * Creates the lightweight due-work coordinates retaining the exact signing-state record pointer.
+         *
+         * @param operationId exact signing operation identity
+         * @param nextEligibleAt authoritative next-eligible timestamp used for due ordering
+         * @param state closed lifecycle state
+         * @param pointer exact retained physical record pointer
+         * @param scheduling exact key and authority coordinates used for fair scheduling
+         * @param malformed whether retained state is malformed and requires guarded handling
+         * @throws NullPointerException if {@code operationId} is null; or if {@code nextEligibleAt} is null; or if {@code state} is null; or if {@code pointer} is null
+         */
         WorkDescriptor {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(nextEligibleAt, "nextEligibleAt");
@@ -1322,7 +1740,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Immutable due records with deterministic generation-pin ownership. */
+    /**
+     * Immutable due records with deterministic generation-pin ownership.
+     */
     /* default */ static final class Selection implements AutoCloseable {
         private final List<WorkDescriptor> records;
         private final SigningGenerationRegistry.SnapshotPins pins;
@@ -1339,6 +1759,12 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.reservedBytes = reservedBytes;
         }
 
+        /**
+         * Returns immutable descriptors retained by the open selection.
+         *
+         * @return descriptor list valid while the owning selection retains its generation pins
+         * @throws IllegalStateException if the selection is closed
+         */
         /* default */ List<WorkDescriptor> records() {
             if (closed.get()) {
                 throw new IllegalStateException("signing due-work selection is closed");
@@ -1346,6 +1772,12 @@ final class SigningDueWorkIndex implements AutoCloseable {
             return records;
         }
 
+        /**
+         * Releases this selection's generation pins and resident selection reservation exactly once.
+         *
+         * <p>The borrowed index and generation registry remain open. Descriptors must no longer
+         * be used as pinned physical references after this selection closes.</p>
+         */
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
@@ -1355,7 +1787,9 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
-    /** Immutable identity-ordered due page with pinned descriptor generations. */
+    /**
+     * Immutable identity-ordered due page with pinned descriptor generations.
+     */
     /* default */ static final class IdentitySelection implements AutoCloseable {
         private final List<WorkDescriptor> records;
         private final java.util.Optional<String> highWatermark;
@@ -1377,14 +1811,32 @@ final class SigningDueWorkIndex implements AutoCloseable {
             this.reservedBytes = reservedBytes;
         }
 
+        /**
+         * Returns immutable descriptors retained by the open selection.
+         *
+         * @return descriptor list valid while the owning selection retains its generation pins
+         * @throws IllegalStateException if the selection is closed
+         */
         /* default */ List<WorkDescriptor> records() {
             requireOpen();
             return records;
         }
+        /**
+         * Returns the greatest eligible identity captured for this page.
+         *
+         * @return optional eligible high-watermark identity
+         * @throws IllegalStateException if the page is closed
+         */
         /* default */ java.util.Optional<String> highWatermark() {
             requireOpen();
             return highWatermark;
         }
+        /**
+         * Reports whether the page exhausted its eligible identity range.
+         *
+         * @return true if no additional eligible record remains within the captured range
+         * @throws IllegalStateException if the page is closed
+         */
         /* default */ boolean endReached() {
             requireOpen();
             return endReached;
@@ -1392,6 +1844,12 @@ final class SigningDueWorkIndex implements AutoCloseable {
         private void requireOpen() {
             if (closed.get()) throw new IllegalStateException("signing due-work page is closed");
         }
+        /**
+         * Releases this identity page's generation pins and resident page reservation exactly once.
+         *
+         * <p>The borrowed index, budget, and generation registry remain open. Page accessors
+         * reject use after closure.</p>
+         */
         @Override public void close() {
             if (closed.compareAndSet(false, true)) {
                 pins.close();
@@ -1400,6 +1858,17 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Due-work population and accounted resident memory counters.
+     *
+     * @param workCount ordered descriptor slots, including unpublished replacement keys
+     * @param maximumWork inclusive configured due-work count limit
+     * @param canonicalIdBytes accounted bytes of retained canonical operation identifiers
+     * @param estimatedResidentBytes estimated resident index memory in bytes
+     * @param reservedBytes current accounted reservation in bytes
+     * @param sharedReservedBytes current bytes reserved from the shared capacity budget
+     * @param admittedIdentities cumulative published identity insertions, seeded by the recovered population
+     */
     /* default */ record Statistics(int workCount, int maximumWork, long canonicalIdBytes,
             long estimatedResidentBytes, long reservedBytes,
             long sharedReservedBytes, long admittedIdentities) {

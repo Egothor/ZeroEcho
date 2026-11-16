@@ -60,6 +60,9 @@ public record RenewCommand(PkiId existingCredentialId, Optional<Validity> validi
      *
      * @throws IllegalArgumentException if inputs are invalid or optional container
      *                                  is null
+     * @param existingCredentialId credential id to renew
+     * @param validityOverride optional validity override (policy-validated)
+     * @param overrides universal attribute overrides (policy-validated; may be empty but not null)
      */
     public RenewCommand {
         if (existingCredentialId == null) {

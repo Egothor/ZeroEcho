@@ -53,7 +53,9 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Stable snapshot, lazy cursor, and bounded log-slice content lifecycles. */
+/**
+ * Stable snapshot, lazy cursor, and bounded log-slice content lifecycles.
+ */
 @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
 final class DurableMetadataSnapshotSupport {
     private static final String MAXIMUM_KEY = "~".repeat(MetadataKey.MAXIMUM_KEY_UTF8_BYTES);
@@ -66,6 +68,14 @@ final class DurableMetadataSnapshotSupport {
     private final MetadataStoreId storeId;
     private final SliceOpener sliceOpener;
 
+    /**
+     * Binds stable snapshot and child-stream ownership to one exact adapter lifecycle.
+     *
+     * @param engine borrowed authoritative engine supplying exact current-state snapshots
+     * @param lifecycle shared adapter lifecycle and exact child-resource registry
+     * @param storeId exact authoritative store identity
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ DurableMetadataSnapshotSupport(
             DurableMetadataStoreEngine engine,
             DurableMetadataAdapterLifecycle lifecycle,
@@ -73,6 +83,15 @@ final class DurableMetadataSnapshotSupport {
         this(engine, lifecycle, storeId, engine::openValueSlice);
     }
 
+    /**
+     * Binds stable snapshot and child-stream ownership to one exact adapter lifecycle.
+     *
+     * @param engine borrowed authoritative engine supplying exact current-state snapshots
+     * @param lifecycle shared adapter lifecycle and exact child-resource registry
+     * @param storeId exact authoritative store identity
+     * @param sliceOpener borrowed bounded-value stream opener used for snapshot record resources
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ DurableMetadataSnapshotSupport(
             DurableMetadataStoreEngine engine,
             DurableMetadataAdapterLifecycle lifecycle,
@@ -84,11 +103,20 @@ final class DurableMetadataSnapshotSupport {
         this.sliceOpener = Objects.requireNonNull(sliceOpener, "sliceOpener");
     }
 
+    /**
+     * Pins current state and registers the resulting snapshot with the exact adapter lifecycle.
+     *
+     * @return owned registered snapshot; caller closes it after all child readers finish
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if stable snapshot capture or lifecycle allocation fails
+     */
     /* default */ MetadataSnapshot open() throws IOException {
         return lifecycle.openManaged(() -> new SnapshotImpl(engine.snapshotState()));
     }
 
-    /** Finite immutable snapshot metadata; no payload byte is copied. */
+    /**
+     * Finite immutable snapshot metadata; no payload byte is copied.
+     */
     private final class SnapshotImpl
             implements MetadataSnapshot, DurableMetadataAdapterLifecycle.ManagedResource {
         private final long revision;
@@ -108,18 +136,27 @@ final class DurableMetadataSnapshotSupport {
             release = captured.release();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public MetadataStoreId storeId() {
             requireOpen();
             return storeId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long revision() {
             requireOpen();
             return revision;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<MetadataSnapshot.Record> get(MetadataKey key) {
             Objects.requireNonNull(key, "key");
@@ -135,6 +172,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<MetadataKey> greatestKey(String namespace) {
             MetadataKey upper = new MetadataKey(namespace, MAXIMUM_KEY);
@@ -151,6 +191,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public MetadataCursor scan(KeyRange range, CancellationSignal cancellation)
                 throws IOException {
@@ -169,6 +212,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             IOException failure = forceClose();
@@ -178,6 +224,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public IOException forceClose() {
             List<CursorImpl> cursors;
@@ -260,7 +309,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
-        /** Cursor retains only one map iterator and one current record. */
+        /**
+         * Cursor retains only one map iterator and one current record.
+         */
         private final class CursorImpl implements MetadataCursor {
             private final KeyRange range;
             private final Iterator<Map.Entry<MetadataKey, MetadataStateIndex.CurrentRecord>> iterator;
@@ -275,6 +326,9 @@ final class DurableMetadataSnapshotSupport {
                 this.iterator = iterator;
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public Optional<MetadataSnapshot.Record> next(CancellationSignal cancellation)
                     throws IOException {
@@ -313,6 +367,9 @@ final class DurableMetadataSnapshotSupport {
                 }
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void close() {
                 IOException failure = forceClose();
@@ -364,7 +421,9 @@ final class DurableMetadataSnapshotSupport {
             }
         }
 
-        /** Snapshot record whose streams are closed at the snapshot boundary. */
+        /**
+         * Snapshot record whose streams are closed at the snapshot boundary.
+         */
         private final class RecordImpl implements MetadataSnapshot.Record {
             private final RecordMetadata metadata;
             private final Set<OwnedInputStream> streams =
@@ -376,42 +435,63 @@ final class DurableMetadataSnapshotSupport {
                 this.metadata = metadata;
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public MetadataKey key() {
                 requireRecordOpen();
                 return metadata.key();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public long recordRevision() {
                 requireRecordOpen();
                 return metadata.revision();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public long commitRevision() {
                 requireRecordOpen();
                 return metadata.revision();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public Optional<Integrity> integrity() {
                 requireRecordOpen();
                 return Optional.empty();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public InputStream openStream() throws IOException {
                 requireRecordOpen();
                 return SnapshotImpl.this.openStream(this);
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public OptionalLong length() {
                 requireRecordOpen();
                 return OptionalLong.of(metadata.valueLength());
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public String contentId() {
                 requireRecordOpen();
@@ -419,6 +499,9 @@ final class DurableMetadataSnapshotSupport {
                         + ':' + metadata.key().canonical() + ':' + metadata.revision();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void close() throws IOException {
                 List<OwnedInputStream> detached;
@@ -488,7 +571,9 @@ final class DurableMetadataSnapshotSupport {
             return failure;
         }
 
-        /** Bounded reader invalidated with its owning record. */
+        /**
+         * Bounded reader invalidated with its owning record.
+         */
         private final class OwnedInputStream extends InputStream {
             private final RecordImpl owner;
             private final InputStream delegate;
@@ -500,18 +585,27 @@ final class DurableMetadataSnapshotSupport {
                 this.delegate = delegate;
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public int read() throws IOException {
                 requireStreamOpen();
                 return delegate.read();
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public int read(byte[] target, int offset, int length) throws IOException {
                 requireStreamOpen();
                 return delegate.read(target, offset, length);
             }
 
+            /**
+             * {@inheritDoc}
+             */
             @Override
             public void close() throws IOException {
                 if (streamClosed) {
@@ -558,7 +652,9 @@ final class DurableMetadataSnapshotSupport {
         }
     }
 
-    /** Narrow record-slice seam used to verify child-resource cleanup. */
+    /**
+     * Narrow record-slice seam used to verify child-resource cleanup.
+     */
     /* default */
     @FunctionalInterface
     interface SliceOpener {
@@ -573,7 +669,9 @@ final class DurableMetadataSnapshotSupport {
         InputStream open(long offset, long length) throws IOException;
     }
 
-    /** Finite immutable durable value location. */
+    /**
+     * Finite immutable durable value location.
+     */
     private record RecordMetadata(
             MetadataKey key, long revision, long valueOffset, long valueLength) {
         private RecordMetadata(MetadataStateIndex.CurrentRecord record) {

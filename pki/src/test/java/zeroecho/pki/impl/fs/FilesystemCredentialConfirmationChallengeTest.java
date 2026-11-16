@@ -72,6 +72,9 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 
+/**
+ * Contract and regression tests for filesystem credential confirmation challenge.
+ */
 class FilesystemCredentialConfirmationChallengeTest {
     private static final Clock CLOCK = Clock.fixed(Instant.EPOCH.plusSeconds(60L), ZoneOffset.UTC);
     private static final Instant ISSUED_AT = Instant.EPOCH.plusSeconds(30L);
@@ -83,6 +86,11 @@ class FilesystemCredentialConfirmationChallengeTest {
     @TempDir
     private java.nio.file.Path temporary;
 
+    /**
+     * Gets issues replays live record and replaces at exact expiry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void getsIssuesReplaysLiveRecordAndReplacesAtExactExpiry() throws Exception {
         MutableClock clock = new MutableClock(Instant.EPOCH.plusSeconds(60L));
@@ -120,6 +128,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Completes atomically deletes derived records and replays terminal without clock.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void completesAtomicallyDeletesDerivedRecordsAndReplaysTerminalWithoutClock() throws Exception {
         MutableClock clock = new MutableClock(Instant.EPOCH.plusSeconds(60L));
@@ -153,6 +166,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects missing backdated expired and rotated challenge without partial mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsMissingBackdatedExpiredAndRotatedChallengeWithoutPartialMutation() throws Exception {
         MutableClock clock = new MutableClock(Instant.EPOCH.plusSeconds(60L));
@@ -184,6 +202,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects completion after credential expiry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsCompletionAfterCredentialExpiry() throws Exception {
         MutableClock clock = new MutableClock(Instant.EPOCH.plusSeconds(60L));
@@ -201,6 +224,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects realm audience and suite binding mismatch while live and expired.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsRealmAudienceAndSuiteBindingMismatchWhileLiveAndExpired() throws Exception {
         MutableClock clock = new MutableClock(Instant.EPOCH.plusSeconds(60L));
@@ -228,6 +256,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Concurrent issuance serializes to one exact record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentIssuanceSerializesToOneExactRecord() throws Exception {
         try (FilesystemPkiStore store = open("concurrent")) {
@@ -257,6 +290,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Reopens canonical pending challenge including expired record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopensCanonicalPendingChallengeIncludingExpiredRecord() throws Exception {
         java.nio.file.Path root = temporary.resolve("reopen");
@@ -272,6 +310,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects corrupt challenge at startup.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsCorruptChallengeAtStartup() throws Exception {
         java.nio.file.Path root = temporary.resolve("corrupt");
@@ -285,6 +328,11 @@ class FilesystemCredentialConfirmationChallengeTest {
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK));
     }
 
+    /**
+     * Rejects challenge stored under another canonical key at startup.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsChallengeStoredUnderAnotherCanonicalKeyAtStartup() throws Exception {
         java.nio.file.Path root = temporary.resolve("wrong-key");
@@ -301,6 +349,11 @@ class FilesystemCredentialConfirmationChallengeTest {
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK));
     }
 
+    /**
+     * Rejects canonical challenge whose frozen lifecycle binding differs at startup.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsCanonicalChallengeWhoseFrozenLifecycleBindingDiffersAtStartup() throws Exception {
         java.nio.file.Path root = temporary.resolve("mismatched-lifecycle-binding");
@@ -324,6 +377,11 @@ class FilesystemCredentialConfirmationChallengeTest {
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK));
     }
 
+    /**
+     * Wrong pending lifecycle commitment leaves all three records usable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void wrongPendingLifecycleCommitmentLeavesAllThreeRecordsUsable() throws Exception {
         try (FilesystemPkiStore store = open("wrong-pending-commitment")) {
@@ -351,6 +409,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects challenge whose lifecycle is no longer pending at startup.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsChallengeWhoseLifecycleIsNoLongerPendingAtStartup() throws Exception {
         java.nio.file.Path root = temporary.resolve("non-pending");
@@ -369,6 +432,11 @@ class FilesystemCredentialConfirmationChallengeTest {
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK));
     }
 
+    /**
+     * Accepts TTL ending at maximum supported epoch second.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptsTtlEndingAtMaximumSupportedEpochSecond() throws Exception {
         Instant maximum = Instant.ofEpochSecond(MAXIMUM_CONFIRMATION_EPOCH_SECOND);
@@ -387,6 +455,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects expiry beyond maximum without persisting challenge.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsExpiryBeyondMaximumWithoutPersistingChallenge() throws Exception {
         Instant maximum = Instant.ofEpochSecond(MAXIMUM_CONFIRMATION_EPOCH_SECOND);
@@ -401,6 +474,11 @@ class FilesystemCredentialConfirmationChallengeTest {
         }
     }
 
+    /**
+     * Rejects clock before epoch without persisting challenge.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsClockBeforeEpochWithoutPersistingChallenge() throws Exception {
         Instant observation = Instant.ofEpochSecond(-1L);

@@ -50,9 +50,20 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
+/**
+ * Checks one-time administrator bootstrap and explicit initial identity/capability prerequisites.
+ */
 class PkiAdminBootstrapTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks explicit root capability permits the designated administrator own-decision without changing requester-separation policy for ordinary users.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void onlyDesignatedRootCanDecideOwnRequestWhilePolicyRemainsSeparated() throws Exception {
         var configuration = configuration();
@@ -72,6 +83,11 @@ class PkiAdminBootstrapTest {
         }
     }
 
+    /**
+     * Checks bootstrap users receive realm-read authority while the forwarding proxy remains excluded.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void initialUsersCanInspectRealmButProxyCannot() throws Exception {
         var configuration = configuration();
@@ -89,6 +105,11 @@ class PkiAdminBootstrapTest {
         }
     }
 
+    /**
+     * Checks durable user/service identity categories, explicit bootstrap grants and the proxy single forwarding permission.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void createsPersistedAdministratorsAndOnlyForwardPermissionForProxy() throws Exception {
         var configuration = configuration();
@@ -134,6 +155,11 @@ class PkiAdminBootstrapTest {
         assertArrayEquals(original, Files.readAllBytes(configuration.realm().controlLogPath()));
     }
 
+    /**
+     * Checks unmapped or duplicated bootstrap principals fail before any control log is created.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsMismatchedIdentityAndDuplicateIdentityBeforeStateCreation() throws Exception {
         var configuration = configuration();
@@ -144,6 +170,11 @@ class PkiAdminBootstrapTest {
         assertFalse(Files.exists(configuration.realm().controlLogPath()));
     }
 
+    /**
+     * Checks even an empty pre-existing control log or initialized PKI state prevents fresh bootstrap.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void refusesExistingEmptyControlLogAndExistingPkiState() throws Exception {
         var configuration = configuration();
@@ -158,6 +189,11 @@ class PkiAdminBootstrapTest {
                 "administrator", "approver", "trusted-proxy"));
     }
 
+    /**
+     * Checks a durable bootstrap reservation prevents retry after partial initialization without creating a new control log.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void retainsReservationAndRefusesPartialBootstrapRetry() throws Exception {
         var configuration = configuration();
@@ -168,6 +204,11 @@ class PkiAdminBootstrapTest {
         assertFalse(Files.exists(control));
     }
 
+    /**
+     * Checks administrator and separate approver cannot share the same certificate mapping.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsSameCertificateForAdminAndApprover() throws Exception {
         var source = configuration();
@@ -183,6 +224,9 @@ class PkiAdminBootstrapTest {
         assertFalse(Files.exists(configuration.realm().controlLogPath()));
     }
 
+    /**
+     * Checks successful help and input-refusal exit codes for missing, unknown or repeated CLI options.
+     */
     @Test
     void cliRejectsUnknownAndRepeatedOptionsAndOffersHelp() {
         assertEquals(0, PkiAdminBootstrap.run(new String[] {"--help"}));
@@ -193,6 +237,13 @@ class PkiAdminBootstrapTest {
 
     private PkiServerConfiguration configuration() throws Exception { return configuration(directory); }
 
+    /**
+     * Builds isolated direct/proxy TLS configuration for original-bootstrap identity scenarios.
+     *
+     * @param directory isolated realm/control fixture directory
+     * @return immutable configuration with explicit administrator, approver and proxy mappings
+     * @throws Exception if TLS certificate or server configuration setup fails
+     */
     static PkiServerConfiguration configuration(Path directory) throws Exception {
         var tls = HttpServerTestSupport.tls();
         var source = HttpServerTestSupport.proxyConfiguration(directory, tls, ForwardedCertificateFormat.RFC9440);

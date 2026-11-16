@@ -34,9 +34,17 @@
 
 package zeroecho.pki.api.signing;
 
-/** Authoritative resolution of a possibly uncertain acceptance. */
+/**
+ * Authoritative resolution of a possibly uncertain acceptance.
+ */
 public enum SigningAcceptanceResolution {
-    /** Exact acceptance is durable. */ MATCHED,
-    /** The operation exists with different immutable input. */ CONFLICT,
-    /** No retained acceptance exists. */ NOT_ACCEPTED
+    /**
+     * Exact acceptance is durable.
+     */ MATCHED,
+    /**
+     * The operation exists with different immutable input.
+     */ CONFLICT,
+    /**
+     * No retained acceptance exists.
+     */ NOT_ACCEPTED
 }

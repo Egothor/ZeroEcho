@@ -73,7 +73,9 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pkix.Pkix;
 
-/** Streams one full CRL in O(B) I/O and bounded heap, except pure EdDSA provider buffering. */
+/**
+ * Streams one full CRL in O(B) I/O and bounded heap, except pure EdDSA provider buffering.
+ */
 final class FullCrlContinuationPublisher {
     private static final int MAXIMUM_SIGNATURE_BYTES = 1_048_576;
     private static final AttributeId COMMAND = new AttributeId("zeroecho.pki.full-crl.command-sha256");
@@ -81,12 +83,28 @@ final class FullCrlContinuationPublisher {
     private final X509BindingCatalog bindings;
     private final long pureEdDsaMaximumTbsBytes;
 
+    /**
+     * Creates a streaming CRL publisher with a finite pure-EdDSA buffering limit.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param bindings borrowed immutable X.509 binding catalogue
+     * @param maximum maximum pure-EdDSA TBS message length in bytes
+     */
     /* default */ FullCrlContinuationPublisher(PkiStore store, X509BindingCatalog bindings, long maximum) {
         this.store = store;
         this.bindings = bindings;
         this.pureEdDsaMaximumTbsBytes = maximum;
     }
 
+    /**
+     * Assembles, verifies, and idempotently publishes a full or delta CRL from retained signing output.
+     *
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param signature completed bounded binary signature result; must not be null
+     * @return bounded encoded publication result
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     * @throws zeroecho.pki.api.PkiException if content or metadata persistence fails
+     */
     /* default */ EncodedObject publish(DomainContinuationStore.Record domain, EncodedObject signature) {
         DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(new DomainContinuationTemplate(
                 domain.kind(), domain.correlationId(), domain.command(), domain.commandCommitment()));
@@ -129,6 +147,17 @@ final class FullCrlContinuationPublisher {
         }
     }
 
+    /**
+     * Verifies captured parent/child bindings and publishes the completed hybrid CRL.
+     *
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param execution captured hybrid execution linking parent and native child
+     * @param parent retained alternative-signature parent workflow
+     * @param child completed native-signature child workflow
+     * @return encoded hybrid CRL publication result
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     * @throws PkiException if hybrid signatures, content processing or finite admission validation fails
+     */
     /* default */ EncodedObject publishHybrid(DomainContinuationStore.Record domain,
             zeroecho.pki.spi.store.CrlHybridExecution execution, zeroecho.pki.spi.store.SignWorkflowStore.Workflow parent,
             zeroecho.pki.spi.store.SignWorkflowStore.Workflow child) {
@@ -306,10 +335,31 @@ final class FullCrlContinuationPublisher {
         }
     }
 
+    /**
+     * Reconstructs deterministic status metadata from the frozen CRL command and provenance.
+     *
+     * @param id deterministic status-object identity
+     * @param content durable content reference selected for publication
+     * @param domain frozen durable domain continuation record; must not be null
+     * @return status object referencing the completed persisted content
+     * @throws NullPointerException if a hybrid command has no signer lineage
+     * @throws IllegalArgumentException if command or provenance fields are malformed
+     */
     /* default */ static StatusObject status(PkiId id, DurableContentReference content, DomainContinuationStore.Record domain) {
         return status(id, content, domain, null);
     }
 
+    /**
+     * Reconstructs deterministic status metadata from the frozen CRL command and provenance.
+     *
+     * @param id deterministic status-object identity
+     * @param content durable content reference selected for publication
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param lineage native signer lineage; required for hybrid CRLs and otherwise unused
+     * @return status object referencing the completed persisted content
+     * @throws NullPointerException if a hybrid command has no signer lineage
+     * @throws IllegalArgumentException if command or provenance fields are malformed
+     */
     /* default */ static StatusObject status(PkiId id, DurableContentReference content, DomainContinuationStore.Record domain, PkiId lineage) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
         var attributes = SimpleAttributeSet.builder().put(COMMAND, new AttributeValue.StringValue(domain.commandCommitment()))
@@ -328,6 +378,14 @@ final class FullCrlContinuationPublisher {
                 Instant.parse(command.field(3)), Optional.of(Instant.parse(command.field(4))), content, attributes.build());
     }
 
+    /**
+     * Requires a stored status object to match the frozen command, provenance, and expected content.
+     *
+     * @param actual stored status object selected by deterministic identity
+     * @param domain frozen durable domain continuation record; must not be null
+     * @param expectedContent exact expected content reference
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ static void requirePublished(StatusObject actual, DomainContinuationStore.Record domain,
             DurableContentReference expectedContent) {
         DurableContentReference content = actual.content();

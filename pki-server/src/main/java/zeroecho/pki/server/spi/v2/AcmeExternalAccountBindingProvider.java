@@ -82,7 +82,19 @@ public interface AcmeExternalAccountBindingProvider {
      */
     record Request(String directoryId, PkiId authorityId, String profileId,
             String accountKeyThumbprint, byte[] nestedJws, Instant now) {
-        /** Defensively snapshots non-secret protocol material. */
+        /**
+         * Defensively snapshots non-secret protocol material.
+         * @param directoryId directory receiving the account request
+         * @param authorityId authority to which the account will be bound
+         * @param profileId requested issuance profile
+         * @param accountKeyThumbprint lowercase SHA-256 account-key commitment
+         * @param nestedJws bounded nested EAB JWS; defensively copied
+         * @param now authoritative verification time
+         * @throws NullPointerException if any of {@code authorityId}, {@code nestedJws}, {@code now} is null
+         * @throws IllegalArgumentException if the directory identity is invalid or the profile identity is
+         *         invalid or the account commitment is noncanonical or the external-account document exceeds
+         *         its supported byte bound
+         */
         public Request {
             if (directoryId == null || directoryId.isBlank()) { throw new IllegalArgumentException("Invalid directory identity"); }
             Objects.requireNonNull(authorityId, "authorityId");
@@ -99,7 +111,11 @@ public interface AcmeExternalAccountBindingProvider {
          */
         @Override public byte[] nestedJws() { return nestedJws.clone(); }
 
-        /** Returns a redacted diagnostic without account or JWS material. */
+        /**
+         * Returns a redacted diagnostic without account or JWS material.
+         *
+         * @return fixed redacted external-account-request label
+         */
         @Override public String toString() { return "AcmeExternalAccountRequest[redacted]"; }
     }
 
@@ -114,7 +130,18 @@ public interface AcmeExternalAccountBindingProvider {
      */
     record Binding(String keyId, String policyCommitment, Set<String> dnsNamespaces,
             Instant expiresAt, boolean consumed) {
-        /** Validates complete EAB policy binding. */
+        /**
+         * Validates complete EAB policy binding.
+         * @param keyId stable external-account key identity
+         * @param policyCommitment lowercase SHA-256 policy commitment
+         * @param dnsNamespaces immutable DNS namespaces authorized by the binding
+         * @param expiresAt binding expiry
+         * @param consumed whether the provider atomically consumed a one-time binding
+         * @throws NullPointerException if any of {@code dnsNamespaces}, {@code expiresAt} is null
+         * @throws IllegalArgumentException if the external-account key identity is invalid or the
+         *         external-account policy commitment is noncanonical or the external-account DNS namespace
+         *         policy is invalid
+         */
         public Binding {
             if (keyId == null || keyId.isBlank() || keyId.length() > 128) { throw new IllegalArgumentException("Invalid EAB key identity"); }
             if (policyCommitment == null || !policyCommitment.matches("[0-9a-f]{64}")) { throw new IllegalArgumentException("Invalid EAB policy commitment"); }

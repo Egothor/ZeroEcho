@@ -183,6 +183,9 @@ public class XdhPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -196,6 +199,9 @@ public class XdhPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();

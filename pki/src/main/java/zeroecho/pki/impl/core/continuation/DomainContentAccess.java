@@ -47,15 +47,34 @@ import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Performs bounded durable content reads, publication staging, and failed-publication cleanup. */
+/**
+ * Performs bounded durable content reads, publication staging, and failed-publication cleanup.
+ */
 final class DomainContentAccess {
     private static final int MAXIMUM_CONTENT_BYTES = 1_048_576;
     private final PkiStore store;
 
+    /**
+     * Creates a bounded content adapter borrowing the supplied store.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @throws NullPointerException if store is null
+     */
     /* default */ DomainContentAccess(PkiStore store) {
         this.store = Objects.requireNonNull(store, "store");
     }
 
+    /**
+     * Reads exactly the declared positive content length, bounded to one MiB.
+     *
+     * <p>Closes both read handles and clears the allocated buffer on failure. The caller
+     * owns the successful returned buffer.</p>
+     *
+     * @param reference durable content reference with its expected length and digest
+     * @param invalidCode stable postcondition failure code; must not be null
+     * @return independently owned complete content bytes
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ byte[] materialize(DurableContentReference reference, String invalidCode) {
         if (reference.length() <= 0L || reference.length() > MAXIMUM_CONTENT_BYTES) {
             throw new DomainContinuationPublisher.PostconditionFailure(invalidCode);
@@ -76,6 +95,13 @@ final class DomainContentAccess {
         return bytes;
     }
 
+    /**
+     * Stages and completes a persisted-lifecycle DER object, closing the owned sink.
+     *
+     * @param bytes encoded content bytes borrowed for this call; must not be null
+     * @return completed durable reference ready for a published object to own
+     * @throws PkiException if staging, writing, or sink completion fails
+     */
     /* default */ DurableContentReference persist(byte[] bytes) {
         try (ContentSink sink = store.stagedContent().beginContent(Encoding.DER,
                 DurableContentReference.Lifecycle.PERSISTED); OutputStream output = sink.outputStream()) {
@@ -86,6 +112,14 @@ final class DomainContentAccess {
         }
     }
 
+    /**
+     * Requires metadata digest agreement and constant-time equality of the complete content.
+     *
+     * @param reference durable content reference with its expected length and digest
+     * @param expected exact expected bytes borrowed for comparison; must not be null
+     * @param invalidCode stable postcondition failure code; must not be null
+     * @throws DomainContinuationPublisher.PostconditionFailure if frozen content or result postconditions differ
+     */
     /* default */ void requireExact(DurableContentReference reference, byte[] expected,
             String invalidCode) {
         if (reference.length() != expected.length
@@ -102,6 +136,13 @@ final class DomainContentAccess {
         }
     }
 
+    /**
+     * Retires an unowned content reference unless publication already transferred ownership.
+     *
+     * @param content durable content reference selected for publication
+     * @param published whether a durable published object already owns the content
+     * @throws PkiException if retiring unpublished content fails
+     */
     /* default */ void releaseUnlessPublished(DurableContentReference content, boolean published) {
         if (published) {
             return;

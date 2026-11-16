@@ -46,13 +46,24 @@ import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Deterministic safe renderer for a remote admin-API operation outcome. */
+/**
+ * Deterministic renderer of already classified remote admin-API outcomes.
+ *
+ * <p>This adapter performs no additional field redaction or authentication. It
+ * relies on the transport's safe projection and must not be used as a general
+ * renderer for arbitrary secret-bearing response data.</p>
+ */
 final class PkiRemoteReporter {
 
     private static final JsonFactory JSON_FACTORY = JsonFactory.builder().build();
 
     /**
      * Renders one terminal (or wait-exhausted) remote result.
+     *
+     * <p>The caller owns the output, which is flushed but not closed. JSON is built
+     * in memory before it is written; human output uses a PrintWriter whose I/O
+     * error flag is not inspected here. Rendering does not poll or recover an
+     * uncertain backend operation.</p>
      *
      * @param result remote result
      * @param mode selected output representation

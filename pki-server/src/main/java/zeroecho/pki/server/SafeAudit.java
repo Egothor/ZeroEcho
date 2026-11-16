@@ -45,17 +45,37 @@ import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.server.jfr.AuditWriteEvent;
 
-/** Package-private safe server audit producer. */
+/**
+ * Package-private safe server audit producer.
+ */
 @SuppressWarnings("PMD.CommentDefaultAccessModifier")
 final class SafeAudit {
     private final Clock clock;
     private final AuditSink sink;
 
+    /**
+     * Creates a best-effort safe server-security event producer.
+     *
+     * @param clock authoritative event timestamp source
+     * @param sink destination server-security audit sink
+     * @throws NullPointerException if a collaborator is null
+     */
     SafeAudit(Clock clock, AuditSink sink) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.sink = Objects.requireNonNull(sink, "sink");
     }
 
+    /**
+     * Attempts one safe server-security event and associated JFR timing observation.
+     *
+     * <p>Runtime failures are suppressed so immediate telemetry cannot replace or block
+     * authoritative state changes. Callers must supply only safe, bounded public metadata.</p>
+     *
+     * @param action stable security action classification
+     * @param principalId safe principal identity
+     * @param objectId optional public object identity
+     * @param details safe event detail map, copied before delivery
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink defines RuntimeException as its failure boundary.
     void record(String action, String principalId, Optional<PkiId> objectId, Map<String, String> details) {
         AuditWriteEvent jfrEvent = new AuditWriteEvent();

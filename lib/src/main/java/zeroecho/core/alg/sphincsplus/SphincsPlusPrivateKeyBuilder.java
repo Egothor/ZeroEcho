@@ -70,7 +70,9 @@ import zeroecho.core.spi.PrivateKeyImporter;
  */
 public final class SphincsPlusPrivateKeyBuilder implements PrivateKeyImporter<SphincsPlusPrivateKeySpec> {
 
-    /** Creates a stateless SPHINCS+ private-key importer. */
+    /**
+     * Creates a stateless SPHINCS+ private-key importer.
+     */
     public SphincsPlusPrivateKeyBuilder() {
         // Stateless importer.
     }

@@ -95,11 +95,17 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
      * Hash function families supported by SPHINCS+.
      */
     public enum Hash {
-        /** SHA-2 based instantiation. */
+        /**
+         * SHA-2 based instantiation.
+         */
         SHA2,
-        /** SHAKE (SHA-3 XOF) based instantiation. */
+        /**
+         * SHAKE (SHA-3 XOF) based instantiation.
+         */
         SHAKE,
-        /** Haraka (AES-based permutation) instantiation. */
+        /**
+         * Haraka (AES-based permutation) instantiation.
+         */
         HARAKA
     }
 
@@ -108,16 +114,29 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
      * gives the claimed classical security level.
      */
     public enum Security {
-        /** NIST Level 1 (~128-bit security). */
+        /**
+         * NIST Level 1 (~128-bit security).
+         */
         L1_128(128),
-        /** NIST Level 3 (~192-bit security). */
+        /**
+         * NIST Level 3 (~192-bit security).
+         */
         L3_192(192),
-        /** NIST Level 5 (~256-bit security). */
+        /**
+         * NIST Level 5 (~256-bit security).
+         */
         L5_256(256);
 
-        /** Claimed security level in bits. */
+        /**
+         * Claimed security level in bits.
+         */
         public final int bits;
 
+        /**
+         * Retains the security strength associated with this level.
+         *
+         * @param b security strength in bits
+         */
         Security(int b) {
             bits = b;
         }
@@ -133,9 +152,13 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
      * </p>
      */
     public enum Variant {
-        /** Larger, faster signatures. */
+        /**
+         * Larger, faster signatures.
+         */
         FAST,
-        /** Smaller, slower signatures. */
+        /**
+         * Smaller, slower signatures.
+         */
         SMALL
     } // f vs s (speed vs signature size), same security
 
@@ -144,9 +167,13 @@ public final class SphincsPlusKeyGenSpec implements AlgorithmKeySpec {
      * as pure SLH-DSA; ROBUST is retained for source compatibility and rejected.
      */
     public enum Mode {
-        /** Legacy construction; rejected by the current SLH-DSA binding. */
+        /**
+         * Legacy construction; rejected by the current SLH-DSA binding.
+         */
         ROBUST,
-        /** Selects the current pure SLH-DSA compatibility binding. */
+        /**
+         * Selects the current pure SLH-DSA compatibility binding.
+         */
         SIMPLE
     } // ROBUST = conservative
 

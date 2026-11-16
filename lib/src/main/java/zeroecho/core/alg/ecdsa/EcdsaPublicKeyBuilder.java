@@ -72,7 +72,9 @@ import zeroecho.core.spi.PublicKeyImporter;
  */
 public final class EcdsaPublicKeyBuilder implements PublicKeyImporter<EcdsaPublicKeySpec> {
 
-    /** Creates a stateless X.509 EC public-key importer. */
+    /**
+     * Creates a stateless X.509 EC public-key importer.
+     */
     public EcdsaPublicKeyBuilder() {
         // Stateless importer.
     }

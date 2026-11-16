@@ -58,6 +58,11 @@ import zeroecho.core.context.MessageAgreementContext;
  */
 class HybridKexFrameCodecTest {
 
+    /**
+     * Accepts zero length components.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void acceptsZeroLengthComponents() throws Exception {
         String name = start("acceptsZeroLengthComponents");
@@ -71,6 +76,11 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Accepts inclusive maximum frame.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void acceptsInclusiveMaximumFrame() throws Exception {
         String name = start("acceptsInclusiveMaximumFrame");
@@ -83,6 +93,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Rejects oversized encoding.
+     */
     @Test
     void rejectsOversizedEncoding() {
         String name = start("rejectsOversizedEncoding");
@@ -93,6 +106,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Rejects malformed frames.
+     */
     @Test
     void rejectsMalformedFrames() {
         String name = start("rejectsMalformedFrames");
@@ -107,6 +123,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Public API maps malformed frame.
+     */
     @Test
     void publicApiMapsMalformedFrame() {
         String name = start("publicApiMapsMalformedFrame");
@@ -123,6 +142,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Clears component secrets after successful derivation.
+     */
     @Test
     void clearsComponentSecretsAfterSuccessfulDerivation() {
         String name = start("clearsComponentSecretsAfterSuccessfulDerivation");
@@ -143,6 +165,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Clears classic secret when second leg fails.
+     */
     @Test
     void clearsClassicSecretWhenSecondLegFails() {
         String name = start("clearsClassicSecretWhenSecondLegFails");
@@ -160,6 +185,9 @@ class HybridKexFrameCodecTest {
         ok(name);
     }
 
+    /**
+     * Clears all temporary secrets when KDF fails.
+     */
     @Test
     void clearsAllTemporarySecretsWhenKdfFails() {
         String name = start("clearsAllTemporarySecretsWhenKdfFails");

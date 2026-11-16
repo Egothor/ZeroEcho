@@ -75,8 +75,9 @@ import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
-/** Single exact-path HTTPS adapter; all PKI execution delegates to the gateway. */
-@SuppressWarnings("PMD")
+/**
+ * Single exact-path HTTPS adapter; all PKI execution delegates to the gateway.
+ */
 final class AdminHttpHandler implements HttpHandler {
     private static final String JSON = "application/json; charset=utf-8";
     private final PkiServerConfiguration configuration;
@@ -87,6 +88,17 @@ final class AdminHttpHandler implements HttpHandler {
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
+    /**
+     * Composes the administrative HTTP boundary from borrowed realm and execution services.
+     *
+     * @param configuration listener limits and exposure policy
+     * @param realm lifecycle-owned realm context
+     * @param authenticator transport identity authenticator
+     * @param runtime lifecycle-owned admission and operation execution owner
+     * @param clock deadline and audit time source
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     */
     AdminHttpHandler(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, ServerRuntime runtime, Clock clock,
             RequestIds requestIds, BooleanSupplier ready) {
@@ -99,6 +111,9 @@ final class AdminHttpHandler implements HttpHandler {
         this.ready = ready;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         if (exchange.getRequestURI().getPath().startsWith("/admin/")) realm.recordAdminRequest();
@@ -360,6 +375,14 @@ final class AdminHttpHandler implements HttpHandler {
         }
     }
 
+    /**
+     * Observes a signing operation only after authorizing its exact authoritative scope.
+     *
+     * @param requestId transport correlation identity
+     * @param principalId authenticated principal requesting observation
+     * @param signingId retained signing-operation identity
+     * @return current outcome, or an indistinguishable not-found response for absent/unauthorized operations
+     */
     /* default */ HttpResponses.Response signingOperation(String requestId, String principalId, String signingId) {
         try {
             zeroecho.pki.api.SemanticSigningService service = realm.session().semanticSigning().orElseThrow();

@@ -56,16 +56,24 @@ import zeroecho.pki.spi.audit.AuditSinkProvider;
 public class FileAuditSinkProvider implements AuditSinkProvider {
     private static final Logger LOG = Logger.getLogger(FileAuditSinkProvider.class.getName());
 
-    /** Creates a file-backed audit-sink provider descriptor. */
+    /**
+     * Creates a file-backed audit-sink provider descriptor.
+     */
     public FileAuditSinkProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "file";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of("root");
@@ -90,6 +98,9 @@ public class FileAuditSinkProvider implements AuditSinkProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AuditSink allocate(ProviderConfig config) {
         Objects.requireNonNull(config, "config");

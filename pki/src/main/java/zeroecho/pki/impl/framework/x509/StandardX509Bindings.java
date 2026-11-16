@@ -55,63 +55,121 @@ import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
  */
 public final class StandardX509Bindings {
 
-    /** RSA PKCS#1 SHA-256 signature OID. */
+    /**
+     * RSA PKCS#1 SHA-256 signature OID.
+     */
     public static final String OID_RSA_SHA256 = "1.2.840.113549.1.1.11";
-    /** RSA PKCS#1 SHA-384 signature OID. */
+    /**
+     * RSA PKCS#1 SHA-384 signature OID.
+     */
     public static final String OID_RSA_SHA384 = "1.2.840.113549.1.1.12";
-    /** RSA PKCS#1 SHA-512 signature OID. */
+    /**
+     * RSA PKCS#1 SHA-512 signature OID.
+     */
     public static final String OID_RSA_SHA512 = "1.2.840.113549.1.1.13";
-    /** RSA-PSS signature OID. */
+    /**
+     * RSA-PSS signature OID.
+     */
     public static final String OID_RSA_PSS = "1.2.840.113549.1.1.10";
-    /** ECDSA SHA-256 signature OID. */
+    /**
+     * ECDSA SHA-256 signature OID.
+     */
     public static final String OID_ECDSA_SHA256 = "1.2.840.10045.4.3.2";
-    /** ECDSA SHA-384 signature OID. */
+    /**
+     * ECDSA SHA-384 signature OID.
+     */
     public static final String OID_ECDSA_SHA384 = "1.2.840.10045.4.3.3";
-    /** ECDSA SHA-512 signature OID. */
+    /**
+     * ECDSA SHA-512 signature OID.
+     */
     public static final String OID_ECDSA_SHA512 = "1.2.840.10045.4.3.4";
-    /** Ed25519 OID. */
+    /**
+     * Ed25519 OID.
+     */
     public static final String OID_ED25519 = String.join(".", "1", "3", "101", "112");
-    /** Ed448 OID. */
+    /**
+     * Ed448 OID.
+     */
     public static final String OID_ED448 = String.join(".", "1", "3", "101", "113");
-    /** RSA public-key OID. */
+    /**
+     * RSA public-key OID.
+     */
     public static final String OID_RSA_PUBLIC_KEY = "1.2.840.113549.1.1.1";
-    /** EC public-key OID. */
+    /**
+     * EC public-key OID.
+     */
     public static final String OID_EC_PUBLIC_KEY = "1.2.840.10045.2.1";
-    /** P-256 named-curve OID. */
+    /**
+     * P-256 named-curve OID.
+     */
     public static final String OID_P256 = "1.2.840.10045.3.1.7";
-    /** P-384 named-curve OID. */
+    /**
+     * P-384 named-curve OID.
+     */
     public static final String OID_P384 = "1.3.132.0.34";
-    /** P-521 named-curve OID. */
+    /**
+     * P-521 named-curve OID.
+     */
     public static final String OID_P521 = "1.3.132.0.35";
-    /** ML-DSA-44 OID (FIPS 204). */
+    /**
+     * ML-DSA-44 OID (FIPS 204).
+     */
     public static final String OID_ML_DSA_44 = "2.16.840.1.101.3.4.3.17";
-    /** ML-DSA-65 OID (FIPS 204). */
+    /**
+     * ML-DSA-65 OID (FIPS 204).
+     */
     public static final String OID_ML_DSA_65 = "2.16.840.1.101.3.4.3.18";
-    /** ML-DSA-87 OID (FIPS 204). */
+    /**
+     * ML-DSA-87 OID (FIPS 204).
+     */
     public static final String OID_ML_DSA_87 = "2.16.840.1.101.3.4.3.19";
-    /** SLH-DSA-SHA2-128s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-128s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_128S = "2.16.840.1.101.3.4.3.20";
-    /** SLH-DSA-SHA2-128f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-128f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_128F = "2.16.840.1.101.3.4.3.21";
-    /** SLH-DSA-SHA2-192s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-192s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_192S = "2.16.840.1.101.3.4.3.22";
-    /** SLH-DSA-SHA2-192f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-192f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_192F = "2.16.840.1.101.3.4.3.23";
-    /** SLH-DSA-SHA2-256s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-256s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_256S = "2.16.840.1.101.3.4.3.24";
-    /** SLH-DSA-SHA2-256f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHA2-256f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHA2_256F = "2.16.840.1.101.3.4.3.25";
-    /** SLH-DSA-SHAKE-128s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-128s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_128S = "2.16.840.1.101.3.4.3.26";
-    /** SLH-DSA-SHAKE-128f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-128f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_128F = "2.16.840.1.101.3.4.3.27";
-    /** SLH-DSA-SHAKE-192s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-192s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_192S = "2.16.840.1.101.3.4.3.28";
-    /** SLH-DSA-SHAKE-192f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-192f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_192F = "2.16.840.1.101.3.4.3.29";
-    /** SLH-DSA-SHAKE-256s OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-256s OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_256S = "2.16.840.1.101.3.4.3.30";
-    /** SLH-DSA-SHAKE-256f OID (FIPS 205). */
+    /**
+     * SLH-DSA-SHAKE-256f OID (FIPS 205).
+     */
     public static final String OID_SLH_DSA_SHAKE_256F = "2.16.840.1.101.3.4.3.31";
     private static final X509BindingCatalog CATALOG = createCatalog(X509ComponentCatalog.builtIn());
     private static final List<X509AlgorithmBinding> DESCRIPTORS = CATALOG.rules().stream()
@@ -282,6 +340,12 @@ public final class StandardX509Bindings {
         return DESCRIPTORS;
     }
 
+    /**
+     * Extracts the exact identity only from this catalog's closed fixed-rule implementation.
+     *
+     * @param rule public binding rule to inspect; null or contributed rules do not match
+     * @return fixed algorithm identity, or an empty optional when the identity domain is not proven closed
+     */
     // Only this closed implementation proves a complete, exact identity domain.
     /* default */ static Optional<AlgorithmIdentity> fixedIdentity(X509BindingRule rule) {
         return rule instanceof FixedRule fixed ? Optional.of(fixed.identity()) : Optional.empty();
@@ -306,28 +370,43 @@ public final class StandardX509Bindings {
             Objects.requireNonNull(publicKeyEncoding, "publicKeyEncoding");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String oid() {
             return identifier.oid();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String semanticFingerprint() {
             return id + "|" + role + "|" + identity.canonicalForm() + "|" + identifier.canonicalForm() + "|"
                     + signatureEncoding + "|" + publicKeyEncoding;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<X509AlgorithmBinding> bindings() {
             return descriptors(id, role, identity, identifier, signatureEncoding, publicKeyEncoding,
                     semanticFingerprint());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity candidate) {
             return identity.equals(candidate) ? Optional.of(identifier) : Optional.empty();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier candidate) {
             if (!identifier.oid().equals(candidate.oid())) {
@@ -340,7 +419,9 @@ public final class StandardX509Bindings {
         }
     }
 
-    /** Parameterized authority for RSA-PSS signature identifiers. */
+    /**
+     * Parameterized authority for RSA-PSS signature identifiers.
+     */
     private static final class RsaPssRule implements X509BindingRule {
 
         private final X509ComponentCatalog components;
@@ -349,36 +430,57 @@ public final class StandardX509Bindings {
             this.components = components;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String id() {
             return "zeroecho.signature.rsa-pss";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public X509AlgorithmRole role() {
             return X509AlgorithmRole.SIGNATURE_ALGORITHM;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String oid() {
             return OID_RSA_PSS;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String semanticFingerprint() {
             return "rsa-pss-v1|sha2-256,sha2-384,sha2-512|mgf1|salt-nonnegative|trailer-1|canonical-explicit";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SignatureEncoding signatureEncoding() {
             return SignatureEncoding.OPAQUE;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PublicKeyEncoding publicKeyEncoding() {
             return PublicKeyEncoding.NOT_APPLICABLE;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<X509AlgorithmBinding> bindings() {
             X509AlgorithmIdentifier identifier = encode(BootstrapAlgorithmIdentities.RSA_PSS_SHA256).orElseThrow();
@@ -386,6 +488,9 @@ public final class StandardX509Bindings {
                     signatureEncoding(), publicKeyEncoding(), semanticFingerprint());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
             if (identity.kind() != AlgorithmIdentity.Kind.SIGNATURE
@@ -399,6 +504,9 @@ public final class StandardX509Bindings {
             return Optional.of(X509AlgorithmIdentifier.exact(OID_RSA_PSS, der));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
             if (!OID_RSA_PSS.equals(identifier.oid())) {
@@ -413,7 +521,9 @@ public final class StandardX509Bindings {
         }
     }
 
-    /** Parameterized authority for named-curve EC public-key identifiers. */
+    /**
+     * Parameterized authority for named-curve EC public-key identifiers.
+     */
     private static final class EcPublicKeyRule implements X509BindingRule {
 
         private final X509ComponentCatalog components;
@@ -422,36 +532,57 @@ public final class StandardX509Bindings {
             this.components = components;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String id() {
             return "zeroecho.spki.ec-named-curve";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public X509AlgorithmRole role() {
             return X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String oid() {
             return OID_EC_PUBLIC_KEY;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String semanticFingerprint() {
             return "ec-spki-v1|named-only|p-256,p-384,p-521|sec1-point";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SignatureEncoding signatureEncoding() {
             return SignatureEncoding.NOT_APPLICABLE;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PublicKeyEncoding publicKeyEncoding() {
             return PublicKeyEncoding.EC_POINT;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<X509AlgorithmBinding> bindings() {
             return List.of(BootstrapAlgorithmIdentities.EC_P256_PUBLIC_KEY,
@@ -462,6 +593,9 @@ public final class StandardX509Bindings {
                             semanticFingerprint()).stream()).toList();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
             if (identity.kind() != AlgorithmIdentity.Kind.PUBLIC_KEY
@@ -472,6 +606,9 @@ public final class StandardX509Bindings {
             return Optional.of(X509AlgorithmIdentifier.exact(OID_EC_PUBLIC_KEY, StrictDer.oid(curveOid)));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
             if (!OID_EC_PUBLIC_KEY.equals(identifier.oid())) {
@@ -687,7 +824,9 @@ public final class StandardX509Bindings {
             return new Reader(content.clone(), 0, content.length);
         }
 
-        /** Bounded cursor over one independently owned DER byte sequence. */
+        /**
+         * Bounded cursor over one independently owned DER byte sequence.
+         */
         private static final class Reader {
 
             private final byte[] data;

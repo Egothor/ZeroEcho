@@ -315,7 +315,9 @@ public final class Tag { // NOPMD
         throw new IllegalArgumentException("Unsupported digest: " + s);
     }
 
-    /** STDIN wrapper that implements PlainContent. */
+    /**
+     * STDIN wrapper that implements PlainContent.
+     */
     private static final class StdinContent implements PlainContent {
         private final InputStream in;
 
@@ -336,7 +338,9 @@ public final class Tag { // NOPMD
         }
     }
 
-    /** Buffered stream that never closes the underlying stream (for STDOUT). */
+    /**
+     * Buffered stream that never closes the underlying stream (for STDOUT).
+     */
     private static final class NonClosingBufferedOutputStream extends BufferedOutputStream {
         private NonClosingBufferedOutputStream(OutputStream out, int size) {
             super(out, size);

@@ -54,9 +54,17 @@ import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 
+/**
+ * Contract and regression tests for password recipient.
+ */
 class PasswordRecipientTest {
     private static final Pbkdf2Limits LIMITS = new Pbkdf2Limits(20_000, 30_000);
 
+    /**
+     * Owns and destroys retained password.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ownsAndDestroysRetainedPassword() throws Exception {
         System.out.print("PasswordRecipient/lifecycle...");
@@ -78,6 +86,9 @@ class PasswordRecipientTest {
         System.out.println("ok");
     }
 
+    /**
+     * Constructors reject iterations below minimum and accept boundary.
+     */
     @Test
     void constructorsRejectIterationsBelowMinimumAndAcceptBoundary() {
         System.out.print("PasswordRecipient/constructorsRejectIterationsBelowMinimumAndAcceptBoundary...");
@@ -95,6 +106,11 @@ class PasswordRecipientTest {
         System.out.println("ok");
     }
 
+    /**
+     * Constructors accept only openable KEK sizes.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void constructorsAcceptOnlyOpenableKekSizes() throws Exception {
         System.out.println("constructorsAcceptOnlyOpenableKekSizes");
@@ -112,6 +128,11 @@ class PasswordRecipientTest {
         System.out.println("constructorsAcceptOnlyOpenableKekSizes...ok");
     }
 
+    /**
+     * Builder methods reject before recipient list mutation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void builderMethodsRejectBeforeRecipientListMutation() throws Exception {
         System.out.print("PasswordRecipient/builderMethodsRejectBeforeRecipientListMutation...");
@@ -134,6 +155,11 @@ class PasswordRecipientTest {
         System.out.println("ok");
     }
 
+    /**
+     * Builder rejects unsupported KEK before state mutation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void builderRejectsUnsupportedKekBeforeStateMutation() throws Exception {
         System.out.println("builderRejectsUnsupportedKekBeforeStateMutation");
@@ -152,6 +178,11 @@ class PasswordRecipientTest {
         System.out.println("builderRejectsUnsupportedKekBeforeStateMutation...ok");
     }
 
+    /**
+     * Password opener rejects subminimum decoded iterations.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void passwordOpenerRejectsSubminimumDecodedIterations() throws Exception {
         System.out.print("PasswordRecipient/passwordOpenerRejectsSubminimumDecodedIterations...");
@@ -163,6 +194,9 @@ class PasswordRecipientTest {
         System.out.println("ok");
     }
 
+    /**
+     * Password opener rejects unterminated iteration encoding.
+     */
     @Test
     void passwordOpenerRejectsUnterminatedIterationEncoding() {
         System.out.print("PasswordRecipient/passwordOpenerRejectsUnterminatedIterationEncoding...");
@@ -176,6 +210,11 @@ class PasswordRecipientTest {
         System.out.println("ok");
     }
 
+    /**
+     * Builder close destroys abandoned password recipients.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void builderCloseDestroysAbandonedPasswordRecipients() throws Exception {
         System.out.println("builderCloseDestroysAbandonedPasswordRecipients");
@@ -193,6 +232,11 @@ class PasswordRecipientTest {
         System.out.println("builderCloseDestroysAbandonedPasswordRecipients...ok");
     }
 
+    /**
+     * Transferred recipient survives builder close until terminal failure.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void transferredRecipientSurvivesBuilderCloseUntilTerminalFailure() throws Exception {
         System.out.println("transferredRecipientSurvivesBuilderCloseUntilTerminalFailure");
@@ -210,6 +254,11 @@ class PasswordRecipientTest {
         System.out.println("transferredRecipientSurvivesBuilderCloseUntilTerminalFailure...ok");
     }
 
+    /**
+     * Abandoned built content owns and destroys transferred recipient.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void abandonedBuiltContentOwnsAndDestroysTransferredRecipient() throws Exception {
         System.out.println("abandonedBuiltContentOwnsAndDestroysTransferredRecipient");
@@ -231,6 +280,11 @@ class PasswordRecipientTest {
         System.out.println("abandonedBuiltContentOwnsAndDestroysTransferredRecipient...ok");
     }
 
+    /**
+     * Terminal limit and random failures destroy password recipients.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void terminalLimitAndRandomFailuresDestroyPasswordRecipients() throws Exception {
         System.out.println("terminalLimitAndRandomFailuresDestroyPasswordRecipients");

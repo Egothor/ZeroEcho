@@ -46,9 +46,13 @@ package zeroecho.sdk.guard;
  * @since 1.0
  */
 public final class RecipientKekSizes {
-    /** AES-128 key size in bytes. */
+    /**
+     * AES-128 key size in bytes.
+     */
     public static final int AES_128_BYTES = 16;
-    /** AES-256 key size in bytes. */
+    /**
+     * AES-256 key size in bytes.
+     */
     public static final int AES_256_BYTES = 32;
 
     private RecipientKekSizes() {

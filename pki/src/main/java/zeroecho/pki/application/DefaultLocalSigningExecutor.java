@@ -59,7 +59,9 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.SignWorkflowStore.Workflow;
 
-/** Sequential borrowed executor retaining only call-scoped operation observations. */
+/**
+ * Sequential borrowed executor retaining only call-scoped operation observations.
+ */
 final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     private static final String RECOVERY_REQUIRED_CODE = "RECOVERY_REQUIRED";
 
@@ -73,6 +75,19 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     private final LocalInvocationAudit audit;
     private final Runnable requireOpen;
 
+    /**
+     * Binds a sequential executor to session-owned signing collaborators and audit attribution.
+     *
+     * @param store borrowed authoritative workflow store
+     * @param provider borrowed configured signing provider
+     * @param semantic semantic signing service used for preparation and reconciliation
+     * @param commands application command normalizer
+     * @param configuration local timeout and observation settings
+     * @param driver outer-domain terminal effect driver
+     * @param audit best-effort local invocation audit adapter
+     * @param requireOpen session lifecycle guard invoked before execution
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ DefaultLocalSigningExecutor(PkiStore store, SigningProvider provider, SemanticSigningService semantic,
             PkiSigningCommands commands, LocalSigningConfiguration configuration,
             SigningStepExecutor.OuterTerminalDriver driver, LocalInvocationAudit audit, Runnable requireOpen) {
@@ -87,6 +102,9 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     }
 
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
     @Override public LocalSigningResult execute(PkiSigningOperation operation, CancellationSignal cancellation) {
         requireOpen.run();
@@ -129,6 +147,9 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     }
 
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
     @Override public LocalSigningResult complete(PkiId operationId, CancellationSignal cancellation) {
         requireOpen.run();
@@ -155,6 +176,9 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
     }
 
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
     @Override public PkiOperationOutcome inspect(PkiId operationId, CancellationSignal cancellation) {
         requireOpen.run();

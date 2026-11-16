@@ -72,6 +72,7 @@ public final class SigningProviderExecutor {
      * @param provider bound signing provider
      * @param providerCallTimeout positive finite call timeout no greater than one day
      * @throws IllegalArgumentException if the timeout is not positive or exceeds one day
+     * @throws NullPointerException if store, provider is null
      */
     public SigningProviderExecutor(SignWorkflowStore store, SigningProvider provider,
             Duration providerCallTimeout) {
@@ -89,6 +90,7 @@ public final class SigningProviderExecutor {
      * @param content candidate content owned by the caller
      * @param cancellation cooperative cancellation signal
      * @return bounded provider observation
+     * @throws NullPointerException if content, cancellation is null
      */
     public OperationObservation dispatch(SignWorkflowStore.Workflow workflow, RepeatableContent content,
             CancellationSignal cancellation) {
@@ -129,6 +131,7 @@ public final class SigningProviderExecutor {
      * @param reason finite safe cancellation reason
      * @param cancellation cooperative cancellation signal
      * @return bounded provider observation
+     * @throws NullPointerException if reason is null
      */
     public OperationObservation cancel(SignWorkflowStore.Workflow workflow,
             SigningProvider.CancellationReason reason, CancellationSignal cancellation) {

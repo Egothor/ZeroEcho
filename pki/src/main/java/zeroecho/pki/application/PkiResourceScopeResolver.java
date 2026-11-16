@@ -52,7 +52,13 @@ public interface PkiResourceScopeResolver {
      * @param profileId frozen logical profile
      */
     record CredentialScope(PkiId authorityId, String profileId) {
-        /** Validates the immutable authority and profile coordinates. */
+        /**
+         * Validates the immutable authority and profile coordinates.
+         * @param authorityId issuing authority
+         * @param profileId frozen logical profile
+         * @throws NullPointerException if authorityId is null
+         * @throws IllegalArgumentException if profileId is null or blank
+         */
         public CredentialScope {
             java.util.Objects.requireNonNull(authorityId, "authorityId");
             if (profileId == null || profileId.isBlank()) {

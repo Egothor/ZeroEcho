@@ -65,6 +65,16 @@ final class CrlScopeRecovery {
 
     private CrlScopeRecovery() { }
 
+    /**
+     * Checks recovered certificate signing work, permanent scope reservations and pending CRL counter relationships.
+     *
+     * <p>Temporary exact-membership indexes bound retained working memory and are closed after validation.</p>
+     *
+     * @param store borrowed recovered store with stable authoritative metadata and content access
+     * @param reservations exact scope ownership, serial and next-number authority
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if reservation relationships are inconsistent or bounded metadata and content evidence cannot be read
+     */
     /* default */ static void validate(FilesystemPkiStore store, CrlScopeReservationStore reservations) throws IOException {
         try (zeroecho.pki.spi.store.TemporaryUniqueIndex pending = store.stagedContent().beginUniqueIndex();
                 zeroecho.pki.spi.store.TemporaryUniqueIndex children = store.stagedContent().beginUniqueIndex();
@@ -147,7 +157,9 @@ final class CrlScopeRecovery {
         }
     }
 
-    /** Certificate and exact accepted TBS bytes retained for legacy subject reconciliation. */
+    /**
+     * Certificate and exact accepted TBS bytes retained for legacy subject reconciliation.
+     */
     private record RetainedCertificate(java.security.cert.X509Certificate certificate, byte[] tbs) { }
 
     private static RetainedCertificate retainedCertificate(FilesystemPkiStore store,

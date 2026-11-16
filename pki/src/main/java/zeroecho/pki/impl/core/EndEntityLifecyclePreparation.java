@@ -101,12 +101,39 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
     private final EndEntityIssuancePreparation issuance;
     private final X509AuthoritySnapshot authority;
 
+    /**
+     * Creates a preparer borrowing authoritative store and validation collaborators.
+     *
+     * <p>The caller retains collaborator lifecycle ownership; construction does not submit
+     * a signing request or publish a credential.</p>
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param clock authoritative session clock; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param verifier borrowed X.509 signature verification executor; must not be null
+     * @param bindings immutable X.509 algorithm binding registry; must not be null
+     * @param signatureAlgorithm canonical permitted signature algorithm identity
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configured algorithm or binding selection is invalid
+     */
     /* default */ EndEntityLifecyclePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm) {
         this(store, new StoreBackedEffectiveCredentialStatusResolver(store, clock), authority,
                 new EndEntityIssuancePreparation(store, clock, authority, verifier, bindings, signatureAlgorithm));
     }
 
+    /**
+     * Creates a preparer borrowing authoritative store and validation collaborators.
+     *
+     * <p>The caller retains collaborator lifecycle ownership; construction does not submit
+     * a signing request or publish a credential.</p>
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param status borrowed effective-status resolver; must not be null
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param issuance borrowed issuance preparer sharing the authoritative store; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ EndEntityLifecyclePreparation(PkiStore store, EffectiveCredentialStatusResolver status,
             X509AuthoritySnapshot authority, EndEntityIssuancePreparation issuance) {
         this.store = Objects.requireNonNull(store, "store");
@@ -115,35 +142,111 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         this.issuance = Objects.requireNonNull(issuance, "issuance");
     }
 
+    /**
+     * Reconstructs a proven predecessor subject and applies renewal validity policy.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request bounded typed lifecycle request; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen predecessor and validated issuance preparation
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if predecessor state, profile, proof, or correlation is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ Prepared prepareRenewal(AccessContext access, EndEntityRenewalRequest request, CancellationSignal cancellation)
             throws IOException {
         Objects.requireNonNull(request, "request");
         return reconstruct(access, request.existingCredentialId(), request.validityOverride(), cancellation);
     }
 
+    /**
+     * Reconstructs a proven predecessor subject for reissue without a caller validity override.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request bounded typed lifecycle request; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen predecessor and validated issuance preparation
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if predecessor state, profile, proof, or correlation is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ Prepared prepareReissue(AccessContext access, EndEntityReissueRequest request, CancellationSignal cancellation)
             throws IOException {
         Objects.requireNonNull(request, "request");
         return reconstruct(access, request.existingCredentialId(), Optional.empty(), cancellation);
     }
 
+    /**
+     * Verifies replacement enrollment and binds it to the predecessor credential.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request bounded typed lifecycle request; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen predecessor and validated issuance preparation
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if predecessor state, profile, proof, or correlation is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ Prepared prepareReplacement(AccessContext access, EndEntityReplacementRequest request, CancellationSignal cancellation)
             throws IOException {
         return replace(access, request, Optional.empty(), Optional.empty(), cancellation);
     }
 
+    /**
+     * Prepares replacement using the exact correlated request and effective issuance intent.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request bounded typed lifecycle request; must not be null
+     * @param effective effective frozen issuance intent for the correlated operation
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen predecessor and validated issuance preparation
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if predecessor state, profile, proof, or correlation is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ Prepared prepareCorrelatedReplacement(AccessContext access,
             CorrelatedEndEntityReplacementRequest request, IssuanceIntent effective,
             CancellationSignal cancellation) throws IOException {
         return replace(access, request.request(), Optional.of(request), Optional.of(effective), cancellation);
     }
 
+    /**
+     * Validates a supported hybrid lifecycle command and freezes its exact predecessor target.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param command supported renewal, reissue, or replacement command; must not be null
+     * @param parsed parsed hybrid SDK lifecycle request; must not be null
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param preview whether to avoid serial allocation for a preview
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen lifecycle issuance inputs and matching SDK lifecycle target
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if the command, predecessor, hybrid proof, or policy is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ SdkPrepared prepareSdk(AccessContext access, Object command,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             boolean preview, CancellationSignal cancellation) throws IOException {
         return prepareSdk(access, command, parsed, frozenValidity, preview, Optional.empty(), Optional.empty(), cancellation);
     }
 
+    /**
+     * Validates a supported hybrid lifecycle command and freezes its exact predecessor target.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param command supported renewal, reissue, or replacement command; must not be null
+     * @param parsed parsed hybrid SDK lifecycle request; must not be null
+     * @param frozenValidity optional previously frozen validity; container must not be null
+     * @param preview whether to avoid serial allocation for a preview
+     * @param intent optional frozen caller idempotency intent; container must not be null
+     * @param correlation optional lifecycle correlation input; container must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen lifecycle issuance inputs and matching SDK lifecycle target
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if the command, predecessor, hybrid proof, or policy is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     * @throws UnsupportedOperationException if command is not a supported SDK renewal, reissue or replacement request
+     */
     /* default */ SdkPrepared prepareSdk(AccessContext access, Object command,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             boolean preview, Optional<IssuanceIntent> intent, Optional<Object> correlation,
@@ -245,6 +348,18 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         return reconstruct(access, id, validity, Optional.empty(), Optional.empty(), cancellation);
     }
 
+    /**
+     * Prepares renewal using the exact correlated request and effective issuance intent.
+     *
+     * @param access authenticated operation access context; must not be null
+     * @param request bounded typed lifecycle request; must not be null
+     * @param effective effective frozen issuance intent for the correlated operation
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return frozen predecessor and validated issuance preparation
+     * @throws IOException if predecessor, enrollment, issuer content, or cancellation processing fails
+     * @throws PkiException if predecessor state, profile, proof, or correlation is invalid
+     * @throws NullPointerException if a required input or optional container is null
+     */
     /* default */ Prepared prepareCorrelatedRenewal(AccessContext access,
             CorrelatedEndEntityRenewalRequest request,
             IssuanceIntent effective, CancellationSignal cancellation) throws IOException {
@@ -453,15 +568,33 @@ final class EndEntityLifecyclePreparation { // NOPMD CyclomaticComplexity - One 
         return new PkiException("End-entity lifecycle preparation rejected: code=" + code);
     }
 
+    /**
+     * Frozen lifecycle preparation paired with its exact hybrid SDK target.
+     *
+     * @param prepared validated predecessor and issuance preparation
+     * @param target frozen lifecycle target used by SDK approval and execution
+     */
     /* default */ record SdkPrepared(Prepared prepared, zeroecho.pki.api.hybrid.sdk.SdkLifecycleTarget target) { }
 
+    /**
+     * Frozen predecessor and issuance inputs for lifecycle signing.
+     *
+     * @param predecessor authoritative predecessor credential
+     * @param issuance validated replacement or reconstructed issuance inputs
+     */
     /* default */ record Prepared(Credential predecessor, EndEntityIssuancePreparation.Prepared issuance) {
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "PreparedEndEntityLifecycle[redacted]"; }
     }
 
     private record Predecessor(Credential credential, ParsedCertificationRequest request, byte[] subjectDer,
             X509Certificate certificate) {
         private Predecessor { subjectDer = subjectDer.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public byte[] subjectDer() { return subjectDer.clone(); }
     }
 }

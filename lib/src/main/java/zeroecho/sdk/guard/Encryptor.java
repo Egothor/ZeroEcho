@@ -69,12 +69,34 @@ final class Encryptor implements EncryptedContent, MultiRecipientContent {
     private DataContent upstream;
     private boolean closed;
 
+    /**
+     * Creates encrypting content from an already validated envelope configuration.
+     *
+     * @param recipients owned recipients, retained in supplied order
+     * @param aesBuilder configured AES payload builder, or null when ChaCha is selected
+     * @param chachaBuilder configured ChaCha payload builder, or null when AES is selected
+     * @param keyBytes content-encryption key length, in bytes
+     * @param maxRecipients maximum recipient entries accepted in the envelope
+     * @param maxEntryLen maximum encoded recipient-entry length, in bytes
+     */
     /* package */ Encryptor(List<Recipient> recipients, AesDataContentBuilder aesBuilder,
             ChaChaDataContentBuilder chachaBuilder, int keyBytes, int maxRecipients, int maxEntryLen) {
         this(recipients, aesBuilder, chachaBuilder, keyBytes, maxRecipients, maxEntryLen,
                 RandomSupport::generateRandom);
     }
 
+    /**
+     * Creates encrypting content from an already validated envelope configuration.
+     *
+     * @param recipients owned recipients, retained in supplied order
+     * @param aesBuilder configured AES payload builder, or null when ChaCha is selected
+     * @param chachaBuilder configured ChaCha payload builder, or null when AES is selected
+     * @param keyBytes content-encryption key length, in bytes
+     * @param maxRecipients maximum recipient entries accepted in the envelope
+     * @param maxEntryLen maximum encoded recipient-entry length, in bytes
+     * @param randomBytesFactory source of fresh content keys of the requested byte length
+     * @throws NullPointerException if the random source is null
+     */
     /* package */ Encryptor(List<Recipient> recipients, AesDataContentBuilder aesBuilder,
             ChaChaDataContentBuilder chachaBuilder, int keyBytes, int maxRecipients, int maxEntryLen,
             IntFunction<byte[]> randomBytesFactory) {
@@ -106,6 +128,7 @@ final class Encryptor implements EncryptedContent, MultiRecipientContent {
      * @return an input stream over the envelope and ciphertext
      * @throws IOException if building recipient entries fails or if upstream is
      *                     missing
+     * @throws NullPointerException if no upstream plaintext input has been set
      */
     @Override
     public InputStream getStream() throws IOException {
@@ -231,6 +254,14 @@ final class Encryptor implements EncryptedContent, MultiRecipientContent {
         return key;
     }
 
+    /**
+     * Closes every owned recipient and preserves the primary operation failure.
+     *
+     * @param ownedRecipients owned recipients; must not be null or contain null
+     * @param primary existing failure receiving suppressed cleanup failures, or null
+     * @throws IOException if cleanup fails and there is no primary failure;
+     *         subsequent cleanup failures are suppressed on the first
+     */
     /* default */ static void closeRecipients(List<Recipient> ownedRecipients, Throwable primary) throws IOException {
         IOException cleanupFailure = null;
         for (Recipient recipient : ownedRecipients) {

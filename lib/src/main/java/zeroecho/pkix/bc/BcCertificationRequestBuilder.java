@@ -56,7 +56,9 @@ import zeroecho.pkix.csr.CertificationRequestBuilder;
 import zeroecho.pkix.csr.CsrAttribute;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** BouncyCastle-backed {@link CertificationRequestBuilder}. */
+/**
+ * BouncyCastle-backed {@link CertificationRequestBuilder}.
+ */
 final class BcCertificationRequestBuilder implements CertificationRequestBuilder {
 
     private X500Principal subject;
@@ -65,24 +67,36 @@ final class BcCertificationRequestBuilder implements CertificationRequestBuilder
     private boolean hasExtensions;
     private final List<CsrAttribute> attributes = new ArrayList<>();
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder subject(X500Principal subject) {
         this.subject = subject;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder publicKey(PublicKey publicKey) {
         this.publicKey = publicKey;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder subjectAlternativeNames(List<GeneralName> names, boolean critical) {
         addExtension(BcExtensions.subjectAlternativeNames(names, critical));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder requestExtension(CertificateExtension extension) {
         addExtension(BcExtensions.generic(extension));
@@ -94,6 +108,9 @@ final class BcCertificationRequestBuilder implements CertificationRequestBuilder
         hasExtensions = true;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificationRequestBuilder addAttribute(CsrAttribute attribute) {
         attributes.add(Objects.requireNonNull(attribute, "attribute"));
@@ -101,6 +118,9 @@ final class BcCertificationRequestBuilder implements CertificationRequestBuilder
     }
 
     // Bouncy Castle requires a distinct ASN.1 attribute object for every requested attribute.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     @Override
     public CertificationRequest build(ContentSigner signer) {

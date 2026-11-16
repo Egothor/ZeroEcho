@@ -65,12 +65,20 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Co-commit and startup reconciliation of the status-generation evidence log. */
+/**
+ * Co-commit and startup reconciliation of the status-generation evidence log.
+ */
 final class FilesystemStatusEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * Status generation co commits evidence and reconciles the crash window.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusGenerationCoCommitsEvidenceAndReconcilesTheCrashWindow(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);

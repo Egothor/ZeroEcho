@@ -38,13 +38,23 @@ import java.util.Optional;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.KeyRef;
 
-/** Provider-owned, generate-only capability; results never contain private material. */
+/**
+ * Provider-owned, generate-only capability; results never contain private material.
+ */
 public interface ManagedKeyGeneration {
-    /** Closed explicit asymmetric generation choices; no provider default is selected. */
+    /**
+     * Closed explicit asymmetric generation choices; no provider default is selected.
+     */
     enum Parameters {
-        /** NIST P-384 key pair. */ ECDSA_P384,
-        /** RSA 4096-bit modulus and public exponent 65537. */ RSA_4096,
-        /** Pure ML-DSA-87 parameter set. */ ML_DSA_87
+        /**
+         * NIST P-384 key pair.
+         */ ECDSA_P384,
+        /**
+         * RSA 4096-bit modulus and public exponent 65537.
+         */ RSA_4096,
+        /**
+         * Pure ML-DSA-87 parameter set.
+         */ ML_DSA_87
     }
 
     /**
@@ -54,7 +64,13 @@ public interface ManagedKeyGeneration {
      * @param subjectPublicKeyInfo public DER SubjectPublicKeyInfo
      */
     record Result(KeyRef keyRef, Parameters parameters, EncodedObject subjectPublicKeyInfo) {
-        /** Validates the immutable public result. */
+        /**
+         * Validates the immutable public result.
+         * @param keyRef provider-owned private signing-key reference
+         * @param parameters exact generation parameters
+         * @param subjectPublicKeyInfo public DER SubjectPublicKeyInfo
+         * @throws NullPointerException if keyRef, parameters, subjectPublicKeyInfo is null
+         */
         public Result {
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(parameters, "parameters");

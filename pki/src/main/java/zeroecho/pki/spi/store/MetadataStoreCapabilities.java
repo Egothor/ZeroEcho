@@ -53,32 +53,67 @@ import java.util.Set;
 public record MetadataStoreCapabilities(WriterModel writerModel,
         ContentLengthModel contentLengthModel, OutcomeRetention outcomeRetention,
         Set<OptionalFeature> optionalFeatures, OptionalLong maximumIndividualRecordBytes) {
-    /** Adapter writer-concurrency model. */
+    /**
+     * Adapter writer-concurrency model.
+     */
     public enum WriterModel {
-        /** At most one writer transaction may be active. */ EXCLUSIVE_WRITER,
-        /** Concurrent writers have serializable transaction outcomes. */ SERIALIZABLE_MULTI_WRITER
+        /**
+         * At most one writer transaction may be active.
+         */ EXCLUSIVE_WRITER,
+        /**
+         * Concurrent writers have serializable transaction outcomes.
+         */ SERIALIZABLE_MULTI_WRITER
     }
 
-    /** Accepted repeatable-content length forms. */
+    /**
+     * Accepted repeatable-content length forms.
+     */
     public enum ContentLengthModel {
-        /** Every admitted value must declare its exact length. */ KNOWN_LENGTH_ONLY,
-        /** Known and initially unknown lengths can be staged safely. */ KNOWN_OR_UNKNOWN_LENGTH
+        /**
+         * Every admitted value must declare its exact length.
+         */ KNOWN_LENGTH_ONLY,
+        /**
+         * Known and initially unknown lengths can be staged safely.
+         */ KNOWN_OR_UNKNOWN_LENGTH
     }
 
-    /** Authoritative transaction-outcome retention model. */
+    /**
+     * Authoritative transaction-outcome retention model.
+     */
     public enum OutcomeRetention {
-        /** Known terminal outcomes may be released after acknowledgement. */ UNTIL_ACKNOWLEDGED,
-        /** Known terminal outcomes remain resolvable indefinitely. */ INDEFINITE
+        /**
+         * Known terminal outcomes may be released after acknowledgement.
+         */ UNTIL_ACKNOWLEDGED,
+        /**
+         * Known terminal outcomes remain resolvable indefinitely.
+         */ INDEFINITE
     }
 
-    /** Optional facilities that do not weaken required store semantics. */
+    /**
+     * Optional facilities that do not weaken required store semantics.
+     */
     public enum OptionalFeature {
-        /** Store authority coordinates cooperating processes. */ CROSS_PROCESS_COORDINATION,
-        /** Adapter supports explicit checkpoints. */ CHECKPOINT,
-        /** Adapter supports history compaction. */ COMPACTION
+        /**
+         * Store authority coordinates cooperating processes.
+         */ CROSS_PROCESS_COORDINATION,
+        /**
+         * Adapter supports explicit checkpoints.
+         */ CHECKPOINT,
+        /**
+         * Adapter supports history compaction.
+         */ COMPACTION
     }
 
-    /** Validates and defensively copies capability values. */
+    /**
+     * Validates and defensively copies capability values.
+     * @param writerModel active-writer model
+     * @param contentLengthModel accepted content-length forms
+     * @param outcomeRetention authoritative outcome-retention model
+     * @param optionalFeatures optional adapter facilities
+     * @param maximumIndividualRecordBytes optional positive technical record limit
+     * @throws NullPointerException if writerModel, contentLengthModel, outcomeRetention, optionalFeatures, maximumIndividualRecordBytes is null
+     * @throws IllegalArgumentException if a present maximumIndividualRecordBytes value is not positive
+     */
     public MetadataStoreCapabilities {
         Objects.requireNonNull(writerModel, "writerModel");
         Objects.requireNonNull(contentLengthModel, "contentLengthModel");

@@ -69,9 +69,16 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.ct.CtLogDescriptor;
 import zeroecho.pkix.ct.SignedCertificateTimestamp;
 
-/** Unit tests for {@link HttpCtLogClient} using an in-process HTTP server. */
+/**
+ * Unit tests for {@link HttpCtLogClient} using an in-process HTTP server.
+ */
 class HttpCtLogClientTest {
 
+    /**
+     * Checks retry backoff interruption stops further HTTP attempts and preserves both cause and caller interrupt status.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void interruptedBackoffStopsRetriesAndPreservesInterrupt() throws Exception {
         HttpClient http = mock(HttpClient.class);
@@ -93,6 +100,11 @@ class HttpCtLogClientTest {
         }
     }
 
+    /**
+     * Checks closing a factory-created CT client terminates its owned executor and rejects subsequent submission.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void closeTerminatesFactoryOwnedExecutor() throws Exception {
         HttpCtLogClient client = HttpCtLogClient.create(descriptor);
@@ -121,6 +133,11 @@ class HttpCtLogClientTest {
     private String baseUrl;
     private CtLogDescriptor descriptor;
 
+    /**
+     * Starts an isolated local HTTP CT-log fixture and creates its descriptor before each scenario.
+     *
+     * @throws IOException if test fixture setup or execution fails
+     */
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
@@ -131,6 +148,9 @@ class HttpCtLogClientTest {
         descriptor = new CtLogDescriptor(logIdHex, baseUrl, PUBLIC_KEY_DER, true, "Test CT Log");
     }
 
+    /**
+     * Stops the local HTTP fixture after each scenario when startup acquired it.
+     */
     @AfterEach
     void stopServer() {
         if (server != null) {
@@ -138,7 +158,11 @@ class HttpCtLogClientTest {
         }
     }
 
-    /** Verifies that the correct JSON body (chain array with base64 entries) is sent. */
+    /**
+     * Checks the actual CT HTTP request contains the precertificate and issuer chain as ordered base64 entries.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void submit_sendsCorrectRequestBody() throws Exception {
         AtomicReference<String> capturedBody = new AtomicReference<>();
@@ -163,7 +187,11 @@ class HttpCtLogClientTest {
         assertTrue(body.contains(expectedChainBase64), "body must contain base64-encoded chain entry");
     }
 
-    /** Verifies that a valid 200 JSON response is parsed into the correct SCT fields. */
+    /**
+     * Checks an HTTP 200 CT-log response preserves exact SCT version, log identity, timestamp, algorithm and signature bytes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void submit_parsesResponseIntoCorrectSct() throws Exception {
         server.createContext("/ct/v1/add-pre-chain", exchange -> {
@@ -187,7 +215,11 @@ class HttpCtLogClientTest {
         assertArrayEquals(expectedRawSig, sct.signature(), "raw signature bytes must match");
     }
 
-    /** Verifies that HTTP 5xx responses trigger retry and eventually throw CtSubmissionException. */
+    /**
+     * Checks retryable HTTP 503 responses eventually produce a log-bound submission failure within deadline handling.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void submit_retriesOn5xx_thenThrows() throws Exception {
         AtomicInteger attempts = new AtomicInteger(0);

@@ -49,11 +49,22 @@ import java.util.Optional;
 public record SubjectRdnRule(SubjectRdnType type, int minimumOccurrences, int maximumOccurrences, int maximumUtf8Bytes,
         Optional<String> fixedValue, boolean requesterSupplied) {
 
-    /** Maximum hard value size. */
+    /**
+     * Maximum hard value size.
+     */
     public static final int HARD_MAXIMUM_UTF8_BYTES = 256;
 
     /**
      * Validates and constructs a rule.
+     * @param type exact supported RDN type
+     * @param minimumOccurrences minimum number of occurrences
+     * @param maximumOccurrences maximum number of occurrences
+     * @param maximumUtf8Bytes maximum encoded value length, at most 256 bytes
+     * @param fixedValue optional profile-fixed value
+     * @param requesterSupplied whether the requester may supply the value
+     * @throws IllegalArgumentException if type or fixedValue is null, occurrence/byte bounds are invalid, a
+     *     fixed value is noncanonical or too large, or fixed/requester-supplied occurrence requirements
+     *     disagree
      */
     public SubjectRdnRule {
         if (type == null || fixedValue == null) {
@@ -88,6 +99,8 @@ public record SubjectRdnRule(SubjectRdnType type, int minimumOccurrences, int ma
      * @param type  RDN type
      * @param value value to validate
      * @return canonical value
+     * @throws IllegalArgumentException if value is null or empty, or a country value does not contain exactly
+     *     two ASCII letters
      */
     public static String canonicalValue(SubjectRdnType type, String value) {
         if (value == null || value.isEmpty()) {

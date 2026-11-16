@@ -43,10 +43,15 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.revocation.RevocationReason;
 
-/** Operator-justification contract coverage for permanent credential revocation. */
+/**
+ * Operator-justification contract coverage for permanent credential revocation.
+ */
 class RevokeCredentialTest {
     private static final PkiId CREDENTIAL_ID = new PkiId("credential-a");
 
+    /**
+     * Accepts absent and maximum length justification.
+     */
     @Test
     void acceptsAbsentAndMaximumLengthJustification() {
         PkiOperation.RevokeCredential absent = new PkiOperation.RevokeCredential(CREDENTIAL_ID,
@@ -58,6 +63,9 @@ class RevokeCredentialTest {
         assertEquals(1024, maximum.operatorJustification().orElseThrow().length());
     }
 
+    /**
+     * Rejects blank and oversized justification.
+     */
     @Test
     void rejectsBlankAndOversizedJustification() {
         assertThrows(IllegalArgumentException.class, () -> new PkiOperation.RevokeCredential(CREDENTIAL_ID,

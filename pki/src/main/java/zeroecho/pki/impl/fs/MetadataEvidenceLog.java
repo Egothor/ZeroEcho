@@ -62,7 +62,9 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
  * compare-and-replace concurrency point.</p>
  */
 final class MetadataEvidenceLog {
-    /** Bounded append retries under concurrent head advancement. */
+    /**
+     * Bounded append retries under concurrent head advancement.
+     */
     private static final int MAXIMUM_APPEND_ATTEMPTS = 64;
     private static final long MAXIMUM_VALUE_BYTES = 1L << 20;
     private static final String HEAD_KEY = "head";
@@ -72,6 +74,13 @@ final class MetadataEvidenceLog {
     private final TransactionalMetadataStore metadata;
     private final String namespace;
 
+    /**
+     * Binds an append-only evidence family to borrowed transactional metadata authority.
+     *
+     * @param metadata caller-owned transactional metadata store
+     * @param namespace exact evidence namespace used by append, count and traversal operations
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ MetadataEvidenceLog(TransactionalMetadataStore metadata, String namespace) {
         this.metadata = Objects.requireNonNull(metadata, "metadata");
         this.namespace = Objects.requireNonNull(namespace, "namespace");
@@ -81,9 +90,11 @@ final class MetadataEvidenceLog {
      * Appends one evidence entry for {@code objectId} unless already recorded.
      *
      * @param objectId immutable produced-object identity (idempotency key)
-     * @param payload opaque family-serialized evidence bytes
+     * @param recordedAt authoritative timestamp retained with the evidence entry
+     * @param payload opaque family-serialized evidence bytes; copied before optimistic retries
      * @return {@code true} when a new entry was committed, {@code false} when already present
      * @throws IOException on a durable read/write failure
+     * @throws NullPointerException if an argument is null
      */
     // Every optimistic retry needs fresh keys, content wrappers, and transaction-owned immutable values.
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
@@ -174,17 +185,39 @@ final class MetadataEvidenceLog {
         }
     }
 
-    /** One decoded append entry. */
+    /**
+     * One decoded append entry.
+     * @param sequence exact persisted record sequence
+     * @param objectId exact object identity associated with the evidence entry
+     * @param recordedAt retained evidence recording timestamp
+     * @param payload exact encoded payload retained for this operation
+     */
     /* default */ record Entry(long sequence, PkiId objectId, java.time.Instant recordedAt, byte[] payload) {
+        /**
+         * Creates one decoded append entry.
+         *
+         * @param sequence exact persisted record sequence
+         * @param objectId exact object identity associated with the evidence entry
+         * @param recordedAt retained evidence recording timestamp
+         * @param payload exact encoded payload retained for this operation
+         * @throws NullPointerException if {@code objectId} is null; or if {@code recordedAt} is null; or if {@code payload} is null
+         */
         Entry {
             Objects.requireNonNull(objectId, "objectId");
             Objects.requireNonNull(recordedAt, "recordedAt");
             payload = Objects.requireNonNull(payload, "payload").clone();
         }
+        /**
+         * Returns an independent copy of the retained record payload bytes.
+         *
+         * @return newly allocated array containing the exact encoded payload retained for this operation
+         */
         @Override public byte[] payload() { return payload.clone(); }
     }
 
-    /** Closeable ordered reader over evidence entries after an exclusive sequence. */
+    /**
+     * Closeable ordered reader over evidence entries after an exclusive sequence.
+     */
     /* default */ static final class Reader implements AutoCloseable {
         private final MetadataSnapshot snapshot;
         private final MetadataCursor cursor;
@@ -200,12 +233,22 @@ final class MetadataEvidenceLog {
             this.highWatermark = highWatermark;
         }
 
-        /** @return the captured entry count (next sequence) at open time */
+        /**
+         * Returns the evidence high-watermark captured when this reader opened.
+         *
+         * @return the captured entry count (next sequence) at open time
+         */
         /* default */ long highWatermark() {
             return highWatermark;
         }
 
-        /** Advances to the next entry strictly after the exclusive sequence. */
+        /**
+         * Advances to the next entry strictly after the exclusive sequence.
+         * @param cancellation cooperative cancellation signal checked while advancing the stream
+         * @return true when a current entry is available; false when the captured input is exhausted
+         * @throws NullPointerException if the cancellation signal is null
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         /* default */ boolean next(CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(cancellation, "cancellation");
             Optional<MetadataSnapshot.Record> record;
@@ -223,7 +266,12 @@ final class MetadataEvidenceLog {
             return false;
         }
 
-        /** @return the entry positioned by the most recent {@link #next(CancellationSignal)} */
+        /**
+         * Returns the evidence entry selected by the most recent successful advance.
+         *
+         * @return the entry positioned by the most recent {@link #next(CancellationSignal)}
+         * @throws IllegalStateException if no successful advance currently selects an entry
+         */
         /* default */ Entry current() {
             if (current == null) {
                 throw new IllegalStateException("Evidence-log reader is not positioned on an entry");
@@ -232,6 +280,9 @@ final class MetadataEvidenceLog {
         }
 
         // Explicit nesting guarantees cursor-before-snapshot closure without changing legacy exception precedence.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.UseTryWithResources")
         @Override public void close() {
             try {

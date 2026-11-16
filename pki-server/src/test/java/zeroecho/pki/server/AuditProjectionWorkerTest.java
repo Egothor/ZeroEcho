@@ -58,7 +58,13 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
+/**
+ * Checks bounded projection scheduling, advisory wakeups, retry eligibility and worker shutdown.
+ */
 final class AuditProjectionWorkerTest {
+    /**
+     * Checks only an unfinished unblocked audit pass requests immediate continuation; blocked and captured-end results remain delayed.
+     */
     @Test
     void onlyUnblockedBacklogRequestsImmediateContinuation() {
         assertTrue(AuditProjectionWorker.auditImmediate(result(false, false, Optional.empty())));
@@ -66,6 +72,11 @@ final class AuditProjectionWorkerTest {
         assertFalse(AuditProjectionWorker.auditImmediate(emptyResult()));
     }
 
+    /**
+     * Checks future retry delay, 30-second idle ceiling and zero delay for due work, backlog or a coalesced wake.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void delayUsesWakeBacklogRetryDueAndIdleCeiling() throws Exception {
         try (AuditProjectionWorker worker = worker(emptyProjection(), Duration.ofSeconds(30), fixedClock())) {
@@ -80,6 +91,11 @@ final class AuditProjectionWorkerTest {
         }
     }
 
+    /**
+     * Checks many realm wakes coalesce into a bounded second pass without overlap and the listener is released on close.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void realmWakeStormCoalescesWithoutOverlapAndReleasesListener() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
@@ -125,6 +141,11 @@ final class AuditProjectionWorkerTest {
         }
     }
 
+    /**
+     * Checks a failed worker start cannot remove a wake listener owned by another registration.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void failedRegistrationLeavesExistingListenerOwnedByItsRegistrant() throws Exception {
         RealmReconciliationWakeSignal signal = new RealmReconciliationWakeSignal();
@@ -145,6 +166,11 @@ final class AuditProjectionWorkerTest {
         }
     }
 
+    /**
+     * Checks an unfinished unblocked audit pass schedules its next pass immediately.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void auditBacklogRunsImmediately() throws Exception {
         CountDownLatch consumed = new CountDownLatch(2);
@@ -160,6 +186,11 @@ final class AuditProjectionWorkerTest {
         assertEquals(2, calls.get());
     }
 
+    /**
+     * Checks evidence backlog drives immediate continuation independently of a future revocation retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void evidenceBacklogContinuesEvenWhileRevocationReportsFutureRetry() throws Exception {
         CountDownLatch consumed = new CountDownLatch(2);
@@ -182,6 +213,11 @@ final class AuditProjectionWorkerTest {
         assertEquals(2, revocationCalls.get());
     }
 
+    /**
+     * Checks sub-millisecond periodic scheduling makes progress without external wakeups or overlapping passes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void pollingConvergesWithoutWakeWithSubMillisecondInterval() throws Exception {
         CountDownLatch twice = new CountDownLatch(2);
@@ -199,6 +235,11 @@ final class AuditProjectionWorkerTest {
         assertEquals(1, maximumActive.get());
     }
 
+    /**
+     * Checks audit/evidence projections run on the same named daemon and each receives its configured record/sink budget.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void projectionsShareOneDaemonThreadAndReceiveIndependentBudgets() throws Exception {
         CountDownLatch projected = new CountDownLatch(1);
@@ -235,6 +276,11 @@ final class AuditProjectionWorkerTest {
         assertEquals(3, evidenceSinks.get());
     }
 
+    /**
+     * Checks projection and aggregate audit failures do not suppress the other phase or later passes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void projectionAndTelemetryFailuresDoNotSuppressOtherPhaseOrLaterPasses() throws Exception {
         CountDownLatch auditTwice = new CountDownLatch(2);
@@ -255,6 +301,11 @@ final class AuditProjectionWorkerTest {
         }
     }
 
+    /**
+     * Checks shutdown reaches the active projection signal before the evidence phase can begin.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cancellationReachesActiveProjectionAndPreventsFollowingPhase() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
@@ -280,6 +331,11 @@ final class AuditProjectionWorkerTest {
         assertEquals(0, evidenceCalls.get());
     }
 
+    /**
+     * Checks interrupted/timed-out closure retains interrupt and ownership semantics until a noncooperative projection is released and close retried.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void noncooperativeProjectionTimesOutAndCloseCanBeRetried() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
@@ -319,6 +375,11 @@ final class AuditProjectionWorkerTest {
         assertThrows(IllegalStateException.class, worker::start);
     }
 
+    /**
+     * Checks retry-clock failure falls back to the configured polling interval while projection continues.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void clockFailureDegradesToPollingWithoutSuppressingProjection() throws Exception {
         AtomicInteger clockCalls = new AtomicInteger();

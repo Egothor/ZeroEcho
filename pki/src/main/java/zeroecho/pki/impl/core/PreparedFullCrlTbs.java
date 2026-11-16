@@ -85,7 +85,8 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
         String profilePolicyCommitment, String x509BindingCommitment, KeyRef signingKeyRef,
         String signatureAlgorithm, X509AlgorithmBinding signatureBinding, X509AlgorithmIdentifier signatureIdentifier, BigInteger crlNumber,
         Instant evaluationTime, Instant thisUpdate, Instant nextUpdate, String snapshotId,
-        MetadataStoreId snapshotSourceStoreId, long snapshotRevision, long snapshotBoundary, String snapshotCommitment, OptionalLong rawEntryCount,
+        MetadataStoreId snapshotSourceStoreId, long snapshotRevision, long snapshotBoundary, String snapshotCommitment,
+        OptionalLong rawEntryCount,
         long emittedEntryCount, DurableContentReference tbsContent, Optional<DeltaCrlBase> base, Optional<Hybrid> hybrid) {
     /**
      * Checks hybrid carrier consistency against its actual selected CRL binding.
@@ -93,12 +94,38 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
      * with configured preparation and the adoption verifier, not this constructor.
      * @throws NullPointerException if a hybrid structural coordinate is null
      * @throws IllegalArgumentException if captured roles or selected presentation disagree
+     * @param authorityId logical issuer authority
+     * @param issuerGenerationId selected immutable issuer generation
+     * @param issuerCredentialId exact issuer credential
+     * @param profile selected versioned profile
+     * @param issuerContent exact bounded issuer certificate content
+     * @param scopeDigest canonical CRL numbering scope digest
+     * @param profilePolicyCommitment frozen issuer policy commitment
+     * @param x509BindingCommitment frozen issuer binding commitment
+     * @param signingKeyRef selected managed signing key
+     * @param signatureAlgorithm canonical semantic signature identity
+     * @param signatureBinding exact selected signature binding descriptor
+     * @param signatureIdentifier exact inner and outer AlgorithmIdentifier
+     * @param crlNumber irreversibly reserved CRL number
+     * @param evaluationTime precise preparation evaluation time
+     * @param thisUpdate normalized current update time
+     * @param nextUpdate normalized next update time
+     * @param snapshotId stable revocation snapshot identity
+     * @param snapshotSourceStoreId source identity captured by that same snapshot
+     * @param snapshotRevision frozen snapshot revision
+     * @param snapshotBoundary frozen snapshot journal boundary
+     * @param snapshotCommitment immutable snapshot commitment
+     * @param rawEntryCount optional raw snapshot row count
+     * @param emittedEntryCount exact emitted revocation count
+     * @param tbsContent completed operation-owned DER TBSCertList
+     * @param base frozen validated full CRL base, empty for a full CRL
+     * @param hybrid optional captured two-role alternative-transcript preparation
      */
     public PreparedFullCrlTbs {
         java.util.Objects.requireNonNull(hybrid, "hybrid");
         if (hybrid.isPresent()) {
             Hybrid selected = hybrid.orElseThrow();
-            var primary = selected.binding().primary();
+            zeroecho.pki.api.ca.IssuerKeyBinding primary = selected.binding().primary();
             if (!selected.binding().issuerId().equals(issuerGenerationId)
                     || !selected.binding().authorityId().equals(authorityId)
                     || !selected.binding().credentialId().equals(issuerCredentialId)
@@ -113,32 +140,61 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
                         case ABSENT -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.ABSENT;
                         case DER_NULL -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.DER_NULL;
                         case STRUCTURED_DER -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.EXACT_DER;
-                    })) throw new IllegalArgumentException("Hybrid CRL selected native role differs");
+                    })) {
+                throw new IllegalArgumentException("Hybrid CRL selected native role differs");
+            }
             requireAlgorithm(signatureIdentifier);
             java.util.Objects.requireNonNull(tbsContent, "tbsContent");
             if (tbsContent.encoding() != zeroecho.pki.api.Encoding.DER
-                    || tbsContent.lifecycle() != DurableContentReference.Lifecycle.OPERATION || tbsContent.length() <= 0)
+                    || tbsContent.lifecycle() != DurableContentReference.Lifecycle.OPERATION || tbsContent.length() <= 0) {
                 throw new IllegalArgumentException("Hybrid CRL transcript content is invalid");
+            }
         }
     }
 
     private static void requireAlgorithm(X509AlgorithmIdentifier identifier) {
         byte[] der = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(
                 zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.toLib(identifier));
-        try { new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(der, 16_384); }
-        catch (java.io.IOException invalid) { throw new IllegalArgumentException("Invalid CRL AlgorithmIdentifier", invalid); }
+        try {
+            new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(der, 16_384);
+        } catch (java.io.IOException invalid) {
+            throw new IllegalArgumentException("Invalid CRL AlgorithmIdentifier", invalid);
+        }
     }
 
     /**
-     * Preserves native-only prepared carriers.
-     * @param authorityId authority @param issuerGenerationId generation @param issuerCredentialId credential
-     * @param profile profile @param issuerContent issuer DER @param scopeDigest primary scope
-     * @param profilePolicyCommitment policy @param x509BindingCommitment registry
-     * @param signingKeyRef native key @param signatureAlgorithm native algorithm @param signatureBinding presentation
-     * @param signatureIdentifier native DER @param crlNumber number @param evaluationTime evaluation
-     * @param thisUpdate start @param nextUpdate end @param snapshotId snapshot @param snapshotSourceStoreId source
-     * @param snapshotRevision revision @param snapshotBoundary boundary @param snapshotCommitment snapshot commitment
-     * @param rawEntryCount raw count @param emittedEntryCount emitted count @param tbsContent native TBS @param base full base
+     * Creates a native-only prepared carrier without alternative-transcript evidence.
+     *
+     * <p>This overload retains the supplied immutable preparation coordinates and
+     * uses an empty hybrid optional. Preparation and adoption remain responsible for
+     * validating those coordinates; construction does not reserve a CRL number,
+     * resolve content or acquire signing custody.
+     *
+     * @param authorityId logical issuer authority
+     * @param issuerGenerationId selected immutable issuer generation
+     * @param issuerCredentialId exact issuer credential
+     * @param profile selected versioned profile
+     * @param issuerContent bounded issuer certificate content reference
+     * @param scopeDigest canonical CRL numbering-scope digest
+     * @param profilePolicyCommitment frozen issuer policy commitment
+     * @param x509BindingCommitment frozen issuer binding commitment
+     * @param signingKeyRef selected managed primary signing key
+     * @param signatureAlgorithm canonical semantic signature identity
+     * @param signatureBinding selected native CRL signature binding
+     * @param signatureIdentifier inner and outer native AlgorithmIdentifier
+     * @param crlNumber already durably reserved CRL number
+     * @param evaluationTime precise preparation evaluation time
+     * @param thisUpdate normalized current update time
+     * @param nextUpdate normalized next update time
+     * @param snapshotId retained revocation-snapshot identity
+     * @param snapshotSourceStoreId source identity captured by that snapshot
+     * @param snapshotRevision frozen snapshot revision
+     * @param snapshotBoundary frozen snapshot journal boundary
+     * @param snapshotCommitment immutable snapshot commitment
+     * @param rawEntryCount optional raw snapshot row count
+     * @param emittedEntryCount exact emitted revocation count
+     * @param tbsContent completed operation-owned DER TBSCertList reference
+     * @param base validated full CRL base, or an empty optional for a full CRL
      */
     public PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, PkiId issuerCredentialId,
             CertificateProfileRef profile, DurableContentReference issuerContent, String scopeDigest,
@@ -153,11 +209,21 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
                 snapshotRevision, snapshotBoundary, snapshotCommitment, rawEntryCount, emittedEntryCount, tbsContent, base, Optional.empty());
     }
 
-    /** Frozen hybrid role plans; public evidence only, no private keys or runtime executor tokens.
-     * @param binding immutable issuer roles @param alternativeIdentifier alternative CRL AlgorithmIdentifier
-     * @param tupleCommitment compatible signer tuple @param lineageId immutable signer lineage
-     * @param primaryPlanCommitment native implementation plan @param alternativePlanCommitment alternative implementation plan
-     * @param alternativeMaximumSignatureBytes public alternative bound @param primaryMaximumSignatureBytes public native bound
+    /**
+     * Captures the public role plans used to prepare a hybrid CRL transcript.
+     *
+     * <p>The carrier holds no private keys or runtime executor tokens. Its commitments
+     * identify the compatible signer tuple and both implementation plans; configured
+     * adoption and cryptographic verification are still required before signing.
+     *
+     * @param binding immutable issuer binding with an alternative signer role
+     * @param alternativeIdentifier canonical alternative CRL AlgorithmIdentifier
+     * @param tupleCommitment compatible signer-tuple digest as 64 lowercase hexadecimal characters
+     * @param lineageId immutable signer-lineage identity; must not be {@code null}
+     * @param primaryPlanCommitment primary plan digest as 64 lowercase hexadecimal characters
+     * @param alternativePlanCommitment alternative plan digest as 64 lowercase hexadecimal characters
+     * @param alternativeMaximumSignatureBytes alternative signature bound, between 1 and 1,048,576 bytes
+     * @param primaryMaximumSignatureBytes primary signature bound, between 1 and 1,048,576 bytes
      */
     public record Hybrid(zeroecho.pki.api.ca.IssuerCryptographicBinding binding,
             X509AlgorithmIdentifier alternativeIdentifier, String tupleCommitment, PkiId lineageId,
@@ -167,19 +233,39 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
          * Checks bounded immutable structure; configured decoding and cryptographic checks remain mandatory.
          * @throws NullPointerException if a structural coordinate is null
          * @throws IllegalArgumentException for absent alternative role, invalid digest, DER or signature bound
+         * @param binding immutable issuer binding with an alternative signer role
+         * @param alternativeIdentifier canonical alternative CRL AlgorithmIdentifier
+         * @param tupleCommitment compatible signer-tuple digest as 64 lowercase hexadecimal characters
+         * @param lineageId immutable signer-lineage identity; must not be {@code null}
+         * @param primaryPlanCommitment primary plan digest as 64 lowercase hexadecimal characters
+         * @param alternativePlanCommitment alternative plan digest as 64 lowercase hexadecimal characters
+         * @param alternativeMaximumSignatureBytes alternative signature bound, between 1 and 1,048,576 bytes
+         * @param primaryMaximumSignatureBytes primary signature bound, between 1 and 1,048,576 bytes
          */
         public Hybrid {
             java.util.Objects.requireNonNull(binding, "binding");
             java.util.Objects.requireNonNull(alternativeIdentifier, "alternativeIdentifier");
             java.util.Objects.requireNonNull(lineageId, "lineageId");
             if (binding.alternative().isEmpty() || alternativeMaximumSignatureBytes < 1 || alternativeMaximumSignatureBytes > 1_048_576
-                    || primaryMaximumSignatureBytes < 1 || primaryMaximumSignatureBytes > 1_048_576)
+                    || primaryMaximumSignatureBytes < 1 || primaryMaximumSignatureBytes > 1_048_576) {
                 throw new IllegalArgumentException("Invalid hybrid CRL role or bound");
-            for (String digest : new String[] {tupleCommitment, primaryPlanCommitment, alternativePlanCommitment})
-                if (digest == null || !digest.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid hybrid CRL plan commitment");
+            }
+            for (String digest : new String[] {tupleCommitment, primaryPlanCommitment, alternativePlanCommitment}) {
+                if (digest == null || !digest.matches("[0-9a-f]{64}")) {
+                    throw new IllegalArgumentException("Invalid hybrid CRL plan commitment");
+                }
+            }
             requireAlgorithm(alternativeIdentifier);
         }
     }
 
-    @Override public String toString() { return "PreparedFullCrlTbs[redacted]"; }
+    /**
+     * Returns a diagnostic label without exposing issuer, snapshot or content coordinates.
+     *
+     * @return the fixed redacted prepared-CRL label
+     */
+    @Override
+    public String toString() {
+        return "PreparedFullCrlTbs[redacted]";
+    }
 }

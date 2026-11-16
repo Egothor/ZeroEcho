@@ -69,7 +69,16 @@ import zeroecho.pki.impl.fs.FullCrlRecoveryFaults;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
+/**
+ * Contract and regression tests for full CRL recovery integration.
+ */
 class FullCrlRecoveryIntegrationTest {
+    /**
+     * Reopens every durable success cut and retires exactly once.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reopensEveryDurableSuccessCutAndRetiresExactlyOnce(@TempDir Path root) throws Exception {
         for (SuccessCut cut : SuccessCut.values()) {
             Path source = root.resolve(cut.name());
@@ -128,6 +137,12 @@ class FullCrlRecoveryIntegrationTest {
         }
     }
 
+    /**
+     * Terminal failure cancellation and expiry never publish.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void terminalFailureCancellationAndExpiryNeverPublish(@TempDir Path root) throws Exception {
         for (SignWorkflowStore.State terminal : new SignWorkflowStore.State[] {
                 SignWorkflowStore.State.FAILED, SignWorkflowStore.State.CANCELLED, SignWorkflowStore.State.EXPIRED }) {
@@ -164,20 +179,48 @@ class FullCrlRecoveryIntegrationTest {
         }
     }
 
+    /**
+     * Creates the two-entry RSA full-CRL fixture used by crash-recovery cases.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return prepared CRL, signing identity, expected signature, and complete encoded CRL
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static Fixture smallFixture(FilesystemPkiStore store) throws Exception {
         return fixture(store, "RSA", "SHA256withRSA", BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, 2);
     }
 
+    /**
+     * Accepts the prepared fixture operation into its durable signing workflow.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param fixture prepared CRL/key fixture to accept into the signing workflow
+     * @return durably accepted signing operation identity
+     */
     static PkiId accept(FilesystemPkiStore store, Fixture fixture) {
         DefaultSemanticSigningService service = semantic(store, fixture.algorithm(), 1);
         return service.accept(service.prepareFullCrl(ACCESS, fixture.prepared(), CancellationSignal.NONE)).receipt().operationId();
     }
 
+    /**
+     * Transitions the retained CRL continuation into its publishing state.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param operation retained signing operation or typed command being exercised
+     * @return updated durable domain continuation
+     */
     static DomainContinuationStore.Record publishing(FilesystemPkiStore store, PkiId operation) {
         return store.transitionDomainContinuation(operation, 0, DomainContinuationStore.State.PUBLISHING,
                 Optional.empty(), Optional.empty()).orElseThrow();
     }
 
+    /**
+     * Publishes the CRL result and marks completion while deliberately retaining source content.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param operation retained signing operation or typed command being exercised
+     * @param signature signature bytes or encoded signature selected for verification/publication
+     */
     static void completeWithoutRetirement(FilesystemPkiStore store, PkiId operation, EncodedObject signature) {
         DomainContinuationStore.Record domain = store.getDomainContinuation(operation).orElseThrow();
         EncodedObject result = new FullCrlContinuationPublisher(store, StandardX509Bindings.catalog(), 1).publish(domain, signature);

@@ -68,7 +68,9 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPublicKeyBuilder;
  * @since 1.0
  */
 public final class Ed25519PublicKeyBuilder extends AbstractEncodedPublicKeyBuilder<Ed25519PublicKeySpec> {
-    /** Creates a stateless Ed25519 public-key importer. */
+    /**
+     * Creates a stateless Ed25519 public-key importer.
+     */
     public Ed25519PublicKeyBuilder() {
         super();
         // Stateless importer.

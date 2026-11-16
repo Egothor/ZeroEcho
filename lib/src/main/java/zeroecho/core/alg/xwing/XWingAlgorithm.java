@@ -148,6 +148,9 @@ public final class XWingAlgorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(XWingPrivateKeySpec.class, spec -> new XWingPrivateKey(spec.rawSeed()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

@@ -51,7 +51,13 @@ import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 
+/**
+ * Contract and regression tests for evidence payload encoding.
+ */
 final class EvidencePayloadEncodingTest {
+    /**
+     * Typed families round trip canonical feed bytes and ignore absent families.
+     */
     @Test void typedFamiliesRoundTripCanonicalFeedBytesAndIgnoreAbsentFamilies() {
         byte[] absent = payload(SimpleAttributeSet.builder().put(new AttributeId("urn:test:unrelated"),
                 new AttributeValue.StringValue("value")).build());
@@ -66,6 +72,9 @@ final class EvidencePayloadEncodingTest {
         }
     }
 
+    /**
+     * Rejects malformed noncanonical raw binary and oversized payloads with safe errors.
+     */
     @Test void rejectsMalformedNoncanonicalRawBinaryAndOversizedPayloadsWithSafeErrors() {
         for (Sample sample : samples()) {
             byte[] canonical = payload(sample.attributes());
@@ -86,6 +95,9 @@ final class EvidencePayloadEncodingTest {
         }
     }
 
+    /**
+     * Rejects partial mistyped and unknown version vocabularies after canonical transport.
+     */
     @Test void rejectsPartialMistypedAndUnknownVersionVocabulariesAfterCanonicalTransport() {
         for (Sample sample : samples()) {
             AttributeId first = sample.attributes().ids().iterator().next();
@@ -103,6 +115,9 @@ final class EvidencePayloadEncodingTest {
         }
     }
 
+    /**
+     * Signing outcomes retain the historical closed vocabulary.
+     */
     @Test void signingOutcomesRetainTheHistoricalClosedVocabulary() {
         for (SigningExecutionEvidence.Outcome outcome : SigningExecutionEvidence.Outcome.values()) {
             SigningExecutionEvidence evidence = SigningExecutionEvidence.terminal("store.provider", "accept-sign:v3:commitment",

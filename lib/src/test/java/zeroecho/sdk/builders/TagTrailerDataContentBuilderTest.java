@@ -108,6 +108,9 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println(method + "...ok");
     }
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,
@@ -138,7 +141,9 @@ public class TagTrailerDataContentBuilderTest {
         }
     }
 
-    /** Minimal source builder for tests. */
+    /**
+     * Minimal source builder for tests.
+     */
     private static final class BytesSourceBuilder implements DataContentBuilder<PlainContent> {
         private final byte[] data;
 
@@ -166,6 +171,11 @@ public class TagTrailerDataContentBuilderTest {
     }
 
     // ---------- AES/GCM with TagTrailer (Ed25519 SIGNATURE) ----------
+    /**
+     * Tag inside AES GCM with Ed25519 signature round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_aes_gcm_with_ed25519_signature_roundtrip() throws Exception {
         final int SIZE = 64 * 1024 + 11;
@@ -208,6 +218,11 @@ public class TagTrailerDataContentBuilderTest {
     }
 
     // ---------- AES/GCM with TagTrailer (SPHINCS+ SIGNATURE) ----------
+    /**
+     * Tag inside AES GCM with SPHINCS+ signature round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_aes_gcm_with_sphincsplus_signature_roundtrip() throws Exception {
         final int SIZE = 64 * 1024 + 17;
@@ -252,6 +267,11 @@ public class TagTrailerDataContentBuilderTest {
     }
 
     // ---------- AES/GCM with TagTrailer (RSA-PSS SIGNATURE) ----------
+    /**
+     * Tag inside AES GCM with RSA-PSS signature round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_aes_gcm_with_rsapss_signature_roundtrip() throws Exception {
         final int SIZE = 96 * 1024 + 3;
@@ -297,6 +317,11 @@ public class TagTrailerDataContentBuilderTest {
 
     // ---------- AES/GCM with TagTrailer (SHA-256) ----------
 
+    /**
+     * Tag inside AES GCM round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_aes_gcm_roundtrip() throws Exception {
         final int SIZE = 48 * 1024 + 7;
@@ -341,6 +366,11 @@ public class TagTrailerDataContentBuilderTest {
     // ---------- RSA/OAEP with TagTrailer (keep body small; RSA is not a bulk
     // stream cipher) ----------
 
+    /**
+     * Tag inside RSA OAEP round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_rsa_oaep_roundtrip() throws Exception {
         final int SIZE = 96; // safe under RSA-2048 OAEP SHA-256 limit even with a 32-byte tag appended
@@ -382,6 +412,11 @@ public class TagTrailerDataContentBuilderTest {
     // ---------- KEM → AES/GCM payload with TagTrailer (skip if no KEM registered)
     // ----------
 
+    /**
+     * Tag inside KEM payload round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_kem_payload_roundtrip() throws Exception {
         final int SIZE = 32 * 1024 + 3;
@@ -449,6 +484,11 @@ public class TagTrailerDataContentBuilderTest {
     // -------------------------------------------------------------------------
     // 1) AES-GCM payload, multi-recipient (RSA + Kyber + Password), tag trailer
     // -------------------------------------------------------------------------
+    /**
+     * Tag trailer inside multi recipient AES GCM RSA KEM password round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_trailer_inside_multi_recipient_aes_gcm_rsa_kem_password_roundtrip() throws Exception {
         final int SIZE = 96 * 1024 + 7;
@@ -559,6 +599,11 @@ public class TagTrailerDataContentBuilderTest {
     // -------------------------------------------------------------------------
     // 2) AES-CBC payload (PKCS#7), RSA recipient only, tag trailer for integrity
     // -------------------------------------------------------------------------
+    /**
+     * Tag trailer inside multi recipient AES CBC RSA round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_trailer_inside_multi_recipient_aes_cbc_rsa_roundtrip() throws Exception {
         final int SIZE = 48 * 1024 + 321;
@@ -624,6 +669,11 @@ public class TagTrailerDataContentBuilderTest {
     }
 
     // ---------- AES/GCM with TagTrailer (ECDSA P-256 SIGNATURE) ----------
+    /**
+     * Tag inside AES GCM with ECDSA p256 signature round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void tag_inside_aes_gcm_with_ecdsa_p256_signature_roundtrip() throws Exception {
         final int SIZE = 64 * 1024 + 5;

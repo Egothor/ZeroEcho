@@ -88,7 +88,9 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * }</pre>
  */
 public final class DhKeyGenBuilder implements AsymmetricKeyPairGenerator<DhSpec> {
-    /** Creates a stateless Diffie-Hellman key-pair generator. */
+    /**
+     * Creates a stateless Diffie-Hellman key-pair generator.
+     */
     public DhKeyGenBuilder() {
         // Stateless generator.
     }

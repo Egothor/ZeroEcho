@@ -55,11 +55,17 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofProvider;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofVerification;
 
+/**
+ * Contract and regression tests for credential confirmation proof runtime policy.
+ */
 final class CredentialConfirmationProofRuntimePolicyTest {
     private static final ConfirmationRealmBinding REALM = new ConfirmationRealmBinding("realm");
     private static final ConfirmationProofSuiteBinding BINDING = new ConfirmationProofSuiteBinding(
             new ConfirmationProofSuiteRef("zeroecho.signature-pop.v1", "a".repeat(64)), 8_192);
 
+    /**
+     * Accepts exact UUID v4 urn variants and inclusive TTL boundaries.
+     */
     @Test
     void acceptsExactUuidV4UrnVariantsAndInclusiveTtlBoundaries() {
         for (char variant : new char[] { '8', '9', 'a', 'b' }) {
@@ -76,6 +82,9 @@ final class CredentialConfirmationProofRuntimePolicyTest {
         }
     }
 
+    /**
+     * Rejects noncanonical UUID audience and invalid policy coordinates.
+     */
     @Test
     void rejectsNoncanonicalUuidAudienceAndInvalidPolicyCoordinates() {
         List<String> invalid = List.of(
@@ -111,6 +120,9 @@ final class CredentialConfirmationProofRuntimePolicyTest {
                 () -> policy(validAudience(), Duration.ofSeconds(10L).plusNanos(1L)));
     }
 
+    /**
+     * Optional runtime policy is preserved across dependency composition.
+     */
     @Test
     void optionalRuntimePolicyIsPreservedAcrossDependencyComposition() {
         CredentialConfirmationProofRuntimePolicy policy =

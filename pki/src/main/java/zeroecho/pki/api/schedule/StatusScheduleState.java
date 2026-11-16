@@ -47,7 +47,15 @@ import zeroecho.pki.api.PkiId;
  */
 public record StatusScheduleState(StatusSchedule configuration, Instant nextDue,
         long workerRevision, Optional<Execution> execution) {
-    /** Validates the progress snapshot. */
+    /**
+     * Validates the progress snapshot.
+     * @param configuration latest operator configuration
+     * @param nextDue next unclaimed due instant
+     * @param workerRevision monotonic progress fence
+     * @param execution latest claimed execution, retained until replaced by a later claim
+     * @throws NullPointerException if configuration, nextDue or execution is null
+     * @throws IllegalArgumentException if configuration revision is not positive or workerRevision is negative
+     */
     public StatusScheduleState {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(nextDue, "nextDue");
@@ -55,12 +63,22 @@ public record StatusScheduleState(StatusSchedule configuration, Instant nextDue,
         if (configuration.revision() < 1 || workerRevision < 0) { throw new IllegalArgumentException("Invalid schedule revision"); }
     }
 
-    /** Durable execution stages. */
+    /**
+     * Durable execution stages.
+     */
     public enum Phase {
-        /** Authorization captured; signing may not yet have been accepted. */ CLAIMED,
-        /** Canonical status object and execution result committed atomically. */ EFFECT_COMMITTED,
-        /** Next due instant committed; no regeneration is permitted. */ SCHEDULE_ADVANCED,
-        /** Accepted execution failed and requires configuration or operator intervention. */ FAILED
+        /**
+         * Authorization captured; signing may not yet have been accepted.
+         */ CLAIMED,
+        /**
+         * Canonical status object and execution result committed atomically.
+         */ EFFECT_COMMITTED,
+        /**
+         * Next due instant committed; no regeneration is permitted.
+         */ SCHEDULE_ADVANCED,
+        /**
+         * Accepted execution failed and requires configuration or operator intervention.
+         */ FAILED
     }
 
     /**
@@ -78,7 +96,23 @@ public record StatusScheduleState(StatusSchedule configuration, Instant nextDue,
     public record Execution(String executionId, StatusSchedule configuration, Instant due, long fence,
             Phase phase, Optional<PkiId> signingOperationId, String acceptanceCommitment,
             Optional<PkiId> statusObjectId, String detailCode) {
-        /** Validates finite identity and stage invariants. */
+        /**
+         * Validates finite identity and stage invariants.
+         * @param executionId deterministic identity of the scheduled occurrence
+         * @param configuration configuration captured when claimed
+         * @param due claimed due instant
+         * @param fence worker revision which authorized this claim
+         * @param phase durable phase
+         * @param signingOperationId accepted signing identity, absent before acceptance
+         * @param acceptanceCommitment exact acceptance commitment, empty before acceptance
+         * @param statusObjectId committed canonical effect identity
+         * @param detailCode stable failure code, empty except on failure
+         * @throws NullPointerException if configuration, due, phase, signingOperationId, statusObjectId,
+         *     acceptanceCommitment, detailCode is null
+         * @throws IllegalArgumentException if execution identity, fence, configuration revision/enabled state,
+         *     acceptance commitment, phase/result linkage or detail code violates the scheduled-execution
+         *     invariants
+         */
         public Execution {
             Objects.requireNonNull(configuration, "configuration"); Objects.requireNonNull(due, "due");
             Objects.requireNonNull(phase, "phase"); Objects.requireNonNull(signingOperationId, "signingOperationId");

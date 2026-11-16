@@ -107,6 +107,8 @@ public final class Pkcs11SigningProvider implements SigningProvider {
      * @param keyRefPrefix          key reference prefix (may be empty)
      * @param keyLabelPattern       key label template (informational)
      * @param sessionPoolSize       maximum concurrent PKCS#11 sessions (≥ 1)
+     * @throws NullPointerException if {@code id}, {@code keyStore}, {@code provider}, {@code supportedAlgorithms}, {@code backendCommitment}, {@code operationHorizon}, {@code keyRefPrefix} or {@code keyLabelPattern} is null
+     * @throws IllegalArgumentException if id is blank, the supported algorithm set is empty, or sessionPoolSize is less than one
      */
     /* default */ Pkcs11SigningProvider(String id, KeyStore keyStore, Provider provider,
             Set<String> supportedAlgorithms, ConfigurationCommitment backendCommitment,
@@ -133,26 +135,41 @@ public final class Pkcs11SigningProvider implements SigningProvider {
                 .commitment(backendCommitment, this.supportedAlgorithms);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return id;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ConfigurationCommitment configurationCommitment() {
         return configurationCommitment;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedAlgorithms() {
         return supportedAlgorithms;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningInputCapabilities inputCapabilities() {
         return new SigningInputCapabilities(Long.MAX_VALUE, Map.of());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation dispatch(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
@@ -197,6 +214,9 @@ public final class Pkcs11SigningProvider implements SigningProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation reconcile(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
@@ -206,6 +226,9 @@ public final class Pkcs11SigningProvider implements SigningProvider {
                 DetailCode.LOCAL_RESTART_UNRECOVERABLE, Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation cancel(PkiId operationId, long fencingToken,
             CancellationReason reason, CallControl control) {
@@ -219,6 +242,9 @@ public final class Pkcs11SigningProvider implements SigningProvider {
                 DetailCode.LOCAL_RESTART_UNRECOVERABLE, Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         lifecycleLock.lock();

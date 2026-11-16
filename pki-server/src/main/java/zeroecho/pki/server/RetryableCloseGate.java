@@ -37,7 +37,9 @@ import java.util.Objects;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-/** Serializes retryable close attempts without holding its lock during teardown. */
+/**
+ * Serializes retryable close attempts without holding its lock during teardown.
+ */
 final class RetryableCloseGate {
     private static final String REENTRANT =
             "Close attempt cannot join its owner: code=SERVER_CLOSE_REENTRANT";
@@ -57,6 +59,8 @@ final class RetryableCloseGate {
      * @param quiesce idempotent nonblocking signal used only by a worker caller
      * @param teardown blocking teardown that returns its original failure, if any
      * @throws java.io.IOException if checked shutdown fails
+     * @throws NullPointerException if any of {@code quiesce}, {@code teardown} is null
+     * @throws IllegalStateException if an owned worker requests closure and an external caller must retry
      */
     /* default */ void close(boolean workerThread, Runnable quiesce, CloseAttempt teardown) throws java.io.IOException {
         Runnable signal = Objects.requireNonNull(quiesce, "quiesce");
@@ -135,7 +139,9 @@ final class RetryableCloseGate {
         return translated;
     }
 
-    /** Normalizes a shared attempt once so owner and joiners observe the same failure. */
+    /**
+     * Normalizes a shared attempt once so owner and joiners observe the same failure.
+     */
     private static Throwable normalize(Throwable failure) {
         if (failure == null || failure instanceof java.io.IOException
                 || failure instanceof RuntimeException || failure instanceof Error) {
@@ -147,7 +153,9 @@ final class RetryableCloseGate {
         return new java.io.IOException("Server close failed", failure);
     }
 
-    /** Restores cancellation throughout the original cause and suppression graph. */
+    /**
+     * Restores cancellation throughout the original cause and suppression graph.
+     */
     private static void restoreInterruption(Throwable failure) {
         java.util.Set<Throwable> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         java.util.Deque<Throwable> pending = new java.util.ArrayDeque<>();
@@ -166,7 +174,9 @@ final class RetryableCloseGate {
         }
     }
 
-    /** Rethrows a published failure without creating caller-specific wrappers. */
+    /**
+     * Rethrows a published failure without creating caller-specific wrappers.
+     */
     private static void rethrowExact(Throwable failure) throws java.io.IOException {
         if (failure == null) {
             return;
@@ -196,11 +206,17 @@ final class RetryableCloseGate {
      */
     @FunctionalInterface
     public interface CloseAttempt {
-        /** @return original failure to normalize and publish, or {@code null} on success */
+        /**
+         * Performs one close attempt and returns its original failure, if any.
+         *
+         * @return original failure to normalize and publish, or {@code null} on success
+         */
         Throwable close();
     }
 
-    /** One write-once result retained directly by every caller that joined it. */
+    /**
+     * One write-once result retained directly by every caller that joined it.
+     */
     @SuppressWarnings("PMD.DoNotUseThreads") // Attempt ownership is intentionally an exact Thread capability.
     private static final class Attempt {
         private final long generation;

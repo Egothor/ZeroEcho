@@ -45,13 +45,36 @@ import java.util.Optional;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.store.MetadataKey;
 
-/** Strict ZCLN/v1 private rows, capped at16KiB independently of unchanged FsCodec11/store18. */
+/**
+ * Strict ZCLN/v1 private rows, capped at16KiB independently of unchanged FsCodec11/store18.
+ */
 final class CrlSignerLineageCodec {
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.crl-signer-lineage}; persisted identities depend on this value.
+     */
     static final String NAMESPACE = "io.zeroecho.pki.crl-signer-lineage";
+    /**
+     * Inclusive maximum encoded metadata record length in bytes.
+     */
     static final int MAXIMUM_BYTES = 16 * 1024;
     private static final int MAGIC = 0x5a434c4e;
     private CrlSignerLineageCodec() { }
+    /**
+     * Derives the exact issuer-generation metadata key for hybrid CRL lineage.
+     *
+     * @param issuer exact issuer generation identity
+     * @return canonical lineage metadata key
+     * @throws NullPointerException if a required input is null
+     */
     static MetadataKey key(PkiId issuer) { return new MetadataKey(NAMESPACE, issuer.value()); }
+    /**
+     * Encodes hybrid signer-lineage membership without private material or mutable-head inference.
+     *
+     * @param value validated immutable hybrid lineage evidence
+     * @return newly allocated bounded binary lineage record
+     * @throws NullPointerException if the value is null
+     * @throws IOException if bounded text encoding fails or the record exceeds its row bound
+     */
     static byte[] encode(CrlSignerLineage value) throws IOException {
         var bytes = new ByteArrayOutputStream();
         try (var output = new DataOutputStream(bytes)) {
@@ -64,6 +87,15 @@ final class CrlSignerLineageCodec {
         if (bytes.size() > MAXIMUM_BYTES) throw new IOException("Hybrid CRL lineage exceeds row bound");
         return bytes.toByteArray();
     }
+    /**
+     * Decodes exact hybrid signer-lineage evidence and checks its persisted issuer identity.
+     *
+     * @param key exact persisted lineage metadata key
+     * @param bytes complete bounded binary lineage record
+     * @return validated immutable lineage evidence
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if framing, version, identity, canonical fields or trailing data is invalid
+     */
     static CrlSignerLineage decode(MetadataKey key, byte[] bytes) {
         try {
             if (bytes.length > MAXIMUM_BYTES) throw new IOException("Hybrid CRL lineage exceeds row bound");

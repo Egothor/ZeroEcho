@@ -78,7 +78,9 @@ import zeroecho.pki.api.PkiException;
 @SuppressWarnings({ "PMD.AvoidUncheckedExceptionsInSignatures", "PMD.PreserveStackTrace" })
 public final class BuiltInCertificateProfileCatalog {
 
-    /** Fixed packaged catalogue manifest resource. */
+    /**
+     * Fixed packaged catalogue manifest resource.
+     */
     public static final String MANIFEST_RESOURCE = "zeroecho/pki/profiles/v1/catalog.json";
 
     private static final String PROFILE_RESOURCE_ROOT = "zeroecho/pki/profiles/v1/";
@@ -237,7 +239,9 @@ public final class BuiltInCertificateProfileCatalog {
         return new PkiException(ERROR_PREFIX + code);
     }
 
-    /** Collects and validates one bounded catalogue load. */
+    /**
+     * Collects and validates one bounded catalogue load.
+     */
     private static final class CatalogueAccumulator {
 
         private final List<BuiltInCertificateProfileTemplate> templates;
@@ -280,7 +284,9 @@ public final class BuiltInCertificateProfileCatalog {
         }
     }
 
-    /** Strict Jackson Core streaming parser for the fixed catalogue manifest. */
+    /**
+     * Strict Jackson Core streaming parser for the fixed catalogue manifest.
+     */
     private static final class ManifestParser {
 
         private static final JsonFactory JSON_FACTORY = createJsonFactory();

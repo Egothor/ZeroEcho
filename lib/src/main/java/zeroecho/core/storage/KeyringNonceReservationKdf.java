@@ -60,6 +60,7 @@ final class KeyringNonceReservationKdf {
      * @param storeId   borrowed canonical 128-bit binary store UUID
      * @return newly owned 256-bit derived key
      * @throws GeneralSecurityException if HMAC-SHA-256 is unavailable
+     * @throws IllegalArgumentException if the master key is not 32 bytes or the store identifier is not 16 bytes
      */
     /* default */ static byte[] derive(byte[] masterKey, byte[] storeId) throws GeneralSecurityException {
         if (masterKey == null || masterKey.length != MASTER_KEY_BYTES || storeId == null

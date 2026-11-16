@@ -68,12 +68,19 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Real process interruption followed exclusively by the installed public CLI. */
+/**
+ * Real process interruption followed exclusively by the installed public CLI.
+ */
 @Tag("packaged-local-recovery")
 public class PkiPackagedLocalRecoveryTest {
     private static final int SIGNATURE_HALT = 73;
     private static final int CLAIM_HALT = 74;
 
+    /**
+     * Checks durable signature recovery after a process halt and completion through the packaged CLI.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(180)
     void durableSignatureSurvivesProcessHaltAndRequiresExplicitPackagedCompletion() throws Exception {
@@ -126,6 +133,11 @@ public class PkiPackagedLocalRecoveryTest {
         // independently verifies that the dispatch counter remains exactly one across reopening.
     }
 
+    /**
+     * Checks explicit completion failure for a lost in-flight result without publishing a CA.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(180)
     void lostInFlightResultFailsExplicitCompletionWithoutPublishingAnAuthority() throws Exception {
@@ -161,7 +173,11 @@ public class PkiPackagedLocalRecoveryTest {
         Files.writeString(directory.resolve("after-completion.txt"), after.evidence());
     }
 
-    /** Test child exits without shutdown hooks at an existing public durability callback. */
+    /**
+     * Test child exits without shutdown hooks at an existing public durability callback.
+     * @param arguments child scenario selector and scenario-specific fixture paths
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     public static void main(String[] arguments) throws Exception {
         String mode = arguments[0];
         Path configuration = Path.of(arguments[1]);

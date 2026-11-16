@@ -65,6 +65,11 @@ public class KdfTest {
         return HexFormat.of().parseHex(s.replaceAll("\\s+", ""));
     }
 
+    /**
+     * Checks HKDF-SHA-256 against RFC 5869 appendix A.1.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("RFC5869 A.1 - Basic test case with SHA-256")
     void rfc5869_caseA1() throws Exception {
@@ -80,6 +85,11 @@ public class KdfTest {
         assertArrayEquals(expectedOkm, okm, "OKM must match RFC5869 A.1");
     }
 
+    /**
+     * Checks HKDF-SHA-256 against RFC 5869 appendix A.2.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("RFC5869 A.2 - Test with longer inputs/outputs")
     void rfc5869_caseA2() throws Exception {
@@ -102,6 +112,11 @@ public class KdfTest {
         assertArrayEquals(expectedOkm, okm, "OKM must match RFC5869 A.2");
     }
 
+    /**
+     * Checks HKDF-SHA-256 against RFC 5869 appendix A.3.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("RFC5869 A.3 - Test with zero salt and empty info")
     void rfc5869_caseA3() throws Exception {
@@ -117,6 +132,11 @@ public class KdfTest {
         assertArrayEquals(expectedOkm, okm, "OKM must match RFC5869 A.3");
     }
 
+    /**
+     * Checks that null and empty HKDF salts select the same extraction behavior.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("salt == null behaves like empty salt")
     void nullSaltEqualsEmptySalt() throws Exception {
@@ -128,6 +148,11 @@ public class KdfTest {
         assertArrayEquals(a, b, "null salt and empty salt must be equivalent");
     }
 
+    /**
+     * Checks that HKDF leaves caller-owned input arrays unchanged.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Inputs are not mutated")
     void inputsAreNotMutated() throws Exception {
@@ -146,12 +171,18 @@ public class KdfTest {
         assertArrayEquals(infoCopy, info, "info must not be modified");
     }
 
+    /**
+     * Rejects empty HKDF input key material.
+     */
     @Test
     @DisplayName("Validation: empty IKM not allowed")
     void emptyIkmDisallowed() {
         assertThrows(IllegalArgumentException.class, () -> Kdf.hkdfSha256(new byte[0], null, null, 16));
     }
 
+    /**
+     * Rejects HKDF output lengths outside the permitted range.
+     */
     @Test
     @DisplayName("Validation: output length must be within 1..(255*HashLen)")
     void invalidLengthsDisallowed() {
@@ -160,6 +191,11 @@ public class KdfTest {
         assertThrows(IllegalArgumentException.class, () -> Kdf.hkdfSha256(ikm, null, null, 255 * 32 + 1));
     }
 
+    /**
+     * Checks that changing HKDF context information changes the derived output.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Small sanity: different info yields different outputs")
     void differentInfoProducesDifferentOkm() throws Exception {
@@ -175,6 +211,11 @@ public class KdfTest {
                 "Distinct info should produce distinct OKM");
     }
 
+    /**
+     * Checks deterministic HKDF output for identical inputs.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Idempotence for same inputs")
     void repeatability() throws Exception {
@@ -187,6 +228,11 @@ public class KdfTest {
         assertArrayEquals(a, b, "Same inputs must yield identical OKM");
     }
 
+    /**
+     * Checks that HKDF returns exactly the requested number of bytes.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Produces exact requested length")
     void exactLengthProduced() throws Exception {
@@ -197,6 +243,11 @@ public class KdfTest {
         }
     }
 
+    /**
+     * Checks that the HMAC algorithm required by HKDF is available.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Declared throws: GeneralSecurityException path is reachable")
     void macAlgorithmAvailable() throws Exception {

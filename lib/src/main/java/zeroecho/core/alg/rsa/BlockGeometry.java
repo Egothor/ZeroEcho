@@ -164,6 +164,12 @@ public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationO
         };
     }
 
+    /**
+     * Compares the input chunk size, output chunk size, and maximum finalization-output chunks by value.
+     *
+     * @param other object to compare, or null
+     * @return true for a compatible value with equal input chunk size, output chunk size, and maximum finalization-output chunks; false otherwise
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -176,11 +182,21 @@ public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationO
                 && finalizationOutputChunks == geometry.finalizationOutputChunks;
     }
 
+    /**
+     * Hashes the input chunk size, output chunk size, and maximum finalization-output chunks using the same components as equality.
+     *
+     * @return value-based hash code consistent with equals
+     */
     @Override
     public int hashCode() {
         return Objects.hash(inChunkSize, outChunkSize, finalizationOutputChunks);
     }
 
+    /**
+     * Returns a diagnostic representation containing the input/output chunk sizes and finalization-output chunk count.
+     *
+     * @return input/output chunk sizes and finalization-output chunk count
+     */
     @Override
     public String toString() {
         return "BlockGeometry[inChunkSize=" + inChunkSize + ", outChunkSize=" + outChunkSize

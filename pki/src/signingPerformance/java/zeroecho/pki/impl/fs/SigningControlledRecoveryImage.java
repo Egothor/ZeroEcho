@@ -53,13 +53,24 @@ import java.util.concurrent.ExecutionException;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Benchmark-only builder and validator for a production-recoverable controlled image. */
+/**
+ * Benchmark-only builder and validator for a production-recoverable controlled image.
+ */
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.CommentRequired",
         "PMD.CyclomaticComplexity" })
 final class SigningControlledRecoveryImage {
+    /**
+     * Stable schema identifier of controlled recovery-image descriptors.
+     */
     static final String DESCRIPTOR_SCHEMA = "zeroecho-signing-controlled-recovery-image-v1";
+    /**
+     * Store-local filename of the controlled recovery-image descriptor.
+     */
     static final String DESCRIPTOR_FILE = "CONTROLLED_RECOVERY_IMAGE";
     /* Eight canonical ASCII lines with bounded numeric, boolean, and SHA-256 fields. */
+    /**
+     * Inclusive maximum descriptor file size, in bytes, before decoding.
+     */
     static final int MAXIMUM_DESCRIPTOR_BYTES = descriptorMaximumBytes();
     private static final String GENERIC_NAMESPACE = "io.zeroecho.pki.benchmark-retained";
     private static final MetadataKey REPLACED_KEY =
@@ -70,6 +81,18 @@ final class SigningControlledRecoveryImage {
     private SigningControlledRecoveryImage() {
     }
 
+    /**
+     * Creates a fresh production-generated checkpoint and sealed-suffix image with a committed descriptor.
+     *
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     * @param retainedPopulation expected current retained metadata population
+     * @param activePopulation active signing-work population recovered into the due index
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param suffixFrames committed data-frame count distributed over the sealed suffix
+     * @param createdAt fixed image creation instant used by the population fixture
+     * @return validated descriptor of the completed image
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     static Descriptor prepare(Path workRoot, long retainedPopulation, long activePopulation,
             int sealedSegments, long suffixFrames, Instant createdAt) throws IOException {
         prepareFreshRoot(workRoot);
@@ -98,6 +121,17 @@ final class SigningControlledRecoveryImage {
         return descriptor;
     }
 
+    /**
+     * Reads and validates a controlled image descriptor against its requested populations and manifest commitment.
+     *
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     * @param retainedPopulation expected current retained metadata population
+     * @param activePopulation active signing-work population recovered into the due index
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param suffixFrames committed data-frame count distributed over the sealed suffix
+     * @return validated existing-image descriptor without synthesizing replacement state
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     static Descriptor validate(Path workRoot, long retainedPopulation, long activePopulation,
             int sealedSegments, long suffixFrames) throws IOException {
         if (!Files.isDirectory(workRoot, LinkOption.NOFOLLOW_LINKS)
@@ -120,10 +154,23 @@ final class SigningControlledRecoveryImage {
         return descriptor;
     }
 
+    /**
+     * Resolves the transactional-metadata directory inside the controlled work image without I/O.
+     *
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     * @return derived metadata directory path
+     */
     static Path metadataRoot(Path workRoot) {
         return new FsPaths(workRoot.resolve("store")).transactionalMetadataRoot();
     }
 
+    /**
+     * Reads a bounded authoritative manifest from the controlled metadata directory.
+     *
+     * @param metadataRoot production transactional-metadata artifact directory
+     * @return validated decoded manifest
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     static SigningManifestCodec.Manifest readManifest(Path metadataRoot) throws IOException {
         try {
             return SigningManifestCodec.decode(readBounded(
@@ -341,6 +388,17 @@ final class SigningControlledRecoveryImage {
         }
     }
 
+    /**
+     * Controlled production-image population, topology, and commitment coordinates.
+     *
+     * @param retainedPopulation expected current retained metadata population
+     * @param activePopulation active signing-work population recovered into the due index
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param suffixFrames committed data-frame count distributed over the sealed suffix
+     * @param synthetic whether the descriptor identifies synthetic rather than production-generated evidence
+     * @param manifestFingerprint lowercase SHA-256 commitment of the authoritative manifest
+     * @param descriptorFingerprint lowercase SHA-256 commitment of canonical descriptor fields
+     */
     record Descriptor(long retainedPopulation, long activePopulation, int sealedSegments,
             long suffixFrames, boolean synthetic, String manifestFingerprint,
             String descriptorFingerprint) {
@@ -429,20 +487,39 @@ final class SigningControlledRecoveryImage {
         }
     }
 
+    /**
+     * Stable failure classification for controlled production recovery-image creation or validation.
+     */
     static final class ImageException extends IOException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         */
         ImageException(String reasonCode) {
             super("controlled signing recovery image failed: code=" + reasonCode);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Creates a classified benchmark failure with the supplied stable reason and optional cause.
+         *
+         * @param reasonCode caller-selected stable reason code retained as supplied
+         * @param cause underlying diagnostic failure, possibly null
+         */
         ImageException(String reasonCode, Throwable cause) {
             super("controlled signing recovery image failed: code=" + reasonCode, cause);
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         String reasonCode() {
             return reasonCode;
         }

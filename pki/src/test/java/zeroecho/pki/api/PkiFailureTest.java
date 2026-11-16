@@ -42,8 +42,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for PKI failure.
+ */
 final class PkiFailureTest {
 
+    /**
+     * Retains valid classification and code with value equality.
+     */
     @Test
     void retainsValidClassificationAndCodeWithValueEquality() {
         PkiFailure failure = new PkiFailure(PkiFailureClassification.VALIDATION_FAILURE,
@@ -62,6 +68,9 @@ final class PkiFailureTest {
                         PkiFailureCode.CAPABILITY_NOT_CONFIGURED));
     }
 
+    /**
+     * Every canonical code declares its only valid classification.
+     */
     @Test
     void everyCanonicalCodeDeclaresItsOnlyValidClassification() {
         for (PkiFailureCode code : PkiFailureCode.values()) {
@@ -71,6 +80,9 @@ final class PkiFailureTest {
         }
     }
 
+    /**
+     * Rejects null and inconsistent failure components.
+     */
     @Test
     void rejectsNullAndInconsistentFailureComponents() {
         assertThrows(NullPointerException.class,
@@ -82,12 +94,18 @@ final class PkiFailureTest {
                         PkiFailureCode.NOT_FOUND));
     }
 
+    /**
+     * Arbitrary well formed token cannot become failure code.
+     */
     @Test
     void arbitraryWellFormedTokenCannotBecomeFailureCode() {
         assertThrows(IllegalArgumentException.class,
                 () -> PkiFailureCode.valueOf("PRIVATE_KEY_0123456789ABCDEF"));
     }
 
+    /**
+     * Exception retains failure and builds only safe message.
+     */
     @Test
     void exceptionRetainsFailureAndBuildsOnlySafeMessage() {
         PkiFailure failure = new PkiFailure(PkiFailureClassification.NOT_FOUND,
@@ -99,6 +117,9 @@ final class PkiFailureTest {
         assertTrue(exception.toString().contains("classification=NOT_FOUND, code=NOT_FOUND"));
     }
 
+    /**
+     * Direct exception text is safe while throwable graph remains sensitive.
+     */
     @Test
     void directExceptionTextIsSafeWhileThrowableGraphRemainsSensitive() {
         String hostileText = "hostile-input-private-key-material";
@@ -125,6 +146,9 @@ final class PkiFailureTest {
                 exception.getMessage());
     }
 
+    /**
+     * Exception rejects null failure and cause.
+     */
     @Test
     void exceptionRejectsNullFailureAndCause() {
         PkiFailure failure = new PkiFailure(PkiFailureClassification.INTERNAL_FAILURE,

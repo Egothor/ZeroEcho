@@ -36,10 +36,22 @@ package zeroecho.apispec;
 import java.util.List;
 import zeroecho.pki.server.http.HybridSdkHttpCodec;
 
-/** Projects existing optional SDK adapters; protocol authentication remains adapter-specific. */
+/**
+ * Emits OpenAPI fragments for explicitly optional SDK adapters and retained admin requests.
+ *
+ * <p>The projection describes existing carrier authentication/media distinctions,
+ * not listener activation or runtime authorization. Enrollment subject proofs do
+ * not replace native authentication, and OCSP F4/F5 evidence is the separate SDK
+ * profile rather than standard AltSignature OCSP.</p>
+ */
 final class SdkOpenApi {
     private SdkOpenApi() { }
 
+    /**
+     * Appends retained-request and optional adapter paths to the current YAML mapping.
+     *
+     * @param y caller-owned builder positioned in the paths mapping
+     */
     static void paths(YamlBuilder y) {
         administrativeRequests(y);
         for(String adapter:List.of("Admin","Acme","Est","Scep","Cmp")) {
@@ -168,6 +180,14 @@ final class SdkOpenApi {
             y.blockMapping("'"+status+"'",()->y.mapping("description","Native adapter rejection, unavailable opt-in, resource bound or transient failure; response media and grammar remain adapter-specific"));
     }
 
+    /**
+     * Appends the shared request/response component schemas used by the emitted paths.
+     *
+     * <p>Patterns and declared bounds describe representation requirements; runtime
+     * native decoders and listener/component budgets remain authoritative.</p>
+     *
+     * @param y caller-owned builder positioned in components.schemas
+     */
     static void schemas(YamlBuilder y) {
         for(String adapter:List.of("Admin","Acme","Est","Scep","Cmp"))for(boolean accept:new boolean[]{false,true}) {
             var fields=new java.util.ArrayList<String>(List.of("version","profile"));

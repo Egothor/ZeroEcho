@@ -77,6 +77,8 @@ public record SecurityLevel(OptionalInt nistLevel, int classicalBits) {
      * @throws NullPointerException     if {@code nistLevel} is {@code null}
      * @throws IllegalArgumentException if {@code classicalBits} is not positive, or
      *                                  if a NIST level is present but not in [1, 5]
+     * @param nistLevel optional NIST security category, from 1 to 5
+     * @param classicalBits positive classical security strength in bits
      */
     public SecurityLevel {
         java.util.Objects.requireNonNull(nistLevel, "nistLevel must not be null");

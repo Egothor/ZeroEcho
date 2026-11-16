@@ -45,6 +45,9 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for credential confirmation model.
+ */
 final class CredentialConfirmationModelTest {
     private static final PkiId CREDENTIAL = new PkiId("x509:" + "a".repeat(64));
     private static final String POLICY_COMMITMENT = "b".repeat(64);
@@ -53,6 +56,9 @@ final class CredentialConfirmationModelTest {
             new ConfirmationProofSuiteRef("x509-signature.v1", "c".repeat(64));
     private static final Instant REVIEW_AT = Instant.ofEpochSecond(1_767_225_600L, 123_456_789L);
 
+    /**
+     * Profile policy has canonical commitment and bounded window.
+     */
     @Test
     void profilePolicyHasCanonicalCommitmentAndBoundedWindow() {
         CredentialConfirmationPolicy policy = new CredentialConfirmationPolicy(
@@ -69,6 +75,9 @@ final class CredentialConfirmationModelTest {
                 policy.proofSuite()));
     }
 
+    /**
+     * Exposes six stable policies and exact requirement states.
+     */
     @Test
     void exposesSixStablePoliciesAndExactRequirementStates() {
         ConfirmationDisclosurePolicy[] policies = ConfirmationDisclosurePolicy.values();
@@ -92,6 +101,9 @@ final class CredentialConfirmationModelTest {
                 ConfirmationDisclosurePolicy.OWNER_ONLY, POLICY_COMMITMENT, false, REVIEW_AT, PROOF_SUITE));
     }
 
+    /**
+     * Rejects noncanonical suite commitment and instant bounds.
+     */
     @Test
     void rejectsNoncanonicalSuiteCommitmentAndInstantBounds() {
         String maximumSuiteId = "a".repeat(125) + ".v1";
@@ -114,6 +126,9 @@ final class CredentialConfirmationModelTest {
                 Instant.ofEpochSecond(253_402_300_800L), PROOF_SUITE));
     }
 
+    /**
+     * Enforces strict UTF-8 credential identity at every boundary without normalization.
+     */
     @Test
     void enforcesStrictUtf8CredentialIdentityAtEveryBoundaryWithoutNormalization() {
         PkiId asciiMaximum = new PkiId("a".repeat(
@@ -155,6 +170,9 @@ final class CredentialConfirmationModelTest {
         assertNotEquals(composed.recordCommitment(), decomposed.recordCommitment());
     }
 
+    /**
+     * Enforces revision state and exact cas invariants.
+     */
     @Test
     void enforcesRevisionStateAndExactCasInvariants() {
         CredentialConfirmationLifecycle pending = pending();
@@ -201,6 +219,9 @@ final class CredentialConfirmationModelTest {
                         notRequired.recordCommitment(), CHALLENGE_COMMITMENT), REVIEW_AT));
     }
 
+    /**
+     * Classifies exact review boundary as timely and later confirmation as late.
+     */
     @Test
     void classifiesExactReviewBoundaryAsTimelyAndLaterConfirmationAsLate() {
         CredentialConfirmationLifecycle pending = pending();
@@ -212,6 +233,9 @@ final class CredentialConfirmationModelTest {
         assertEquals(CredentialConfirmationLifecycle.Timeliness.LATE, late.timeliness());
     }
 
+    /**
+     * Produces exact v2 commitment and separates every mutation.
+     */
     @Test
     void producesExactV2CommitmentAndSeparatesEveryMutation() {
         CredentialConfirmationLifecycle baseline = pending();
@@ -247,6 +271,9 @@ final class CredentialConfirmationModelTest {
                 proof(baseline), REVIEW_AT).recordCommitment());
     }
 
+    /**
+     * Produces exact revision two vector with nanosecond confirmation time.
+     */
     @Test
     void producesExactRevisionTwoVectorWithNanosecondConfirmationTime() {
         CredentialConfirmationLifecycle baseline = pending();

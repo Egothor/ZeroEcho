@@ -44,8 +44,13 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingRule;
 import zeroecho.pki.impl.framework.x509.X509BindingRuleProvider;
 
-/** Configured test-only certificate representation absent from every built-in catalog. */
+/**
+ * Configured test-only certificate representation absent from every built-in catalog.
+ */
 public final class AcceptancePrivateBinding implements X509BindingRuleProvider, X509BindingRule {
+    /**
+     * Private test binding descriptor installed for framework-composition checks.
+     */
     public static final X509AlgorithmBinding DESCRIPTOR = new X509AlgorithmBinding(
             "test.acceptance.rsa.certificate.v1", BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
             X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE, "1.3.6.1.4.1.55555.77.1",
@@ -53,17 +58,47 @@ public final class AcceptancePrivateBinding implements X509BindingRuleProvider, 
             X509AlgorithmBinding.PublicKeyEncoding.NOT_APPLICABLE, X509AlgorithmBinding.SignatureEncoding.OPAQUE,
             X509AlgorithmBinding.Interoperability.DEPLOYER_ECOSYSTEM, Optional.of("test.acceptance"), "acceptance-rsa-v1");
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<X509BindingRule> rules() { return List.of(this); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<X509AlgorithmBinding> bindings() { return List.of(DESCRIPTOR); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String id() { return DESCRIPTOR.bindingId(); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public X509AlgorithmRole role() { return X509AlgorithmRole.SIGNATURE_ALGORITHM; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String oid() { return DESCRIPTOR.oid(); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String semanticFingerprint() { return DESCRIPTOR.semanticCommitment(); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public SignatureEncoding signatureEncoding() { return SignatureEncoding.OPAQUE; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public PublicKeyEncoding publicKeyEncoding() { return PublicKeyEncoding.NOT_APPLICABLE; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
         return identity.equals(DESCRIPTOR.algorithmIdentity()) ? Optional.of(X509AlgorithmIdentifier.absent(oid())) : Optional.empty();
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
         if (!oid().equals(identifier.oid())) { return Optional.empty(); }
         if (identifier.parameterForm() != X509AlgorithmIdentifier.ParameterForm.ABSENT) {

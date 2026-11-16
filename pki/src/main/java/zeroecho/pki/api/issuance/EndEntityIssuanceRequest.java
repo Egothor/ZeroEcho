@@ -52,7 +52,9 @@ import zeroecho.pki.api.request.X509EnrollmentPayload;
  */
 public record EndEntityIssuanceRequest(PkiId issuerCaId, X509EnrollmentPayload payload, String profileId,
         Optional<Validity> validityOverride) {
-    /** Maximum encoded request size, checked before allocating its defensive copy. */
+    /**
+     * Maximum encoded request size, checked before allocating its defensive copy.
+     */
     public static final int MAXIMUM_CSR_DER_BYTES = 1024 * 1024;
 
     /**
@@ -60,6 +62,10 @@ public record EndEntityIssuanceRequest(PkiId issuerCaId, X509EnrollmentPayload p
      *
      * @throws IllegalArgumentException if an argument is null, the profile is blank,
      *         or the request is empty or exceeds the size limit
+     * @param issuerCaId logical issuing authority; the current generation is selected by the store
+     * @param payload exact typed DER request, between one byte and one MiB inclusive
+     * @param profileId nonblank active profile identifier
+     * @param validityOverride optional requested duration, evaluated against issuer time and policy
      */
     public EndEntityIssuanceRequest {
         if (issuerCaId == null || payload == null || profileId == null || profileId.isBlank()

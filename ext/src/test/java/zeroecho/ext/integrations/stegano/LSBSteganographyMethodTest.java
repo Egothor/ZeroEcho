@@ -44,8 +44,16 @@ import java.nio.file.StandardOpenOption;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * LSB method tests for payload recovery, metadata, and an inspectable PNG sample.
+ */
 public class LSBSteganographyMethodTest {
 
+    /**
+     * Checks that LSB embedding followed by extraction preserves the message.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testEmbedAndExtract() throws Exception {
         SteganographyMethod method = new LSBSteganographyMethod();
@@ -63,6 +71,9 @@ public class LSBSteganographyMethodTest {
         assertEquals(message, result);
     }
 
+    /**
+     * Checks the stable LSB method identifier and descriptive algorithm metadata.
+     */
     @Test
     void testMetadata() {
         SteganographyMethod method = new LSBSteganographyMethod();
@@ -72,6 +83,11 @@ public class LSBSteganographyMethodTest {
         assertTrue(meta.fullName().contains("Least Significant"));
     }
 
+    /**
+     * Writes an LSB-embedded PNG sample to /tmp for inspection.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void createSample() throws Exception {
         // for verification purposes

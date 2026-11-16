@@ -58,7 +58,15 @@ import org.junit.jupiter.api.Timeout;
 
 import com.sun.net.httpserver.HttpServer;
 
+/**
+ * HTTP exchange tests for total deadlines, interruption, and bounded response bodies.
+ */
 class JdkHttpExchangeTest {
+    /**
+     * Checks that a stalled response body remains subject to the total request deadline.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void responseBodyStallHonorsWholeRequestTimeout() throws Exception {
@@ -73,6 +81,11 @@ class JdkHttpExchangeTest {
         } finally { release.countDown(); caller.shutdownNow(); }
     }
 
+    /**
+     * Checks that interruption cancels an unfinished response and preserves the caller's interrupt flag.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void interruptCancelsUnfinishedBodyAndRestoresCallerFlag() throws Exception {
@@ -95,6 +108,11 @@ class JdkHttpExchangeTest {
         } finally { release.countDown(); caller.shutdownNow(); }
     }
 
+    /**
+     * Rejects an oversized response instead of accepting a truncated protocol envelope.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void responseLimitRejectsOverflowRatherThanReturningTruncatedData() throws Exception {

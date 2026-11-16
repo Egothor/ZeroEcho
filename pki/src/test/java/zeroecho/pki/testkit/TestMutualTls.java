@@ -70,7 +70,9 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
  */
 public final class TestMutualTls {
 
-    /** Password protecting every generated keystore and key entry. */
+    /**
+     * Password protecting every generated keystore and key entry.
+     */
     public static final char[] PASSWORD = "changeit".toCharArray();
     private static final String PROTOCOL = "TLSv1.3";
 
@@ -109,6 +111,8 @@ public final class TestMutualTls {
     }
 
     /**
+     * Creates an SSL context presenting the server fixture identity.
+     *
      * @return a server context presenting the localhost identity and requiring the
      *         test client certificate
      * @throws Exception if the context cannot be built
@@ -118,6 +122,8 @@ public final class TestMutualTls {
     }
 
     /**
+     * Creates an SSL context presenting the client fixture identity and trusting its test root.
+     *
      * @return a client context presenting the client identity and pinning the test root
      * @throws Exception if the context cannot be built
      */

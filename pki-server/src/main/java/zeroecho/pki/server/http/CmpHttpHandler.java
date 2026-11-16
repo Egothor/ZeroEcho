@@ -52,7 +52,9 @@ import zeroecho.pki.server.cmp.CmpProtocolException;
 import zeroecho.pki.server.cmp.CmpService;
 import zeroecho.pkix.cmp.CmpProtectedMessage;
 
-/** Bounded RFC 6712 transport with owned admission, deadlines and cancellation. */
+/**
+ * Bounded RFC 6712 transport with owned admission, deadlines and cancellation.
+ */
 final class CmpHttpHandler implements HttpHandler {
     private static final int METHOD_NOT_ALLOWED_STATUS = 405;
     private static final String TEXT = "text/plain; charset=utf-8";
@@ -62,6 +64,17 @@ final class CmpHttpHandler implements HttpHandler {
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
+    /**
+     * Composes the CMP HTTP boundary without taking ownership of its collaborators.
+     *
+     * @param configuration protocol listener limits and transport policy
+     * @param realm lifecycle-owned realm context
+     * @param service realm-owned CMP service
+     * @param runtime lifecycle-owned admission and bounded execution owner
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     * @throws NullPointerException if any collaborator is null
+     */
     /* default */ CmpHttpHandler(PkiServerConfiguration.CmpListener configuration, ServerRealmContext realm,
             CmpService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
@@ -72,6 +85,9 @@ final class CmpHttpHandler implements HttpHandler {
         this.ready = Objects.requireNonNull(ready, "ready");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             try {

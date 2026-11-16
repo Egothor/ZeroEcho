@@ -53,6 +53,10 @@ public record RevocationQuery(Optional<PkiId> issuerCaId, Optional<RevocationRea
      * Creates a revocation query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param issuerCaId optional issuer CA filter
+     * @param reason optional reason filter
+     * @param revokedAfter optional lower bound (inclusive) for revocation time
+     * @param revokedBefore optional upper bound (exclusive) for revocation time
      */
     public RevocationQuery {
         if (issuerCaId == null || reason == null || revokedAfter == null || revokedBefore == null) {

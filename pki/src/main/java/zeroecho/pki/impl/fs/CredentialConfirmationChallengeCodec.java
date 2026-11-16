@@ -52,8 +52,13 @@ import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
 import zeroecho.pki.api.confirmation.CredentialConfirmationChallenge;
 import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 
-/** Strict bounded binary version-1 codec for portable confirmation challenges. */
+/**
+ * Strict bounded binary version-1 codec for portable confirmation challenges.
+ */
 final class CredentialConfirmationChallengeCodec {
+    /**
+     * Inclusive maximum encoded record length in bytes.
+     */
     /* default */ static final int MAXIMUM_ENCODED_BYTES = 2_048;
 
     private static final int MAGIC = 0x5a454348; // ZECH
@@ -66,6 +71,16 @@ final class CredentialConfirmationChallengeCodec {
 
     private CredentialConfirmationChallengeCodec() { }
 
+    /**
+     * Encodes an immutable confirmation challenge using the current bounded binary format.
+     *
+     * <p>Temporary raw challenge and encoded text buffers are cleared after encoding.</p>
+     *
+     * @param challenge validated challenge whose complete realm, policy, proof suite and temporal bindings are persisted
+     * @return newly allocated encoding of at most 2,048 bytes
+     * @throws NullPointerException if the challenge is null
+     * @throws IllegalArgumentException if a text field is not strict UTF-8 or the complete encoding exceeds the size bound
+     */
     /* default */ static byte[] encode(CredentialConfirmationChallenge challenge) {
         CredentialConfirmationChallenge exact = Objects.requireNonNull(challenge, "challenge");
         byte[] realm = strictUtf8(exact.realm().value());
@@ -111,6 +126,15 @@ final class CredentialConfirmationChallengeCodec {
         }
     }
 
+    /**
+     * Decodes and validates one exact bounded confirmation challenge record.
+     *
+     * <p>The temporary encoded copy is cleared after parsing.</p>
+     *
+     * @param encoded complete binary challenge record; copied before parsing
+     * @return validated immutable challenge with independent raw challenge ownership
+     * @throws IOException if input is null, empty, oversized, malformed or inconsistent with its canonical commitment
+     */
     /* default */ static CredentialConfirmationChallenge decode(byte[] encoded) throws IOException {
         if (encoded == null || encoded.length == 0 || encoded.length > MAXIMUM_ENCODED_BYTES) {
             throw malformed();

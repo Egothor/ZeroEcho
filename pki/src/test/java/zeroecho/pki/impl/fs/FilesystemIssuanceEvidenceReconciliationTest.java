@@ -69,11 +69,19 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Startup reconciliation of the issuance-evidence log across the credential-commit crash window. */
+/**
+ * Startup reconciliation of the issuance-evidence log across the credential-commit crash window.
+ */
 final class FilesystemIssuanceEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";
 
+    /**
+     * Crash window issuance evidence is reconciled on restart.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crashWindowIssuanceEvidenceIsReconciledOnRestart(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
@@ -102,6 +110,12 @@ final class FilesystemIssuanceEvidenceReconciliationTest {
         }
     }
 
+    /**
+     * Ca credentials are not reconciled into the issuance feed.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void caCredentialsAreNotReconciledIntoTheIssuanceFeed(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);

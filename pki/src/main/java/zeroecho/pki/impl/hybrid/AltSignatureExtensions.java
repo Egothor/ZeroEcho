@@ -67,22 +67,34 @@ public final class AltSignatureExtensions {
     private static final int UNSIGNED_BYTE_MAX = 0xff;
     private static final int UNSIGNED_SHORT_MAX = 0xffff;
 
-    /** OID for SubjectAltPublicKeyInfo (id-ce-subjectAltPublicKeyInfo). */
+    /**
+     * OID for SubjectAltPublicKeyInfo (id-ce-subjectAltPublicKeyInfo).
+     */
     public static final String OID_SUBJECT_ALT_PUBLIC_KEY_INFO = "2.5.29.72"; // NOPMD LongVariable, AvoidUsingHardCodedIP - Exported descriptive OID identifier preserves consumer API. Standardized X.509 extension OID, not a network address.
 
-    /** OID for AltSignatureAlgorithm (id-ce-altSignatureAlgorithm). */
+    /**
+     * OID for AltSignatureAlgorithm (id-ce-altSignatureAlgorithm).
+     */
     public static final String OID_ALT_SIGNATURE_ALGORITHM = "2.5.29.73"; // NOPMD AvoidUsingHardCodedIP - Standardized X.509 extension OID, not a network address.
 
-    /** OID for AltSignatureValue (id-ce-altSignatureValue). */
+    /**
+     * OID for AltSignatureValue (id-ce-altSignatureValue).
+     */
     public static final String OID_ALT_SIGNATURE_VALUE = "2.5.29.74"; // NOPMD AvoidUsingHardCodedIP - Standardized X.509 extension OID, not a network address.
 
-    /** Fixed raw signature length for ML-DSA-44 (FIPS 204). */
+    /**
+     * Fixed raw signature length for ML-DSA-44 (FIPS 204).
+     */
     public static final int ML_DSA_44_SIGNATURE_LENGTH = 2420;
 
-    /** Fixed raw signature length for ML-DSA-65 (FIPS 204). */
+    /**
+     * Fixed raw signature length for ML-DSA-65 (FIPS 204).
+     */
     public static final int ML_DSA_65_SIGNATURE_LENGTH = 3309;
 
-    /** Fixed raw signature length for ML-DSA-87 (FIPS 204). */
+    /**
+     * Fixed raw signature length for ML-DSA-87 (FIPS 204).
+     */
     public static final int ML_DSA_87_SIGNATURE_LENGTH = 4627;
 
     private static final Map<String, Integer> FIXED_SIGNATURE_LENGTHS = Map.of(
@@ -197,6 +209,13 @@ public final class AltSignatureExtensions {
 
     // ---- DER BIT STRING encoding (no BC dependency) --------------------------
 
+    /**
+     * Encodes complete octets as a DER BIT STRING with zero unused bits.
+     *
+     * @param content payload bytes; the caller must ensure the resulting payload fits the supported 24-bit length range
+     * @return newly allocated BIT STRING tag, canonical length and zero-padded payload
+     * @throws NullPointerException if the payload is null
+     */
     /* default */ static byte[] encodeBitString(byte[] content) {
         // BIT STRING: tag 0x03, length(1 + content.length), 0x00 unused bits, content
         byte[] payload = new byte[content.length + 1];
@@ -205,6 +224,14 @@ public final class AltSignatureExtensions {
         return encodeTlv(0x03, payload);
     }
 
+    /**
+     * Encodes a single-octet ASN.1 tag and a definite-length value.
+     *
+     * @param tag single-octet tag; the caller must supply a valid byte-valued ASN.1 tag
+     * @param value payload whose length is at most 16,777,215 bytes; this precondition is not checked here
+     * @return newly allocated tag-length-value encoding
+     * @throws NullPointerException if the value is null
+     */
     /* default */ static byte[] encodeTlv(int tag, byte[] value) {
         byte[] length = encodeLength(value.length);
         byte[] result = new byte[1 + length.length + value.length];
@@ -214,6 +241,12 @@ public final class AltSignatureExtensions {
         return result;
     }
 
+    /**
+     * Encodes a bounded definite DER length in its shortest supported representation.
+     *
+     * @param length nonnegative byte length at most 16,777,215; the caller must enforce this precondition
+     * @return newly allocated one- through four-byte DER length encoding
+     */
     /* default */ static byte[] encodeLength(int length) {
         if (length < LONG_FORM_THRESHOLD) {
             return new byte[] { (byte) length };

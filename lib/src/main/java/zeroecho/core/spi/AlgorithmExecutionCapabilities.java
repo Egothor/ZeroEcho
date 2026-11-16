@@ -64,6 +64,7 @@ public final class AlgorithmExecutionCapabilities {
      * @param capabilities installed trusted-code capabilities
      * @throws IllegalArgumentException if implementation identifiers collide or a
      *                                  fingerprint is blank
+     * @throws NullPointerException if {@code capabilities} is null
      */
     public AlgorithmExecutionCapabilities(List<AlgorithmExecutionCapability> capabilities) {
         Objects.requireNonNull(capabilities, "capabilities");
@@ -99,6 +100,7 @@ public final class AlgorithmExecutionCapabilities {
      *
      * @param providers provider instances belonging to the runtime graph
      * @return immutable capability snapshot
+     * @throws NullPointerException if {@code providers} is null
      */
     public static AlgorithmExecutionCapabilities fromProviders(
             Collection<? extends AlgorithmExecutionCapabilityProvider> providers) {
@@ -121,6 +123,7 @@ public final class AlgorithmExecutionCapabilities {
      * @param suite     complete suite
      * @param direction operation direction
      * @return deterministic immutable matching list
+     * @throws NullPointerException if any of {@code identity}, {@code suite}, {@code direction} is null
      */
     public List<AlgorithmExecutionCapability> supporting(AlgorithmIdentity identity, AlgorithmSuite suite,
             AlgorithmExecutionCapability.Direction direction) {

@@ -53,6 +53,10 @@ public record CorrelatedEndEntityReplacementRequest(PkiId issuerCaId, EndEntityR
      * Validates bounded coordinates without accessing persistent state.
      * @throws NullPointerException if an argument is null
      * @throws IllegalArgumentException if a digest or coordinate is invalid
+     * @param issuerCaId expected logical issuing authority
+     * @param request predecessor and exact replacement request
+     * @param predecessorSha256 canonical lowercase SHA-256 of predecessor DER
+     * @param intent frozen orchestration identity and selection
      */
     public CorrelatedEndEntityReplacementRequest {
         Objects.requireNonNull(issuerCaId, "issuerCaId");
@@ -70,7 +74,11 @@ public record CorrelatedEndEntityReplacementRequest(PkiId issuerCaId, EndEntityR
         CorrelatedEndEntityIssuanceRequest.requireBoundedIdentifier(intent.expectedChainPathId().value());
     }
 
-    /** @return a redacted diagnostic description */
+    /**
+     * Returns a fixed redacted diagnostic label for this lifecycle request.
+     *
+     * @return a redacted diagnostic description
+     */
     @Override public String toString() { return "CorrelatedEndEntityReplacementRequest[redacted]"; }
 }
 

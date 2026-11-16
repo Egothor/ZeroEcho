@@ -89,6 +89,19 @@ final class CertificateProfileValidator {
     private CertificateProfileValidator() {
     }
 
+    /**
+     * Applies managed responder subject, key, and frozen-validity policy.
+     *
+     * @param request managed responder issuance request
+     * @param publicKey exact managed subject public key
+     * @param profile resolved certificate profile policy
+     * @param reference exact profile identity and version
+     * @param issuer selected authoritative issuer credential
+     * @param time authoritative evaluation instant
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @return gate-approved bounded leaf certificate request
+     * @throws PkiException if subject, SAN, key, transport evidence, or validity violates policy
+     */
     /* package */ static ValidatedCertificateRequest validateManagedOcsp(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
             zeroecho.pki.api.EncodedObject publicKey, CertificateProfile profile, CertificateProfileRef reference,
@@ -107,6 +120,18 @@ final class CertificateProfileValidator {
                 policy.extendedKeyUsageCritical(), policy.basicConstraintsCritical(), profile.algorithmBindingPolicy());
     }
 
+    /**
+     * Applies leaf policy to a verified request with canonical transport evidence.
+     *
+     * @param candidate verified enrollment or reconstructed predecessor candidate
+     * @param profile resolved certificate profile policy
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param issuerCredential selected authoritative issuer credential
+     * @param evaluationTime authoritative policy evaluation instant
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @return gate-approved bounded leaf certificate request
+     * @throws PkiException if subject, SAN, key, transport evidence, or validity violates policy
+     */
     /* package */ static ValidatedCertificateRequest validate(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority) {
@@ -114,6 +139,19 @@ final class CertificateProfileValidator {
         return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority, false);
     }
 
+    /**
+     * Applies leaf policy while preserving an already frozen validity interval.
+     *
+     * @param candidate verified enrollment or reconstructed predecessor candidate
+     * @param profile resolved certificate profile policy
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param issuerCredential selected authoritative issuer credential
+     * @param evaluationTime authoritative policy evaluation instant
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @param exactValidity optional frozen validity that must satisfy current policy
+     * @return gate-approved bounded leaf certificate request
+     * @throws PkiException if subject, SAN, key, transport evidence, or validity violates policy
+     */
     /* package */ static ValidatedCertificateRequest validateFrozen(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority, Optional<Validity> exactValidity) {
@@ -126,6 +164,14 @@ final class CertificateProfileValidator {
      * renewal or reissue. Applies the identical deny-by-default subject, SAN,
      * key, and validity policy, but does not require the CSR transport attribute,
      * because a reconstruction carries no fresh PKCS#10 request.
+     * @param candidate verified enrollment or reconstructed predecessor candidate
+     * @param profile resolved certificate profile policy
+     * @param profileReference exact validated profile identity and version; must not be null
+     * @param issuerCredential selected authoritative issuer credential
+     * @param evaluationTime authoritative policy evaluation instant
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @return gate-approved bounded leaf certificate request
+     * @throws PkiException if subject, SAN, key, transport evidence, or validity violates policy
      */
     /* package */ static ValidatedCertificateRequest validateReconstructed(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
@@ -288,6 +334,14 @@ final class CertificateProfileValidator {
     }
 
     // The public exception deliberately redacts ASN.1 parser details.
+    /**
+     * Requires bounded DER SubjectPublicKeyInfo with a permitted algorithm and supported parameters.
+     *
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param allowedAlgorithms permitted profile subject-key algorithm identifiers
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @throws PkiException if subject-key encoding, parameters, algorithm, or profile permission is invalid
+     */
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidRethrowingException" })
     /* package */ static void requireSubjectKeyAllowed(zeroecho.pki.api.EncodedObject exactPublicKey,
             Set<String> allowedAlgorithms, X509AuthoritySnapshot authority) {

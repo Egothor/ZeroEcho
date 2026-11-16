@@ -69,7 +69,16 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 
+/**
+ * Contract and regression tests for authority metadata repair.
+ */
 final class AuthorityMetadataRepairTest {
+    /**
+     * Committed large authority and credential payloads read and reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void committedLargeAuthorityAndCredentialPayloadsReadAndReopen(@TempDir Path root) throws Exception {
         Credential credential;
         IssuerGeneration generation;
@@ -96,6 +105,13 @@ final class AuthorityMetadataRepairTest {
         }
     }
 
+    /**
+     * Live ca reads reject damaged credential authority after open.
+     *
+     * @param damage named corruption applied to the retained artifact
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"selected", "unselected", "owner", "content", "path-ancestor"})
     void liveCaReadsRejectDamagedCredentialAuthorityAfterOpen(String damage, @TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
@@ -146,6 +162,12 @@ final class AuthorityMetadataRepairTest {
         }
     }
 
+    /**
+     * Startup streams large key references within fixed heap.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void startupStreamsLargeKeyReferencesWithinFixedHeap(@TempDir Path temporary) throws Exception {
         Path root = temporary.resolve("store");
         try (FilesystemPkiStore store = open(root)) {
@@ -199,8 +221,16 @@ final class AuthorityMetadataRepairTest {
         return String.join(java.io.File.pathSeparator, entries);
     }
 
-    /** Isolated startup-only probe; a materialized 128-MiB generation list cannot fit. */
+    /**
+     * Isolated startup-only probe; a materialized 128-MiB generation list cannot fit.
+     */
     public static final class ReopenProcess {
+        /**
+         * Opens the supplied store in a forked JVM and requires the repaired authority head to remain absent.
+         *
+         * @param arguments console arguments containing the store path at index zero
+         * @throws Exception if fixture construction, execution, or cleanup fails
+         */
         public static void main(String[] arguments) throws Exception {
             java.util.logging.LogManager.getLogManager().reset();
             try (FilesystemPkiStore store = open(Path.of(arguments[0]))) {

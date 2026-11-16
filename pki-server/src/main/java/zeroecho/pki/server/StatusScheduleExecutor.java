@@ -45,19 +45,32 @@ import zeroecho.pki.api.schedule.StatusScheduleCoordinator;
 import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Bounded-page traversal of durable schedule work, including disabled unfinished executions. */
+/**
+ * Bounded-page traversal of durable schedule work, including disabled unfinished executions.
+ */
 final class StatusScheduleExecutor implements StatusScheduleWorker.ScheduleGateway {
     private static final int PAGE_SIZE = 200;
     private final Optional<StatusScheduleCoordinator> coordinator;
     private final Clock clock;
     private final Consumer<String> failure;
 
+    /**
+     * Composes bounded durable schedule traversal with optional generation coordination.
+     *
+     * @param coordinator status generation coordinator, or empty when unavailable
+     * @param clock schedule eligibility time source
+     * @param failure safe schedule-failure code recorder
+     * @throws NullPointerException if a required collaborator or optional container is null
+     */
     /* default */ StatusScheduleExecutor(Optional<StatusScheduleCoordinator> coordinator, Clock clock, Consumer<String> failure) {
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.failure = Objects.requireNonNull(failure, "failure");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public StatusScheduleWorker.PassHints execute(CancellationSignal cancellation) {
         if (coordinator.isEmpty()) { return StatusScheduleWorker.PassHints.idle(); }
         StatusScheduleCoordinator service = coordinator.orElseThrow();

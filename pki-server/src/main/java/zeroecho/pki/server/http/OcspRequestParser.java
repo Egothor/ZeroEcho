@@ -53,7 +53,9 @@ import zeroecho.pkix.ocsp.OcspRequest;
 import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.server.OcspRequesterService;
 
-/** Narrow canonical DER and unpadded Base64url OCSP request decoder. */
+/**
+ * Narrow canonical DER and unpadded Base64url OCSP request decoder.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExceptionAsFlowControl", "PMD.PreserveStackTrace",
         "PMD.AvoidCatchingGenericException", "PMD.CyclomaticComplexity", "PMD.AvoidLiteralsInIfCondition" })
 final class OcspRequestParser {
@@ -61,18 +63,47 @@ final class OcspRequestParser {
     private static final String OID_SHA256 = "2.16.840.1.101.3.4.2.1";
     private static final String OID_NONCE = "1.3.6.1.5.5.7.48.1.2";
 
+    /**
+     * Validated OCSP request coordinates and optional request-authentication material.
+     *
+     * @param requests immutable ordered certificate identifiers
+     * @param nonce optional request nonce; copied on construction and access
+     * @param signedRequest optional signed request awaiting requester trust validation
+     */
     /* default */ record Parsed(List<OcspResponseService.CertId> requests, Optional<byte[]> nonce,
             Optional<OcspRequesterService.SignedRequest> signedRequest) {
+        /**
+         * Snapshots parsed request collections and nonce bytes.
+         *
+         * @param requests ordered certificate identifiers; copied to an immutable list
+         * @param nonce optional nonce bytes; copied when present
+         * @param signedRequest optional request-signature material
+         * @throws NullPointerException if a container or request entry is null
+         */
         Parsed {
             requests = List.copyOf(requests);
             nonce = nonce.map(byte[]::clone);
             signedRequest = Objects.requireNonNull(signedRequest, "signedRequest");
         }
+        /**
+         * Copies the optional OCSP nonce for independent caller ownership.
+         *
+         * @return optional caller-owned nonce bytes
+         */
         @Override public Optional<byte[]> nonce() { return nonce.map(byte[]::clone); }
     }
 
     private OcspRequestParser() { }
 
+    /**
+     * Decodes a canonical unpadded base64url OCSP GET path segment.
+     *
+     * @param encoded complete encoded request path segment
+     * @param maximumBytes maximum decoded DER request size, in bytes
+     * @return newly allocated DER request bytes
+     * @throws IllegalArgumentException if the text is empty, noncanonical, malformed or oversized
+     * @throws NullPointerException if encoded text is null
+     */
     /* default */ static byte[] decodeGet(String encoded, int maximumBytes) {
         if (encoded.isEmpty() || encoded.length() > Math.addExact(maximumBytes * 2, 8)
                 || !encoded.matches("[A-Za-z0-9_-]+") || encoded.indexOf('=') >= 0) throw malformed();
@@ -84,11 +115,35 @@ final class OcspRequestParser {
         } catch (IllegalArgumentException failure) { throw malformed(); }
     }
 
+    /**
+     * Parses a bounded unsigned OCSP request with the accepted CertID hash algorithms.
+     *
+     * @param der complete OCSP request DER
+     * @param maximumEntries maximum number of requested certificate identifiers
+     * @param acceptedHashes permitted issuer hash algorithms
+     * @param maximumNonceBytes maximum decoded nonce length, in bytes
+     * @return validated request coordinates
+     * @throws IllegalArgumentException if DER or extensions are malformed, bounds are exceeded,
+     *         or a signed request requires signer certificates
+     */
     /* default */ static Parsed parse(byte[] der, int maximumEntries,
             Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumNonceBytes) {
         return parse(der, maximumEntries, acceptedHashes, maximumNonceBytes, 0, 0);
     }
 
+    /**
+     * Parses a bounded OCSP request without establishing signer trust.
+     *
+     * @param der complete canonical OCSP request DER
+     * @param maximumEntries maximum number of requested certificate identifiers
+     * @param acceptedHashes permitted issuer hash algorithms
+     * @param maximumNonceBytes maximum decoded nonce length, in bytes
+     * @param maximumSignerCertificates maximum embedded signer-certificate count
+     * @param maximumSignerChainBytes maximum embedded signer-chain size, in bytes
+     * @return validated request coordinates and optional untrusted signature material
+     * @throws IllegalArgumentException if DER, extensions, algorithms or signature structure
+     *         are malformed, noncanonical or outside configured bounds
+     */
     /* default */ static Parsed parse(byte[] der, int maximumEntries,
             Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumNonceBytes,
             int maximumSignerCertificates, int maximumSignerChainBytes) {

@@ -33,8 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.cli;
 
-/** Supported administrator output representations. */
+/**
+ * Supported administrator output representations.
+ */
 enum PkiOutputMode {
+    /**
+     * Administrator-oriented human-readable presentation.
+     */
     HUMAN,
+    /**
+     * Structured JSON presentation for machine consumption.
+     */
     JSON
 }

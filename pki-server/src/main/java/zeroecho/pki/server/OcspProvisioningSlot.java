@@ -46,15 +46,78 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity;
 import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
 
-/** Retained uniqueness claim for one trusted-realm managed responder public-key tuple. */
+/**
+ * Retained uniqueness claim for one trusted-realm managed responder public-key tuple.
+ *
+ * @param realmId trusted server realm owning the claim
+ * @param serverSlotId realm-bound SHA-256 slot identity
+ * @param coreSlotId domain SHA-256 identity of the issuer and responder-key tuple
+ * @param authorityId issuing authority identity
+ * @param issuerId exact issuing credential identity
+ * @param primarySpkiSha256 primary responder public-key SHA-256
+ * @param alternativeSpkiSha256 distinct alternative responder public-key SHA-256
+ * @param revision positive provisioning revision
+ * @param state retained claim lifecycle state
+ * @param canonicalRequestId deterministic administrative request identity for this revision
+ * @param targetCommitment exact normalized provisioning target commitment
+ * @param receipt accepted signing receipt, if any
+ * @param credentialId issued X.509 credential identity, present only after completion
+ * @param certificateSha256 issued certificate SHA-256, present only after completion
+ * @param predecessorCredentialId predecessor credential for explicit renewal, absent for revision one
+ */
 record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlotId,
         PkiId authorityId, PkiId issuerId, String primarySpkiSha256, String alternativeSpkiSha256,
         long revision, State state, String canonicalRequestId, String targetCommitment,
         Optional<SigningAcceptanceReceipt> receipt, Optional<PkiId> credentialId,
         Optional<String> certificateSha256, Optional<PkiId> predecessorCredentialId) {
+    /**
+     * Administrative operation identity permitted to own responder-provisioning claims.
+     */
     static final String OPERATION = "ocsp.responder.issue-certificate";
-    enum State { CLAIMED, ACCEPTED, COMPLETED, FAILED }
+    /**
+     * Durable provisioning claim lifecycle.
+     */
+    enum State {
+        /**
+         * The canonical target is claimed without an accepted signing receipt.
+         */
+        CLAIMED,
+        /**
+         * The claim is bound to an accepted signing receipt.
+         */
+        ACCEPTED,
+        /**
+         * The claim retains the successfully issued certificate identity.
+         */
+        COMPLETED,
+        /**
+         * The administrative workflow terminated without a successful certificate result.
+         */
+        FAILED
+    }
 
+    /**
+     * Validates canonical slot coordinates and state-dependent receipt/result invariants.
+     *
+     * @param realmId trusted server realm owning the claim
+     * @param serverSlotId realm-bound SHA-256 slot identity
+     * @param coreSlotId domain SHA-256 identity of the issuer and responder-key tuple
+     * @param authorityId issuing authority identity
+     * @param issuerId exact issuing credential identity
+     * @param primarySpkiSha256 primary responder public-key SHA-256
+     * @param alternativeSpkiSha256 distinct alternative responder public-key SHA-256
+     * @param revision positive provisioning revision
+     * @param state retained claim lifecycle state
+     * @param canonicalRequestId deterministic administrative request identity for this revision
+     * @param targetCommitment exact normalized provisioning target commitment
+     * @param receipt accepted signing receipt, if any
+     * @param credentialId issued X.509 credential identity, present only after completion
+     * @param certificateSha256 issued certificate SHA-256, present only after completion
+     * @param predecessorCredentialId predecessor credential for explicit renewal, absent for revision one
+     * @throws NullPointerException if a required identity or optional container is null
+     * @throws IllegalArgumentException if a digest, revision, derived identity or lifecycle invariant is
+     *         inconsistent
+     */
     OcspProvisioningSlot {
         Objects.requireNonNull(realmId); Objects.requireNonNull(authorityId); Objects.requireNonNull(issuerId);
         Objects.requireNonNull(state); Objects.requireNonNull(receipt); Objects.requireNonNull(credentialId);
@@ -73,10 +136,22 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
                 || complete && !credentialId.orElseThrow().value().equals("x509:" + certificateSha256.orElseThrow())) throw invalid();
     }
 
-    /** Validates immutable coordinates and the only permitted explicit renewal transition. */
+    /**
+     * Validates a normal claim transition without permitting receipt replacement.
+     *
+     * @param previous exact retained prior slot, or empty for the initial claim
+     * @throws IllegalArgumentException if coordinates change, renewal skips a revision,
+     *         a receipt is replaced or a terminal state changes
+     */
     void requireTransition(Optional<OcspProvisioningSlot> previous) { requireTransition(previous, false); }
 
-    /** The receipt exception is supplied only by the store's verified definite attachment path. */
+    /**
+     * Validates immutable slot coordinates and the sole permitted explicit renewal transition.
+     *
+     * @param previous exact retained prior slot, or empty for the initial claim
+     * @param definiteAttachment whether the store's verified attachment path permits receipt replacement
+     * @throws IllegalArgumentException if coordinates, revision or lifecycle invariants are violated
+     */
     void requireTransition(Optional<OcspProvisioningSlot> previous, boolean definiteAttachment) {
         if (previous.isEmpty()) {
             if (revision != 1 || state != State.CLAIMED) throw invalid();
@@ -98,7 +173,13 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
                 || (old.state == State.COMPLETED || old.state == State.FAILED) && !equals(old)) throw invalid();
     }
 
-    /** Validates the exact request scope, target and receipt before one atomic mutation. */
+    /**
+     * Checks exact scope, target, receipt and result consistency with the administrative request.
+     *
+     * @param request administrative request proposed for the same atomic mutation
+     * @throws IllegalArgumentException if operation, request identity, scope, receipt,
+     *         target, SDK-proof absence or terminal result differs
+     */
     void requireRequest(AdministrativeRequest request) {
         if (!request.operation().equals(OPERATION) || !request.requestId().equals(canonicalRequestId)
                 || !request.scope().realmId().equals(realmId) || !request.scope().authorityId().equals(Optional.of(authorityId))

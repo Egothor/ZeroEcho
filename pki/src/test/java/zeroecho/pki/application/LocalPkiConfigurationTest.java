@@ -54,9 +54,17 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for local PKI configuration.
+ */
 final class LocalPkiConfigurationTest {
     private static final ProviderConfig SIGNER = new ProviderConfig("zeroecho-lib", Map.of());
 
+    /**
+     * Validates finite local bounds and matches one signer buffer budget.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     */
     @Test
     void validatesFiniteLocalBoundsAndMatchesOneSignerBufferBudget(@TempDir Path root) {
         assertThrows(IllegalArgumentException.class, () -> signing(new ProviderConfig("remote", Map.of()),
@@ -86,6 +94,12 @@ final class LocalPkiConfigurationTest {
         }
     }
 
+    /**
+     * Unsigned session reports local schema and audits declared operator without key access.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unsignedSessionReportsLocalSchemaAndAuditsDeclaredOperatorWithoutKeyAccess(@TempDir Path root) throws Exception {
         List<AuditEvent> events = new ArrayList<>();

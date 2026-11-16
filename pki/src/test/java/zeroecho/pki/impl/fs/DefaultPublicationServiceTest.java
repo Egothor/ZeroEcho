@@ -96,6 +96,9 @@ import zeroecho.pki.spi.publish.PublicationAttempt;
 import zeroecho.pki.spi.publish.PublicationOutcome;
 import zeroecho.pki.spi.publish.Publisher;
 
+/**
+ * Contract and regression tests for default publication service.
+ */
 final class DefaultPublicationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-03T10:15:30Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -105,11 +108,19 @@ final class DefaultPublicationServiceTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Clears the test-installed persistence fault or observation hook after each case.
+     */
     @AfterEach
     void clearFaults() {
         FilesystemPkiStore.clearPublicationCommitFault();
     }
 
+    /**
+     * Registration requires committed exact source and is idempotent.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void registrationRequiresCommittedExactSourceAndIsIdempotent() throws Exception {
         System.out.println("registrationRequiresCommittedExactSourceAndIsIdempotent");
@@ -159,6 +170,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("registrationRequiresCommittedExactSourceAndIsIdempotent...ok");
     }
 
+    /**
+     * Store rejects foreign content and obsolete sidecar authority.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void storeRejectsForeignContentAndObsoleteSidecarAuthority() throws Exception {
         System.out.println("storeRejectsForeignContentAndObsoleteSidecarAuthority");
@@ -184,6 +200,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("storeRejectsForeignContentAndObsoleteSidecarAuthority...ok");
     }
 
+    /**
+     * Dispatch retry and terminal states are durable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void dispatchRetryAndTerminalStatesAreDurable() throws Exception {
         System.out.println("dispatchRetryAndTerminalStatesAreDurable");
@@ -221,6 +242,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("dispatchRetryAndTerminalStatesAreDurable...ok");
     }
 
+    /**
+     * Publisher exception is redacted unknown and reconciles with same token.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publisherExceptionIsRedactedUnknownAndReconcilesWithSameToken() throws Exception {
         System.out.println("publisherExceptionIsRedactedUnknownAndReconcilesWithSameToken");
@@ -252,6 +278,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("publisherExceptionIsRedactedUnknownAndReconcilesWithSameToken...ok");
     }
 
+    /**
+     * Result persistence failure fences unknown and committed uncertainty resolves.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void resultPersistenceFailureFencesUnknownAndCommittedUncertaintyResolves() throws Exception {
         System.out.println("resultPersistenceFailureFencesUnknownAndCommittedUncertaintyResolves");
@@ -288,6 +319,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("resultPersistenceFailureFencesUnknownAndCommittedUncertaintyResolves...ok");
     }
 
+    /**
+     * Restart converts prepared attempt to unknown without dispatch.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartConvertsPreparedAttemptToUnknownWithoutDispatch() throws Exception {
         System.out.println("restartConvertsPreparedAttemptToUnknownWithoutDispatch");
@@ -318,6 +354,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("restartConvertsPreparedAttemptToUnknownWithoutDispatch...ok");
     }
 
+    /**
+     * Restart preserves pending retryable successful and unknown states.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartPreservesPendingRetryableSuccessfulAndUnknownStates() throws Exception {
         System.out.println("restartPreservesPendingRetryableSuccessfulAndUnknownStates");
@@ -358,6 +399,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("restartPreservesPendingRetryableSuccessfulAndUnknownStates...ok");
     }
 
+    /**
+     * Concurrent same operation does not duplicate and unrelated progresses.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentSameOperationDoesNotDuplicateAndUnrelatedProgresses() throws Exception {
         System.out.println("concurrentSameOperationDoesNotDuplicateAndUnrelatedProgresses");
@@ -393,6 +439,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("concurrentSameOperationDoesNotDuplicateAndUnrelatedProgresses...ok");
     }
 
+    /**
+     * Second service does not reclassify an active dispatch.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void secondServiceDoesNotReclassifyAnActiveDispatch() throws Exception {
         System.out.println("secondServiceDoesNotReclassifyAnActiveDispatch");
@@ -420,6 +471,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("secondServiceDoesNotReclassifyAnActiveDispatch...ok");
     }
 
+    /**
+     * Cursor is stable filtered and closeable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cursorIsStableFilteredAndCloseable() throws Exception {
         System.out.println("cursorIsStableFilteredAndCloseable");
@@ -447,6 +503,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("cursorIsStableFilteredAndCloseable...ok");
     }
 
+    /**
+     * Snapshot reconstructs publication metadata without sidecar authority.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotReconstructsPublicationMetadataWithoutSidecarAuthority() throws Exception {
         System.out.println("snapshotReconstructsPublicationMetadataWithoutSidecarAuthority");
@@ -474,6 +535,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("snapshotReconstructsPublicationMetadataWithoutSidecarAuthority...ok");
     }
 
+    /**
+     * Snapshot reminting preserves pending and retry attempt tokens.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotRemintingPreservesPendingAndRetryAttemptTokens() throws Exception {
         System.out.println("snapshotRemintingPreservesPendingAndRetryAttemptTokens");
@@ -513,6 +579,11 @@ final class DefaultPublicationServiceTest {
         System.out.println("snapshotRemintingPreservesPendingAndRetryAttemptTokens...ok");
     }
 
+    /**
+     * Strict codec rejects trailing and impossible publication metadata.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void strictCodecRejectsTrailingAndImpossiblePublicationMetadata() throws Exception {
         System.out.println("strictCodecRejectsTrailingAndImpossiblePublicationMetadata");
@@ -586,7 +657,9 @@ final class DefaultPublicationServiceTest {
                 .findFirst().orElseThrow().attemptToken();
     }
 
-    /** Deterministic streaming publisher with controllable outcomes and barriers. */
+    /**
+     * Deterministic streaming publisher with controllable outcomes and barriers.
+     */
     private static final class RecordingPublisher implements Publisher {
         private final PublicationTarget target;
         private final AtomicInteger dispatchCalls = new AtomicInteger();

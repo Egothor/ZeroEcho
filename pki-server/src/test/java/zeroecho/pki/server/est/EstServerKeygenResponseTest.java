@@ -53,7 +53,15 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.enrollment.EnrollmentCoordinator;
 
+/**
+ * Transport ownership tests for lazy encrypted EST server-keygen responses.
+ */
 class EstServerKeygenResponseTest {
+    /**
+     * Checks lazy lease acquisition, exact encrypted multipart output, and preservation of the caller-owned output stream.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void lazyLeaseStreamsExactEncryptedMultipartAndClosesWithoutClosingCallerStream() throws Exception {
         EnrollmentCoordinator coordinator = mock(EnrollmentCoordinator.class);
         EnrollmentCoordinator.Admission admission = mock(EnrollmentCoordinator.Admission.class);
@@ -81,6 +89,11 @@ class EstServerKeygenResponseTest {
         assertEquals(response.contentType(), EstServerKeygenResponse.issued(coordinator, admission, "a".repeat(64), certificatePart).contentType());
     }
 
+    /**
+     * Checks lease release on cancellation and transport failure, and no lease acquisition for pending responses.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void cancellationAndFailedTransportReleaseLeaseAndPendingNeverOpensOne() throws Exception {
         assertEquals(202, EstServerKeygenResponse.pending(5).status());
         assertEquals(5L, EstServerKeygenResponse.pending(5).retryAfterSeconds().orElseThrow());

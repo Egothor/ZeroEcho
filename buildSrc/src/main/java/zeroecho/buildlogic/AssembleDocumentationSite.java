@@ -58,23 +58,41 @@ import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
 
-/** Combines an immutable MkDocs build with every configured module's Javadoc. */
+/**
+ * Combines an immutable MkDocs build with every configured module's Javadoc.
+ */
 @DisableCachingByDefault(because = "Assembles local documentation outputs for one Pages upload")
 public abstract class AssembleDocumentationSite extends DefaultTask {
-    /** @return the independently built MkDocs site, which is never modified */
+    /**
+     * Returns the independently built MkDocs input directory.
+     *
+     * @return managed input property; assembly reads this tree without modifying it
+     */
     @InputDirectory
     @PathSensitive(PathSensitivity.RELATIVE)
     public abstract DirectoryProperty getMkDocsDirectory();
 
-    /** @return the enabled Java modules and their actual Javadoc output directories */
+    /**
+     * Returns the named Javadoc inputs included in the combined site.
+     *
+     * @return managed nested-input list; every configured module is validated before synchronization
+     */
     @Nested
     public abstract ListProperty<ModuleJavadoc> getModules();
 
-    /** @return the separate, replaceable combined publication directory */
+    /**
+     * Returns the destination tree replaced by successful synchronization.
+     *
+     * @return managed output-directory property; it must not overlap any documentation input
+     */
     @OutputDirectory
     public abstract DirectoryProperty getDestinationDirectory();
 
-    /** @return Gradle's managed copy service */
+    /**
+     * Provides the Gradle-managed service used to synchronize the combined output.
+     *
+     * @return injected file-system service; callers do not create or close it
+     */
     @Inject
     protected abstract FileSystemOperations getFileSystemOperations();
 
@@ -118,7 +136,9 @@ public abstract class AssembleDocumentationSite extends DefaultTask {
         Files.writeString(destination.resolve(".nojekyll"), "");
     }
 
-    /** Resolves existing symlinks even when the final output directory does not yet exist. */
+    /**
+     * Resolves existing symlinks even when the final output directory does not yet exist.
+     */
     private static Path physicalPath(Path path) throws IOException {
         Path ancestor = path;
         List<Path> suffix = new ArrayList<>();
@@ -145,13 +165,24 @@ public abstract class AssembleDocumentationSite extends DefaultTask {
         }
     }
 
-    /** One named module output, modeled as a nested Gradle input. */
+    /**
+     * One named module output, modeled as a nested Gradle input.
+     */
     public abstract static class ModuleJavadoc {
-        /** @return the Gradle module name used as its public URL segment */
+        /**
+         * Returns the module name used for the public javadoc URL segment.
+         *
+         * @return managed name property; assembly requires a unique alphanumeric-leading name with only
+         *     letters, digits, underscores or hyphens
+         */
         @Input
         public abstract Property<String> getName();
 
-        /** @return the output directory supplied by the module's Javadoc task */
+        /**
+         * Returns the existing Javadoc output directory for this module.
+         *
+         * @return managed input-directory property; assembly requires a regular index.html file
+         */
         @InputDirectory
         @PathSensitive(PathSensitivity.RELATIVE)
         public abstract DirectoryProperty getDirectory();

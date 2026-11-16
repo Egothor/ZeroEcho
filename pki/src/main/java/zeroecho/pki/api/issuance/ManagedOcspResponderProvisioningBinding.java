@@ -44,7 +44,15 @@ import java.util.Objects;
  */
 public record ManagedOcspResponderProvisioningBinding(RetainedIssuanceBinding retainedBinding,
         String primarySpkiSha256, String alternativeSpkiSha256) {
-    /** Validates the closed immutable public tuple. */
+    /**
+     * Validates the closed immutable public tuple.
+     * @param retainedBinding exact normalized issuance target
+     * @param primarySpkiSha256 lowercase SHA256 of the actual managed primary SPKI
+     * @param alternativeSpkiSha256 lowercase SHA256 of the actual managed alternative SPKI
+     * @throws NullPointerException if retainedBinding is null
+     * @throws IllegalArgumentException if a public-key digest is not canonical SHA-256 or both roles name the
+     *     same public key
+     */
     public ManagedOcspResponderProvisioningBinding {
         Objects.requireNonNull(retainedBinding, "retainedBinding");
         IssuanceIntent.requireDigest(primarySpkiSha256);

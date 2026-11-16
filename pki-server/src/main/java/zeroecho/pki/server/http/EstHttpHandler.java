@@ -62,8 +62,9 @@ import zeroecho.pki.server.est.EstProtocolException;
 import zeroecho.pki.server.est.EstServerKeygenResponse;
 import zeroecho.pki.server.est.EstService;
 
-/** Strict EST RFC 7030 route adapter; protocol state and PKI business rules remain in {@link EstService}. */
-@SuppressWarnings("PMD")
+/**
+ * Strict EST RFC 7030 route adapter; protocol state and PKI business rules remain in {@link EstService}.
+ */
 final class EstHttpHandler implements HttpHandler {
     private static final String CERTS_ONLY = "application/pkcs7-mime; smime-type=certs-only";
     private static final String CSRATTRS = "application/csrattrs";
@@ -77,6 +78,17 @@ final class EstHttpHandler implements HttpHandler {
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
+    /**
+     * Composes the EST HTTP boundary without taking ownership of its collaborators.
+     *
+     * @param configuration protocol listener limits and transport policy
+     * @param realm lifecycle-owned realm context
+     * @param service realm-owned EST service
+     * @param runtime lifecycle-owned admission and bounded execution owner
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     * @throws NullPointerException if any collaborator is null
+     */
     EstHttpHandler(PkiServerConfiguration.EstListener configuration, ServerRealmContext realm,
             EstService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
@@ -87,6 +99,9 @@ final class EstHttpHandler implements HttpHandler {
         this.ready = Objects.requireNonNull(ready, "ready");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request";
@@ -309,6 +324,9 @@ final class EstHttpHandler implements HttpHandler {
             body = body.clone();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public byte[] body() {
             return body.clone();

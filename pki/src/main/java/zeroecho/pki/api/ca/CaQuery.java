@@ -54,6 +54,10 @@ public record CaQuery(Optional<CaKind> kind, Optional<CaState> state, Optional<F
      * Creates a CA query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param kind optional CA kind filter
+     * @param state optional state filter
+     * @param formatId optional framework filter (implementation-defined; may map to CA credential format)
+     * @param subjectRef optional subject filter
      */
     public CaQuery {
         if (kind == null || state == null || formatId == null || subjectRef == null) {

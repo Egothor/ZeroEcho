@@ -62,7 +62,9 @@ public final class CtLogSubmitter {
 
     private static final Logger LOG = Logger.getLogger(CtLogSubmitter.class.getName());
 
-    /** Prevents instantiation; all methods are static. */
+    /**
+     * Prevents instantiation; all methods are static.
+     */
     private CtLogSubmitter() {
         // utility class
     }

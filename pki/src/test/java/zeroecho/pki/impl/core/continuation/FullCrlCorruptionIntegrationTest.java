@@ -66,7 +66,16 @@ import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FullCrlRecoveryFaults;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+/**
+ * Contract and regression tests for full CRL corruption integration.
+ */
 class FullCrlCorruptionIntegrationTest {
+    /**
+     * Missing or truncated live tbs fails at its owning boundary.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingOrTruncatedLiveTbsFailsAtItsOwningBoundary(@TempDir Path root) throws Exception {
         for (boolean publish : new boolean[] {false, true}) {
             for (boolean missing : new boolean[] {false, true}) {
@@ -96,6 +105,12 @@ class FullCrlCorruptionIntegrationTest {
         }
     }
 
+    /**
+     * Malformed completed identity fails recovery.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void malformedCompletedIdentityFailsRecovery(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             Fixture fixture = smallFixture(store);
@@ -109,6 +124,12 @@ class FullCrlCorruptionIntegrationTest {
         assertReopenFails(root);
     }
 
+    /**
+     * Missing or mismatching completed publication fails ordinary reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingOrMismatchingCompletedPublicationFailsOrdinaryReopen(@TempDir Path root) throws Exception {
         for (boolean missing : new boolean[] {false, true}) {
             Path source = root.resolve("completed-" + missing);
@@ -130,6 +151,12 @@ class FullCrlCorruptionIntegrationTest {
         }
     }
 
+    /**
+     * Damaged published content rejects lookup export and reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void damagedPublishedContentRejectsLookupExportAndReopen(@TempDir Path root) throws Exception {
         for (boolean truncate : new boolean[] {false, true}) {
             Path source = root.resolve("published-" + truncate);

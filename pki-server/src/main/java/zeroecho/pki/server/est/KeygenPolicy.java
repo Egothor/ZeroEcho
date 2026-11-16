@@ -55,10 +55,21 @@ public record KeygenPolicy(
         int maximumKeySizeBits,
         boolean storeGeneratedKeys) {
 
-    /** Sentinel policy for endpoints where server-side key generation is disabled. */
+    /**
+     * Sentinel policy for endpoints where server-side key generation is disabled.
+     */
     public static final KeygenPolicy DISABLED = new KeygenPolicy(false, List.of(), 0, false);
 
-    /** Validates and defensively copies all mutable fields. */
+    /**
+     * Validates and defensively copies all mutable fields.
+     * @param enabled {@code true} iff POST {@code /serverkeygen} is allowed on this endpoint
+     * @param permittedAlgorithms JCA key algorithm names permitted for generation (e.g. {@code "RSA"}, {@code "EC"})
+     * @param maximumKeySizeBits upper bound on key size in bits; protects against memory exhaustion during generation
+     * @param storeGeneratedKeys if {@code true}, the generated private key is written to the CA's keyring (escrow)
+     * @throws NullPointerException if {@code permittedAlgorithms} is null
+     * @throws IllegalArgumentException if key generation is enabled without a permitted algorithm or enabled
+     *         key generation permits fewer than 256 key bits
+     */
     public KeygenPolicy {
         Objects.requireNonNull(permittedAlgorithms, "permittedAlgorithms");
         permittedAlgorithms = List.copyOf(permittedAlgorithms);

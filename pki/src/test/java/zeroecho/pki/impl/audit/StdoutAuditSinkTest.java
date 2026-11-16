@@ -49,8 +49,14 @@ import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
+/**
+ * Contract and regression tests for stdout audit sink.
+ */
 public final class StdoutAuditSinkTest {
 
+    /**
+     * Record prints deterministic summary without details.
+     */
     @Test
     public void record_printsDeterministicSummaryWithoutDetails() {
         System.out.println("record_printsDeterministicSummaryWithoutDetails");

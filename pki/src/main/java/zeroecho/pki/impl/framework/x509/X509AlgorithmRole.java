@@ -37,8 +37,12 @@ package zeroecho.pki.impl.framework.x509;
  * Closed semantic role of an algorithm representation in X.509.
  */
 public enum X509AlgorithmRole {
-    /** Signature algorithm on a certificate, CRL, or certification request. */
+    /**
+     * Signature algorithm on a certificate, CRL, or certification request.
+     */
     SIGNATURE_ALGORITHM,
-    /** Public-key algorithm in SubjectPublicKeyInfo. */
+    /**
+     * Public-key algorithm in SubjectPublicKeyInfo.
+     */
     SUBJECT_PUBLIC_KEY_ALGORITHM
 }

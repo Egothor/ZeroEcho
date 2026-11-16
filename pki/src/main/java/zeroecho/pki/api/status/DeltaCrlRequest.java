@@ -53,6 +53,8 @@ public record DeltaCrlRequest(PkiId issuerGenerationId, Duration validity) {
      * Validates the request coordinates without store access.
      * @throws NullPointerException if either argument is null
      * @throws IllegalArgumentException if validity is zero or negative
+     * @param issuerGenerationId exact signing issuer generation
+     * @param validity positive requested interval from thisUpdate to nextUpdate
      */
     public DeltaCrlRequest {
         Objects.requireNonNull(issuerGenerationId, "issuerGenerationId");

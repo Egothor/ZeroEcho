@@ -107,7 +107,9 @@ public interface ThrowingBiPredicate<T, U, E extends Exception> {
      * @param <T> the type of the first value being verified
      */
     abstract class VerificationBiPredicate<T> implements ThrowingBiPredicate<T, byte[], VerificationException> {
-        /** Creates a verification predicate base with no mutable state. */
+        /**
+         * Creates a verification predicate base with no mutable state.
+         */
         public VerificationBiPredicate() {
             // Stateless base class.
         }
@@ -214,6 +216,7 @@ public interface ThrowingBiPredicate<T, U, E extends Exception> {
          * Creates a new throwing decorator.
          *
          * @param delegate the underlying verifier to call; must not be {@code null}
+         * @throws NullPointerException if {@code delegate} is null
          */
         public ThrowOnMismatch(VerificationBiPredicate<T> delegate) {
             super();
@@ -280,6 +283,7 @@ public interface ThrowingBiPredicate<T, U, E extends Exception> {
          *                  {@code null}
          * @param verifyKey the key under which the outcome is recorded; must not be
          *                  {@code null}
+         * @throws NullPointerException if any of {@code delegate}, {@code ctx}, {@code verifyKey} is null
          */
         public FlagOkInCtx(VerificationBiPredicate<T> delegate, CtxInterface ctx, Key<Boolean> verifyKey) {
             super();

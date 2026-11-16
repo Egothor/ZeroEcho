@@ -48,16 +48,32 @@ import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.util.Arrays;
 
-/** Shared bounded I/O and canonical-encoding operations for signing formats. */
+/**
+ * Shared bounded I/O and canonical-encoding operations for signing formats.
+ */
 final class SigningFormatSupport {
 
+    /**
+     * Length in bytes of a SHA-256 digest.
+     */
     /* default */ static final int SHA_256_BYTES = 32;
+    /**
+     * Buffer capacity in bytes for bounded content transfer.
+     */
     /* default */ static final int TRANSFER_BYTES = 16 * 1024;
 
     private SigningFormatSupport() {
         // utility class
     }
 
+    /**
+     * Writes all remaining buffer bytes and rejects a channel that makes no progress.
+     *
+     * @param channel borrowed destination channel; remains open
+     * @param source buffer whose position advances through all remaining bytes
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if writing fails or a write returns zero before the source is exhausted
+     */
     /* default */ static void writeFully(WritableByteChannel channel, ByteBuffer source)
             throws IOException {
         while (source.hasRemaining()) {
@@ -92,6 +108,15 @@ final class SigningFormatSupport {
         PlatformFs.forceDirectory(directory);
     }
 
+    /**
+     * Fills the remaining buffer region until capacity is exhausted or end of input is reached.
+     *
+     * @param channel borrowed source channel; remains open
+     * @param target destination whose position advances by the bytes actually read
+     * @return number of bytes read; zero when the target is already full or input ends immediately
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if reading fails or a read returns zero while target capacity remains
+     */
     /* default */ static int readAvailable(ReadableByteChannel channel, ByteBuffer target)
             throws IOException {
         int total = 0;
@@ -108,6 +133,15 @@ final class SigningFormatSupport {
         return total;
     }
 
+    /**
+     * Requires the complete remaining destination region to be filled from the channel.
+     *
+     * @param channel borrowed source channel; remains open
+     * @param target destination whose position advances as bytes are read
+     * @param diagnostic trusted non-sensitive message used when input is truncated
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if input ends early, reading fails or the channel makes no progress
+     */
     /* default */ static void readFully(ReadableByteChannel channel, ByteBuffer target,
             String diagnostic) throws IOException {
         int expected = target.remaining();
@@ -117,6 +151,14 @@ final class SigningFormatSupport {
     }
 
     // Encoder diagnostics are deliberately replaced with a stable redacted message.
+    /**
+     * Encodes nonempty NFC-normalized strict UTF-8 text under a finite byte limit.
+     *
+     * @param value canonical text without ISO control characters or unpaired surrogates
+     * @param maximumBytes nonnegative inclusive UTF-8 byte bound
+     * @return newly allocated exact UTF-8 representation
+     * @throws IllegalArgumentException if the bound is negative or the text is null, empty, non-NFC, contains controls, malformed Unicode or exceeds its byte bound
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static byte[] strictUtf8(String value, int maximumBytes) {
         if (maximumBytes < 0) {
@@ -152,6 +194,14 @@ final class SigningFormatSupport {
     }
 
     // Decoder diagnostics are deliberately replaced with a stable redacted message.
+    /**
+     * Decodes strict UTF-8 and requires NFC normalization of the resulting text.
+     *
+     * @param bytes complete encoded text; empty input is permitted
+     * @return decoded NFC-normalized text
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if UTF-8 is malformed or the resulting text is not NFC-normalized
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static String decodeUtf8(byte[] bytes) throws IOException {
         try {
@@ -169,7 +219,14 @@ final class SigningFormatSupport {
         }
     }
 
-    /** Decodes one bounded canonical nonempty text field without re-encoding it. */
+    /**
+     * Decodes one bounded canonical nonempty text field without re-encoding it.
+     *
+     * @param bytes complete strict UTF-8 representation
+     * @param maximumBytes inclusive maximum encoded byte length
+     * @return nonempty NFC-normalized text containing no ISO control characters
+     * @throws IOException if input is null, empty, oversized, malformed UTF-8, non-NFC or contains a control character
+     */
     /* default */ static String decodeCanonicalUtf8(byte[] bytes, int maximumBytes)
             throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > maximumBytes) {
@@ -184,10 +241,23 @@ final class SigningFormatSupport {
         return value;
     }
 
+    /**
+     * Compares two byte arrays lexically using unsigned octet values.
+     *
+     * @param first left byte array, or null
+     * @param second right byte array, or null
+     * @return negative, zero or positive according to lexical order; null sorts before every non-null array
+     */
     /* default */ static int compareUnsigned(byte[] first, byte[] second) {
         return Arrays.compareUnsigned(first, second);
     }
 
+    /**
+     * Creates independent SHA-256 digest state for one integrity calculation.
+     *
+     * @return newly initialized SHA-256 message digest
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static MessageDigest sha256() {
         try {
             return MessageDigest.getInstance("SHA-256");
@@ -196,6 +266,12 @@ final class SigningFormatSupport {
         }
     }
 
+    /**
+     * Creates a checked format-validation failure with a trusted diagnostic message.
+     *
+     * @param diagnostic non-sensitive format failure message, retained as supplied
+     * @return new IOException without a cause
+     */
     /* default */ static IOException invalid(String diagnostic) {
         return new IOException(diagnostic);
     }

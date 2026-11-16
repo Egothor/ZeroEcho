@@ -41,15 +41,25 @@ import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.content.DurableContentReference;
 
-/** Lifecycle-owned immutable repository content lease without store internals. */
+/**
+ * Lifecycle-owned immutable repository content lease without store internals.
+ */
 public final class PkiRepositoryContent implements AutoCloseable {
-    /** Closed semantic role of public repository content. */
+    /**
+     * Closed semantic role of public repository content.
+     */
     public enum Role {
-        /** Public credential in its original or explicitly selected format representation. */
+        /**
+         * Public credential in its original or explicitly selected format representation.
+         */
         CERTIFICATE,
-        /** X.509 certificate-revocation-list DER. */
+        /**
+         * X.509 certificate-revocation-list DER.
+         */
         CRL,
-        /** Other immutable status-object representation. */
+        /**
+         * Other immutable status-object representation.
+         */
         STATUS_OBJECT
     }
 
@@ -60,14 +70,35 @@ public final class PkiRepositoryContent implements AutoCloseable {
     private final String contentDigest;
     private final RepeatableContent content;
 
-    /** Creates a validated application-layer content lease. */
+    /**
+     * Creates a validated application-layer content lease.
+     *
+     * @param objectId exact public repository object identity
+     * @param authorityId owning authority identity
+     * @param role semantic representation role
+     * @param reference durable content length and SHA-256 commitment
+     * @param content owned content lease released when this wrapper closes
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalArgumentException if the referenced length or digest is invalid
+     */
     /* default */ PkiRepositoryContent(PkiId objectId, PkiId authorityId, Role role,
             DurableContentReference reference,
             RepeatableContent content) {
         this(objectId, authorityId, role, Objects.requireNonNull(reference, "reference").length(), reference.sha256(), content);
     }
 
-    /** Creates a transient export lease without manufacturing durable store provenance. */
+    /**
+     * Creates a transient export lease without manufacturing durable store provenance.
+     *
+     * @param objectId exact public repository object identity
+     * @param authorityId owning authority identity
+     * @param role semantic representation role
+     * @param contentLength nonnegative committed length in bytes
+     * @param contentDigest canonical lowercase SHA-256 hexadecimal commitment
+     * @param content owned content lease released when this wrapper closes
+     * @throws NullPointerException if a required reference is null
+     * @throws IllegalArgumentException if the length is negative or the digest is not canonical
+     */
     /* default */ PkiRepositoryContent(PkiId objectId, PkiId authorityId, Role role,
             long contentLength, String contentDigest, RepeatableContent content) {
         this.objectId = Objects.requireNonNull(objectId, "objectId");
@@ -116,6 +147,9 @@ public final class PkiRepositoryContent implements AutoCloseable {
      * @throws IOException if the content cannot be opened
      */
     public InputStream openStream() throws IOException { return content.openStream(); }
-    /** Releases provider-owned lease resources. */
+    /**
+     * Releases provider-owned lease resources.
+     * @throws IOException if the owned content lease cannot be released
+     */
     @Override public void close() throws IOException { content.close(); }
 }

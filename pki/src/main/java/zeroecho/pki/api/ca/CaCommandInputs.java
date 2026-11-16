@@ -38,26 +38,58 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 
-/** Local structural validation only; strict UTF-8 counting allocates no encoded byte arrays. */
+/**
+ * Local structural validation only; strict UTF-8 counting allocates no encoded byte arrays.
+ */
 final class CaCommandInputs {
     private CaCommandInputs() { }
 
+    /**
+     * Rejects a missing structural CA command component.
+     *
+     * @param value component to check without conversion or copying
+     * @throws IllegalArgumentException if the value is null or violates its structural bounds
+     */
     /* default */ static void required(Object value) {
         if (value == null) { throw invalid(); }
     }
 
+    /**
+     * Validates a CA identifier as nonblank strict UTF-8 of at most 4,096 bytes.
+     *
+     * @param value identifier to validate without resolving authoritative CA state
+     * @throws IllegalArgumentException if the value is null or violates its structural bounds
+     */
     /* default */ static void identifier(PkiId value) {
         required(value);
         text(value.value(), 4096);
     }
 
+    /**
+     * Validates a profile identifier as nonblank strict UTF-8 of at most 256 bytes.
+     *
+     * @param value profile identifier to validate without selecting a profile
+     * @throws IllegalArgumentException if the value is null or violates its structural bounds
+     */
     /* default */ static void profile(String value) { text(value, 256); }
 
+    /**
+     * Validates a key reference as nonblank strict UTF-8 of at most 1,048,576 bytes.
+     *
+     * @param value key reference to validate without accessing its provider
+     * @throws IllegalArgumentException if the value is null or violates its structural bounds
+     */
     /* default */ static void key(KeyRef value) {
         required(value);
         text(value.value(), 1_048_576);
     }
 
+    /**
+     * Checks the bounded proof identifier and its signing-submission syntax.
+     *
+     * @param value proof submission identity; must be non-null and use canonical submission syntax
+     * @throws IllegalArgumentException if the identifier or its syntax is invalid; diagnostics are sanitized
+     */
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static void proof(PkiId value) {

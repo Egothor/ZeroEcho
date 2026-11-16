@@ -67,8 +67,17 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for signing ledger coordinator capacity.
+ */
 final class SigningLedgerCoordinatorCapacityTest {
 
+    /**
+     * Usable space probe runs only on maintenance coordinator.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void usableSpaceProbeRunsOnlyOnMaintenanceCoordinator(@TempDir Path temporary)
             throws Exception {
@@ -125,6 +134,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Soft usable space observation is hysteretic rate limited and redacted.
+     */
     @Test
     void softUsableSpaceObservationIsHystereticRateLimitedAndRedacted() {
         SigningLedgerStoreEngine.SoftUsableSpaceObservation observation =
@@ -154,6 +166,12 @@ final class SigningLedgerCoordinatorCapacityTest {
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("1234567890abcdef1234567890abcdef");
 
+    /**
+     * Live commit avoids decoded payload copy and releases exact reservation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void liveCommitAvoidsDecodedPayloadCopyAndReleasesExactReservation(@TempDir Path temporary)
             throws Exception {
@@ -178,6 +196,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Conservative reservation saturates the hard byte cap.
+     */
     @Test
     void conservativeReservationSaturatesTheHardByteCap() {
         MetadataKey key = new MetadataKey("io.zeroecho.test", "maximum");
@@ -194,6 +215,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertTrue((admitted + 1L) * reservation > limit);
     }
 
+    /**
+     * Open rejects recovered resident state above ordinary ceiling without mutation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void openRejectsRecoveredResidentStateAboveOrdinaryCeilingWithoutMutation(
             @TempDir Path temporary) throws Exception {
@@ -225,6 +252,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertArrayEquals(manifestBefore, Files.readAllBytes(manifest));
     }
 
+    /**
+     * Generic reject and acknowledge cannot enter protected progress capacity.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void genericRejectAndAcknowledgeCannotEnterProtectedProgressCapacity(
             @TempDir Path temporary) throws Exception {
@@ -285,6 +318,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Accepted direct progress can use protected capacity when ordinary replacement cannot.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptedDirectProgressCanUseProtectedCapacityWhenOrdinaryReplacementCannot(
             @TempDir Path temporary) throws Exception {
@@ -333,6 +372,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Headroom pressure rotates tiny WAL and leaves rejection retryable.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void headroomPressureRotatesTinyWalAndLeavesRejectionRetryable(@TempDir Path temporary)
             throws Exception {
@@ -366,6 +411,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Headroom signal raised during pass is consumed only by following restoration.
+     */
     @Test
     void headroomSignalRaisedDuringPassIsConsumedOnlyByFollowingRestoration() {
         SigningLedgerStoreEngine.MaintenancePressure pressure =
@@ -384,6 +432,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertFalse(pressure.pending());
     }
 
+    /**
+     * Deferred pressure waits for a new external signal.
+     */
     @Test
     void deferredPressureWaitsForANewExternalSignal() {
         SigningLedgerStoreEngine.MaintenancePressure pressure =
@@ -400,6 +451,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertFalse(pressure.pending());
     }
 
+    /**
+     * Protected progress pressure remains distinct from WAL pressure.
+     */
     @Test
     void protectedProgressPressureRemainsDistinctFromWalPressure() {
         SigningLedgerStoreEngine.MaintenancePressure wal =
@@ -419,6 +473,9 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertNull(protectedProgress.reason());
     }
 
+    /**
+     * Protected progress yield preserves independent WAL trigger.
+     */
     @Test
     void protectedProgressYieldPreservesIndependentWalTrigger() {
         SigningLedgerStoreEngine.MaintenancePressure pressure =
@@ -435,6 +492,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         assertFalse(pressure.pending());
     }
 
+    /**
+     * Persistent transient deferral ignores unrelated commits without topology churn.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void persistentTransientDeferralIgnoresUnrelatedCommitsWithoutTopologyChurn(
             @TempDir Path temporary) throws Exception {
@@ -474,6 +537,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Cumulative writer counters stay monotone across WAL rotation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cumulativeWriterCountersStayMonotoneAcrossWalRotation(@TempDir Path temporary)
             throws Exception {
@@ -512,6 +581,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Snapshot close rearms exactly one deferred coordinator pass.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotCloseRearmsExactlyOneDeferredCoordinatorPass(
             @TempDir Path temporary) throws Exception {
@@ -549,6 +624,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Reservation captures wait for manifest cutover instead of leaking capacity failure.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reservationCapturesWaitForManifestCutoverInsteadOfLeakingCapacityFailure(
             @TempDir Path temporary) throws Exception {
@@ -622,6 +703,12 @@ final class SigningLedgerCoordinatorCapacityTest {
         }
     }
 
+    /**
+     * Signing admission rejects nonblockingly while manifest cutover is paused.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void signingAdmissionRejectsNonblockinglyWhileManifestCutoverIsPaused(
             @TempDir Path temporary) throws Exception {

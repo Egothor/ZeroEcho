@@ -56,7 +56,13 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for PKI configuration choices.
+ */
 final class PkiConfigurationChoicesTest {
+    /**
+     * Merges known sources without inventing remote inventory and traverses every distinct key.
+     */
     @Test
     void mergesKnownSourcesWithoutInventingRemoteInventoryAndTraversesEveryDistinctKey() {
         AtomicInteger scans = new AtomicInteger();
@@ -87,6 +93,9 @@ final class PkiConfigurationChoicesTest {
         assertEquals(9, scans.get());
     }
 
+    /**
+     * Cancellation and bounds fail before any provider or store read.
+     */
     @Test
     void cancellationAndBoundsFailBeforeAnyProviderOrStoreRead() {
         AtomicInteger storeCalls = new AtomicInteger();
@@ -103,6 +112,9 @@ final class PkiConfigurationChoicesTest {
         assertEquals(0, providerCalls.get());
     }
 
+    /**
+     * Absent signer reports no provider or algorithms but keeps persisted known references.
+     */
     @Test
     void absentSignerReportsNoProviderOrAlgorithmsButKeepsPersistedKnownReferences() {
         PkiStore store = store(visitor -> visitor.accept(new KeyRef("persisted-key")), new AtomicInteger());
@@ -115,6 +127,9 @@ final class PkiConfigurationChoicesTest {
         assertTrue(choices.algorithms().isEmpty());
     }
 
+    /**
+     * Format guidance belongs to the framework and legacy ids remain generic.
+     */
     @Test
     void formatGuidanceBelongsToTheFrameworkAndLegacyIdsRemainGeneric() {
         var opaque = new zeroecho.pki.api.FormatId("opaque");
@@ -129,6 +144,11 @@ final class PkiConfigurationChoicesTest {
                 "", "", "", Optional.empty()));
     }
 
+    /**
+     * Configured framework supplies subject guidance without format id branches.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void configuredFrameworkSuppliesSubjectGuidanceWithoutFormatIdBranches() throws Exception {
         var fixture = new zeroecho.pki.testkit.RootCreationFixture();

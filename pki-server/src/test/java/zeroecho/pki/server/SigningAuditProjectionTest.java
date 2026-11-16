@@ -50,11 +50,16 @@ import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Maps signing-evidence feed entries to payload-free key-usage audit events through the signing adapter. */
+/**
+ * Maps signing-evidence feed entries to payload-free key-usage audit events through the signing adapter.
+ */
 class SigningAuditProjectionTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
     private static final String FINGERPRINT = "ab".repeat(32);
 
+    /**
+     * Checks successful signing projection preserves component attribution, operation identity and namespace metadata.
+     */
     @Test
     void projectsSuccessfulSigning() {
         SigningExecutionEvidence evidence = SigningExecutionEvidence.terminal("realm.ca-a", FINGERPRINT,
@@ -76,6 +81,9 @@ class SigningAuditProjectionTest {
         assertFalse(event.details().containsKey("tbs"));
     }
 
+    /**
+     * Checks failed signing emits a not-produced event with the exact finite provider-result detail code.
+     */
     @Test
     void projectsFailedSigning() {
         SigningExecutionEvidence evidence = SigningExecutionEvidence.terminal("realm.ca-a", FINGERPRINT,
@@ -89,6 +97,9 @@ class SigningAuditProjectionTest {
         assertEquals("PROVIDER_RESULT_INVALID", event.details().get("detailCode"));
     }
 
+    /**
+     * Checks an entry without recognized signing evidence produces no fabricated audit event.
+     */
     @Test
     void skipsEntriesWithoutSigningEvidence() {
         byte[] payload = DomainAttributeEncoding.encode(SimpleAttributeSet.builder().build())
@@ -97,6 +108,9 @@ class SigningAuditProjectionTest {
         assertTrue(SigningAuditProjection.toEvent(entry).isEmpty());
     }
 
+    /**
+     * Checks repeated projection of the same authoritative signing entry produces an equal deterministic event identity.
+     */
     @Test
     void deterministicEventIdIsStableAcrossReprojection() {
         SigningExecutionEvidence evidence = SigningExecutionEvidence.terminal("realm.ca-a", FINGERPRINT,

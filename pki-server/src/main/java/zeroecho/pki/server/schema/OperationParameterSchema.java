@@ -35,19 +35,47 @@ package zeroecho.pki.server.schema;
 
 import java.util.List;
 
-/** Immutable model for machine-readable operation parameter schemas. */
+/**
+ * Immutable model for machine-readable operation parameter schemas.
+ */
 public final class OperationParameterSchema { // NOPMD MissingStaticMethodInNonInstantiatableClass - Namespace for public schema records; instances have no meaning.
 
-    /** Wire types matching the codec's strict intake methods. */
+    /**
+     * Wire types matching the codec's strict intake methods.
+     */
     public enum FieldType {
-        /** Plain string value. */ TEXT,
-        /** Signed 64-bit integer. */ INTEGER,
-        /** Boolean true/false. */ BOOLEAN,
-        /** Set of plain strings. */ TEXT_SET,
-        /** Single enum constant from a closed set. */ ENUM,
-        /** Set of enum constants from a closed set. */ ENUM_SET,
-        /** Base64-encoded binary. */ BASE64,
-        /** Nested JSON object validated by the typed operation decoder. */ OBJECT
+        /**
+         * Plain string value.
+         */
+        TEXT,
+        /**
+         * Signed 64-bit integer.
+         */
+        INTEGER,
+        /**
+         * Boolean true/false.
+         */
+        BOOLEAN,
+        /**
+         * Set of plain strings.
+         */
+        TEXT_SET,
+        /**
+         * Single enum constant from a closed set.
+         */
+        ENUM,
+        /**
+         * Set of enum constants from a closed set.
+         */
+        ENUM_SET,
+        /**
+         * Base64-encoded binary.
+         */
+        BASE64,
+        /**
+         * Nested JSON object validated by the typed operation decoder.
+         */
+        OBJECT
     }
 
     /**
@@ -58,7 +86,13 @@ public final class OperationParameterSchema { // NOPMD MissingStaticMethodInNonI
      * @param choices permitted enum constants, empty for other types
      */
     public record FieldSpec(String name, FieldType type, boolean required, List<String> choices) {
-        /** Snapshots the choice list. */
+        /**
+         * Snapshots the choice list.
+         * @param name argument name
+         * @param type JSON wire type
+         * @param required whether omission is rejected
+         * @param choices permitted enum constants, empty for other types
+         */
         public FieldSpec {
             choices = List.copyOf(choices);
         }
@@ -147,7 +181,13 @@ public final class OperationParameterSchema { // NOPMD MissingStaticMethodInNonI
      */
     public record OperationSpec(String operationId, String permissionAction, String permissionResourceType,
             List<FieldSpec> fields) {
-        /** Snapshots the field list. */
+        /**
+         * Snapshots the field list.
+         * @param operationId canonical operation identity
+         * @param permissionAction permission action constant
+         * @param permissionResourceType permission resource-type constant
+         * @param fields ordered argument definitions
+         */
         public OperationSpec {
             fields = List.copyOf(fields);
         }

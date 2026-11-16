@@ -73,7 +73,9 @@ import zeroecho.core.spi.PrivateKeyImporter;
  */
 public final class EcdsaPrivateKeyBuilder implements PrivateKeyImporter<EcdsaPrivateKeySpec> {
 
-    /** Creates a stateless PKCS#8 EC private-key importer. */
+    /**
+     * Creates a stateless PKCS#8 EC private-key importer.
+     */
     public EcdsaPrivateKeyBuilder() {
         // Stateless importer.
     }

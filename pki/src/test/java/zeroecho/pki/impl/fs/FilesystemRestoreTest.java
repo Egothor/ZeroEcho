@@ -62,15 +62,30 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.EncodedObject;
 import java.util.Optional;
 
+/**
+ * Contract and regression tests for filesystem restore.
+ */
 class FilesystemRestoreTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-04T12:00:00Z"), ZoneOffset.UTC);
     private FilesystemPkiStore open() { return new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(), CLOCK); }
     private static BackupRequest request() {
         return new BackupRequest("restore-test", FilesystemPkiStoreTest.TestObjects.emptyAttributes());
     }
+    /**
+     * Clears the test-installed persistence fault or observation hook after each case.
+     */
     @AfterEach void clearObserver() { FsRestoreCoordinator.observeWith(null); }
 
+    /**
+     * Unpublished stage is discarded exactly after cold recovery.
+     *
+     * @param crash restore phase at which the fixture process is interrupted
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(value = FsRestoreCoordinator.Phase.class,
             names = {"AFTER_STAGE_MOVE", "AFTER_CANDIDATE_MARKER", "AFTER_ORIGINAL_MARKER"})
@@ -104,6 +119,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Unpublished cleanup rejects mismatched marker and published identity.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unpublishedCleanupRejectsMismatchedMarkerAndPublishedIdentity() throws Exception {
         PkiId expected = new PkiId("ad52d431-4394-41e1-90d2-7e6ed0f59c44");
         String manifest = "a".repeat(64);
@@ -122,6 +142,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Caller restore identity is preserved and cannot be reused.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void callerRestoreIdentityIsPreservedAndCannotBeReused() throws Exception {
         PkiId chosen = new PkiId("ad52d431-4394-41e1-90d2-7e6ed0f59c44");
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
@@ -139,6 +164,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Staged status becomes activated only after cold recovery and retains rollback.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void stagedStatusBecomesActivatedOnlyAfterColdRecoveryAndRetainsRollback() throws Exception {
         PkiId restore;
         PkiId backup;
@@ -171,6 +201,12 @@ class FilesystemRestoreTest {
         assertTrue(Files.isDirectory(directory.resolve(".store.restore-old-" + restore)));
     }
 
+    /**
+     * Crash at activation boundary reconciles idempotently.
+     *
+     * @param crash restore phase at which the fixture process is interrupted
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(value = FsRestoreCoordinator.Phase.class, names = {"BEFORE_LIVE_MOVE", "AFTER_LIVE_MOVE", "BEFORE_PROMOTION",
             "AFTER_PROMOTION", "RECOVERY_STARTED", "BEFORE_RECOVERY", "AFTER_RECOVERY", "DIRECTORY_FORCE", "JOURNAL"})
@@ -189,6 +225,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Later live metadata change rejects cold activation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void laterLiveMetadataChangeRejectsColdActivation() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             store.stageRestore(source);
@@ -202,6 +243,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Backup before imported request cannot erase retained enrollment input.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void backupBeforeImportedRequestCannotEraseRetainedEnrollmentInput() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             store.putRequest(enrollmentRequest("after-backup"));
@@ -211,6 +257,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Request imported after staging prevents cold activation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void requestImportedAfterStagingPreventsColdActivation() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             store.stageRestore(source);
@@ -222,6 +273,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Exact request projection survives restore and rejects unexpected entries.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exactRequestProjectionSurvivesRestoreAndRejectsUnexpectedEntries() throws Exception {
         try (FilesystemPkiStore store = open()) {
             store.putRequest(enrollmentRequest("retained"));
@@ -244,6 +300,11 @@ class FilesystemRestoreTest {
                 Optional.empty(), Optional.empty(), FilesystemPkiStoreTest.TestObjects.emptyAttributes());
     }
 
+    /**
+     * Recovery failure rolls back and never claims activation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void recoveryFailureRollsBackAndNeverClaimsActivation() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         FsRestoreCoordinator.observeWith(phase -> { if (phase == FsRestoreCoordinator.Phase.BEFORE_RECOVERY) throw new IOException("fixture"); });
@@ -256,6 +317,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Corrupt journal cannot create fresh store or alter live.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void corruptJournalCannotCreateFreshStoreOrAlterLive() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         Path journal = directory.resolve(".store.restore-control/journal");
@@ -267,6 +333,11 @@ class FilesystemRestoreTest {
         assertFalse(Files.exists(directory.resolve("store-2")));
     }
 
+    /**
+     * Populated workflow and metadata are preserved.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void populatedWorkflowAndMetadataArePreserved() throws Exception {
         zeroecho.pki.api.ca.IssuerGeneration expectedGeneration;
         zeroecho.pki.api.ca.IssuerCryptographicBinding expectedBinding;
@@ -295,6 +366,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Uncertain stage publication fences restaging and reports no failure or activation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void uncertainStagePublicationFencesRestagingAndReportsNoFailureOrActivation() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             FsRestoreCoordinator.observeWith(phase -> {
@@ -315,6 +391,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Missing candidate after first move restores old root.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingCandidateAfterFirstMoveRestoresOldRoot() throws Exception {
         PkiId id;
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
@@ -331,6 +412,11 @@ class FilesystemRestoreTest {
         assertTrue(Files.exists(directory.resolve("preserved-missing-stage/VERSION")));
     }
 
+    /**
+     * Unknown colocated authority rejects staging without moving live.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unknownColocatedAuthorityRejectsStagingWithoutMovingLive() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             Files.createDirectories(directory.resolve("store/keyring"));
@@ -342,6 +428,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Second restore can crash and reconcile without losing first identity.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void secondRestoreCanCrashAndReconcileWithoutLosingFirstIdentity() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         PkiId second;
@@ -357,6 +448,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Existing legacy root lock excludes new coordinator open.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void existingLegacyRootLockExcludesNewCoordinatorOpen() throws Exception {
         try (FilesystemPkiStore store = open()) { assertTrue(store.latestRestoreStatus().isEmpty()); }
         {
@@ -368,6 +464,11 @@ class FilesystemRestoreTest {
         try (FilesystemPkiStore store = open()) { assertTrue(store.latestRestoreStatus().isEmpty()); }
     }
 
+    /**
+     * Every activation durability event can be interrupted and retried.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void everyActivationDurabilityEventCanBeInterruptedAndRetried() throws Exception {
         Path original = directory;
         directory = original.resolve("reference");
@@ -392,6 +493,12 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Rollback intent survives interruption.
+     *
+     * @param crash restore phase at which the fixture process is interrupted
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(value = FsRestoreCoordinator.Phase.class, names = {"BEFORE_ROLLBACK", "AFTER_ROLLBACK"})
     void rollbackIntentSurvivesInterruption(FsRestoreCoordinator.Phase crash) throws Exception {
@@ -407,6 +514,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Atomic promotion unavailable rolls back without copy fallback.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void atomicPromotionUnavailableRollsBackWithoutCopyFallback() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         FsRestoreCoordinator.observeWith(phase -> {
@@ -417,6 +529,11 @@ class FilesystemRestoreTest {
         try (FilesystemPkiStore store = open()) { assertEquals(RestoreStatus.State.FAILED, store.latestRestoreStatus().orElseThrow().state()); }
     }
 
+    /**
+     * Unexpected live root after first move is preserved and fails closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unexpectedLiveRootAfterFirstMoveIsPreservedAndFailsClosed() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         FsRestoreCoordinator.observeWith(phase -> { if (phase == FsRestoreCoordinator.Phase.AFTER_LIVE_MOVE) throw new Crash(); });
@@ -431,6 +548,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Early rollback interrupted after original move does not require quarantined candidate.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void earlyRollbackInterruptedAfterOriginalMoveDoesNotRequireQuarantinedCandidate() throws Exception {
         PkiId id;
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
@@ -448,6 +570,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Retained transaction outcome survives checkpoint normalization and cold restore.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void retainedTransactionOutcomeSurvivesCheckpointNormalizationAndColdRestore() throws Exception {
         zeroecho.pki.spi.store.MetadataCommitResult retained;
         zeroecho.pki.spi.store.MetadataKey key = new zeroecho.pki.spi.store.MetadataKey("io.zeroecho.restore-test", "retained");
@@ -477,6 +604,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Historical counter state cannot be staged.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void historicalCounterStateCannotBeStaged() throws Exception {
         try (FilesystemPkiStore store = open()) {
             zeroecho.pki.api.ca.CaRecord ca = FilesystemPkiStoreTest.TestObjects.minimalCaRecord(store, "counter-ca", zeroecho.pki.api.ca.CaState.ACTIVE);
@@ -491,6 +623,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Missing or corrupt prepared candidate fails without moving live.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingOrCorruptPreparedCandidateFailsWithoutMovingLive() throws Exception {
         for (boolean missing : List.of(false, true)) {
             Path original = directory;
@@ -506,6 +643,11 @@ class FilesystemRestoreTest {
         }
     }
 
+    /**
+     * Nested external authority is rejected but known publication temporary is allowed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void nestedExternalAuthorityIsRejectedButKnownPublicationTemporaryIsAllowed() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) {
             Path unexpected = directory.resolve("store/revocations/operator-notes");
@@ -519,6 +661,11 @@ class FilesystemRestoreTest {
         assertEquals("legitimate colocated external authority", Files.readString(directory.resolve("preserved-operator-notes")));
     }
 
+    /**
+     * Complete journal never initializes over missing activated root.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void completeJournalNeverInitializesOverMissingActivatedRoot() throws Exception {
         try (FilesystemPkiStore store = open(); BackupSource source = store.createBackupSource(request())) { store.stageRestore(source); }
         try (FilesystemPkiStore store = open()) { assertEquals(RestoreStatus.State.ACTIVATED, store.latestRestoreStatus().orElseThrow().state()); }
@@ -528,6 +675,11 @@ class FilesystemRestoreTest {
         assertTrue(Files.exists(directory.resolve("preserved-activated/VERSION")));
     }
 
+    /**
+     * Resumed visible moves are forced before journal publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void resumedVisibleMovesAreForcedBeforeJournalPublication() throws Exception {
         Path original = directory;
         for (int move = 1; move <= 2; move++) {

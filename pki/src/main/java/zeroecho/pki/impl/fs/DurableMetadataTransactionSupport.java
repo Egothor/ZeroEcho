@@ -62,7 +62,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
-/** Thread-confined transaction admission, staging, and outcome mapping. */
+/**
+ * Thread-confined transaction admission, staging, and outcome mapping.
+ */
 final class DurableMetadataTransactionSupport {
     private static final int TRANSFER_BUFFER_BYTES = 8192;
     private static final long MINIMUM_CONTENT_LENGTH = 0L;
@@ -73,6 +75,16 @@ final class DurableMetadataTransactionSupport {
     private final OptionalLong maximumRecordBytes;
     private final StagingOperations stagingOperations;
 
+    /**
+     * Binds transaction preparation and spool custody to the shared exact store lifecycle.
+     *
+     * @param engine borrowed authoritative commit engine
+     * @param lifecycle shared exact-instance child-resource registry
+     * @param stagingDirectory store-owned spool directory
+     * @param maximumRecordBytes optional finite value bound; empty permits unbounded known-length values
+     * @param stagingOperations borrowed deterministic spool operations
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ DurableMetadataTransactionSupport(
             DurableMetadataStoreEngine engine,
             DurableMetadataAdapterLifecycle lifecycle,
@@ -87,16 +99,42 @@ final class DurableMetadataTransactionSupport {
         this.stagingOperations = Objects.requireNonNull(stagingOperations, "stagingOperations");
     }
 
+    /**
+     * Issues durable transaction authority and registers the new transaction with the adapter lifecycle.
+     *
+     * @return owned active transaction; caller commits it or closes it
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if durable identity issuance or lifecycle registration fails
+     */
     /* default */ MetadataTransaction begin() throws IOException {
         return lifecycle.openManaged(() -> new TransactionImpl(engine.issue()));
     }
 
+    /**
+     * Maps the exact retained engine outcome to its provider-neutral transaction result.
+     *
+     * @param transactionId store-bound transaction identity to resolve without resubmission
+     * @return retained provider-neutral terminal result
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if the identity is foreign, no terminal result is retained or reading outcome evidence fails
+     */
     /* default */ MetadataCommitResult resolve(MetadataTransactionId transactionId)
             throws IOException {
         Objects.requireNonNull(transactionId, "transactionId");
         return lifecycle.read(() -> map(transactionId, engine.resolve(transactionId)));
     }
 
+    /**
+     * Requires a resolvable definite transaction outcome before accepting acknowledgement.
+     *
+     * <p>This adapter retains terminal outcomes indefinitely; acknowledgement does not delete their evidence.</p>
+     *
+     * @param transactionId exact store-bound transaction identity
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalStateException if the engine is closed or requires recovery
+     * @throws IOException if outcome resolution fails or the result is UNKNOWN
+     */
     /* default */ void acknowledge(MetadataTransactionId transactionId) throws IOException {
         MetadataCommitResult retained = resolve(transactionId);
         if (retained.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
@@ -276,7 +314,9 @@ final class DurableMetadataTransactionSupport {
                 MetadataCommitResult.FailureCategory.STORAGE_FAILURE, message, failure);
     }
 
-    /** Store-issued transaction whose owner lock provides exact thread identity. */
+    /**
+     * Store-issued transaction whose owner lock provides exact thread identity.
+     */
     private final class TransactionImpl
             implements MetadataTransaction, DurableMetadataAdapterLifecycle.ManagedResource {
         private final MetadataTransactionId transactionId;
@@ -290,11 +330,17 @@ final class DurableMetadataTransactionSupport {
             this.transactionId = transactionId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public MetadataTransactionId id() {
             return transactionId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void create(
                 MetadataKey key,
@@ -304,6 +350,9 @@ final class DurableMetadataTransactionSupport {
                     key, MINIMUM_CONTENT_LENGTH, content, cancellation);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void replace(
                 MetadataKey key,
@@ -376,6 +425,9 @@ final class DurableMetadataTransactionSupport {
                     kind, key, expectedRevision, stagedContent.transfer()));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void delete(MetadataKey key, long expectedRevision) {
             Objects.requireNonNull(key, "key");
@@ -410,6 +462,9 @@ final class DurableMetadataTransactionSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public MetadataCommitResult commit() throws IOException {
             requireOwner();
@@ -469,6 +524,9 @@ final class DurableMetadataTransactionSupport {
             lifecycle.unregister(this);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void abort() throws IOException {
             requireOwner();
@@ -493,6 +551,9 @@ final class DurableMetadataTransactionSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             requireOwner();
@@ -501,6 +562,9 @@ final class DurableMetadataTransactionSupport {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public IOException forceClose() {
             if (state == TransactionState.TERMINAL) {
@@ -561,7 +625,9 @@ final class DurableMetadataTransactionSupport {
         }
     }
 
-    /** Store-owned staged mutation containing no caller content authority. */
+    /**
+     * Store-owned staged mutation containing no caller content authority.
+     */
     private record StagedMutation(
             MetadataMutationPayloadCodec.MutationKind kind,
             MetadataKey key,
@@ -584,7 +650,9 @@ final class DurableMetadataTransactionSupport {
         }
     }
 
-    /** Repeatable store-owned spool removed exactly once after ownership ends. */
+    /**
+     * Repeatable store-owned spool removed exactly once after ownership ends.
+     */
     private static final class SpoolContent implements RepeatableContent {
         private final Path path;
         private final long length;
@@ -599,6 +667,9 @@ final class DurableMetadataTransactionSupport {
             this.operations = operations;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() throws IOException {
             if (closed.get()) {
@@ -607,11 +678,17 @@ final class DurableMetadataTransactionSupport {
             return java.nio.channels.Channels.newInputStream(operations.openRead(path));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(length);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "zeroecho-posix-metadata-staged-v1";
@@ -625,6 +702,9 @@ final class DurableMetadataTransactionSupport {
             return new SpoolContent(path, length, operations);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             if (!transferred && closed.compareAndSet(false, true)) {
@@ -633,24 +713,53 @@ final class DurableMetadataTransactionSupport {
         }
     }
 
-    /** Package-private deterministic staging seam; never part of the SPI. */
+    /**
+     * Package-private deterministic staging seam; never part of the SPI.
+     */
     /* default */ interface StagingOperations {
-        /** Creates one unpredictable exclusive store-owned spool. */
+        /**
+         * Creates one unpredictable exclusive store-owned spool.
+         *
+         * @param parent existing store-owned staging directory
+         * @return exact path of the newly created owned spool
+         * @throws IOException if exclusive spool creation fails
+         */
         Path create(Path parent) throws IOException;
 
-        /** Opens the spool for bounded transfer. */
+        /**
+         * Opens the spool for bounded transfer.
+         *
+         * @param path exact owned spool path
+         * @return owned writable file channel; the caller closes it after transfer
+         * @throws IOException if the spool cannot be opened for writing
+         */
         FileChannel openWrite(Path path) throws IOException;
 
-        /** Opens a fresh repeatable spool reader. */
+        /**
+         * Opens a fresh repeatable spool reader.
+         *
+         * @param path exact owned spool path
+         * @return newly opened owned read channel positioned at its beginning
+         * @throws IOException if the spool cannot be opened for reading
+         */
         FileChannel openRead(Path path) throws IOException;
 
-        /** Removes one no-longer-authoritative spool. */
+        /**
+         * Removes one no-longer-authoritative spool.
+         *
+         * @param path exact owned spool path eligible for deletion
+         * @throws IOException if spool removal fails
+         */
         void delete(Path path) throws IOException;
     }
 
-    /** Real durable staging operations. */
+    /**
+     * Real durable staging operations.
+     */
     /* default */ enum DefaultStagingOperations implements StagingOperations {
-        /** Singleton production implementation. */
+        /**
+         * Singleton production implementation.
+         */
         INSTANCE;
 
         private static final FileAttribute<?>[] OWNER_ONLY = {
@@ -659,6 +768,9 @@ final class DurableMetadataTransactionSupport {
 
         private static final FileAttribute<?>[] NO_ATTRIBUTES = new FileAttribute<?>[0];
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Path create(Path parent) throws IOException {
             // Owner-only 0600 bits at create time on POSIX; on filesystems
@@ -669,6 +781,9 @@ final class DurableMetadataTransactionSupport {
             return Files.createTempFile(parent, ".zeroecho-metadata-", ".stage", attributes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public FileChannel openWrite(Path path) throws IOException {
             return FileChannel.open(
@@ -677,6 +792,9 @@ final class DurableMetadataTransactionSupport {
                             LinkOption.NOFOLLOW_LINKS));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public FileChannel openRead(Path path) throws IOException {
             return FileChannel.open(
@@ -684,13 +802,18 @@ final class DurableMetadataTransactionSupport {
                     Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void delete(Path path) throws IOException {
             Files.deleteIfExists(path);
         }
     }
 
-    /** Single-use transaction lifecycle. */
+    /**
+     * Single-use transaction lifecycle.
+     */
     private enum TransactionState {
         ACTIVE,
         COMMITTING,

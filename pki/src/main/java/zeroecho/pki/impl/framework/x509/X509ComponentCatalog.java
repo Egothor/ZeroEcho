@@ -83,11 +83,17 @@ public final class X509ComponentCatalog {
      * Closed component role.
      */
     public enum Kind {
-        /** Digest AlgorithmIdentifier component. */
+        /**
+         * Digest AlgorithmIdentifier component.
+         */
         DIGEST,
-        /** Mask-generation AlgorithmIdentifier component. */
+        /**
+         * Mask-generation AlgorithmIdentifier component.
+         */
         MASK_GENERATION,
-        /** Named-curve OBJECT IDENTIFIER component. */
+        /**
+         * Named-curve OBJECT IDENTIFIER component.
+         */
         NAMED_CURVE
     }
 
@@ -106,6 +112,11 @@ public final class X509ComponentCatalog {
          * Creates a component.
          *
          * @throws NullPointerException if a required field is {@code null}
+         * @param id stable namespaced contribution identifier
+         * @param kind closed component kind
+         * @param identity exact provider-independent identity
+         * @param oid standard dotted-decimal OID
+         * @param builtIn whether the entry is non-overridable built-in authority
          */
         public Component {
             Objects.requireNonNull(id, "id");
@@ -141,6 +152,8 @@ public final class X509ComponentCatalog {
      *
      * @param components extension components
      * @return validated extension catalog
+     * @throws IllegalArgumentException if an extension claims built-in authority or uses a reserved zeroecho identity
+     * @throws NullPointerException if components or a component entry is null
      */
     public static X509ComponentCatalog extension(List<Component> components) {
         for (Component component : components) {
@@ -156,6 +169,7 @@ public final class X509ComponentCatalog {
      *
      * @param extensions extension catalogs
      * @return merged catalog
+     * @throws NullPointerException if {@code extensions} or an extension entry is null
      */
     public X509ComponentCatalog merge(List<X509ComponentCatalog> extensions) {
         Objects.requireNonNull(extensions, "extensions");
@@ -172,6 +186,8 @@ public final class X509ComponentCatalog {
      * @param kind     component kind
      * @param identity exact identity
      * @return component OID
+     * @throws NullPointerException if {@code kind} or {@code identity} is null
+     * @throws IllegalArgumentException if the component identity is unknown or disallowed by the security floor
      */
     public String oid(Kind kind, AlgorithmIdentity identity) {
         Objects.requireNonNull(kind, "kind");
@@ -190,6 +206,8 @@ public final class X509ComponentCatalog {
      * @param kind component kind
      * @param oid  dotted-decimal OID
      * @return exact component identity
+     * @throws NullPointerException if {@code kind} or {@code oid} is null
+     * @throws IllegalArgumentException if the component OID is unknown or resolves to a disallowed identity
      */
     public AlgorithmIdentity identity(Kind kind, String oid) {
         Objects.requireNonNull(kind, "kind");

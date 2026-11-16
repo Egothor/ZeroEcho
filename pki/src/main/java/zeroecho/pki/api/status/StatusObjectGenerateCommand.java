@@ -57,6 +57,10 @@ public record StatusObjectGenerateCommand(PkiId issuerCaId, StatusObjectType typ
      * Creates a status generation command.
      *
      * @throws IllegalArgumentException if inputs are null
+     * @param issuerCaId issuer CA entity id
+     * @param type status object type
+     * @param formatId framework format id
+     * @param attributes generation hints (may be empty but not null)
      */
     public StatusObjectGenerateCommand {
         if (issuerCaId == null) {

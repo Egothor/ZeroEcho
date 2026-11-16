@@ -76,7 +76,9 @@ final class AtomicPublish {
      */
     private static final int REPLACE_ATTEMPTS = 100;
 
-    /** Backoff between replace attempts, in milliseconds. */
+    /**
+     * Backoff between replace attempts, in milliseconds.
+     */
     private static final long REPLACE_BACKOFF_MILLIS = 10L;
 
     private AtomicPublish() {

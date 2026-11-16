@@ -42,7 +42,9 @@ import java.util.Objects;
  * Exact immutable identity of one imported certificate-profile version.
  */
 public final class CertificateProfileRef {
-    /** SHA-256 digest length in bytes. */
+    /**
+     * SHA-256 digest length in bytes.
+     */
     public static final int HASH_BYTES = 32;
 
     private final String profileId;
@@ -55,6 +57,9 @@ public final class CertificateProfileRef {
      * @param profileId       logical profile identifier
      * @param profileVersion  positive profile version
      * @param canonicalSha256 SHA-256 of the canonical JSON document
+     * @throws NullPointerException if canonicalSha256 is null
+     * @throws IllegalArgumentException if profileId is null or blank, profileVersion is not positive, or the
+     *     digest is not exactly 32 bytes
      */
     public CertificateProfileRef(String profileId, long profileVersion, byte[] canonicalSha256) {
         if (profileId == null || profileId.isBlank()) {
@@ -108,12 +113,18 @@ public final class CertificateProfileRef {
         return HexFormat.of().formatHex(canonicalSha256, 0, 8);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof CertificateProfileRef ref && profileVersion == ref.profileVersion
                 && profileId.equals(ref.profileId) && MessageDigest.isEqual(canonicalSha256, ref.canonicalSha256);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         int result = profileId.hashCode();
@@ -122,6 +133,9 @@ public final class CertificateProfileRef {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CertificateProfileRef[profileId=" + profileId + ", profileVersion=" + profileVersion + ", fingerprint="

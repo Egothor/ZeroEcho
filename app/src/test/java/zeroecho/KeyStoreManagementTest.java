@@ -74,9 +74,15 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 public class KeyStoreManagementTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tmp;
 
+    /**
+     * Initializes cryptographic providers before executing the sample or integration scenarios.
+     */
     @BeforeAll
     static void setupProviders() {
         BouncyCastleActivator.init();

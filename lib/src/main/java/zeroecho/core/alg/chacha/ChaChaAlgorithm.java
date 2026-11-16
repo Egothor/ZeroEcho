@@ -116,6 +116,9 @@ public final class ChaChaAlgorithm extends AbstractChaChaAlgorithm {
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

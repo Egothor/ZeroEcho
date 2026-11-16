@@ -91,19 +91,60 @@ import zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.cmp.CmpProtectedMessage;
 
+/**
+ * CMP authentication tests using real signature certificates and binary password-based MACs.
+ */
 class CmpAuthenticationTest {
+    /**
+     * Fixed authoritative CMP evaluation instant used by all certificate and message fixtures.
+     */
     static final Instant NOW = Instant.parse("2026-10-11T12:00:00Z");
+    /**
+     * Isolated CMP realm identity used by authentication checks.
+     */
     static final RealmId REALM = new RealmId("cmp-test");
+    /**
+     * Distinguished name of the fixture root certificate.
+     */
     static final X500Name CA_NAME = new X500Name("CN=CMP root");
+    /**
+     * Distinguished name of the fixture requester certificate.
+     */
     static final X500Name CLIENT_NAME = new X500Name("CN=CMP requester");
+    /**
+     * Distinguished name of the fixture response signer.
+     */
     static final X500Name SERVER_NAME = new X500Name("CN=CMP responder");
+    /**
+     * Root signing key pair generated once for this test class.
+     */
     static KeyPair caKey;
+    /**
+     * Requester signing key pair generated once for this test class.
+     */
     static KeyPair clientKey;
+    /**
+     * Responder signing key pair generated once for this test class.
+     */
     static KeyPair serverKey;
+    /**
+     * Root certificate generated once and used as the configured trust anchor.
+     */
     static X509Certificate ca;
+    /**
+     * Requester certificate carrying digital-signature usage.
+     */
     static X509Certificate client;
+    /**
+     * Response signer certificate carrying digital-signature usage.
+     */
     static X509Certificate server;
 
+    /**
+     * Generates deterministic RSA root, requester, and responder certificate fixtures once.
+     *
+     * @throws Exception if key generation or certificate signing fails
+     */
     @BeforeAll static void certificates() throws Exception {
         SecureRandom random = SecureRandom.getInstance("SHA1PRNG", "SUN"); random.setSeed(new byte[] { 3, 8, 14, 92, 6 });
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048, random);
@@ -113,6 +154,11 @@ class CmpAuthenticationTest {
         server = certificate(serverKey, SERVER_NAME, false, KeyUsage.digitalSignature, 3, NOW.plusSeconds(3600));
     }
 
+    /**
+     * Checks configured trust-anchor enforcement and retention of the real authenticated signer identity.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void signatureRequiresConfiguredTrustAndPreservesRealCertificateIdentity() throws Exception {
         EnrollmentRuntime.CredentialLease lease = signatureLease();
         CmpProtectedMessage request = signed(client, CLIENT_NAME, SERVER_NAME);
@@ -133,6 +179,11 @@ class CmpAuthenticationTest {
                 server.getSubjectX500Principal(), NOW, CancellationSignal.NONE));
     }
 
+    /**
+     * Rejects CMP signatures with wrong key usage, validity, names, key identifiers, or configured protection mode.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void signatureRejectsWrongUsageExpiryNamesKeyIdentifiersAndMode() throws Exception {
         EnrollmentRuntime.CredentialLease lease = signatureLease();
         for (X509Certificate invalid : List.of(
@@ -155,6 +206,11 @@ class CmpAuthenticationTest {
                 false, lease, REALM, server.getSubjectX500Principal(), NOW, CancellationSignal.NONE));
     }
 
+    /**
+     * Checks binary PBM identity mapping and destruction of owned secret material on success and failure paths.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void binaryPbmMapsExplicitIdentityAndErasesOwnedSecretOnCloseAndFailure() throws Exception {
         byte[] secret = filled(32, 0x80); secret[0] = 0;
         PBMParameter parameters = new PBMParameter(filled(16, 3), new AlgorithmIdentifier(new ASN1ObjectIdentifier("2.16.840.1.101.3.4.2.1"), DERNull.INSTANCE),
@@ -192,6 +248,11 @@ class CmpAuthenticationTest {
                 server.getSubjectX500Principal(), NOW, CancellationSignal.NONE));
     }
 
+    /**
+     * Builds a borrowed credential lease exposing the fixture server key and configured trust chain.
+     *
+     * @return mock lease with server response chain, CA trust anchor, and server private key
+     */
     static EnrollmentRuntime.CredentialLease signatureLease() {
         EnrollmentRuntime.CredentialLease lease = mock(EnrollmentRuntime.CredentialLease.class);
         when(lease.responseChain()).thenReturn(List.of(server, ca)); when(lease.requestTrustAnchors()).thenReturn(List.of(ca));
@@ -199,12 +260,28 @@ class CmpAuthenticationTest {
         return lease;
     }
 
+    /**
+     * Builds a protected CMP request using the fixture requester private key.
+     *
+     * @param signer certificate included in the protected request
+     * @param sender sender distinguished name
+     * @param recipient recipient distinguished name
+     * @return parsed protected CMP message signed with SHA256withRSA
+     * @throws Exception if certificate encoding, signing, or message parsing fails
+     */
     static CmpProtectedMessage signed(X509Certificate signer, X500Name sender, X500Name recipient) throws Exception {
         return CmpProtectedMessage.parse(builder(sender, recipient).setSenderKID(CmpProtectedMessage.certificateKeyId(signer))
                 .addCMPCertificate(new X509CertificateHolder(signer.getEncoded()))
                 .build(new JcaContentSignerBuilder("SHA256withRSA").build(clientKey.getPrivate())).toASN1Structure().getEncoded());
     }
 
+    /**
+     * Creates the fixed CMP discovery request builder with deterministic transaction and nonce values.
+     *
+     * @param sender sender distinguished name
+     * @param recipient recipient distinguished name
+     * @return mutable protected-message builder owned by the caller
+     */
     static ProtectedPKIMessageBuilder builder(X500Name sender, X500Name recipient) {
         return new ProtectedPKIMessageBuilder(new GeneralName(sender), new GeneralName(recipient))
                 .setTransactionID(filled(16, 1)).setSenderNonce(filled(16, 2)).setMessageTime(Date.from(NOW))
@@ -212,6 +289,18 @@ class CmpAuthenticationTest {
                         new ASN1ObjectIdentifier("1.3.6.1.5.5.7.4.17")))));
     }
 
+    /**
+     * Signs a fixture certificate with the shared root key.
+     *
+     * @param pair subject key pair
+     * @param subject subject distinguished name
+     * @param isCa whether the certificate basic constraints identify a CA
+     * @param usage key-usage bit mask encoded as a critical extension
+     * @param serial positive certificate serial number
+     * @param expires certificate expiry instant
+     * @return parsed X.509 certificate carrying the supplied subject and key usage
+     * @throws Exception if extension encoding or certificate signing/parsing fails
+     */
     static X509Certificate certificate(KeyPair pair, X500Name subject, boolean isCa, int usage, int serial, Instant expires) throws Exception {
         return Pkix.parseCertificate(new JcaX509v3CertificateBuilder(CA_NAME, BigInteger.valueOf(serial), Date.from(NOW.minusSeconds(3600)),
                 Date.from(expires), subject, pair.getPublic()).addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa))
@@ -219,8 +308,24 @@ class CmpAuthenticationTest {
                 .build(new JcaContentSignerBuilder("SHA256withRSA").build(caKey.getPrivate())).getEncoded());
     }
 
+    /**
+     * Creates deterministic nonce or transaction bytes for a protocol fixture.
+     *
+     * @param size array length in bytes; must be nonnegative
+     * @param value value narrowed to a byte and repeated throughout the array
+     * @return new array containing the repeated byte
+     * @throws NegativeArraySizeException if size is negative
+     */
     static byte[] filled(int size, int value) { byte[] bytes = new byte[size]; Arrays.fill(bytes, (byte) value); return bytes; }
 
+    /**
+     * Creates an independent PBM calculator using exact binary secret and salt bytes.
+     *
+     * @param parameters PBM digest, MAC, iteration count, and salt parameters
+     * @param secret binary secret borrowed for derivation
+     * @return MAC calculator owning its derived key and buffered protected bytes
+     * @throws Exception if digest/MAC setup or iterative key derivation fails
+     */
     static MacCalculator calculator(PBMParameter parameters, byte[] secret) throws Exception {
         JcePKMACValuesCalculator calculator = new JcePKMACValuesCalculator();
         calculator.setup(parameters.getOwf(), parameters.getMac());

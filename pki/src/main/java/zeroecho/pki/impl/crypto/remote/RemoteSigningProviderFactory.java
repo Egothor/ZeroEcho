@@ -91,9 +91,13 @@ import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 public class RemoteSigningProviderFactory
         implements SigningProviderFactory, AlgorithmExecutionCapabilityProvider {
 
-    /** Stable implementation id for capability binding. */
+    /**
+     * Stable implementation id for capability binding.
+     */
     public static final String IMPLEMENTATION_ID = "zeroecho-remote.signing-provider";
-    /** Stable failure code when no concrete transport is configured for the endpoint. */
+    /**
+     * Stable failure code when no concrete transport is configured for the endpoint.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final String DC_REMOTE_TRANSPORT_UNCONFIGURED = "REMOTE_TRANSPORT_UNCONFIGURED";
 
@@ -113,16 +117,24 @@ public class RemoteSigningProviderFactory
     private static final long DEFAULT_CALL_TIMEOUT_MS = 30_000L;
     private static final Duration FIXED_HORIZON = Duration.ofDays(90);
 
-    /** Creates a remote signing-provider factory. */
+    /**
+     * Creates a remote signing-provider factory.
+     */
     public RemoteSigningProviderFactory() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "zeroecho-remote";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(KEY_ENDPOINT, KEY_KEYREF_PREFIX, KEY_OPERATION_HORIZON, KEY_TLS_KEYSTORE,
@@ -130,6 +142,9 @@ public class RemoteSigningProviderFactory
                 KEY_CONNECT_TIMEOUT_MS, KEY_CALL_TIMEOUT_MS);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<AlgorithmExecutionCapability> capabilities() {
         Set<AlgorithmIdentity> signatures = Set.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
@@ -156,6 +171,9 @@ public class RemoteSigningProviderFactory
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateConfig(ProviderConfig config) {
         SigningProviderFactory.super.validateConfig(config);
@@ -173,6 +191,9 @@ public class RemoteSigningProviderFactory
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningProvider allocate(ProviderConfig config) {
         validateConfig(config);
@@ -181,6 +202,9 @@ public class RemoteSigningProviderFactory
         return new RemoteSigningProvider(id(), transport, keyRefPrefix, FIXED_HORIZON);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningProvider allocate(ProviderConfig config, SigningProviderRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies must not be null");
@@ -202,6 +226,9 @@ public class RemoteSigningProviderFactory
      *
      * @param config validated provider configuration
      * @return an open transport to the remote signing service
+     * @throws PkiException if mutual-TLS transport configuration is missing or cannot be initialized
+     * @throws NullPointerException if config is null
+     * @throws IllegalArgumentException if endpoint, required TLS paths, or timeout configuration is invalid
      */
     protected RemoteSigningTransport openTransport(ProviderConfig config) {
         if (config.get(KEY_TLS_KEYSTORE).isEmpty()) {

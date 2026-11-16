@@ -59,18 +59,38 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 
-/** The sole STATUS parent drives one retained ALT result and one private native child. */
+/**
+ * The sole STATUS parent drives one retained ALT result and one private native child.
+ */
 final class CrlHybridContinuation {
     private final PkiStore store;
     private final X509BindingCatalog bindings;
     private final long pureMaximum;
     private final FullCrlContinuationPublisher publisher;
 
+    /**
+     * Creates a hybrid CRL driver borrowing the store, bindings, and streaming publisher.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @param bindings immutable X.509 binding catalogue
+     * @param pureMaximum maximum pure-EdDSA message length in bytes
+     * @param publisher borrowed completed-CRL publisher
+     */
     CrlHybridContinuation(PkiStore store, X509BindingCatalog bindings, long pureMaximum,
             FullCrlContinuationPublisher publisher) {
         this.store = store; this.bindings = bindings; this.pureMaximum = pureMaximum; this.publisher = publisher;
     }
 
+    /**
+     * Advances or retires one durable hybrid CRL parent and its captured native child.
+     *
+     * <p>Reloads authoritative workflow state, preserves captured commitments, and records
+     * terminal publication outcomes without resubmitting the alternative signature.</p>
+     *
+     * @param supplied parent workflow identity to reload from authoritative storage
+     * @throws IllegalStateException if required alternative-signature output is not retained
+     * @throws PkiException if advancing the hybrid continuation fails and requires recovery
+     */
     void advance(SignWorkflowStore.Workflow supplied) {
         var parent = store.getSignWorkflow(supplied.operationId()).orElseThrow();
         var domain = store.getDomainContinuation(parent.operationId()).orElseThrow();

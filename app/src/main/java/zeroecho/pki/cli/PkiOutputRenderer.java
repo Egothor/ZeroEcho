@@ -47,11 +47,27 @@ import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Deterministic safe human and versioned machine result renderer. */
+/**
+ * Deterministic human and versioned machine renderer for already classified local results.
+ *
+ * <p>The renderer performs no additional field redaction or authorization. Callers
+ * must select safe result/diagnostic values before rendering. Output is flushed,
+ * not closed; JSON is staged in an owned memory buffer, while human output uses
+ * PrintWriter without checking its suppressed I/O error flag.</p>
+ */
 final class PkiOutputRenderer {
 
     private static final JsonFactory JSON_FACTORY = JsonFactory.builder().build();
 
+    /**
+     * Writes ordered plan results using the selected presentation.
+     *
+     * @param execution complete immutable plan result
+     * @param mode selected human or JSON representation
+     * @param batch whether the JSON mode label is batch rather than single
+     * @param output caller-owned destination, flushed but not closed
+     * @throws IOException if machine encoding or output writing fails
+     */
     /* default */ void render(PkiPlanExecution execution, PkiOutputMode mode, boolean batch, OutputStream output)
             throws IOException {
         if (mode == PkiOutputMode.JSON) {
@@ -61,6 +77,15 @@ final class PkiOutputRenderer {
         }
     }
 
+    /**
+     * Writes a classified command-level failure without rendering an exception graph.
+     *
+     * @param mode selected presentation
+     * @param category caller-selected safe classification, not validated here
+     * @param code caller-selected safe machine detail, not validated here
+     * @param output caller-owned destination, flushed but not closed
+     * @throws IOException if machine encoding or output writing fails
+     */
     /* default */ void renderFailure(PkiOutputMode mode, String category, String code, OutputStream output)
             throws IOException {
         if (mode == PkiOutputMode.HUMAN) {

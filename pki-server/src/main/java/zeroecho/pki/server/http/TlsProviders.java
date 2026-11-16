@@ -46,12 +46,23 @@ import javax.net.ssl.SSLContext;
 import zeroecho.pki.server.spi.PkiServerTlsProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Deterministic explicit TLS-provider selection. */
-@SuppressWarnings("PMD")
+/**
+ * Deterministic explicit TLS-provider selection.
+ */
 final class TlsProviders {
     private TlsProviders() {
     }
 
+    /**
+     * Loads the exact configured TLS provider across supported SPI versions.
+     *
+     * @param configuration exact provider identity and initialization configuration
+     * @param loader service-provider discovery class loader
+     * @return initialized non-null TLS context
+     * @throws NullPointerException if an argument or provider result is null
+     * @throws IllegalStateException if provider identities are ambiguous, the configured provider
+     *         is unavailable or initialization fails
+     */
     static SSLContext create(ProviderConfig configuration, ClassLoader loader) {
         Objects.requireNonNull(configuration, "configuration");
         List<PkiServerTlsProvider> providers = new ArrayList<>();

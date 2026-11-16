@@ -92,7 +92,9 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Independent BC wire encoders and verifiers exercise the public CMP facade. */
+/**
+ * Independent BC wire encoders and verifiers exercise the public CMP facade.
+ */
 class CmpProtectedMessageTest {
     private static final Instant NOW = Instant.parse("2026-10-10T12:00:00Z");
     private static final X500Name CLIENT = new X500Name("CN=Client");
@@ -113,6 +115,11 @@ class CmpProtectedMessageTest {
     private static X509Certificate server;
     private static PKIBody enrollment;
 
+    /**
+     * Prepares cryptographic keys, certificates, and protocol material used by the tests.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @BeforeAll static void fixture() throws Exception {
         BouncyCastleActivator.init();
         SecureRandom random = SecureRandom.getInstance("SHA1PRNG", "SUN");
@@ -129,6 +136,11 @@ class CmpProtectedMessageTest {
         enrollment = new PKIBody(0, new CertReqMessages(csr.toASN1Structure()));
     }
 
+    /**
+     * Signature protection preserves exact request and protects waiting final and discovery.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signatureProtectionPreservesExactRequestAndProtectsWaitingFinalAndDiscovery() throws Exception {
         byte[] wire = signed(enrollment, "SHA256withRSA");
         CmpProtectedMessage parsed = CmpProtectedMessage.parse(wire);
@@ -169,6 +181,11 @@ class CmpProtectedMessageTest {
         assertArrayEquals(server.getEncoded(), org.bouncycastle.asn1.ASN1Sequence.getInstance(info.getInfoValue()).getObjectAt(0).toASN1Primitive().getEncoded());
     }
 
+    /**
+     * Binary pbm uses configured algorithms and independent response verification.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void binaryPbmUsesConfiguredAlgorithmsAndIndependentResponseVerification() throws Exception {
         for (String digest : POLICY.digestOids()) for (String mac : POLICY.macOids()) {
             PBMParameter parameters = new PBMParameter(SALT, new AlgorithmIdentifier(new ASN1ObjectIdentifier(digest)),
@@ -193,6 +210,11 @@ class CmpProtectedMessageTest {
         }
     }
 
+    /**
+     * Malformed work bounds are rejected before any derivation and cancellation is observed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void malformedWorkBoundsAreRejectedBeforeAnyDerivationAndCancellationIsObserved() throws Exception {
         AtomicInteger checks = new AtomicInteger();
         CancellationSignal observed = () -> { checks.incrementAndGet(); return false; };
@@ -212,6 +234,11 @@ class CmpProtectedMessageTest {
                 () -> true));
     }
 
+    /**
+     * Signature and message boundary tampering fails without mode fallback.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signatureAndMessageBoundaryTamperingFailsWithoutModeFallback() throws Exception {
         byte[] wire = signed(enrollment, "SHA256withRSA");
         PKIMessage valid = PKIMessage.getInstance(wire);
@@ -244,6 +271,11 @@ class CmpProtectedMessageTest {
         assertArrayEquals(server.getEncoded(), candidates.extraCertificates().getFirst());
     }
 
+    /**
+     * Named ec and supported RSA digests interoperate while parameters stay exact.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void namedEcAndSupportedRsaDigestsInteroperateWhileParametersStayExact() throws Exception {
         for (String algorithm : List.of("SHA256withRSA", "SHA384withRSA", "SHA512withRSA")) {
             CmpProtectedMessage.parse(signed(enrollment, algorithm)).verifySignature(client);
@@ -270,6 +302,11 @@ class CmpProtectedMessageTest {
         }
     }
 
+    /**
+     * Pbm overflow field cardinality length and pad bits reject before work.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void pbmOverflowFieldCardinalityLengthAndPadBitsRejectBeforeWork() throws Exception {
         AtomicInteger checks = new AtomicInteger();
         CancellationSignal observed = () -> { checks.incrementAndGet(); return false; };
@@ -289,6 +326,11 @@ class CmpProtectedMessageTest {
         assertEquals(0, checks.get());
     }
 
+    /**
+     * Poll confirmation revocation and body cardinality are explicit.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void pollConfirmationRevocationAndBodyCardinalityAreExplicit() throws Exception {
         PKIBody poll = new PKIBody(25, new DERSequence(new DERSequence(new ASN1Integer(37))));
         CmpProtectedMessage.Verified verified = CmpProtectedMessage.parse(signed(poll, "SHA256withRSA")).verifySignature(client);
@@ -317,6 +359,11 @@ class CmpProtectedMessageTest {
         assertThrows(IllegalArgumentException.class, () -> CmpProtectedMessage.parse(signed(duplicate, "SHA256withRSA")));
     }
 
+    /**
+     * Implicit confirmation is explicit and header grammar is closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void implicitConfirmationIsExplicitAndHeaderGrammarIsClosed() throws Exception {
         byte[] implicit = builder(enrollment).setSenderKID(CmpProtectedMessage.certificateKeyId(client)).addGeneralInfo(new org.bouncycastle.asn1.cmp.InfoTypeAndValue(
                 CMPObjectIdentifiers.it_implicitConfirm, DERNull.INSTANCE)).build(
@@ -354,6 +401,11 @@ class CmpProtectedMessageTest {
         assertThrows(IllegalArgumentException.class, () -> CmpProtectedMessage.parse(malformed));
     }
 
+    /**
+     * Certificate key identifiers use ski or exact fallback and reject routing mismatch.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void certificateKeyIdentifiersUseSkiOrExactFallbackAndRejectRoutingMismatch() throws Exception {
         assertArrayEquals(java.security.MessageDigest.getInstance("SHA-256").digest(serverKey.getPublic().getEncoded()),
                 CmpProtectedMessage.certificateKeyId(server));
@@ -409,6 +461,11 @@ class CmpProtectedMessageTest {
         assertTrue(protectedMessage.verify(new JcaContentVerifierProviderBuilder().build(server.getPublicKey())));
         return protectedMessage.toASN1Structure();
     }
+    /**
+     * Confirmation hash follows issued certificate signature digest.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void confirmationHashFollowsIssuedCertificateSignatureDigest() throws Exception {
         for (String signature : List.of("SHA256withRSA", "SHA384withRSA", "SHA512withRSA", "SHA256withRSAandMGF1")) {
             byte[] certificate = new JcaX509v3CertificateBuilder(CLIENT, BigInteger.TEN, Date.from(NOW.minusSeconds(60)),
@@ -425,6 +482,11 @@ class CmpProtectedMessageTest {
         assertThrows(IllegalArgumentException.class, () -> CmpProtectedMessage.certificateConfirmationHash(new byte[] { 0x30, 0 }));
     }
 
+    /**
+     * Version three explicit confirmation hash supports existing eddsa and ml dsa certificates.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void versionThreeExplicitConfirmationHashSupportsExistingEddsaAndMlDsaCertificates() throws Exception {
         java.security.Provider provider = new org.bouncycastle.jce.provider.BouncyCastleProvider();
         AlgorithmIdentifier sha256 = new AlgorithmIdentifier(org.bouncycastle.asn1.nist.NISTObjectIdentifiers.id_sha256);
@@ -446,6 +508,11 @@ class CmpProtectedMessageTest {
         }
     }
 
+    /**
+     * Signed confirmation hash algorithm rejects malformed and unsupported fields.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signedConfirmationHashAlgorithmRejectsMalformedAndUnsupportedFields() throws Exception {
         ASN1Encodable valid = new org.bouncycastle.asn1.DERTaggedObject(true, 0,
                 new AlgorithmIdentifier(org.bouncycastle.asn1.nist.NISTObjectIdentifiers.id_sha256));
@@ -463,6 +530,11 @@ class CmpProtectedMessageTest {
                 valid, new DERSequence(new ASN1Integer(0)))));
     }
 
+    /**
+     * Project sphincs confirmation uses only the certificate role oid.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void projectSphincsConfirmationUsesOnlyTheCertificateRoleOid() throws Exception {
         KeyPair key = new zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenBuilder().generateKeyPair(
                 zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec.defaultSpec());

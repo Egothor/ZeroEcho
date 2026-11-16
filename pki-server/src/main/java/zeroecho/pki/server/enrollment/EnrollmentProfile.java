@@ -90,7 +90,27 @@ public record EnrollmentProfile(
         this(id, displayName, state, certificateProfileId, allowedAuthorityIds, subjectDnPattern, requiredSanDomains, requireApproval, Optional.empty());
     }
 
-    /** Validates and defensively copies the record. */
+    /**
+     * Validates and defensively copies the record.
+     * @param id URL-safe profile identity, unique within the realm
+     * @param displayName human-readable label
+     * @param state current lifecycle state
+     * @param certificateProfileId certificate profile applied to issued credentials
+     * @param allowedAuthorityIds set of CA identities that may issue under this profile;
+                           empty means any authority is permitted
+     * @param subjectDnPattern optional bounded pattern of literal text and {@code .*}
+                        wildcards; see {@link EnrollmentSubjectPattern}
+     * @param requiredSanDomains DNS suffixes each requiring at least one matching DNS SAN;
+                          normalized to sorted lowercase ASCII; empty = unconstrained
+     * @param sdkProfile optional explicit SDK profile; absence retains ordinary enrollment
+     * @param requireApproval whether issuance requires an out-of-band approval
+     * @throws NullPointerException if any of {@code sdkProfile}, {@code state}, {@code allowedAuthorityIds},
+     *         {@code subjectDnPattern}, {@code requiredSanDomains} is null
+     * @throws IllegalArgumentException if the enrollment profile identity is noncanonical or the enrollment
+     *         profile display name is empty or exceeds 256 characters or the enrollment profile selects an
+     *         unsupported SDK profile or the allowed-authority set exceeds its count bound or the DNS suffix
+     *         set exceeds its count bound or the DNS suffix policy contains duplicates
+     */
     public EnrollmentProfile {
         if (id == null || !id.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) {
             throw new IllegalArgumentException("enrollment profile identity is not canonical");

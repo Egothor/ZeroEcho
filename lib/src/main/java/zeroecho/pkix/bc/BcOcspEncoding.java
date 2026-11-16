@@ -54,10 +54,21 @@ import org.bouncycastle.asn1.ocsp.ResponseData;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.cert.X509CertificateHolder;
 
-/** Shared DER envelope construction; performs no signing or trust validation. */
+/**
+ * Shared DER envelope construction; performs no signing or trust validation.
+ */
 final class BcOcspEncoding {
     private BcOcspEncoding() { }
 
+    /**
+     * Encodes an optional certificate chain without validating its signatures or trust.
+     *
+     * @param chain certificates in caller-selected order; must not be null or contain null
+     * @return ASN.1 sequence in the same order, or null for an empty chain
+     * @throws IOException if a certificate cannot be parsed as an ASN.1 holder
+     * @throws CertificateEncodingException if a certificate cannot provide its encoding
+     * @throws NullPointerException if the chain or an entry is null
+     */
     /* default */ static ASN1Sequence certificates(List<X509Certificate> chain) throws IOException, CertificateEncodingException {
         Objects.requireNonNull(chain, "chain");
         if (chain.isEmpty()) {
@@ -70,6 +81,16 @@ final class BcOcspEncoding {
         return new DERSequence(certificates);
     }
 
+    /**
+     * Wraps supplied signed response data in a successful OCSPResponse DER envelope.
+     *
+     * @param data already prepared response data
+     * @param algorithm identifier corresponding to the supplied signature
+     * @param signature signature bytes over the encoded response data
+     * @param certificates optional certificate sequence, or null to omit it
+     * @return complete DER-encoded OCSPResponse
+     * @throws IOException if the ASN.1 envelope cannot be encoded
+     */
     /* default */ static byte[] assemble(ResponseData data, AlgorithmIdentifier algorithm, byte[] signature,
             ASN1Sequence certificates) throws IOException {
         BasicOCSPResponse basic = new BasicOCSPResponse(data, algorithm, new DERBitString(signature), certificates);

@@ -75,6 +75,18 @@ final class SigningLedgerMaintenance implements AutoCloseable {
     private long sourceChannelsOpened;
     private boolean closed;
 
+    /**
+     * Creates thread-confined maintenance over the caller's coordinated ledger resources.
+     *
+     * @param root ledger artifact directory; must not be null
+     * @param manifest validated authoritative generation manifest; must not be null
+     * @param activeWal current active writer, closed by this maintenance instance; must not be null
+     * @param activeConfiguration validated active-WAL writer configuration; must not be null
+     * @param generations borrowed generation ownership/reclamation registry; must not be null
+     * @param index borrowed live MVCC index; must not be null
+     * @param artifacts borrowed exact physical artifact catalogue; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ SigningLedgerMaintenance(Path root, SigningManifestCodec.Manifest manifest,
             SigningActiveWal activeWal, SigningActiveWal.Configuration activeConfiguration,
             SigningGenerationRegistry generations, SigningMvccIndex index,
@@ -83,6 +95,19 @@ final class SigningLedgerMaintenance implements AutoCloseable {
                 Configuration.defaults(), NO_FAULTS);
     }
 
+    /**
+     * Creates thread-confined maintenance over the caller's coordinated ledger resources.
+     *
+     * @param root ledger artifact directory; must not be null
+     * @param manifest validated authoritative generation manifest; must not be null
+     * @param activeWal current active writer, closed by this maintenance instance; must not be null
+     * @param activeConfiguration validated active-WAL writer configuration; must not be null
+     * @param generations borrowed generation ownership/reclamation registry; must not be null
+     * @param index borrowed live MVCC index; must not be null
+     * @param artifacts borrowed exact physical artifact catalogue; must not be null
+     * @param faults deterministic maintenance fault callback; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ SigningLedgerMaintenance(Path root, SigningManifestCodec.Manifest manifest,
             SigningActiveWal activeWal, SigningActiveWal.Configuration activeConfiguration,
             SigningGenerationRegistry generations, SigningMvccIndex index,
@@ -91,6 +116,20 @@ final class SigningLedgerMaintenance implements AutoCloseable {
                 Configuration.defaults(), faults);
     }
 
+    /**
+     * Creates thread-confined maintenance over the caller's coordinated ledger resources.
+     *
+     * @param root ledger artifact directory; must not be null
+     * @param manifest validated authoritative generation manifest; must not be null
+     * @param activeWal current active writer, closed by this maintenance instance; must not be null
+     * @param activeConfiguration validated active-WAL writer configuration; must not be null
+     * @param generations borrowed generation ownership/reclamation registry; must not be null
+     * @param index borrowed live MVCC index; must not be null
+     * @param artifacts borrowed exact physical artifact catalogue; must not be null
+     * @param configuration validated finite maintenance configuration; must not be null
+     * @param faults deterministic maintenance fault callback; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ SigningLedgerMaintenance(Path root, SigningManifestCodec.Manifest manifest,
             SigningActiveWal activeWal, SigningActiveWal.Configuration activeConfiguration,
             SigningGenerationRegistry generations, SigningMvccIndex index,
@@ -107,7 +146,14 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         this.faults = Objects.requireNonNull(faults, "faults");
     }
 
-    /** Stops admission, seals a copied immutable segment, and publishes a new active WAL. */
+    /**
+     * Stops admission, seals a copied immutable segment, and publishes a new active WAL.
+     * @param nextActiveIdentity fresh positive physical generation identity not already retained
+     * @return published sealed/active generation descriptors; the simple rotation captures no MVCC boundary
+     * @throws IOException if sealing, manifest publication, or directory durability fails
+     * @throws IllegalArgumentException if nextActiveIdentity is unavailable
+     * @throws IllegalStateException if maintenance is closed or requires recovery
+     */
     /* default */ Rotation rotate(long nextActiveIdentity) throws IOException {
         requireUsable();
         requireAvailableIdentity(nextActiveIdentity);
@@ -189,12 +235,32 @@ final class SigningLedgerMaintenance implements AutoCloseable {
     /**
      * Publishes a self-contained live-record checkpoint and relocates only
      * current pointers that still equal the pinned snapshot values.
+     * @param checkpointIdentity fresh positive checkpoint identity distinct from the next active identity
+     * @param nextActiveIdentity fresh positive physical generation identity not already retained
+     * @return published compaction descriptors and live-record count; temporary snapshot ownership is released
+     * @throws IOException if rotation, checkpoint encoding, manifest publication, or durable cutover fails
+     * @throws NullPointerException if an explicitly supplied callback or publication monitor is null
+     * @throws IllegalArgumentException if checkpoint or active identities are unavailable or equal
+     * @throws IllegalStateException if closed, recovery-required, or source-generation bounds are exceeded
      */
     /* default */ Compaction compact(long checkpointIdentity, long nextActiveIdentity)
             throws IOException {
         return compact(checkpointIdentity, nextActiveIdentity, () -> { }, this);
     }
 
+    /**
+     * Builds a bounded checkpoint and relocates live pointers that still match the pinned source revision.
+     *
+     * @param checkpointIdentity fresh positive checkpoint identity distinct from the next active identity
+     * @param nextActiveIdentity fresh positive physical generation identity not already retained
+     * @param boundaryPublished callback after the new rotation boundary becomes authoritative; must not be null
+     * @param relocationPublicationLock monitor coordinating live physical-pointer publication; must not be null
+     * @return published compaction descriptors and live-record count; temporary snapshot ownership is released
+     * @throws IOException if rotation, checkpoint encoding, manifest publication, or durable cutover fails
+     * @throws NullPointerException if an explicitly supplied callback or publication monitor is null
+     * @throws IllegalArgumentException if checkpoint or active identities are unavailable or equal
+     * @throws IllegalStateException if closed, recovery-required, or source-generation bounds are exceeded
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     /* default */ Compaction compact(long checkpointIdentity, long nextActiveIdentity,
             Runnable boundaryPublished, Object relocationPublicationLock) throws IOException {
@@ -261,7 +327,21 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Performs online candidate construction, bounded catch-up, and durable cutover. */
+    /**
+     * Performs online candidate construction, bounded catch-up, and durable cutover.
+     * @param checkpointIdentity fresh positive checkpoint identity distinct from the next active identity
+     * @param nextActiveIdentity fresh positive physical generation identity not already retained
+     * @param boundaryPublished callback after the new rotation boundary becomes authoritative; must not be null
+     * @param finalGate caller-owned admission gate establishing and draining final cutover; must not be null
+     * @param relocationPublicationLock monitor coordinating live physical-pointer publication; must not be null
+     * @param decoder bounded committed-frame mutation decoder; must not be null
+     * @return published compaction descriptors and retained live-record count
+     * @throws IOException if candidate building, final admission drain, replay, or durable publication fails
+     * @throws NullPointerException if a required callback, gate, decoder, monitor, or probe is null
+     * @throws IllegalArgumentException if checkpoint or active identities are unavailable or equal
+     * @throws IllegalStateException if maintenance is closed or requires recovery
+     * @throws CompactionDeferredException if snapshot or protected-progress pressure defers cutover
+     */
     /* default */ Compaction compactOnline(long checkpointIdentity, long nextActiveIdentity,
             Runnable boundaryPublished, FinalGate finalGate,
             Object relocationPublicationLock,
@@ -270,6 +350,23 @@ final class SigningLedgerMaintenance implements AutoCloseable {
                 finalGate, relocationPublicationLock, decoder, NO_PRESSURE);
     }
 
+    /**
+     * Builds a detached checkpoint candidate, catches up bounded committed prefixes, and performs durable cutover.
+     *
+     * @param checkpointIdentity fresh positive checkpoint identity distinct from the next active identity
+     * @param nextActiveIdentity fresh positive physical generation identity not already retained
+     * @param boundaryPublished callback after the new rotation boundary becomes authoritative; must not be null
+     * @param finalGate caller-owned admission gate establishing and draining final cutover; must not be null
+     * @param relocationPublicationLock monitor coordinating live physical-pointer publication; must not be null
+     * @param decoder bounded committed-frame mutation decoder; must not be null
+     * @param pressureProbe lock-free observation of newly raised protected-progress pressure; must not be null
+     * @return published compaction descriptors and retained live-record count
+     * @throws IOException if candidate building, final admission drain, replay, or durable publication fails
+     * @throws NullPointerException if a required callback, gate, decoder, monitor, or probe is null
+     * @throws IllegalArgumentException if checkpoint or active identities are unavailable or equal
+     * @throws IllegalStateException if maintenance is closed or requires recovery
+     * @throws CompactionDeferredException if snapshot or protected-progress pressure defers cutover
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     /* default */ Compaction compactOnline(long checkpointIdentity, long nextActiveIdentity,
             Runnable boundaryPublished, FinalGate finalGate,
@@ -590,7 +687,13 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Deletes at most the claimed bound and durably records directory absence. */
+    /**
+     * Deletes at most the claimed bound and durably records directory absence.
+     * @param maximumActions upper bound on generation reclamation claims in this pass
+     * @return number of generation claims durably reclaimed, which may cover multiple physical files
+     * @throws IOException if owned-artifact validation, deletion, or directory durability fails
+     * @throws IllegalStateException if maintenance is closed or requires recovery
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     /* default */ int reclaim(int maximumActions) throws IOException {
         requireUsable();
@@ -625,7 +728,15 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Durably removes recovery-classified artifacts excluded by the authoritative manifest. */
+    /**
+     * Durably removes recovery-classified artifacts excluded by the authoritative manifest.
+     * @param root ledger artifact directory; must not be null
+     * @param manifest validated authoritative generation manifest; must not be null
+     * @param plan validated recovery cleanup plan containing only nonauthoritative deferred candidates
+     * @return number of deferred artifact paths processed for durable removal
+     * @throws IOException if a candidate became authoritative, changed file kind, or cannot be durably removed
+     * @throws NullPointerException if root, manifest, or plan is null
+     */
     /* default */ static int cleanupDeferredArtifacts(Path root,
             SigningManifestCodec.Manifest manifest, SigningLedgerRecovery.CleanupPlan plan)
             throws IOException {
@@ -686,18 +797,38 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the current authoritative immutable artifact manifest.
+     *
+     * @return current authoritative immutable artifact manifest
+     */
     /* default */ SigningManifestCodec.Manifest manifest() {
         return manifest;
     }
 
+    /**
+     * Returns the current borrowed active WAL; lifecycle remains owned by the maintenance graph.
+     *
+     * @return current borrowed active WAL; lifecycle remains owned by the maintenance graph
+     */
     /* default */ SigningActiveWal activeWal() {
         return activeWal;
     }
 
+    /**
+     * Reports whether maintenance requires authoritative recovery.
+     *
+     * @return true if maintenance observed a failure requiring authoritative recovery
+     */
     /* default */ boolean recoveryRequired() {
         return recoveryRequired.get();
     }
 
+    /**
+     * Returns the number of compaction source channels opened.
+     *
+     * @return number of compaction source channels opened
+     */
     /* default */ long sourceChannelsOpened() {
         return sourceChannelsOpened;
     }
@@ -861,21 +992,35 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Stable externally safe maintenance failure stages. */
+    /**
+     * Stable externally safe maintenance failure stages.
+     */
     /* default */ enum MaintenanceStage {
-        /** Active-WAL rotation or segment publication. */
+        /**
+         * Active-WAL rotation or segment publication.
+         */
         ROTATE,
-        /** Checkpoint construction or adoption. */
+        /**
+         * Checkpoint construction or adoption.
+         */
         CHECKPOINT,
-        /** Manifest publication. */
+        /**
+         * Manifest publication.
+         */
         MANIFEST,
-        /** In-memory ownership publication. */
+        /**
+         * In-memory ownership publication.
+         */
         MEMORY,
-        /** Durable artifact reclamation. */
+        /**
+         * Durable artifact reclamation.
+         */
         RECLAIM
     }
 
-    /** Stable path-free maintenance failure; the cause remains internal. */
+    /**
+     * Stable path-free maintenance failure; the cause remains internal.
+     */
     /* default */ static final class MaintenanceException extends IOException {
         private static final long serialVersionUID = -2454842338520977330L;
         private final MaintenanceStage stage;
@@ -885,10 +1030,17 @@ final class SigningLedgerMaintenance implements AutoCloseable {
             this.stage = stage;
         }
 
+        /**
+         * Returns the closed maintenance stage at which the failure occurred.
+         *
+         * @return closed maintenance stage at which the failure occurred
+         */
         /* default */ MaintenanceStage stage() { return stage; }
     }
 
-    /** Controlled online-compaction deferral that leaves the rotated store usable. */
+    /**
+     * Controlled online-compaction deferral that leaves the rotated store usable.
+     */
     /* default */ static final class CompactionDeferredException extends IOException {
         private static final long serialVersionUID = 1L;
         private final DeferralReason reason;
@@ -898,20 +1050,35 @@ final class SigningLedgerMaintenance implements AutoCloseable {
             this.reason = Objects.requireNonNull(reason, "reason");
         }
 
+        /**
+         * Returns the closed reason why compaction was deferred.
+         *
+         * @return closed reason why compaction was deferred
+         */
         /* default */ DeferralReason reason() {
             return reason;
         }
     }
 
-    /** Internal resource condition that may safely defer online compaction. */
+    /**
+     * Internal resource condition that may safely defer online compaction.
+     */
     /* default */ enum DeferralReason {
-        /** Accepted signing progress needs the steady workspace released first. */
+        /**
+         * Accepted signing progress needs the steady workspace released first.
+         */
         PROTECTED_PROGRESS,
-        /** Detached candidate cannot reserve its transient memory envelope. */
+        /**
+         * Detached candidate cannot reserve its transient memory envelope.
+         */
         TRANSIENT_CAPACITY,
-        /** Candidate cannot be transferred into the steady memory envelope. */
+        /**
+         * Candidate cannot be transferred into the steady memory envelope.
+         */
         STEADY_CAPACITY,
-        /** An external live snapshot still depends on the displaced root. */
+        /**
+         * An external live snapshot still depends on the displaced root.
+         */
         SNAPSHOT
     }
 
@@ -935,6 +1102,14 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
+    /**
+     * Marks maintenance closed and closes its current active WAL writer.
+     *
+     * <p>Repeated calls are no-ops. The maintenance owner remains closed even if the
+     * writer reports a cleanup failure.</p>
+     *
+     * @throws IOException if active writer drain or channel closure fails
+     */
     @Override
     public void close() throws IOException {
         if (!closed) {
@@ -943,80 +1118,148 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Deterministic package-local maintenance crash-boundary seam. */
+    /**
+     * Deterministic package-local maintenance crash-boundary seam.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface FaultInjector {
-        /** Called immediately after the named durable or in-memory boundary. */
+        /**
+         * Called immediately after the named durable or in-memory boundary.
+         * @param stage named durable or in-memory maintenance boundary just completed
+         * @throws IOException to inject failure at that exact boundary
+         */
         void at(Stage stage) throws IOException;
     }
 
-    /** Closes ordinary admission and drains all preexisting lifecycle slots. */
+    /**
+     * Closes ordinary admission and drains all preexisting lifecycle slots.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface FinalGate {
-        /** Returns only after preparation and admitted-projection ownership is empty. */
+        /**
+         * Returns only after preparation and admitted-projection ownership is empty.
+         * @throws IOException if the caller cannot close admission or establish an empty drained publication boundary
+         */
         void closeAndDrain() throws IOException;
     }
 
-    /** Lock-free per-call observation of newly raised protected-progress pressure. */
+    /**
+     * Lock-free per-call observation of newly raised protected-progress pressure.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface PressureProbe {
-        /** Returns the current pressure cause, or {@code null} when compaction may continue. */
+        /**
+         * Returns the current pressure cause, or {@code null} when compaction may continue.
+         * @return current protected-progress capacity failure, or null when compaction may continue
+         */
         SigningIndexCapacityBudget.CapacityExceededException current();
     }
 
-    /** Stable boundaries available to deterministic fault tests. */
+    /**
+     * Stable boundaries available to deterministic fault tests.
+     */
     /* default */ enum Stage {
-        /** The old writer is drained and closed. */
+        /**
+         * The old writer is drained and closed.
+         */
         ACTIVE_DRAINED,
-        /** The immutable-segment hard link exists but its directory is not yet forced. */
+        /**
+         * The immutable-segment hard link exists but its directory is not yet forced.
+         */
         SEALED_LINK_CREATED,
-        /** The immutable copied segment is durable. */
+        /**
+         * The immutable copied segment is durable.
+         */
         SEALED_PUBLISHED,
-        /** The next empty active WAL is durable. */
+        /**
+         * The next empty active WAL is durable.
+         */
         NEXT_ACTIVE_PUBLISHED,
-        /** The rotation manifest is durable. */
+        /**
+         * The rotation manifest is durable.
+         */
         MANIFEST_PUBLISHED,
-        /** Rotation memory ownership is published. */
+        /**
+         * Rotation memory ownership is published.
+         */
         MEMORY_PUBLISHED,
-        /** The self-contained checkpoint is durable. */
+        /**
+         * The self-contained checkpoint is durable.
+         */
         CHECKPOINT_PUBLISHED,
-        /** The detached checkpoint candidate is complete but not manifest-authoritative. */
+        /**
+         * The detached checkpoint candidate is complete but not manifest-authoritative.
+         */
         CANDIDATE_BUILT,
-        /** Admission is closed and all lifecycle slots are drained. */
+        /**
+         * Admission is closed and all lifecycle slots are drained.
+         */
         FINAL_GATE_DRAINED,
-        /** The compacted manifest is durable. */
+        /**
+         * The compacted manifest is durable.
+         */
         COMPACTION_MANIFEST_READY,
-        /** The prevalidated detached MVCC root is live. */
+        /**
+         * The prevalidated detached MVCC root is live.
+         */
         COMPACTION_ROOT_SWAPPED,
-        /** Manifest-removed generations were superseded after the root swap. */
+        /**
+         * Manifest-removed generations were superseded after the root swap.
+         */
         COMPACTION_GENS_SUPERSEDED,
-        /** Compaction memory ownership and relocation are published. */
+        /**
+         * Compaction memory ownership and relocation are published.
+         */
         COMPACTION_MEMORY_PUBLISHED,
-        /** An exact artifact is about to be deleted. */
+        /**
+         * An exact artifact is about to be deleted.
+         */
         BEFORE_DELETE,
-        /** An exact artifact deletion has returned. */
+        /**
+         * An exact artifact deletion has returned.
+         */
         AFTER_DELETE,
-        /** The artifact directory has been forced after deletion. */
+        /**
+         * The artifact directory has been forced after deletion.
+         */
         DELETE_DIRECTORY_FORCED
     }
 
+    /**
+     * Published sealed segment, replacement active WAL and exact rotation boundary.
+     *
+     * @param sealed sealed segment published by the rotation
+     * @param active replacement active-WAL descriptor
+     * @param boundary pinned multiversion snapshot at the exact rotation boundary
+     */
     /* default */ record Rotation(SigningManifestCodec.Segment sealed,
             SigningManifestCodec.ActiveWal active, SigningMvccIndex.Snapshot boundary) {
     }
 
+    /**
+     * Checkpoint publication evidence and retained live-record count for one compaction.
+     *
+     * @param rotation rotation whose sealed inputs are covered by this compaction
+     * @param checkpoint checkpoint artifact covering the retained committed state
+     * @param liveRecords number of live records retained in the checkpoint
+     */
     /* default */ record Compaction(Rotation rotation,
             SigningManifestCodec.Checkpoint checkpoint, int liveRecords) {
     }
 
-    /** Unreferenced durable checkpoint and its validated construction header. */
+    /**
+     * Unreferenced durable checkpoint and its validated construction header.
+     */
     private record CandidateCheckpoint(SigningCheckpointCodec.Header header,
             SigningManifestCodec.Checkpoint descriptor, boolean created) {
     }
 
-    /** In-memory preflight ownership established before rotation or topology changes. */
+    /**
+     * In-memory preflight ownership established before rotation or topology changes.
+     */
     private record OnlinePreflight(SigningMvccIndex.Snapshot snapshot,
             SigningMvccIndex.RelocationCapacity capacityClaim) implements AutoCloseable {
         private OnlinePreflight {
@@ -1024,6 +1267,9 @@ final class SigningLedgerMaintenance implements AutoCloseable {
             Objects.requireNonNull(capacityClaim, "capacityClaim");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             capacityClaim.close();
@@ -1031,15 +1277,34 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
+    /**
+     * Explicit active-segment and compaction source-generation bounds.
+     *
+     * @param maximumActiveSegmentBytes maximum active WAL segment length in bytes
+     * @param maximumSourceGenerations maximum number of source generations considered in one compaction
+     */
     /* default */ record Configuration(long maximumActiveSegmentBytes,
             int maximumSourceGenerations) {
         private static final long DEFAULT_SEGMENT_BYTES = 256L * 1024L * 1024L;
         private static final int DEFAULT_SOURCE_GENERATIONS = 64;
 
+        /**
+         * Configures the active segment byte bound with the default source-generation limit.
+         *
+         * @param maximumActiveSegmentBytes finite active-segment length bound, in bytes
+         * @throws IllegalArgumentException if the segment bound is outside supported format limits
+         */
         /* default */ Configuration(long maximumActiveSegmentBytes) {
             this(maximumActiveSegmentBytes, DEFAULT_SOURCE_GENERATIONS);
         }
 
+        /**
+         * Creates the explicit active-segment and compaction source-generation bounds.
+         *
+         * @param maximumActiveSegmentBytes maximum active WAL segment length in bytes
+         * @param maximumSourceGenerations maximum number of source generations considered in one compaction
+         * @throws IllegalArgumentException if {@code (maximumActiveSegmentBytes < SigningWalContainerCodec.HEADER_BYTES || maximumActiveSegmentBytes > SigningManifestCodec.MAX_FILE_BYTES || maximumSourceGenerations <= 0 || maximumSourceGenerations > 256)}
+         */
         Configuration {
             if (maximumActiveSegmentBytes < SigningWalContainerCodec.HEADER_BYTES
                     || maximumActiveSegmentBytes > SigningManifestCodec.MAX_FILE_BYTES
@@ -1053,7 +1318,9 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** Bounded generation-local source batch that prevents adversarial channel thrashing. */
+    /**
+     * Bounded generation-local source batch that prevents adversarial channel thrashing.
+     */
     private final class FrameBatch implements AutoCloseable {
         private static final int MAXIMUM_ENTRIES = 4_096;
         private static final long MAXIMUM_BYTES = 64L * 1024L * 1024L;
@@ -1132,6 +1399,9 @@ final class SigningLedgerMaintenance implements AutoCloseable {
             return bytes;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         @SuppressWarnings("PMD.CloseResource")
         public void close() throws IOException {
@@ -1156,7 +1426,9 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         }
     }
 
-    /** One semantic-order output and its generation-grouped source pointer. */
+    /**
+     * One semantic-order output and its generation-grouped source pointer.
+     */
     private static final class BatchEntry {
         private final SigningCheckpointCodec.EntryDescriptor descriptor;
         private final SigningMvccIndex.RecordPointer pointer;

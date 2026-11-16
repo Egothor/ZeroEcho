@@ -46,17 +46,30 @@ import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlStore;
 
-/** Closed bounded ZESI-v1 representation; original request DER is serialized once. */
+/**
+ * Closed bounded ZESI-v1 enrollment SDK representation, distinct from administrative HSI1.
+ *
+ * <p>Encoding stores the exact original typed request once and retains required
+ * protected native wire and proof evidence. These bytes may contain confidential
+ * native request attributes; canonical encoding and hashing are not redaction.
+ * Codec validation establishes representation/correspondence, not caller
+ * authentication, cryptographic proof validity or successful durable admission.</p>
+ */
 public final class EnrollmentSdkIntentCodec {
-    /** Closed enrollment namespace discriminator, distinct from administrative HSI1. */
+    /**
+     * Closed enrollment namespace discriminator, distinct from administrative HSI1.
+     */
     public static final int MAGIC = 0x5A455349;
     private static final int MAXIMUM_BYTES = 524_288;
     private EnrollmentSdkIntentCodec() { }
     /**
      * Encodes an immutable intent without accessing persistence or authentication.
+     *
      * @param value retained intent
      * @return independent canonical bytes, bounded to the existing protocol ceiling
-     * @throws IllegalArgumentException if encoded capacity is exceeded
+     * @throws NullPointerException if the intent is null
+     * @throws IllegalArgumentException if target correspondence, whole-second intent times or
+     * component/aggregate capacity constraints fail
      */
     public static byte[] encode(EnrollmentSdkIntent value) {
         try {
@@ -96,8 +109,10 @@ public final class EnrollmentSdkIntentCodec {
     }
     /**
      * Independently decodes and canonical-reencodes one enrollment variant.
+     *
      * @param record private protocol record
-     * @return immutable validated enrollment intent
+     * @return independently reconstructed immutable intent after exact canonical re-encoding
+     * @throws NullPointerException if the record is null
      * @throws IllegalArgumentException for unknown variants, malformed data or inconsistent commitments
      */
     public static EnrollmentSdkIntent decode(ServerControlStore.ProtocolRecord record) {
@@ -142,26 +157,46 @@ public final class EnrollmentSdkIntentCodec {
             return result;
         } catch (IOException | IllegalArgumentException failure) { throw invalid(); }
     }
-    /** @param value immutable intent @return exact private namespace record */
+    /**
+     * Wraps canonical intent bytes in the existing private SDK-intent namespace.
+     *
+     * @param value immutable intent
+     * @return independent protocol record with the exact payload SHA-256 commitment
+     * @throws NullPointerException if the intent is null
+     * @throws IllegalArgumentException if encoding validation or capacity fails
+     */
     public static ServerControlStore.ProtocolRecord record(EnrollmentSdkIntent value) {
         byte[] bytes = encode(value);
         return new ServerControlStore.ProtocolRecord(ServerControlStore.HYBRID_SDK_INTENT, value.id(), EnrollmentTransactionCodec.sha256(bytes), bytes);
     }
     /**
      * Constructs native CMP manifest and empty response-slot mutations without reserving them.
+     *
      * @param manifest exact proposed initial linked manifest
-     * @return finite native mutation set, including its unchanged response capacity
+     * @return immutable native mutation set, including unchanged bounded response-slot capacity
+     * @throws NullPointerException if the manifest is null
+     * @throws IllegalArgumentException if the manifest cannot fit its existing native record/slot bounds
      */
     public static java.util.List<ServerControlStore.ProtocolMutation> cmpCreation(CmpTransaction manifest) {
         return CmpTransactionCodec.create(manifest);
     }
-    /** @param manifest exact retained manifest @return canonical control record */
+    /**
+     * Encodes a native CMP manifest using its existing canonical control-record codec.
+     *
+     * @param manifest exact retained manifest
+     * @return canonical CMP protocol record; no mutation is applied
+     * @throws NullPointerException if the manifest is null
+     * @throws IllegalArgumentException if native encoding or protocol-record bounds fail
+     */
     public static ServerControlStore.ProtocolRecord cmpRecord(CmpTransaction manifest) { return CmpTransactionCodec.record(manifest); }
 
     /**
      * Rejects a native receipt whose independently encoded issuer/policy coordinates differ from F7.
+     *
      * @param intent proposed native frozen intent
      * @param sdk exact retained server challenge
+     * @throws NullPointerException if either required value or expected typed member is missing
+     * @throws IllegalArgumentException if schema/value types or frozen target coordinates disagree
      */
     public static void requireTarget(EnrollmentTransaction.Intent intent, EnrollmentSdkIntent sdk) {
         var frame = sdk.targetFrame();

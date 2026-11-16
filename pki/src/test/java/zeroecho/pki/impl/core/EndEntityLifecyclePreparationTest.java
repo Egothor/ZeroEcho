@@ -112,6 +112,9 @@ import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for end entity lifecycle preparation.
+ */
 final class EndEntityLifecyclePreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -119,9 +122,17 @@ final class EndEntityLifecyclePreparationTest {
     private static final String PROFILE = "h7-no-san-eku";
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "lifecycle"),
             new Purpose("RENEW"), Optional.empty(), Optional.empty());
+    /**
+     * Real key pair retained for certificate construction and verification.
+     */
     static KeyPair key;
     private static KeyPair otherKey;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -129,6 +140,11 @@ final class EndEntityLifecyclePreparationTest {
         otherKey = generator.generateKeyPair();
     }
 
+    /**
+     * Dto bounds and defensive copies.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void dtoBoundsAndDefensiveCopies() throws Exception {
         byte[] csr = csr(key);
         byte[] original = csr.clone();
@@ -143,6 +159,12 @@ final class EndEntityLifecyclePreparationTest {
         assertThrows(IllegalArgumentException.class, () -> new EndEntityReissueRequest(null));
     }
 
+    /**
+     * Renewal and reissue preserve identity and capture one time even when expired.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void renewalAndReissuePreserveIdentityAndCaptureOneTimeEvenWhenExpired(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             for (Validity validity : List.of(new Validity(NOW.minusSeconds(200), NOW.minusSeconds(100)),
@@ -168,6 +190,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Enrollment renewal identity reparses original and rejects changed or forged fields.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void enrollmentRenewalIdentityReparsesOriginalAndRejectsChangedOrForgedFields(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(100), NOW.plusSeconds(100)));
@@ -224,6 +252,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Original renewal proof uses exact frozen binding at validation and dispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void originalRenewalProofUsesExactFrozenBindingAtValidationAndDispatch(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             zeroecho.pki.testkit.AcceptancePrivateBinding source = new zeroecho.pki.testkit.AcceptancePrivateBinding();
@@ -316,6 +350,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Missing nonleaf and inconsistent metadata fail before writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingNonleafAndInconsistentMetadataFailBeforeWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             EndEntityLifecyclePreparation preparation = preparation(readOnly(store), CLOCK);
@@ -332,6 +372,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Revoked and held reject reuse but allow verified different replacement key.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void revokedAndHeldRejectReuseButAllowVerifiedDifferentReplacementKey(@TempDir Path root) throws Exception {
         for (boolean held : List.of(true, false)) {
             try (FilesystemPkiStore store = fixture(root.resolve(Boolean.toString(held)))) {
@@ -354,6 +400,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Replacement same key allowed when usable but bad proof rejected.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void replacementSameKeyAllowedWhenUsableButBadProofRejected(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(10), NOW.plusSeconds(100)));
@@ -368,6 +420,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Current tightened profile rejects reconstruction.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentTightenedProfileRejectsReconstruction(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(10), NOW.plusSeconds(100)));
@@ -380,6 +438,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Reconstructed fixed rdn is checked and never duplicated.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reconstructedFixedRdnIsCheckedAndNeverDuplicated(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             String fixed = new String(H7ProfileDocuments.noSanOrEkuProfile(), StandardCharsets.UTF_8)
@@ -396,6 +460,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Forbidden predecessor signature is rejected before writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void forbiddenPredecessorSignatureIsRejectedBeforeWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(10), NOW.plusSeconds(100)),
@@ -405,6 +475,12 @@ final class EndEntityLifecyclePreparationTest {
         }
     }
 
+    /**
+     * Configured verification denial rejects valid predecessor before writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void configuredVerificationDenialRejectsValidPredecessorBeforeWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
             Credential leaf = leaf(store, "CN=Applicant", new Validity(NOW.minusSeconds(10), NOW.plusSeconds(100)));
@@ -432,6 +508,13 @@ final class EndEntityLifecyclePreparationTest {
                 BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
     }
 
+    /**
+     * Creates the lifecycle store with its real issuer and active profile prerequisites.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @return open filesystem fixture store owned by the caller
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static FilesystemPkiStore fixture(Path root) throws Exception {
         FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK);
         activate(store, H7ProfileDocuments.noSanOrEkuProfile(), 1);
@@ -460,6 +543,15 @@ final class EndEntityLifecyclePreparationTest {
         return store;
     }
 
+    /**
+     * Issues a real leaf fixture with the requested subject and validity.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param subject distinguished-name subject of the created fixture credential
+     * @param validity optional requested validity bounds
+     * @return persisted leaf credential
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static Credential leaf(FilesystemPkiStore store, String subject, Validity validity) throws Exception {
         return leaf(store, subject, validity, "SHA256withRSA");
     }
@@ -517,6 +609,13 @@ final class EndEntityLifecyclePreparationTest {
                 });
     }
 
+    /**
+     * Builds and signs a real PKCS#10 fixture for the supplied key pair.
+     *
+     * @param pair key pair whose public key and signature form the fixture CSR
+     * @return complete encoded PKCS#10 request bytes
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static byte[] csr(KeyPair pair) throws Exception {
         return new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=Applicant"), pair.getPublic())
                 .build(new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate())).getEncoded();

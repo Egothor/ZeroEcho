@@ -37,7 +37,13 @@ package zeroecho.pki.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for encoded object.
+ */
 final class EncodedObjectTest {
+    /**
+     * Byte length reports exact immutable payload length.
+     */
     @Test void byteLengthReportsExactImmutablePayloadLength() {
         for (int length : new int[] {1, 44, 1_048_577}) {
             byte[] source = new byte[length];

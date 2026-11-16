@@ -78,15 +78,26 @@ import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for durable transactional metadata store.
+ */
 final class DurableTransactionalMetadataStoreTest {
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("00112233445566778899aabbccddeeff");
     private static final MetadataKey FIRST = new MetadataKey("example.records", "a");
     private static final MetadataKey SECOND = new MetadataKey("example.records", "b");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Capabilities lifecycle authority and thread confinement.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void capabilitiesLifecycleAuthorityAndThreadConfinement() throws Exception {
         System.out.print("capabilitiesLifecycleAuthorityAndThreadConfinement ");
@@ -147,6 +158,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Admission detaches known content and rejects unsupported or invalid sources.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void admissionDetachesKnownContentAndRejectsUnsupportedOrInvalidSources() throws Exception {
         System.out.print("admissionDetachesKnownContentAndRejectsUnsupportedOrInvalidSources ");
@@ -209,6 +225,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Create replace delete multi key and empty commit use exact revisions.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createReplaceDeleteMultiKeyAndEmptyCommitUseExactRevisions() throws Exception {
         System.out.print("createReplaceDeleteMultiKeyAndEmptyCommitUseExactRevisions ");
@@ -242,6 +263,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Conflict is atomic terminal resolvable and distinct.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictIsAtomicTerminalResolvableAndDistinct() throws Exception {
         System.out.print("conflictIsAtomicTerminalResolvableAndDistinct ");
@@ -268,6 +294,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Abort and conflict retire every detached spool.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void abortAndConflictRetireEveryDetachedSpool() throws Exception {
         System.out.print("abortAndConflictRetireEveryDetachedSpool ");
@@ -295,6 +326,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cleanup failure cannot replace authoritative outcome.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cleanupFailureCannotReplaceAuthoritativeOutcome() throws Exception {
         System.out.print("cleanupFailureCannotReplaceAuthoritativeOutcome ");
@@ -321,6 +357,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Snapshots remain stable and record slices never read later bytes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotsRemainStableAndRecordSlicesNeverReadLaterBytes() throws Exception {
         System.out.print("snapshotsRemainStableAndRecordSlicesNeverReadLaterBytes ");
@@ -345,6 +386,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cursor is lazy ordered range bounded and invalidates current record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cursorIsLazyOrderedRangeBoundedAndInvalidatesCurrentRecord() throws Exception {
         System.out.print("cursorIsLazyOrderedRangeBoundedAndInvalidatesCurrentRecord ");
@@ -387,6 +433,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Uncertain commit resolves after reopen without reexecution.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainCommitResolvesAfterReopenWithoutReexecution() throws Exception {
         System.out.print("uncertainCommitResolvesAfterReopenWithoutReexecution ");
@@ -422,6 +473,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Recovery abandonment conflict storage and unknown categories remain distinct.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryAbandonmentConflictStorageAndUnknownCategoriesRemainDistinct() throws Exception {
         System.out.print("recoveryAbandonmentConflictStorageAndUnknownCategoriesRemainDistinct ");
@@ -459,6 +515,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Close rejects blocked admission and consumes reservation exactly once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void closeRejectsBlockedAdmissionAndConsumesReservationExactlyOnce() throws Exception {
         System.out.print("closeRejectsBlockedAdmissionAndConsumesReservationExactlyOnce ");
@@ -494,6 +555,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Close races reject delete and commit begin failure leaves cleanup possible.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void closeRacesRejectDeleteAndCommitBeginFailureLeavesCleanupPossible() throws Exception {
         System.out.print("closeRacesRejectDeleteAndCommitBeginFailureLeavesCleanupPossible ");
@@ -541,6 +607,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Staging cleanup failure is suppressed behind source and write failures.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stagingCleanupFailureIsSuppressedBehindSourceAndWriteFailures() throws Exception {
         System.out.print("stagingCleanupFailureIsSuppressedBehindSourceAndWriteFailures ");
@@ -573,6 +644,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Store close continues across throwing children and releases writer.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void storeCloseContinuesAcrossThrowingChildrenAndReleasesWriter() throws Exception {
         System.out.print("storeCloseContinuesAcrossThrowingChildrenAndReleasesWriter ");
@@ -601,6 +677,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Snapshot close continues after child failures and contains logger failure.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotCloseContinuesAfterChildFailuresAndContainsLoggerFailure() throws Exception {
         System.out.print("snapshotCloseContinuesAfterChildFailuresAndContainsLoggerFailure ");
@@ -633,6 +714,11 @@ final class DurableTransactionalMetadataStoreTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cursor cancellation runs before snapshot lock and revalidates close.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cursorCancellationRunsBeforeSnapshotLockAndRevalidatesClose() throws Exception {
         System.out.print("cursorCancellationRunsBeforeSnapshotLockAndRevalidatesClose ");

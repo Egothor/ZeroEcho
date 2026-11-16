@@ -59,7 +59,9 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Benchmark-source real-ledger population fixture; absent from production artifacts. */
+/**
+ * Benchmark-source real-ledger population fixture; absent from production artifacts.
+ */
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
         "PMD.CommentRequired" })
 public final class SigningPopulationFixture {
@@ -79,21 +81,55 @@ public final class SigningPopulationFixture {
     private SigningPopulationFixture() {
     }
 
-    /** Populates, closes, and production-recovers one bounded benchmark image. */
+    /**
+     * Populates, closes, and production-recovers one bounded benchmark image.
+     *
+     * @param storeRoot fresh benchmark-owned filesystem PKI store root
+     * @param options filesystem store limits and production recovery options
+     * @param createdAt fixed authoritative instant used to generate the population
+     * @param genericRecords generic retained metadata record count
+     * @param activeRecords active signing-envelope population to create
+     * @return immutable observations of the production-populated and recovered fixture
+     * @throws IOException if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static Artifact populate(Path storeRoot, FsPkiStoreOptions options, Instant createdAt,
             long genericRecords, long activeRecords) throws IOException {
         return populate(storeRoot, options, createdAt, genericRecords, activeRecords,
                 QuiescentJvmCapture.unavailable(), PopulationProgress.none());
     }
 
-    /** Populates and captures one constant-space quiescent capacity artifact. */
+    /**
+     * Populates and captures one constant-space quiescent capacity artifact.
+     *
+     * @param storeRoot fresh benchmark-owned filesystem PKI store root
+     * @param options filesystem store limits and production recovery options
+     * @param createdAt fixed authoritative instant used to generate the population
+     * @param genericRecords generic retained metadata record count
+     * @param activeRecords active signing-envelope population to create
+     * @param jvmCapture benchmark callback sampling existing JVM counters at a quiescent boundary
+     * @return immutable observations of the production-populated and recovered fixture
+     * @throws IOException if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static Artifact populate(Path storeRoot, FsPkiStoreOptions options, Instant createdAt,
             long genericRecords, long activeRecords, QuiescentJvmCapture jvmCapture) throws IOException {
         return populate(storeRoot, options, createdAt, genericRecords, activeRecords,
                 jvmCapture, PopulationProgress.none());
     }
 
-    /** Populates and reports bounded count-based progress for the two population stages. */
+    /**
+     * Populates and reports bounded count-based progress for the two population stages.
+     *
+     * @param storeRoot fresh benchmark-owned filesystem PKI store root
+     * @param options filesystem store limits and production recovery options
+     * @param createdAt fixed authoritative instant used to generate the population
+     * @param genericRecords generic retained metadata record count
+     * @param activeRecords active signing-envelope population to create
+     * @param jvmCapture benchmark callback sampling existing JVM counters at a quiescent boundary
+     * @param progress bounded progress observer; must not retain per-record state
+     * @return immutable observations of the production-populated and recovered fixture
+     * @throws IOException if fixture preparation, measurement, filesystem access, or evidence validation fails
+     * @throws NullPointerException if any of {@code storeRoot}, {@code options}, {@code jvmCapture}, {@code progress}, {@code createdAt} is null
+     */
     public static Artifact populate(Path storeRoot, FsPkiStoreOptions options, Instant createdAt,
             long genericRecords, long activeRecords, QuiescentJvmCapture jvmCapture,
             PopulationProgress progress) throws IOException {
@@ -246,12 +282,33 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Immutable constant-space observation produced by production recovery replay. */
+    /**
+     * Immutable constant-space observation produced by production recovery replay.
+     *
+     * @param genericRecords generic retained metadata record count
+     * @param signRecords retained signing-work record count
+     * @param ownerRecords retained ownership-index record count
+     * @param watermarkRecords retained signing watermark record count
+     * @param currentRecords current metadata-record population observed after production recovery
+     * @param dueRecords active due-work population observed after production recovery
+     * @param sharedContentOwners number of fixture owners sharing staged content
+     */
     public record Observation(long genericRecords, long signRecords, long ownerRecords,
             long watermarkRecords, long currentRecords, long dueRecords, long sharedContentOwners) {
     }
 
-    /** Exact constant-space counters for the split signing recovery shape. */
+    /**
+     * Exact constant-space counters for the split signing recovery shape.
+     *
+     * @param envelopesVisited signing-envelope records visited by recovery
+     * @param statesVisited signing-state records visited by recovery
+     * @param bindingsVisited signing-binding records visited by recovery
+     * @param outerRecordsVisited outer-continuation records visited by recovery
+     * @param activeEntriesBuilt active due-work entries constructed by recovery
+     * @param statePointersRetained state locators retained in the recovered work projection
+     * @param peakTrackedEnvelopeWorkspaceBytes maximum tracked envelope recovery workspace, in bytes
+     * @param currentTrackedEnvelopeWorkspaceBytes tracked envelope workspace remaining at observation, in bytes
+     */
     public record RecoveryShape(long envelopesVisited, long statesVisited,
             long bindingsVisited, long outerRecordsVisited, long activeEntriesBuilt,
             long statePointersRetained, long peakTrackedEnvelopeWorkspaceBytes,
@@ -266,9 +323,25 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Complete constant-space population and quiescent-capacity artifact. */
+    /**
+     * Complete constant-space population and quiescent-capacity artifact.
+     *
+     * @param population production-recovered current and due population counts
+     * @param recoveryShape bounded production recovery traversal and workspace observations
+     * @param capacity production index and generation capacity observations
+     * @param jvm JVM telemetry snapshot at the recovered fixture's quiescent boundary
+     */
     public record Artifact(Observation population, RecoveryShape recoveryShape,
             CapacityEvidence capacity, QuiescentJvm jvm) {
+        /**
+         * Retains the benchmark evidence after checking its required components.
+         *
+         * @param population production-recovered retained/current and due-work population observations
+         * @param recoveryShape authoritative checkpoint, sealed-suffix, and active-WAL shape
+         * @param capacity production ledger capacity observations after recovery
+         * @param jvm JVM counter observations captured around the measurement
+         * @throws NullPointerException if any of {@code population}, {@code recoveryShape}, {@code capacity}, {@code jvm} is null
+         */
         public Artifact {
             Objects.requireNonNull(population, "population");
             Objects.requireNonNull(recoveryShape, "recoveryShape");
@@ -277,7 +350,43 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Immutable scalar capacity observation copied from the reopened production ledger. */
+    /**
+     * Immutable scalar capacity observation copied from the reopened production ledger.
+     *
+     * @param currentKeys current keys retained by the MVCC index
+     * @param mvccLiveSnapshots live snapshots retaining MVCC history
+     * @param canonicalKeyBytes bytes occupied by canonical current metadata keys
+     * @param mvccEstimatedResidentBytes estimated resident MVCC index bytes
+     * @param mvccReservedBytes MVCC index resident bytes reserved against its budget
+     * @param dueWork active due-work identity count
+     * @param dueCanonicalIdBytes bytes occupied by canonical due-work identities
+     * @param dueEstimatedResidentBytes estimated resident due-work index bytes
+     * @param dueReservedBytes due-work resident bytes reserved against its budget
+     * @param retentionRecords retained terminal-work records tracked for expiry
+     * @param retentionReservedBytes resident bytes reserved by terminal-work retention
+     * @param ownerWork owner-scoped work identity count
+     * @param ownerCanonicalIdBytes bytes occupied by canonical owner-work identities
+     * @param ownerEstimatedResidentBytes estimated resident owner-work index bytes
+     * @param ownerReservedBytes owner-work resident bytes reserved against its budget
+     * @param projectedIdentities identities retained by the recovered work projection
+     * @param projectionReservedBytes resident bytes reserved by the work projection
+     * @param registeredGenerations artifact generations registered in the generation registry
+     * @param publishedGenerations artifact generations published as authoritative
+     * @param supersededGenerations artifact generations retained after supersession
+     * @param reclaimingGenerations artifact generations undergoing reclamation
+     * @param reclaimableGenerations unreferenced generations eligible for reclamation
+     * @param generationCurrentReferences current index references retaining artifact generations
+     * @param generationSnapshotPins snapshot pins retaining artifact generations
+     * @param steadyReservedBytes current steady resident budget reservation, in bytes
+     * @param steadyHighWaterReservedBytes highest observed steady resident reservation, in bytes
+     * @param steadyMaximumBytes configured maximum steady resident budget, in bytes
+     * @param transientReservedBytes current transient workspace budget reservation, in bytes
+     * @param transientHighWaterReservedBytes highest observed transient workspace reservation, in bytes
+     * @param transientMaximumBytes configured maximum transient workspace budget, in bytes
+     * @param combinedReservedBytes current combined steady/transient reservation, in bytes
+     * @param combinedHighWaterReservedBytes highest observed combined reservation, in bytes
+     * @param combinedMaximumBytes configured maximum combined budget, in bytes
+     */
     public record CapacityEvidence(int currentKeys, int mvccLiveSnapshots, long canonicalKeyBytes,
             long mvccEstimatedResidentBytes, long mvccReservedBytes,
             int dueWork, long dueCanonicalIdBytes, long dueEstimatedResidentBytes,
@@ -314,7 +423,14 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Existing bounded JVM counters sampled while the reopened ledger remains live. */
+    /**
+     * Existing bounded JVM counters sampled while the reopened ledger remains live.
+     *
+     * @param usedHeapBytes observed used heap, in bytes, or a negative unavailable sentinel
+     * @param allocatedBytes observed allocation count, in bytes, or a negative unavailable sentinel
+     * @param gcCollections observed cumulative collection count, or a negative unavailable sentinel
+     * @param gcMillis observed cumulative collection time, in milliseconds, or a negative unavailable sentinel
+     */
     public record QuiescentJvm(long usedHeapBytes, long allocatedBytes,
             long gcCollections, long gcMillis) {
         private static QuiescentJvm unavailable() {
@@ -322,9 +438,16 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Benchmark-owned callback that samples existing JVM counters at quiescence. */
+    /**
+     * Benchmark-owned callback that samples existing JVM counters at quiescence.
+     */
     @FunctionalInterface
     public interface QuiescentJvmCapture {
+        /**
+         * Captures benchmark JVM counters at an explicitly quiescent fixture boundary.
+         *
+         * @return quiescent telemetry snapshot; unavailable observations may use negative sentinel values
+         */
         QuiescentJvm capture();
 
         private static QuiescentJvmCapture unavailable() {
@@ -332,15 +455,33 @@ public final class SigningPopulationFixture {
         }
     }
 
-    /** Bounded population progress callback; implementations must not retain per-record state. */
+    /**
+     * Bounded population progress callback; implementations must not retain per-record state.
+     */
     public interface PopulationProgress {
-        /** Reports the start of one named stage. */
+        /**
+         * Reports the start of one named stage.
+         *
+         * @param stage bounded fixture population or recovery stage identifier
+         * @param total total work units announced for this stage
+         */
         void started(String stage, long total);
 
-        /** Reports one of at most nine count-derived intermediate milestones. */
+        /**
+         * Reports one of at most nine count-derived intermediate milestones.
+         *
+         * @param stage bounded fixture population or recovery stage identifier
+         * @param completed work units completed at this milestone
+         * @param total total work units announced for this stage
+         */
         void milestone(String stage, long completed, long total);
 
-        /** Reports completion of one named stage. */
+        /**
+         * Reports completion of one named stage.
+         *
+         * @param stage bounded fixture population or recovery stage identifier
+         * @param total total work units announced for this stage
+         */
         void completed(String stage, long total);
 
         private static PopulationProgress none() {

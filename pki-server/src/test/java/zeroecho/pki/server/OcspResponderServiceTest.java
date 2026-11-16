@@ -75,10 +75,20 @@ import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
-/** Durable responder binding, activation, recovery and dependency-failure coverage. */
+/**
+ * Durable responder binding, activation, recovery and dependency-failure coverage.
+ */
 class OcspResponderServiceTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks explicit responder activation, alias uniqueness and retained exact issuer binding across reopen and registry drift.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void persistsExactIssuerBindingAndFailsOnChangedRegistryCommitment() throws Exception {
         System.out.println("persistsExactIssuerBindingAndFailsOnChangedRegistryCommitment");
@@ -141,6 +151,11 @@ class OcspResponderServiceTest {
         System.out.println("persistsExactIssuerBindingAndFailsOnChangedRegistryCommitment...ok");
     }
 
+    /**
+     * Checks delegated responder registration binds its issuer, OCSP EKU/key usage and required signing capability.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void validatesDelegatedResponderIssuerEkuUsageAndSigningCapability() throws Exception {
         System.out.println("validatesDelegatedResponderIssuerEkuUsageAndSigningCapability");
@@ -230,7 +245,13 @@ class OcspResponderServiceTest {
 
     private record CertificatePair(byte[] issuer, byte[] responder) {
         private CertificatePair { issuer = issuer.clone(); responder = responder.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public byte[] issuer() { return issuer.clone(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public byte[] responder() { return responder.clone(); }
     }
 }

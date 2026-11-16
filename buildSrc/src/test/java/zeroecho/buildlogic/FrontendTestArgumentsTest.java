@@ -48,9 +48,18 @@ import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Build-logic tests for Node executable resolution and configuration-cache compatibility.
+ */
 class FrontendTestArgumentsTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks single-argument handling of executable paths containing spaces and rejection of missing values.
+     */
     @Test
     void preservesAPathWithSpacesAsOneJvmArgumentAndRejectsMissingValue() {
         var project = ProjectBuilder.builder().withProjectDir(directory.toFile()).build();
@@ -60,6 +69,11 @@ class FrontendTestArgumentsTest {
         assertEquals(List.of("-Dfrontend.node=/opt/Node Runtime/bin/node"), arguments.asArguments());
     }
 
+    /**
+     * Checks lazy Node resolution and reuse of the Gradle configuration cache.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void resolvesLazyNodeDefaultAndReusesConfigurationCache() throws Exception {
         fixture();
@@ -69,6 +83,11 @@ class FrontendTestArgumentsTest {
         assertTrue(cached.getOutput().contains("NODE=/pinned/node/bin/node"));
     }
 
+    /**
+     * Checks executable override precedence while retaining presence-flag behavior.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void explicitExecutableOverrideWinsAndPresenceFlagsKeepExistingSemantics() throws Exception {
         fixture();
@@ -79,6 +98,11 @@ class FrontendTestArgumentsTest {
         assertTrue(present.getOutput().contains("NODE=/opt/Override Node/node"), present.getOutput());
     }
 
+    /**
+     * Checks Windows executable path resolution independently of the test host platform.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void resolvesWindowsNodePathWithoutUsingTheHostOperatingSystem() throws Exception {
         fixture();

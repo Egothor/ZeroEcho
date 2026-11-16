@@ -43,7 +43,9 @@ import java.util.regex.Pattern;
 
 import zeroecho.pki.api.PkiId;
 
-/** Shared canonical validation for immutable credential-confirmation values. */
+/**
+ * Shared canonical validation for immutable credential-confirmation values.
+ */
 final class ConfirmationModelSupport {
     private static final int MAXIMUM_ONE_BYTE_CODE_POINT = 0x7f;
     private static final int MAXIMUM_TWO_BYTE_CODE_POINT = 0x7ff;
@@ -52,6 +54,14 @@ final class ConfirmationModelSupport {
 
     private ConfirmationModelSupport() { }
 
+    /**
+     * Checks an identifier's Unicode pairing and bounded strict UTF-8 representation.
+     *
+     * @param credentialId credential identity to validate without allocating an encoded array
+     * @return the identical supplied identifier
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if its text is empty, contains an unpaired surrogate or exceeds the credential byte bound
+     */
     /* default */ static PkiId requireCredentialId(PkiId credentialId) {
         PkiId exact = Objects.requireNonNull(credentialId, "credentialId");
         String value = exact.value();
@@ -91,6 +101,15 @@ final class ConfirmationModelSupport {
         return exact;
     }
 
+    /**
+     * Checks that an instant lies between the Unix epoch and the end of UTC year 9999.
+     *
+     * @param value instant to check; its nanoseconds are retained unchanged
+     * @param name trusted field label used in diagnostics
+     * @return the identical supplied instant
+     * @throws NullPointerException if the instant is null
+     * @throws IllegalArgumentException if its epoch second is outside the supported range
+     */
     /* default */ static Instant requireCanonicalInstant(Instant value, String name) {
         Objects.requireNonNull(value, name);
         if (value.getEpochSecond() < 0 || value.getEpochSecond() > MAXIMUM_EPOCH_SECOND) {
@@ -99,6 +118,15 @@ final class ConfirmationModelSupport {
         return value;
     }
 
+    /**
+     * Checks a canonical lowercase hexadecimal SHA-256 commitment.
+     *
+     * @param value commitment text to validate
+     * @param name trusted field label used in diagnostics
+     * @return the identical supplied string
+     * @throws NullPointerException if the commitment is null
+     * @throws IllegalArgumentException if it is not exactly 64 lowercase hexadecimal characters
+     */
     /* default */ static String requireCommitment(String value, String name) {
         Objects.requireNonNull(value, name);
         if (!SHA_256.matcher(value).matches()) {
@@ -107,6 +135,14 @@ final class ConfirmationModelSupport {
         return value;
     }
 
+    /**
+     * Checks nonempty strict UTF-8 audience text without control characters.
+     *
+     * @param value audience text, bounded by the challenge model's maximum UTF-8 byte count
+     * @return the identical supplied string
+     * @throws NullPointerException if the audience is null
+     * @throws IllegalArgumentException if it is empty, oversized, malformed Unicode or contains an ISO control character
+     */
     /* default */ static String requireServerAudience(String value) {
         Objects.requireNonNull(value, "serverAudience");
         byte[] encoded = strictUtf8(value);
@@ -118,6 +154,13 @@ final class ConfirmationModelSupport {
         return value;
     }
 
+    /**
+     * Validates the fixed challenge length and takes an independent copy.
+     *
+     * @param value raw challenge, required to contain exactly 32 bytes
+     * @return a newly allocated array containing the challenge bytes
+     * @throws IllegalArgumentException if the array is null or does not contain exactly 32 bytes
+     */
     /* default */ static byte[] requireRawChallenge(byte[] value) {
         if (value == null || value.length != CredentialConfirmationChallenge.RAW_CHALLENGE_BYTES) {
             throw new IllegalArgumentException("Raw confirmation challenge must contain exactly 32 bytes");

@@ -47,7 +47,9 @@ import javax.net.ssl.SSLHandshakeException;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Submit-once remote execution and caller-thread observation of a retained receipt. */
+/**
+ * Submit-once remote execution and caller-thread observation of a retained receipt.
+ */
 final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals independent cohesive operations; method-level checks remain enabled.
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final String OPERATIONS_PATH = "/admin/v1/operations/";
@@ -59,6 +61,15 @@ final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals
     private final Duration pendingWait;
     private final Duration pollInterval;
 
+    /**
+     * Creates a remote transport with bounded caller-thread observation of pending operations.
+     *
+     * @param exchange borrowed HTTP exchange; the caller remains responsible for closing it
+     * @param pendingWait nonnegative total pending-observation budget; zero disables waiting
+     * @param pollInterval positive interval between observations
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if an observation duration is negative or the interval is zero
+     */
     /* default */ RemotePkiOperationTransport(PkiHttpExchange exchange, Duration pendingWait, Duration pollInterval) {
         this.exchange = Objects.requireNonNull(exchange, "exchange");
         this.pendingWait = Objects.requireNonNull(pendingWait, "pendingWait");
@@ -68,6 +79,22 @@ final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals
         }
     }
 
+    /**
+     * Submits an operation once and observes an accepted pending receipt within the configured budget.
+     *
+     * <p>An I/O failure during submission returns an unknown-acceptance result requiring
+     * reconciliation. Cancellation stops local observation and does not cancel server work.</p>
+     *
+     * @param operation requested semantic operation name; must not be null
+     * @param arguments typed operation arguments; must not be null
+     * @param authorityId optional authority selector; must not be null
+     * @param approvalId optional external approval identity; must not be null
+     * @param deadline optional protocol deadline text; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return classified remote outcome, retaining a receipt when server work remains pending
+     * @throws PkiRemoteTransportException if TLS setup, authentication, or the response protocol fails
+     * @throws IllegalArgumentException if the request cannot be encoded within protocol bounds
+     */
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   PkiRemoteResult submit(String operation, PkiOperationValue.ObjectValue arguments,
@@ -92,6 +119,14 @@ final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals
         return result instanceof PkiRemoteResult.Pending pending ? awaitPending(pending, cancellation) : result;
     }
 
+    /**
+     * Observes a retained signing receipt once without resubmitting or advancing server work.
+     *
+     * @param operationId nonblank operation identity of at most 512 characters, without a slash
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return current remote outcome, or a pending receipt carrying a local observation failure
+     * @throws IllegalArgumentException if the operation identity violates the path bounds
+     */
     /* default */ PkiRemoteResult inspect(String operationId, CancellationSignal cancellation) {
         requireIdentifier(operationId);
         PkiRemoteResult.Pending pending = pending("signing.operation", operationId);
@@ -234,6 +269,12 @@ final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals
                 || !Set.of("DER", "PEM", "BINARY").contains(encoding) || !digest.matches("[0-9a-f]{64}")) { throw invalid(); }
     }
 
+    /**
+     * Checks that an operation identity is bounded and usable as one path segment.
+     *
+     * @param identifier nonblank identity of at most 512 characters, without a slash
+     * @throws IllegalArgumentException if the identifier is null, blank, too long, or contains a slash
+     */
     /* default */ static void requireIdentifier(String identifier) {
         if (identifier == null || identifier.isBlank() || identifier.length() > 512 || identifier.contains("/")) {
             throw invalid();

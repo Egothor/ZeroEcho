@@ -53,6 +53,10 @@ public record IssuanceInputs(PkiId issuerCaId, ParsedCertificationRequest reques
      * Creates issuance inputs for policy evaluation.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param issuerCaId issuer CA entity id
+     * @param request parsed certification request
+     * @param profileId profile id selected for issuance
+     * @param requestedOverrides user-requested overrides (may be empty but not null)
      */
     public IssuanceInputs {
         if (issuerCaId == null) {

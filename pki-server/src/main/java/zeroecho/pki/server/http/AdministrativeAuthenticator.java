@@ -94,6 +94,7 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
      * @param clock certificate validity clock
      * @param loader explicitly scoped provider loader
      * @return immutable request authenticator
+     * @throws NullPointerException if {@code configuration} is null
      */
     public static AdministrativeAuthenticator create(PkiServerConfiguration.Authentication configuration,
             Function<String, SecurityPrincipal> principalResolver,
@@ -113,6 +114,9 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
         return new AdministrativeAuthenticator(exact, transport, endClient, trust, forwardingAuthorization);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiServerAuthenticationResult authenticate(PkiServerAuthenticationContext context) {
         Objects.requireNonNull(context, "context");
@@ -129,6 +133,7 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
      *
      * @param context backend TLS peer context without operation data
      * @return authorized trusted-proxy principal, or empty on any safe failure
+     * @throws NullPointerException if {@code context} is null
      */
     public Optional<String> authenticatePublicProxyTransport(PkiServerAuthenticationContext context) {
         Objects.requireNonNull(context, "context");

@@ -51,7 +51,14 @@ import zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline;
 import zeroecho.pki.application.SdkOcspProjection;
 import zeroecho.pkix.Pkix;
 
-/** Stateless, bounded SDK OCSP assurance verifier; bundle material never establishes trust. */
+/**
+ * Stateless verifier for the separate SDK F4/F5 OCSP evidence profile.
+ *
+ * <p>This profile is not standard AltSignature OCSP. Bundle material never creates
+ * trust: callers supply independently authorized responder roles, issuer path,
+ * original request, SDK nonce and evaluation time. The bounded checks here are not
+ * a general PKIX trust discovery or revocation service.</p>
+ */
 public final class SdkOcspEvidenceVerifier {
     private SdkOcspEvidenceVerifier() { }
 
@@ -59,9 +66,25 @@ public final class SdkOcspEvidenceVerifier {
      * Verifies native delegation/signature, both certificate/evidence roles and every duplicated field.
      * No status lookup, network access, provider key access or trust discovery occurs.
      * Runtime is linear in the bounded request/status/chain sizes.
+     *
+     * <p>The verifier matches the exact retained native response and embedded chain,
+     * verifies its primary responder signature, recomputes requested issuer CertIDs,
+     * and verifies the independent F4 primary and F5 alternative signatures. The
+     * native nonce is derived from the original request/response; the 32-byte SDK
+     * nonce is separately matched to the caller's trusted challenge.</p>
+     *
+     * <p>All temporal decisions use {@code trusted.evaluationTime()}, not an implicit
+     * current clock. Production time may be at most 300 seconds old or 60 seconds
+     * ahead; status/evidence issue times may be at most 60 seconds ahead. Evidence
+     * expiry and nextUpdate must exceed that evaluation time, and evidence expiry
+     * must not exceed responder validity. A later relying-party decision must use
+     * its own actual evaluation time. GOOD does not establish certificate-path
+     * validity, application authorization or future freshness.</p>
+     *
      * @param evidence untrusted complete bundle
      * @param trusted independent policy-authorized coordinates, certificates, nonce and evaluation time
      * @return exact verified native projection; GOOD is not a certificate-path validity assertion
+     * @throws NullPointerException if evidence or trusted context is null
      * @throws IllegalArgumentException for invalid trust inputs, evidence, time, role or signature
      */
     public static SdkOcspProjection.Projection verify(SdkOcspEvidence evidence, TrustedContext trusted) {
@@ -118,7 +141,16 @@ public final class SdkOcspEvidenceVerifier {
     /**
      * Checks independently authorized delegation, path, both certificate signatures and fixed responder roles.
      * This pure pre-sign check discovers no trust, performs no signing and grants no additional authority.
+     *
+     * <p>Checks certificate validity at the supplied evaluation time, critical
+     * extensions, CA/key-usage constraints, direct OCSP delegation and fixed primary
+     * P-384/alternative ML-DSA-87 responder roles. Chain edges use the explicitly
+     * authorized hybrid baselines; the supplied terminal anchor is not authenticated
+     * by its self-signature. No certificate revocation lookup or general policy
+     * path-building occurs.</p>
+     *
      * @param trusted bounded independent policy/store evidence and trusted evaluation time
+     * @throws NullPointerException if the trusted context is null
      * @throws IllegalArgumentException if delegation, certificate validity, path or role evidence fails
      */
     public static void validateResponder(TrustedContext trusted) {
@@ -129,12 +161,15 @@ public final class SdkOcspEvidenceVerifier {
     /**
      * Validates policy-authorized responder material independently of any HTTP listener coordinates.
      * Registration uses this origin-free pure check; no identity, trust or signing authority is created.
-     * Inputs are public, borrowed and bounded identically to TrustedContext's certificate material.
+     * Inputs are public and borrowed during the call; bounded local copies of certificate
+     * arrays and the baseline list are used for validation. Caller-owned resources
+     * are not closed, and the method does not retain a new context.
      * @param issuerPath independently trusted ordered issuer-to-anchor DER path
      * @param baselines explicit persisted baseline per issuer-path certificate
      * @param responderDer independently authorized directly delegated responder DER
      * @param roles independently authorized closed responder-role object
      * @param now trusted evaluation time
+     * @throws NullPointerException if a required value, baseline or certificate element is null
      * @throws IllegalArgumentException for invalid bounds, delegation, validity, path or role evidence
      */
     public static void validateResponder(List<byte[]> issuerPath, List<HybridSignatureBaseline> baselines,
@@ -246,7 +281,33 @@ public final class SdkOcspEvidenceVerifier {
             String chainPathCommitment, String issuerBindingCommitment, byte[] originalRequestDer, byte[] clientNonce,
             List<byte[]> issuerPath, List<HybridSignatureBaseline> issuerCertificateBaselines, byte[] responderCertificateDer,
             HybridSdkValue responderRoles, Instant evaluationTime) {
-        /** Validates bounded independent trust inputs without discovering new trust. */
+        /**
+         * Copies request, nonce and certificate arrays and checks the public context shape.
+         *
+         * <p>The issuer-path list and baseline list become unmodifiable; certificate
+         * arrays are copied individually. The constructor validates neither certificate
+         * signatures nor time validity, and does not prove that the nonce was random
+         * or newly generated. The combined chain encoding bound is enforced when the
+         * responder is validated, rather than by these per-certificate checks.</p>
+         *
+         * @param realmId expected realm
+         * @param canonicalOrigin configured expected HTTPS origin with explicit port
+         * @param authorityId expected logical CA
+         * @param issuerId expected immutable issuer generation
+         * @param chainPathId expected immutable path
+         * @param chainPathCommitment expected full path commitment
+         * @param issuerBindingCommitment expected raw lowercase SHA256 binding commitment
+         * @param originalRequestDer exact locally sent native request
+         * @param clientNonce locally generated 32-byte SDK nonce
+         * @param issuerPath independently trusted ordered DER path, at most 31 certificates
+         * @param issuerCertificateBaselines explicit baseline per path certificate
+         * @param responderCertificateDer independently policy-authorized delegated responder certificate
+         * @param responderRoles independently catalog-authorized closed F4 tag-14 role object
+         * @param evaluationTime trusted local evaluation time
+         * @throws NullPointerException if required coordinates, arrays, lists or list elements are null
+         * @throws IllegalArgumentException if identifier/origin/digest syntax, nonce length, request
+         *     or certificate bounds, path/baseline counts or the closed responder-role shape is invalid
+         */
         public TrustedContext {
             HybridSdkValue.requireIdentifier(realmId); HybridSdkFrame.requireOrigin(canonicalOrigin);
             Objects.requireNonNull(authorityId, "authorityId"); Objects.requireNonNull(issuerId, "issuerId"); Objects.requireNonNull(chainPathId, "chainPathId");
@@ -266,13 +327,29 @@ public final class SdkOcspEvidenceVerifier {
             HybridSdkFrame.requireOcspRole(roles.get("alternative"), HybridSdkFrame.alternativeAlgorithm());
             Objects.requireNonNull(evaluationTime, "evaluationTime");
         }
-        /** @return independent original request bytes */
+        /**
+         * Returns a new copy of the exact caller-supplied original request.
+         *
+         * @return independently owned original-request DER bytes
+         */
         @Override public byte[] originalRequestDer() { return originalRequestDer.clone(); }
-        /** @return independent locally supplied nonce bytes */
+        /**
+         * Returns a new copy of the caller-supplied SDK nonce.
+         *
+         * @return independently owned 32-byte SDK nonce
+         */
         @Override public byte[] clientNonce() { return clientNonce.clone(); }
-        /** @return independent trusted issuer path and DER bytes */
+        /**
+         * Returns an unmodifiable issuer-path list containing fresh copies of its certificates.
+         *
+         * @return independent issuer-to-anchor certificate arrays in retained order
+         */
         @Override public List<byte[]> issuerPath() { return issuerPath.stream().map(byte[]::clone).toList(); }
-        /** @return independent policy-authorized responder DER bytes */
+        /**
+         * Returns a new copy of the policy-authorized responder certificate.
+         *
+         * @return independently owned responder DER bytes
+         */
         @Override public byte[] responderCertificateDer() { return responderCertificateDer.clone(); }
     }
 }

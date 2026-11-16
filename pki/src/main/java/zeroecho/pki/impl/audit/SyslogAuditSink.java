@@ -93,17 +93,25 @@ import zeroecho.pki.spi.audit.AuditSink;
 public final class SyslogAuditSink implements AuditSink {
     private static final String CLOSED_MESSAGE = "SyslogAuditSink is closed";
 
-    /** RFC 5424: LOG_SECURITY facility (13) × 8 + NOTICE severity (5) = 109. */
+    /**
+     * RFC 5424: LOG_SECURITY facility (13) × 8 + NOTICE severity (5) = 109.
+     */
     private static final int PRIORITY = 13 * 8 + 5;
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ISO_INSTANT.withZone(ZoneOffset.UTC);
     private static final Logger LOG = Logger.getLogger(SyslogAuditSink.class.getName());
 
-    /** Syslog protocol selection. */
+    /**
+     * Syslog protocol selection.
+     */
     public enum Protocol {
-        /** Sends one datagram per record without delivery acknowledgement. */
+        /**
+         * Sends one datagram per record without delivery acknowledgement.
+         */
         UDP,
-        /** Sends octet-counted records over a TCP connection. */
+        /**
+         * Sends octet-counted records over a TCP connection.
+         */
         TCP
     }
 
@@ -129,6 +137,8 @@ public final class SyslogAuditSink implements AuditSink {
      * @param protocol transport protocol
      * @param appName  RFC 5424 APP-NAME field (printable US-ASCII, ≤ 48 chars)
      * @throws IOException if socket creation fails
+     * @throws NullPointerException if {@code address}, {@code protocol} or {@code appName} is null
+     * @throws IllegalArgumentException if port is outside the inclusive range 1 through 65535
      */
     public SyslogAuditSink(InetAddress address, int port, Protocol protocol, String appName) throws IOException {
         this.address = Objects.requireNonNull(address, "address");
@@ -147,6 +157,9 @@ public final class SyslogAuditSink implements AuditSink {
         LOG.info(() -> "SyslogAuditSink opened: " + protocol + " " + address.getHostAddress() + ":" + port);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void record(AuditEvent event) {
         Objects.requireNonNull(event, "event");
@@ -162,6 +175,9 @@ public final class SyslogAuditSink implements AuditSink {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) { return; }

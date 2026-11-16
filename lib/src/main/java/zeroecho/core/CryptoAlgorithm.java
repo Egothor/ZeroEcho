@@ -168,6 +168,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      * @param priority     preference when multiple providers offer the same
      *                     algorithm
      * @param providerName provider or implementation source
+     * @throws NullPointerException if any of {@code id}, {@code displayName}, {@code providerName} is null
      */
     protected CryptoAlgorithm(String id, String displayName, int priority, String providerName) {
         this._id = Objects.requireNonNull(id, "id must not be null");
@@ -667,6 +668,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      * Indicates that signing consumes durable private-key state. This declaration
      * does not enable the ordinary SIGN role: callers need a keyring-owned
      * {@link zeroecho.core.storage.StatefulSigner} capability.
+     *
      * @return whether durable state ownership is required for signing
      */
     public boolean requiresStatefulSigning() {

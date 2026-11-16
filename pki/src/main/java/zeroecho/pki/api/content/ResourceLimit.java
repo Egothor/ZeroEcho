@@ -43,7 +43,9 @@ package zeroecho.pki.api.content;
  * </p>
  */
 public sealed interface ResourceLimit permits ResourceLimit.UnrestrictedByDeployment, ResourceLimit.LimitedTo {
-    /** Smallest valid observed aggregate value. */
+    /**
+     * Smallest valid observed aggregate value.
+     */
     long EMPTY = 0L;
 
     /**
@@ -59,6 +61,9 @@ public sealed interface ResourceLimit permits ResourceLimit.UnrestrictedByDeploy
      * Explicit absence of a deployment-owned limit.
      */
     record UnrestrictedByDeployment() implements ResourceLimit {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void requireAllows(long observed) {
             if (observed < EMPTY) {
@@ -77,6 +82,7 @@ public sealed interface ResourceLimit permits ResourceLimit.UnrestrictedByDeploy
          * Creates a finite limit.
          *
          * @throws IllegalArgumentException if {@code maximum} is not positive
+         * @param maximum inclusive maximum
          */
         public LimitedTo {
             if (maximum <= EMPTY) {
@@ -84,6 +90,9 @@ public sealed interface ResourceLimit permits ResourceLimit.UnrestrictedByDeploy
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void requireAllows(long observed) {
             if (observed < EMPTY) {

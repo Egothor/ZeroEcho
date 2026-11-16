@@ -42,7 +42,9 @@ import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 
-/** Closed extraction boundary for original X.509 enrollment transport attributes. */
+/**
+ * Closed extraction boundary for original X.509 enrollment transport attributes.
+ */
 public final class BcX509RequestPayloads {
     private static final int ORIGINAL_REQUEST_ATTRIBUTE = 1;
     private BcX509RequestPayloads() { }

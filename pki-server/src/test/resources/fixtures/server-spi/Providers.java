@@ -53,10 +53,35 @@ import zeroecho.pki.server.ct.CtLogClient;
 import zeroecho.pki.server.ct.CtSubmissionException;
 import zeroecho.pkix.ct.SignedCertificateTimestamp;
 
+/**
+ * External named-module fixtures exercising the public server provider interfaces.
+ */
 public final class Providers {
+    /**
+     * Challenge provider asserting exact wildcard DNS context transport across the module boundary.
+     */
     public static final class Challenge implements AcmeChallengeProvider {
+        /**
+         * Returns the stable fixture provider identity used for ServiceLoader selection.
+         *
+         * @return fixed nonblank fixture provider identifier
+         */
         public String id() { return "external-challenge"; }
+        /**
+         * Returns the sole challenge kind supported by this compatibility fixture.
+         *
+         * @return immutable singleton set containing DNS-01
+         */
         public Set<ChallengeType> challengeTypes() { return Set.of(ChallengeType.DNS_01); }
+        /**
+         * Asserts exact fixture challenge transport and returns a deterministic successful validation.
+         *
+         * @param context exact immutable challenge context under compatibility test
+         * @param configuration fixture provider configuration
+         * @param cancellation uncancelled fixture signal
+         * @return successful validation retaining the context evaluation/deadline instants
+         * @throws AssertionError if the challenge context, configuration, or cancellation binding differs
+         */
         public Result validate(Context context, ProviderConfig configuration, CancellationSignal cancellation) {
             if (!context.identifier().presentation().equals("*.example.test") || context.attempt() != 3
                     || !context.deadline().equals(context.validationTime().plusSeconds(60))
@@ -72,8 +97,24 @@ public final class Providers {
             return new Result(true, "VERIFIED", context.validationTime(), context.deadline());
         }
     }
+    /**
+     * External-account binding fixture checking exact request transport and defensive JWS ownership.
+     */
     public static final class Eab implements AcmeExternalAccountBindingProvider {
+        /**
+         * Returns the stable fixture provider identity used for ServiceLoader selection.
+         *
+         * @return fixed nonblank fixture provider identifier
+         */
         public String id() { return "external-eab"; }
+        /**
+         * Checks exact external-account request transport and defensive JWS byte-array ownership.
+         *
+         * @param request immutable external-account request carrying exact fixture evidence
+         * @param configuration exact fixture provider configuration
+         * @return consumed fixture binding with a one-minute expiry and example.test identifier
+         * @throws AssertionError if request fields, configuration, or JWS defensive copying differ
+         */
         public Binding verify(Request request, ProviderConfig configuration) {
             if (!request.directoryId().equals("directory") || !request.authorityId().equals(new PkiId("authority"))
                     || !request.profileId().equals("profile") || !request.accountKeyThumbprint().equals("a".repeat(64))
@@ -88,8 +129,24 @@ public final class Providers {
             return new Binding("key", "b".repeat(64), Set.of("example.test"), request.now().plusSeconds(60), true);
         }
     }
+    /**
+     * TLS context fixture with an injectable controlled creation failure.
+     */
     public static final class Tls implements PkiServerTlsProvider {
+        /**
+         * Returns the stable fixture provider identity used for ServiceLoader selection.
+         *
+         * @return fixed nonblank fixture provider identifier
+         */
         public String id() { return "external-tls"; }
+        /**
+         * Creates an initialized TLS context for external provider discovery tests.
+         *
+         * @param configuration provider configuration; presence of fail injects controlled failure
+         * @return new initialized TLS context
+         * @throws Exception if TLS context creation or initialization fails
+         * @throws IllegalStateException if configuration selects controlled failure
+         */
         public SSLContext create(ProviderConfig configuration) throws Exception {
             if (configuration.get("fail").isPresent()) throw new IllegalStateException("Controlled provider failure");
             SSLContext context = SSLContext.getInstance("TLS");
@@ -97,8 +154,22 @@ public final class Providers {
             return context;
         }
     }
+    /**
+     * Trust-manager fixture that deliberately rejects every peer certificate chain.
+     */
     public static final class Trust implements PkiServerClientTrustProvider {
+        /**
+         * Returns the stable fixture provider identity used for ServiceLoader selection.
+         *
+         * @return fixed nonblank fixture provider identifier
+         */
         public String id() { return "external-trust"; }
+        /**
+         * Creates a trust manager that deliberately rejects every client and server certificate chain.
+         *
+         * @param configuration fixture configuration accepted without additional validation
+         * @return new rejecting trust manager with an empty accepted-issuer list
+         */
         public X509TrustManager create(ProviderConfig configuration) {
             return new X509TrustManager() {
                 public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
@@ -111,14 +182,41 @@ public final class Providers {
             };
         }
     }
+    /**
+     * Offline certificate-transparency client fixture with deterministic submission failure.
+     */
     public static final class Ct implements CtLogClient {
+        /**
+         * Returns a deterministic certificate-transparency log identity for the offline fixture.
+         *
+         * @return fixed lowercase 64-character hexadecimal log identity
+         */
         public String logId() { return "c".repeat(64); }
+        /**
+         * Rejects certificate-transparency submission to model an offline log client.
+         *
+         * @param preCert precertificate bytes accepted without network transmission
+         * @param chain issuer chain accepted without network transmission
+         * @param deadline submission deadline accepted without starting I/O
+         * @return no result; this offline fixture always throws
+         * @throws CtSubmissionException always, with the deterministic offline-log identity
+         */
         public SignedCertificateTimestamp submit(byte[] preCert, List<byte[]> chain, Instant deadline)
                 throws CtSubmissionException {
             throw new CtSubmissionException("Offline fixture", logId());
         }
+        /**
+         * Closes the offline CT fixture; no network or owned resources exist.
+         */
         public void close() { }
     }
+    /**
+     * Exercises public provider discovery, exact context transport, defensive copying, and offline CT failure.
+     *
+     * @param arguments unused compatibility fixture command-line arguments
+     * @throws Exception if provider discovery or TLS initialization fails
+     * @throws AssertionError if any expected module-boundary contract differs
+     */
     public static void main(String[] arguments) throws Exception {
         Instant now = Instant.parse("2026-10-05T12:00:00Z");
         AcmeChallengeProvider challenge = ServiceLoader.load(AcmeChallengeProvider.class).findFirst().orElseThrow();

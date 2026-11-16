@@ -170,6 +170,9 @@ public final class Ed448Algorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(Ed448PrivateKeySpec.class, new Ed448PrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

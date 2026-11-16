@@ -68,6 +68,7 @@ public final class X509BuiltInDefaults {
      * @param identifier stable versioned default identifier
      * @return exact suite
      * @throws IllegalArgumentException if the identifier is unknown
+     * @throws NullPointerException if {@code identifier} is null
      */
     public static AlgorithmSuite resolve(String identifier) {
         Objects.requireNonNull(identifier, "identifier");

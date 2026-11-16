@@ -65,6 +65,18 @@ import zeroecho.core.io.RepeatableContent;
  * is {@code O(B)} for encoded size {@code B} with auxiliary heap bounded by the
  * fixed depth and comparison-buffer size.
  * </p>
+ *
+ * <p>Repeatable content is borrowed: every opened stream is closed by the reader,
+ * but the supplied content handle is not closed or retired. Streams must reopen
+ * from the same original byte sequence; callers must keep those bytes stable for
+ * all validation and comparison passes. Byte-array entry points borrow the array
+ * synchronously without cloning it. Returned spans are zero-based offsets into
+ * that exact original encoding and own no content resource.</p>
+ *
+ * <p>This is a closed X.509 structural grammar, not a general ASN.1 schema engine
+ * or cryptographic verifier. Unsupported universal primitive types are rejected.
+ * Structural validity alone does not establish key/algorithm compatibility,
+ * certificate policy, trust-path validity, revocation status or current freshness.</p>
  */
 // The aggregate branches implement one closed canonical-DER grammar.
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.NPathComplexity", "PMD.AvoidLiteralsInIfCondition",
@@ -77,7 +89,9 @@ public final class StreamingDerReader {
     private static final int CONTINUATION_BIT = 0x80;
     private static final long SHORT_LENGTH_LIMIT = 128L;
 
-    /** Creates a stateless canonical-DER reader. */
+    /**
+     * Creates a stateless canonical-DER reader.
+     */
     public StreamingDerReader() {
         // Stateless.
     }
@@ -94,7 +108,7 @@ public final class StreamingDerReader {
      * {@link #validate(RepeatableContent, CancellationSignal)} instead.
      * </p>
      *
-     * @param encoded complete DER object
+     * @param encoded complete DER object, borrowed without a copy and stable throughout this call
      * @param maximumBytes positive caller-selected element limit in bytes
      * @return exact encoded length
      * @throws NullPointerException if {@code encoded} is {@code null}
@@ -122,7 +136,11 @@ public final class StreamingDerReader {
      * Validates one canonical DER {@code SubjectPublicKeyInfo} value, including
      * the X.509 requirement that its public-key BIT STRING have zero unused bits.
      *
-     * @param encoded complete DER subject-public-key information
+     * <p>The algorithm SEQUENCE and zero-unused-bit public-key shape are structural
+     * checks; this method does not resolve an algorithm registry, decode a usable
+     * public key or prove possession of a corresponding private key.</p>
+     *
+     * @param encoded complete DER subject-public-key information, borrowed without a copy
      * @param maximumBytes positive caller-selected element limit in bytes
      * @return exact encoded length
      * @throws NullPointerException if {@code encoded} is {@code null}
@@ -153,11 +171,18 @@ public final class StreamingDerReader {
     }
 
     /**
-     * Validates one complete canonical DER object.
+     * Validates one complete canonical DER object from repeatable borrowed content.
+     *
+     * <p>Consumes one complete stream, checks end-of-stream and compares a declared
+     * content length when available. Additional monotonic comparison streams are
+     * opened for SET ordering; each starts at the beginning of the same bytes.
+     * All opened streams are closed on return or failure. No aggregate byte ceiling
+     * is imposed here; callers enforce their domain's size budgets separately.</p>
      *
      * @param content repeatable original content
      * @param cancellation cancellation signal
      * @return exact encoded length
+     * @throws NullPointerException if content or cancellation is null
      * @throws IOException if input fails, is malformed, non-canonical, truncated,
      *                     or has trailing data
      */
@@ -209,13 +234,20 @@ public final class StreamingDerReader {
     }
 
     /**
-     * Validates and locates the signed portions of one certificate or CRL.
+     * Validates and locates signed portions of one certificate or CRL without verifying signatures.
+     *
+     * <p>The spans include complete TBS/algorithm TLVs and the native signature
+     * octets excluding the BIT STRING unused-bit count. A certificate exposes its
+     * SPKI span; a CRL exposes issuer and parsed update-time coordinates. Generic
+     * inspection does not compare inner/outer algorithm bytes; the specialized
+     * hybrid CRL inspector adds that equality check.</p>
      *
      * @param content original repeatable DER
      * @param kind signed-object grammar
      * @param cancellation cancellation signal
      * @return immutable long-offset layout
-     * @throws IOException if structure or canonicality is invalid
+     * @throws NullPointerException if content or cancellation is null
+     * @throws IOException if reading, cancellation, structure or canonicality fails
      */
     public SignedObjectLayout inspectSignedObject(RepeatableContent content, SignedObjectKind kind,
             CancellationSignal cancellation) throws IOException {
@@ -232,6 +264,7 @@ public final class StreamingDerReader {
      * @param content repeatable complete CRL content
      * @param cancellation cancellation checked during traversal
      * @return structural layout and exact bounded semantic numbers
+     * @throws NullPointerException if content or cancellation is null
      * @throws IOException if DER or recognized extensions are invalid, missing, duplicated,
      *         incorrectly critical, truncated, or cancellation is requested
      */
@@ -252,7 +285,15 @@ public final class StreamingDerReader {
      */
     public record CrlSemanticLayout(SignedObjectLayout layout, BigInteger crlNumber,
             Optional<BigInteger> deltaIndicator) {
-        /** Validates the immutable bounded projection. */
+        /**
+         * Checks non-null metadata and the inclusive nonnegative 159-bit number bounds.
+         *
+         * @param layout exact signed-object spans and update times
+         * @param crlNumber required nonnegative CRL number, at most 159 bits
+         * @param deltaIndicator optional nonnegative base number, at most 159 bits
+         * @throws NullPointerException if the layout, CRL number or delta-number container is null
+         * @throws IllegalArgumentException if a CRL or present delta number is negative or exceeds 159 bits
+         */
         public CrlSemanticLayout {
             Objects.requireNonNull(layout, "layout");
             Objects.requireNonNull(crlNumber, "crlNumber");
@@ -274,6 +315,7 @@ public final class StreamingDerReader {
      * @param content exact borrowed alternative transcript
      * @param cancellation cooperative streaming cancellation
      * @return immutable semantic values and original content spans
+     * @throws NullPointerException if content or cancellation is null
      * @throws IOException if the dedicated profile grammar or resource bounds fail
      */
     public CrlAlternativeTbsLayout inspectAlternativeCrlTbs(RepeatableContent content,
@@ -301,6 +343,7 @@ public final class StreamingDerReader {
      * @param content complete borrowed CRL DER
      * @param cancellation cooperative streaming cancellation
      * @return immutable signed layout, alternative values and transformation spans
+     * @throws NullPointerException if content or cancellation is null
      * @throws IOException if profile syntax, canonicality or bounded headers fail
      */
     public AlternativeCrlLayout inspectAlternativeCrl(RepeatableContent content,
@@ -326,8 +369,10 @@ public final class StreamingDerReader {
     }
 
     /**
-     * Bounded header projection of the alternative transcript; offsets refer to
-     * the original content. The fields span begins with canonical v2 INTEGER 1
+     * Header projection produced by the bounded alternative-transcript inspector;
+     * offsets refer to the original content. Direct record construction retains
+     * supplied offsets and semantic values without validating their ranges. The fields span begins with
+     * canonical v2 INTEGER 1
      * and ends immediately before the explicit extensions wrapper.
      * @param encodedLength complete transcript length
      * @param fieldsOffset root SEQUENCE content offset
@@ -346,7 +391,24 @@ public final class StreamingDerReader {
             long issuerOffset, long issuerLength, Instant thisUpdate, Instant nextUpdate,
             BigInteger crlNumber, Optional<BigInteger> deltaIndicator, long extensionsContentOffset,
             long extensionsContentLength, byte[] alternativeAlgorithmDer) {
-        /** Defensively captures the bounded algorithm bytes and non-null metadata. */
+        /**
+         * Copies alternative algorithm bytes and requires semantic metadata without checking offsets or limits.
+         *
+         * @param encodedLength complete transcript length
+         * @param fieldsOffset root SEQUENCE content offset
+         * @param fieldsLength bytes preceding explicit extensions
+         * @param issuerOffset issuer Name TLV offset
+         * @param issuerLength issuer Name TLV length
+         * @param thisUpdate exact inclusive update time
+         * @param nextUpdate exact later update time
+         * @param crlNumber issued CRL number
+         * @param deltaIndicator optional full base number
+         * @param extensionsContentOffset Extensions SEQUENCE value offset
+         * @param extensionsContentLength Extensions SEQUENCE value length
+         * @param alternativeAlgorithmDer canonical alternative AlgorithmIdentifier DER
+         * @throws NullPointerException if an update time, CRL number, delta-number container or algorithm array
+         *     is null
+         */
         public CrlAlternativeTbsLayout {
             Objects.requireNonNull(thisUpdate, "thisUpdate");
             Objects.requireNonNull(nextUpdate, "nextUpdate");
@@ -354,13 +416,19 @@ public final class StreamingDerReader {
             Objects.requireNonNull(deltaIndicator, "deltaIndicator");
             alternativeAlgorithmDer = alternativeAlgorithmDer.clone();
         }
-        /** @return defensive copy of the alternative AlgorithmIdentifier */
+        /**
+         * Returns a new copy of the retained alternative AlgorithmIdentifier bytes.
+         *
+         * @return independently owned algorithm representation
+         */
         @Override public byte[] alternativeAlgorithmDer() { return alternativeAlgorithmDer.clone(); }
     }
 
     /**
-     * Bounded alternative-signature projection of a complete CRL. Offsets address
-     * the original complete signed object, not a separate TBS slice.
+     * Alternative-signature projection produced by the bounded complete-CRL inspector.
+     * Offsets address the original complete signed object, not a separate TBS slice.
+     * Direct construction copies byte arrays but does not impose the inspector's
+     * size, offset or signature-validity requirements.
      * @param semantic ordinary signed layout and CRL numbers
      * @param fieldsOffset native TBS SEQUENCE content offset
      * @param fieldsLength native fields preceding explicit extensions
@@ -374,15 +442,36 @@ public final class StreamingDerReader {
     public record AlternativeCrlLayout(CrlSemanticLayout semantic, long fieldsOffset, long fieldsLength,
             long extensionsContentOffset, long extensionsContentLength, long alternativeValueExtensionOffset,
             long alternativeValueExtensionLength, byte[] alternativeAlgorithmDer, byte[] alternativeSignature) {
-        /** Defensively captures both bounded byte values. */
+        /**
+         * Copies algorithm and signature bytes and requires semantic metadata without verifying either signature.
+         *
+         * @param semantic ordinary signed layout and CRL numbers
+         * @param fieldsOffset native TBS SEQUENCE content offset
+         * @param fieldsLength native fields preceding explicit extensions
+         * @param extensionsContentOffset Extensions SEQUENCE value offset
+         * @param extensionsContentLength Extensions SEQUENCE value length
+         * @param alternativeValueExtensionOffset complete alternative value Extension offset
+         * @param alternativeValueExtensionLength complete alternative value Extension length
+         * @param alternativeAlgorithmDer exact canonical alternative AlgorithmIdentifier
+         * @param alternativeSignature raw zero-unused-bit external signature bytes
+         * @throws NullPointerException if semantic metadata, algorithm bytes or signature bytes are null
+         */
         public AlternativeCrlLayout {
             Objects.requireNonNull(semantic, "semantic");
             alternativeAlgorithmDer = alternativeAlgorithmDer.clone();
             alternativeSignature = alternativeSignature.clone();
         }
-        /** @return defensive copy of the alternative AlgorithmIdentifier */
+        /**
+         * Returns a new copy of the retained alternative AlgorithmIdentifier bytes.
+         *
+         * @return independently owned algorithm representation
+         */
         @Override public byte[] alternativeAlgorithmDer() { return alternativeAlgorithmDer.clone(); }
-        /** @return defensive copy of the external alternative signature */
+        /**
+         * Returns a new copy of the extracted external alternative signature bytes.
+         *
+         * @return independently owned signature bytes, excluding the BIT STRING unused-bit count
+         */
         @Override public byte[] alternativeSignature() { return alternativeSignature.clone(); }
     }
 
@@ -620,7 +709,9 @@ public final class StreamingDerReader {
         private byte[] signature;
     }
 
-    /** Per-inspection CRL extension values used to validate number relationships. */
+    /**
+     * Per-inspection CRL extension values used to validate number relationships.
+     */
     private static final class CrlNumbers {
         private BigInteger crlNumber;
         private BigInteger deltaIndicator;
@@ -1045,14 +1136,23 @@ public final class StreamingDerReader {
      * Supported signed-object grammar.
      */
     public enum SignedObjectKind {
-        /** X.509 Certificate. */
+        /**
+         * X.509 Certificate.
+         */
         CERTIFICATE,
-        /** X.509 CertificateList (CRL). */
+        /**
+         * X.509 CertificateList (CRL).
+         */
         CRL
     }
 
     /**
-     * Exact offsets into the validated original DER.
+     * Exact offsets into original DER, as produced by signed-object inspection.
+     *
+     * <p>Direct construction requires non-null optional time containers only. It
+     * does not check span bounds, time order, object kind or correspondence to a
+     * particular byte sequence; callers must obtain trusted layout values through
+     * the appropriate inspector before using them to select signed bytes.</p>
      *
      * @param tbsOffset complete TBS TLV offset
      * @param tbsLength complete TBS TLV length
@@ -1076,9 +1176,23 @@ public final class StreamingDerReader {
             long signatureLength, long issuerOffset, long issuerLength, Optional<Instant> thisUpdate,
             Optional<Instant> nextUpdate) {
         /**
-         * Creates an immutable layout for one validated signed object.
+         * Retains supplied spans and requires non-null optional time containers only.
          *
-         * @throws NullPointerException if either time container is {@code null}
+         * @param tbsOffset complete TBS TLV offset
+         * @param tbsLength complete TBS TLV length
+         * @param tbsAlgorithmOffset TBS AlgorithmIdentifier TLV offset
+         * @param tbsAlgorithmLength TBS AlgorithmIdentifier TLV length
+         * @param outerAlgorithmOffset outer AlgorithmIdentifier TLV offset
+         * @param outerAlgorithmLength outer AlgorithmIdentifier TLV length
+         * @param subjectPublicKeyInfoOffset SPKI TLV offset, or {@code -1} for CRLs
+         * @param subjectPublicKeyInfoLength SPKI TLV length, or zero for CRLs
+         * @param signatureOffset signature octets offset
+         * @param signatureLength signature octets length
+         * @param issuerOffset issuer Name TLV offset, or {@code -1} for certificates
+         * @param issuerLength issuer Name TLV length, or zero for certificates
+         * @param thisUpdate exact CRL {@code thisUpdate}, or empty for certificates
+         * @param nextUpdate exact optional CRL {@code nextUpdate}, or empty when absent
+         * @throws NullPointerException if either optional time container is null
          */
         public SignedObjectLayout {
             Objects.requireNonNull(thisUpdate, "thisUpdate");
@@ -1098,9 +1212,15 @@ public final class StreamingDerReader {
     public record CertificateTbsLayout(int encodedLength, int algorithmOffset, int algorithmLength,
             int subjectPublicKeyInfoOffset, int subjectPublicKeyInfoLength) {
         /**
-         * Validates positive lengths and overflow-safe containment of both spans.
-         * @throws IllegalArgumentException if a length is not positive
-         * @throws IndexOutOfBoundsException if either span lies outside the TBS
+         * Checks positive lengths and overflow-safe containment of both supplied spans.
+         *
+         * @param encodedLength complete TBS length
+         * @param algorithmOffset signature AlgorithmIdentifier TLV offset
+         * @param algorithmLength signature AlgorithmIdentifier TLV length
+         * @param subjectPublicKeyInfoOffset SPKI TLV offset
+         * @param subjectPublicKeyInfoLength SPKI TLV length
+         * @throws IllegalArgumentException if the total or either span length is not positive
+         * @throws IndexOutOfBoundsException if either span lies outside the encoded TBS
          */
         public CertificateTbsLayout {
             if (encodedLength <= 0 || algorithmLength <= 0 || subjectPublicKeyInfoLength <= 0) {
@@ -1133,7 +1253,9 @@ public final class StreamingDerReader {
         }
     }
 
-    /** Canonical DER tag and length decoder. */
+    /**
+     * Canonical DER tag and length decoder.
+     */
     private static final class HeaderReader {
         private static Header read(CountedInput input) throws IOException {
             long start = input.position();
@@ -1201,7 +1323,9 @@ public final class StreamingDerReader {
         }
     }
 
-    /** Fixed-depth owner of monotonic comparison streams for DER SET values. */
+    /**
+     * Fixed-depth owner of monotonic comparison streams for DER SET values.
+     */
     private static final class OrderingContext implements AutoCloseable {
         private final RepeatableContent content;
         private final SetOrdering[] levels = new SetOrdering[MAXIMUM_X509_STRUCTURE_DEPTH];
@@ -1220,6 +1344,9 @@ public final class StreamingDerReader {
             return ordering;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             IOException failure = null;
@@ -1243,7 +1370,9 @@ public final class StreamingDerReader {
         }
     }
 
-    /** Adjacent-child comparator whose two source passes only move forward. */
+    /**
+     * Adjacent-child comparator whose two source passes only move forward.
+     */
     private static final class SetOrdering {
         private static final long NO_PREVIOUS_VALUE = -1L;
 
@@ -1389,6 +1518,9 @@ public final class StreamingDerReader {
             this.delegate = delegate;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             int value = delegate.read();
@@ -1398,6 +1530,9 @@ public final class StreamingDerReader {
             return value;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] bytes, int offset, int length) throws IOException {
             int count = delegate.read(bytes, offset, length);
@@ -1407,6 +1542,9 @@ public final class StreamingDerReader {
             return count;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             delegate.close();
@@ -1671,15 +1809,23 @@ public final class StreamingDerReader {
             }
         }
 
-        /** Supported restricted X.509 character-string alphabets. */
+        /**
+         * Supported restricted X.509 character-string alphabets.
+         */
         private enum StringKind {
             NUMERIC("NumericString") {
+                /**
+                 * {@inheritDoc}
+                 */
                 @Override
                 boolean accepts(int octet) {
                     return octet == ' ' || octet >= '0' && octet <= '9';
                 }
             },
             PRINTABLE("PrintableString") {
+                /**
+                 * {@inheritDoc}
+                 */
                 @Override
                 boolean accepts(int octet) {
                     return octet >= 'A' && octet <= 'Z' || octet >= 'a' && octet <= 'z'
@@ -1687,12 +1833,18 @@ public final class StreamingDerReader {
                 }
             },
             IA5("IA5String") {
+                /**
+                 * {@inheritDoc}
+                 */
                 @Override
                 boolean accepts(int octet) {
                     return octet <= 0x7f;
                 }
             },
             VISIBLE("VisibleString") {
+                /**
+                 * {@inheritDoc}
+                 */
                 @Override
                 boolean accepts(int octet) {
                     return octet >= 0x20 && octet <= 0x7e;
@@ -1713,7 +1865,9 @@ public final class StreamingDerReader {
         }
     }
 
-    /** Non-copying adapter whose lifetime is confined to one synchronous call. */
+    /**
+     * Non-copying adapter whose lifetime is confined to one synchronous call.
+     */
     private static final class ByteArrayContent implements RepeatableContent {
         private final byte[] encoded;
 
@@ -1721,21 +1875,33 @@ public final class StreamingDerReader {
             this.encoded = encoded;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() {
             return new ByteArrayInputStream(encoded);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(encoded.length);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "bounded-byte-array";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // Caller retains ownership of the bounded array.

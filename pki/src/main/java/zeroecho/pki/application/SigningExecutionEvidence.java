@@ -69,29 +69,51 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 public record SigningExecutionEvidence(String namespace, String fingerprint, String ownerType, String ownerId,
         Optional<String> detailCode, Outcome outcome) {
 
-    /** Terminal signing outcomes. */
+    /**
+     * Terminal signing outcomes.
+     */
     public enum Outcome {
-        /** The signing operation produced a signature. */
+        /**
+         * The signing operation produced a signature.
+         */
         SIGNED,
-        /** The signing operation failed. */
+        /**
+         * The signing operation failed.
+         */
         FAILED,
-        /** The signing operation was cancelled. */
+        /**
+         * The signing operation was cancelled.
+         */
         CANCELLED,
-        /** The signing operation expired before completion. */
+        /**
+         * The signing operation expired before completion.
+         */
         EXPIRED
     }
 
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId NAMESPACE = id("namespace");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId FINGERPRINT = id("fingerprint");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OWNER_TYPE = id("owner-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OWNER_ID = id("owner-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId DETAIL_CODE = id("detail-code");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OUTCOME = id("outcome");
 
     private static final String EVIDENCE_PREFIX = "urn:zeroecho:pki:signing-evidence:";
@@ -99,7 +121,16 @@ public record SigningExecutionEvidence(String namespace, String fingerprint, Str
     private static final Set<AttributeId> EVIDENCE_V1 = Set.of(NAMESPACE, FINGERPRINT, OWNER_TYPE, OWNER_ID,
             DETAIL_CODE, OUTCOME);
 
-    /** Validates the closed evidence model. */
+    /**
+     * Validates the closed evidence model.
+     * @param namespace signing namespace
+     * @param fingerprint immutable semantic acceptance commitment
+     * @param ownerType signing-owner principal type
+     * @param ownerId signing-owner principal identity
+     * @param detailCode safe terminal detail classification, when present
+     * @param outcome terminal outcome
+     * @throws NullPointerException if detailCode, outcome is null
+     */
     public SigningExecutionEvidence {
         requireBounded(namespace, "namespace");
         requireBounded(fingerprint, "fingerprint");
@@ -148,6 +179,7 @@ public record SigningExecutionEvidence(String namespace, String fingerprint, Str
      * @param attributes attributes to inspect
      * @return empty only when no version-one evidence attribute is present
      * @throws IllegalArgumentException if evidence is unknown, partial, duplicated, or mistyped
+     * @throws NullPointerException if attributes is null
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // untrusted evidence values must not escape through causes
     public static Optional<SigningExecutionEvidence> decode(AttributeSet attributes) {

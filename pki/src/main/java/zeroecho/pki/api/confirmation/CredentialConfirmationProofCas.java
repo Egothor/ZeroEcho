@@ -54,6 +54,10 @@ public record CredentialConfirmationProofCas(PkiId credentialId, long expectedLi
      *
      * @throws NullPointerException if either component is {@code null}
      * @throws IllegalArgumentException if the challenge commitment is not canonical
+     * @param credentialId exact credential expected by the caller
+     * @param expectedLifecycleRevision expected pending lifecycle revision, always 1
+     * @param expectedLifecycleRecordCommitment exact expected pending lifecycle-record commitment
+     * @param expectedChallengeRecordCommitment lowercase hexadecimal SHA-256 commitment of the exact challenge record
      */
     public CredentialConfirmationProofCas {
         credentialId = ConfirmationModelSupport.requireCredentialId(credentialId);

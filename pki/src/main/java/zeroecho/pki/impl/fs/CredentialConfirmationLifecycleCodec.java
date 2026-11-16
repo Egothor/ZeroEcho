@@ -48,7 +48,9 @@ import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
 import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
 
-/** Strict bounded binary version-2 codec for authoritative confirmation metadata. */
+/**
+ * Strict bounded binary version-2 codec for authoritative confirmation metadata.
+ */
 final class CredentialConfirmationLifecycleCodec {
     private static final int MAGIC = 0x5a454343; // ZECC
     private static final int VERSION = 2;
@@ -60,6 +62,13 @@ final class CredentialConfirmationLifecycleCodec {
 
     private CredentialConfirmationLifecycleCodec() { }
 
+    /**
+     * Encodes a validated confirmation lifecycle in canonical versioned field order.
+     *
+     * @param lifecycle immutable lifecycle state containing its exact policy, proof suite and record commitments
+     * @return newly allocated complete binary lifecycle record
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static byte[] encode(CredentialConfirmationLifecycle lifecycle) {
         byte[] credentialId = strictUtf8(lifecycle.credentialId().value());
         byte[] suiteId = strictUtf8(lifecycle.proofSuite().suiteId());
@@ -90,6 +99,13 @@ final class CredentialConfirmationLifecycleCodec {
         return output.array();
     }
 
+    /**
+     * Decodes one complete confirmation lifecycle and rejects malformed or trailing data.
+     *
+     * @param encoded complete versioned binary lifecycle record
+     * @return validated immutable lifecycle state
+     * @throws IOException if the input is null, empty, oversized, truncated or violates lifecycle framing or model constraints
+     */
     /* default */ static CredentialConfirmationLifecycle decode(byte[] encoded) throws IOException {
         if (encoded == null || encoded.length == 0 || encoded.length > MAXIMUM_ENCODED_BYTES) {
             throw malformed();

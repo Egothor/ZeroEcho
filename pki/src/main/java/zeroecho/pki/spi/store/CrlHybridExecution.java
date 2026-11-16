@@ -68,6 +68,17 @@ public record CrlHybridExecution(int version, PkiId parentId, String parentComma
      * Validates version, canonical coordinates, and the all-or-none adoption shape.
      * @throws NullPointerException if a required coordinate or optional container is null
      * @throws IllegalArgumentException if a coordinate or phase is inconsistent
+     * @param version execution payload version, exactly 1
+     * @param parentId canonical public signing operation identity
+     * @param parentCommandCommitment immutable parent domain command commitment
+     * @param issuerBindingCommitment captured complete issuer-generation binding digest
+     * @param roleTupleCommitment captured two-role CRL presentation tuple digest
+     * @param nativeChildId distinct canonical child identity in the parent's namespace and creation time
+     * @param phase whether alternative signing is awaited or the native child is linked
+     * @param revision exactly 0 before adoption and 1 after adoption
+     * @param nativeAcceptanceCommitment exact accepted native-child commitment, present only after adoption
+     * @param nativeTbs retained DER operation content for the native child, present only after adoption
+     * @param alternativeSignatureSha256 digest of the actual retained alternative signature, present only after adoption
      */
     public CrlHybridExecution {
         Objects.requireNonNull(phase, "phase");

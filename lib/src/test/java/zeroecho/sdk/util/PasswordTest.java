@@ -50,7 +50,13 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.core.util.RandomSupport;
 
+/**
+ * Contract and regression tests for password.
+ */
 class PasswordTest {
+    /**
+     * Canonical random facade validates null and accepts empty arrays.
+     */
     @Test
     void canonicalRandomFacadeValidatesNullAndAcceptsEmptyArrays() {
         System.out.print("Password/random-boundaries...");
@@ -68,6 +74,11 @@ class PasswordTest {
         System.out.println("ok");
     }
 
+    /**
+     * Shared source supports parallel use.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sharedSourceSupportsParallelUse() throws Exception {
         System.out.print("RandomSupport/concurrent...");

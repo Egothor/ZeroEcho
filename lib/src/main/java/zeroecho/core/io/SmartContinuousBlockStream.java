@@ -84,7 +84,9 @@ import javax.crypto.ShortBufferException;
  */
 final class SmartContinuousBlockStream extends AbstractChunkTransformInputStream {
     private static final Logger LOG = Logger.getLogger(SmartContinuousBlockStream.class.getName());
-    /** Underlying cipher used for streaming updates and finalization. */
+    /**
+     * Underlying cipher used for streaming updates and finalization.
+     */
     private final Cipher cipher;
 
     /**

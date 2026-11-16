@@ -60,7 +60,15 @@ public interface AuditEvidenceFeed extends AutoCloseable {
      * @param evidence family-serialized evidence payload
      */
     record Entry(long sequence, PkiId objectId, Instant recordedAt, byte[] evidence) {
-        /** Validates and defensively copies one entry. */
+        /**
+         * Validates and defensively copies one entry.
+         * @param sequence contiguous zero-based append sequence
+         * @param objectId immutable produced-object identity
+         * @param recordedAt audit event time captured at commit
+         * @param evidence family-serialized evidence payload
+         * @throws NullPointerException if objectId, recordedAt, evidence is null
+         * @throws IllegalArgumentException if sequence is negative
+         */
         public Entry {
             if (isNegative(sequence)) {
                 throw new IllegalArgumentException("Evidence feed sequence must not be negative");
@@ -108,6 +116,8 @@ public interface AuditEvidenceFeed extends AutoCloseable {
      */
     Entry current();
 
-    /** Closes the feed idempotently. */
+    /**
+     * Closes the feed idempotently.
+     */
     @Override void close();
 }

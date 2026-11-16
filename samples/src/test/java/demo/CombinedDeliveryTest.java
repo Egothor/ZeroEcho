@@ -62,6 +62,9 @@ import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
 import zeroecho.sdk.guard.UnlockMaterial;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Executable multi-recipient delivery examples combining classical and post-quantum keys.
+ */
 @Tag("sample")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CombinedDeliveryTest {
@@ -69,11 +72,20 @@ class CombinedDeliveryTest {
     private final ZeroEchoSession session = new ZeroEchoSession()
             .withPbkdf2Limits(new Pbkdf2Limits(1_000_000, 1_000_000));
 
+    /**
+     * Initializes cryptographic providers before executing the sample or integration scenarios.
+     */
     @BeforeAll
     void setupProviders() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Generates an ML-KEM-1024 key pair for the post-quantum recipient.
+     *
+     * @return fresh ML-KEM key pair
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     KeyPair generateKyberKeys() throws GeneralSecurityException {
         KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
         LOG.log(Level.INFO, "ML-KEM key pair generated");
@@ -81,6 +93,12 @@ class CombinedDeliveryTest {
         return kp;
     }
 
+    /**
+     * Generates a 4096-bit RSA recipient key pair through the SDK.
+     *
+     * @return fresh RSA key pair
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     KeyPair generateRsaKeys() throws GeneralSecurityException {
         KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
         LOG.log(Level.INFO, "RSA key pair generated");
@@ -88,6 +106,12 @@ class CombinedDeliveryTest {
         return kp;
     }
 
+    /**
+     * Generates an ElGamal key pair using the ffdhe2048 parameter group.
+     *
+     * @return fresh ElGamal key pair
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     KeyPair generateElGamalKeys() throws GeneralSecurityException {
         KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
         LOG.log(Level.INFO, "ElGamal key pair generated");
@@ -95,6 +119,13 @@ class CombinedDeliveryTest {
         return kp;
     }
 
+    /**
+     * Demonstrates delivery of one encrypted payload to multiple recipients using distinct key mechanisms.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void combinedSdkLevelAPI() throws GeneralSecurityException, IOException {
         // Sample message to encrypt

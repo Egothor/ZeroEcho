@@ -41,8 +41,16 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Forked JVM fixture: no JUnit dependency and deliberately abrupt crash points. */
+/**
+ * Forked JVM fixture: no JUnit dependency and deliberately abrupt crash points.
+ */
 public final class KeyringStatefulProcess {
+    /**
+     * Runs one requested stateful-signing phase in a disposable JVM.
+     *
+     * @param args keyring, authority, and selected crash-transition arguments
+     * @throws Exception if fixture initialization, signing, or coordination fails
+     */
     public static void main(String[] args) throws Exception {
         BouncyCastleActivator.init();
         Path authorityPath = Path.of(args[1]);

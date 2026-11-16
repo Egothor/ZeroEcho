@@ -110,6 +110,7 @@ public abstract class OutputToInputStreamAdapter extends InputStream {
      *
      * @param previousInput The input stream to read untransformed data from.
      * @param bufSize       The buffer size for the transformation output buffer.
+     * @throws NullPointerException if {@code previousInput} is null
      */
     public OutputToInputStreamAdapter(final InputStream previousInput, final int bufSize) {
         super();
@@ -131,18 +132,27 @@ public abstract class OutputToInputStreamAdapter extends InputStream {
         this(previousInput, DEFAULT_BUF_SIZE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int read() throws IOException {
         ensureData();
         return bais.read();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int read(final byte[] b, final int off, final int len) throws IOException {
         ensureData();
         return bais.read(b, off, len);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         previousInput.close();

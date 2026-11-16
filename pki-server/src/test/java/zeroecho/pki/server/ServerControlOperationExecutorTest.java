@@ -72,10 +72,20 @@ import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiSigningOperation;
 
-/** Durable closed control-operation, approval and one-time-result coverage. */
+/**
+ * Durable closed control-operation, approval and one-time-result coverage.
+ */
 class ServerControlOperationExecutorTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks deployment availability tracks optional protocol installation and unavailable execution yields a finite classified outcome.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void missingOptionalProtocolServicesAreNotAdvertisedAndInstalledServicesExecute() throws Exception {
         try(var opened=ServerTestSupport.open(temporaryDirectory)) {
@@ -100,6 +110,11 @@ class ServerControlOperationExecutorTest {
         }
     }
 
+    /**
+     * Checks unsupported restore is rejected by policy before invoking an installed custom backup service.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void restoreRejectsBeforeInvokingCustomBackupService() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -122,6 +137,9 @@ class ServerControlOperationExecutorTest {
         }
     }
 
+    /**
+     * Checks closed catalog size and exact credential-search/managed-key descriptor action/resource classifications.
+     */
     @Test
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
@@ -155,6 +173,11 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks principal registration, role assignment and explicit deny grants persist and appear in bounded pages.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void principalAssignmentAndGrantOperationsPersistAndPage() throws Exception {
         System.out.println("principalAssignmentAndGrantOperationsPersistAndPage");
@@ -183,6 +206,11 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks approval admission snapshots configured high-risk policy while leaving the target unexecuted.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void approvalRequestUsesConfiguredPolicyAndDoesNotExecuteTarget() throws Exception {
         System.out.println("approvalRequestUsesConfiguredPolicyAndDoesNotExecuteTarget");
@@ -207,6 +235,11 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a 32-byte bearer token can be consumed once while persistence retains only its commitment and finite delivery status.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void capabilityResultIsSingleConsumptionAndPersistenceContainsOnlyCommitment() throws Exception {
         System.out.println("capabilityResultIsSingleConsumptionAndPersistenceContainsOnlyCommitment");
@@ -239,6 +272,11 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks pending break-glass grants convey no active authority until a separately approved activation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void pendingBreakGlassRequiresSeparateActivationAndExpires() throws Exception {
         System.out.println("pendingBreakGlassRequiresSeparateActivationAndExpires");
@@ -278,6 +316,11 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks audit query exposes only approved metadata fields and integrity verification returns its safe status.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void auditSearchProjectsSafeMetadataAndVerifyReportsStatus() throws Exception {
         System.out.println("auditSearchProjectsSafeMetadataAndVerifyReportsStatus");
@@ -333,6 +376,11 @@ class ServerControlOperationExecutorTest {
         }
     }
 
+    /**
+     * Checks nonqueryable audit sinks produce finite failed outcomes for unsupported audit operations.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void auditOperationsFailClosedWhenSinkIsNotQueryable() throws Exception {
         System.out.println("auditOperationsFailClosedWhenSinkIsNotQueryable");

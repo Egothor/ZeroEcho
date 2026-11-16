@@ -78,9 +78,17 @@ import zeroecho.pki.impl.core.continuation.DomainContinuationTemplate;
 import zeroecho.pki.impl.core.continuation.DomainContinuationValidation;
 import zeroecho.pki.impl.core.continuation.FullCrlSigningCommand;
 
-/** Borrowed transactional schedule authority; bounded pages retain O(P) rows and scan O(S log P). */
+/**
+ * Borrowed transactional schedule authority; bounded pages retain O(P) rows and scan O(S log P).
+ */
 final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.status-schedule}; persisted identities depend on this value.
+     */
     /* default */ static final String HEAD = "io.zeroecho.pki.status-schedule";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.status-schedule-receipt}; persisted identities depend on this value.
+     */
     /* default */ static final String RECEIPT = "io.zeroecho.pki.status-schedule-receipt";
     private static final int VERSION = 1;
     private static final int MAX_BYTES = 65_536;
@@ -92,25 +100,74 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
     private final Consumer<MetadataCommitResult> outcome;
     private final Consumer<Execution> failureProof;
 
+    /**
+     * Binds status schedule authority to borrowed transactional storage and outcome callbacks.
+     *
+     * <p>The overload without failure proof rejects attempts to mark accepted work failed.</p>
+     *
+     * @param metadata borrowed transactional metadata authority
+     * @param outcome observer receiving each transaction commit result
+     */
     /* default */ FsStatusSchedules(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome) {
         this(metadata, outcome, ignored -> { throw invalid("SCHEDULE_FAILURE_PROOF_UNAVAILABLE"); });
     }
 
+    /**
+     * Binds status schedule authority to borrowed transactional storage and outcome callbacks.
+     *
+     * <p>Collaborators are retained without local validation or lifecycle transfer.</p>
+     *
+     * @param metadata borrowed transactional metadata authority
+     * @param outcome observer receiving each transaction commit result
+     * @param failureProof callback requiring authoritative failure evidence before marking accepted work failed
+     */
     /* default */ FsStatusSchedules(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome,
             Consumer<Execution> failureProof) {
         this.metadata = metadata; this.outcome = outcome; this.failureProof = failureProof;
     }
 
+    /**
+     * Builds the canonical continuation cursor for one exact schedule configuration.
+     *
+     * @param configuration schedule supplying authority and status-type coordinates
+     * @return canonical store-level schedule cursor
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static String cursor(StatusSchedule configuration) {
         return zeroecho.pki.spi.store.PkiStore.statusScheduleCursor(configuration);
     }
 
+    /**
+     * Derives the schedule head identity from a domain-separated authority digest and status type.
+     *
+     * @param caId exact owning authority identity
+     * @param type closed scheduled status-object type
+     * @return canonical schedule head metadata key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey key(PkiId caId, StatusObjectType type) {
         return new MetadataKey(HEAD, digest("status-schedule-key:v1:" + caId.value()) + "." + type.name());
     }
 
+    /**
+     * Derives the immutable acceptance receipt lookup key for a signing operation.
+     *
+     * @param operationId exact accepted signing operation identity
+     * @return canonical schedule receipt metadata key
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey receiptKey(PkiId operationId) { return new MetadataKey(RECEIPT, operationId.value()); }
 
+    /**
+     * Reads one current schedule and requires its decoded coordinates to match the lookup identity.
+     *
+     * @param caId exact owning authority identity
+     * @param type closed scheduled status-object type
+     * @return validated schedule state, or an empty optional if absent
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     */
     /* default */ Optional<StatusScheduleState> get(PkiId caId, StatusObjectType type) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             Optional<StatusScheduleState> found = read(snapshot, key(caId, type)).map(Stored::value);
@@ -120,6 +177,21 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Selects a bounded ordered page of enabled schedules and optionally unfinished executions.
+     *
+     * <p>The scan retains at most the requested page size in memory.</p>
+     *
+     * @param after exclusive canonical schedule cursor, or an empty optional for the first page
+     * @param limit maximum results, from one through 1,001 inclusive
+     * @param includeUnfinished whether disabled schedules with unfinished executions remain eligible
+     * @param cancellation cooperative cancellation checked while scanning the stable snapshot
+     * @return immutable page ordered by authority identity and status-type name
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws IllegalArgumentException if the page size is invalid or the supplied cursor is unavailable
+     */
     /* default */ List<StatusScheduleState> page(Optional<String> after, int limit, boolean includeUnfinished,
             CancellationSignal cancellation) throws IOException {
         if (limit < 1 || limit > 1001) { throw new IllegalArgumentException("Invalid schedule page size"); }
@@ -147,6 +219,18 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         List<StatusScheduleState> result = new ArrayList<>(best); result.sort(ORDER); return List.copyOf(result);
     }
 
+    /**
+     * Creates or updates schedule configuration while retaining compatible in-flight execution state.
+     *
+     * @param requested requested schedule coordinates and editable configuration
+     * @param expected exact expected configuration for compare-and-set, or empty for bounded conflict retries
+     * @param now authoritative instant used to initialize or reset the next due boundary
+     * @return committed configuration with its assigned revision, or null on an expected-state conflict
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws ArithmeticException if configuration or worker revision increments overflow
+     */
     /* default */ StatusSchedule put(StatusSchedule requested, Optional<StatusSchedule> expected, Instant now) throws IOException {
         MetadataKey key = key(requested.caId(), requested.statusType());
         for (int attempt = 0; attempt < MAX_CONFLICT_ATTEMPTS; attempt++) {
@@ -183,6 +267,17 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         return replacement;
     }
 
+    /**
+     * Atomically claims due enabled work only while the exact observed schedule state still matches.
+     *
+     * @param expected exact observed schedule state without an unfinished execution
+     * @param now authoritative instant used to test whether the schedule is due
+     * @return new fenced execution claim, or an empty optional for a conflict or ineligible schedule
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws ArithmeticException if the worker fence increment overflows
+     */
     /* default */ Optional<Execution> claim(StatusScheduleState expected, Instant now) throws IOException {
         MetadataKey key = key(expected.configuration().caId(), expected.configuration().statusType());
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
@@ -198,6 +293,17 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Stages exact signing acceptance and its receipt under the current schedule claim fence.
+     *
+     * @param transaction borrowed transaction receiving the exact staged schedule mutations; caller commits or aborts it
+     * @param claim exact currently retained CLAIMED execution without an attached signing operation
+     * @param command accepted signing command whose frozen status coordinates must match the claim
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws ArithmeticException if the worker revision increment overflows
+     */
     /* default */ void stageAcceptance(MetadataTransaction transaction, Execution claim, SignWorkflowStore.AcceptanceCommand command) throws IOException {
         validateBinding(claim, SignWorkflowStore.AcceptanceEnvelope.from(command));
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
@@ -213,6 +319,16 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Checks whether an exact signing command is already attached to the claimed execution.
+     *
+     * @param claim exact schedule execution claim
+     * @param command signing acceptance whose operation identity and commitment must match
+     * @return true only when the retained receipt matches the claim, operation identity and acceptance commitment
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     */
     /* default */ boolean attached(Execution claim, SignWorkflowStore.AcceptanceCommand command) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             Optional<Execution> receipt = receipt(snapshot, command.operationId());
@@ -221,6 +337,16 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Reads one schedule acceptance receipt and verifies its signing operation identity.
+     *
+     * @param snapshot borrowed stable metadata snapshot; retained resources remain owned by the caller
+     * @param operationId exact accepted signing operation identity
+     * @return validated execution receipt, or an empty optional if absent
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     */
     /* default */ Optional<Execution> receipt(MetadataSnapshot snapshot, PkiId operationId) throws IOException {
         try (MetadataSnapshot.Record record = snapshot.get(receiptKey(operationId)).orElse(null)) {
             if (record == null) { return Optional.empty(); }
@@ -230,6 +356,17 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Stages schedule effect mutations for one exact completed status-object operation.
+     *
+     * @param transaction borrowed transaction receiving the exact staged schedule mutations; caller commits or aborts it
+     * @param operationId exact accepted signing operation identity
+     * @param status immutable completed status metadata
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws ArithmeticException if the worker revision increment overflows
+     */
     /* default */ void stageEffect(MetadataTransaction transaction, PkiId operationId, StatusObject status) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             for (var mutation : effectMutations(snapshot, operationId, status)) {
@@ -238,6 +375,18 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Builds the exact receipt and head replacements committing a schedule status effect.
+     *
+     * @param snapshot borrowed stable metadata snapshot; retained resources remain owned by the caller
+     * @param operationId exact accepted signing operation identity
+     * @param status immutable completed status metadata matching authority, type and format
+     * @return immutable effect mutations, or an empty list when no schedule receipt exists or the exact effect is already retained
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws ArithmeticException if the worker revision increment overflows
+     */
     /* default */ java.util.List<SigningTransactionPayloadCodec.Mutation> effectMutations(MetadataSnapshot snapshot,
             PkiId operationId, StatusObject status) throws IOException {
         try (MetadataSnapshot.Record sidecar = snapshot.get(receiptKey(operationId)).orElse(null)) {
@@ -268,6 +417,19 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Atomically advances a committed schedule effect to its next freshness boundary.
+     *
+     * @param expected exact retained EFFECT_COMMITTED execution
+     * @param committedNextUpdate authoritative freshness limit of the completed status object; the configured grace is subtracted
+     * @return true on definite advancement; false when current state changed or commit conflicted
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws java.util.NoSuchElementException if required signing identity or receipt is missing
+     * @throws ArithmeticException if the worker revision increment overflows
+     * @throws java.time.DateTimeException if the next due instant cannot be represented
+     */
     /* default */ boolean advance(Execution expected, Instant committedNextUpdate) throws IOException {
         if (expected.phase() != Phase.EFFECT_COMMITTED) { throw invalid("SCHEDULE_EFFECT_REQUIRED"); }
         try (MetadataSnapshot snapshot = metadata.snapshot();
@@ -288,6 +450,18 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Marks an accepted claim failed only after its authoritative failure proof succeeds.
+     *
+     * @param expected exact retained CLAIMED execution with an accepted signing operation
+     * @param code safe terminal failure classification retained in the execution receipt
+     * @return true on a definite failure transition; false when current state changed or commit conflicted
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws java.util.NoSuchElementException if the required receipt is missing
+     * @throws ArithmeticException if the worker revision increment overflows
+     */
     /* default */ boolean fail(Execution expected, String code) throws IOException {
         if (expected.phase() != Phase.CLAIMED || expected.signingOperationId().isEmpty()) { throw invalid("SCHEDULE_ACCEPTANCE_REQUIRED"); }
         failureProof.accept(expected);
@@ -308,6 +482,15 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Validates schedule heads, exact receipts and their accepted execution relationships.
+     *
+     * @param validateReceipt callback validating each retained receipt against authoritative signing state
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws RuntimeException if the supplied receipt validator rejects retained execution evidence
+     */
     /* default */ void validate(Consumer<Execution> validateReceipt) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot();
                 MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(HEAD), CancellationSignal.NONE)) {
@@ -358,6 +541,15 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
     }
 
+    /**
+     * Requires a frozen status command and public signer roles to match the exact schedule claim.
+     *
+     * @param claim exact fenced schedule execution and its immutable configuration
+     * @param envelope accepted signing envelope retaining canonical command, content and signer coordinates
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     * @throws IllegalArgumentException if canonical command or hybrid role evidence is malformed
+     */
     /* default */ void validateBinding(Execution claim, SignWorkflowStore.AcceptanceEnvelope envelope) {
         SignWorkflowStore.OuterCommand outer = envelope.outer().orElseThrow(() -> invalid("SCHEDULE_STATUS_REQUIRED"));
         DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(new DomainContinuationTemplate(
@@ -385,6 +577,16 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
                 || !claim.acceptanceCommitment().equals(envelope.acceptanceCommitment().encoded()))) { throw invalid("SCHEDULE_RECEIPT_MISMATCH"); }
     }
 
+    /**
+     * Tests whether an execution still pins its schedule receipt against retention.
+     *
+     * @param snapshot borrowed stable metadata snapshot; retained resources remain owned by the caller
+     * @param execution exact retained schedule execution
+     * @return true for claimed or effect-committed work, and for a failed execution still selected by its head
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if bounded schedule metadata cannot be read or written, or commit durability is unknown
+     * @throws IllegalStateException if schedule identity, execution phase, fence or retained receipt is inconsistent
+     */
     /* default */ boolean pinned(MetadataSnapshot snapshot, Execution execution) throws IOException {
         if (execution.phase() == Phase.CLAIMED || execution.phase() == Phase.EFFECT_COMMITTED) { return true; }
         return execution.phase() == Phase.FAILED && read(snapshot, key(execution.configuration().caId(), execution.configuration().statusType()))
@@ -433,6 +635,15 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         return result;
     }
 
+    /**
+     * Decodes a complete bounded schedule head and checks its persisted metadata identity.
+     *
+     * @param key exact schedule head metadata key
+     * @param bytes complete versioned schedule state encoding
+     * @return validated immutable schedule state
+     * @throws NullPointerException if the encoded array is null
+     * @throws IOException if the value exceeds its bound or framing, identity and model coordinates are invalid
+     */
     static StatusScheduleState decodeState(MetadataKey key, byte[] bytes) throws IOException {
         if (bytes.length > MAX_BYTES) throw new IOException("Schedule metadata exceeds its limit");
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
@@ -446,6 +657,14 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
             return decodeState(input, record.key(), bytes);
         } catch (RuntimeException malformed) { throw new IOException("Invalid status schedule metadata", malformed); } // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
     }
+    /**
+     * Encodes the exact schedule head state in the current bounded metadata format.
+     *
+     * @param state validated immutable schedule head state
+     * @return newly allocated complete binary metadata value
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if field encoding or the complete metadata size bound fails
+     */
     static byte[] encode(StatusScheduleState state) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -455,6 +674,14 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         }
         return bounded(bytes.toByteArray());
     }
+    /**
+     * Encodes the exact schedule execution receipt in the current bounded metadata format.
+     *
+     * @param execution validated immutable schedule execution receipt
+     * @return newly allocated complete binary metadata value
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if field encoding or the complete metadata size bound fails
+     */
     static byte[] encodeExecution(Execution execution) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) { output.writeInt(VERSION); writeExecution(output, execution); }
@@ -467,6 +694,13 @@ final class FsStatusSchedules { // NOPMD CyclomaticComplexity - Aggregate lifecy
         return result;
     }
 
+    /**
+     * Decodes one exact bounded schedule execution receipt.
+     *
+     * @param bytes complete current-format receipt encoding
+     * @return validated immutable schedule execution
+     * @throws IOException if framing, model fields or complete record bounds are invalid
+     */
     static Execution decodeExecution(byte[] bytes) throws IOException {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
             return decodeReceipt(input, bytes);

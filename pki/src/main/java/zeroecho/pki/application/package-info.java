@@ -31,5 +31,11 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-/** Lifecycle-owned synchronous PKI sessions and transport-neutral typed operations. */
+/**
+ * Lifecycle-owned synchronous PKI sessions and transport-neutral typed operations.
+ *
+ * <p>Typed operation construction is separate from caller authorization and
+ * durable execution. Session-owned services must be used within their owning
+ * lifecycle rather than treated as independently opened resources.</p>
+ */
 package zeroecho.pki.application;

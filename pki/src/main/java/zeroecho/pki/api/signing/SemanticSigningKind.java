@@ -34,14 +34,24 @@
 
 package zeroecho.pki.api.signing;
 
-/** Finite domain namespaces for authoritative semantic signing correlation. */
+/**
+ * Finite domain namespaces for authoritative semantic signing correlation.
+ */
 public enum SemanticSigningKind {
-    /** Root or intermediate authority lifecycle. */
+    /**
+     * Root or intermediate authority lifecycle.
+     */
     CA,
-    /** Credential issuance. */
+    /**
+     * Credential issuance.
+     */
     ISSUANCE,
-    /** Signed certificate-status production. */
+    /**
+     * Signed certificate-status production.
+     */
     STATUS,
-    /** Verification of possession of a managed private key without publishing an artifact. */
+    /**
+     * Verification of possession of a managed private key without publishing an artifact.
+     */
     KEY_PROOF
 }

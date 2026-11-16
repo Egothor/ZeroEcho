@@ -55,7 +55,15 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
+/**
+ * Contract and regression tests for signing work projection.
+ */
 final class SigningWorkProjectionTest {
+    /**
+     * Handoff keeps both residents with only one due slot and rebuilds that ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void handoffKeepsBothResidentsWithOnlyOneDueSlotAndRebuildsThatOwnership() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
@@ -99,6 +107,11 @@ final class SigningWorkProjectionTest {
         }
     }
 
+    /**
+     * Admission transfers only to initial state due work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void admissionTransfersOnlyToInitialStateDueWork() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
@@ -136,6 +149,11 @@ final class SigningWorkProjectionTest {
         assertEquals(0L, capacity.snapshot().reservedBytes());
     }
 
+    /**
+     * Prepared projection rollback releases consumed admission exactly once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preparedProjectionRollbackReleasesConsumedAdmissionExactlyOnce() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
@@ -173,6 +191,11 @@ final class SigningWorkProjectionTest {
         assertEquals(0L, capacity.snapshot().reservedBytes());
     }
 
+    /**
+     * One canonical identity is shared and every reservation is released.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oneCanonicalIdentityIsSharedAndEveryReservationIsReleased() throws Exception {
         SigningGenerationRegistry generations = new SigningGenerationRegistry();
@@ -238,6 +261,11 @@ final class SigningWorkProjectionTest {
         assertEquals(0L, capacity.snapshot().reservedBytes());
     }
 
+    /**
+     * Bulk recovery rejects foreign namespace before publishing membership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bulkRecoveryRejectsForeignNamespaceBeforePublishingMembership() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
@@ -268,6 +296,11 @@ final class SigningWorkProjectionTest {
         assertEquals(0L, capacity.snapshot().reservedBytes());
     }
 
+    /**
+     * Recovery retains only validated scheduling coordinates.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryRetainsOnlyValidatedSchedulingCoordinates() throws Exception {
         String operationId = operationId(5);
@@ -290,6 +323,11 @@ final class SigningWorkProjectionTest {
         }
     }
 
+    /**
+     * Recovery rejects missing coordinates and mismatched state identity.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryRejectsMissingCoordinatesAndMismatchedStateIdentity() throws Exception {
         String operationId = operationId(7);
@@ -310,6 +348,11 @@ final class SigningWorkProjectionTest {
         }
     }
 
+    /**
+     * Malformed recovered state still uses validated envelope coordinates.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedRecoveredStateStillUsesValidatedEnvelopeCoordinates() throws Exception {
         String operationId = operationId(9);
@@ -330,6 +373,11 @@ final class SigningWorkProjectionTest {
         }
     }
 
+    /**
+     * Acceptance envelope codec bytes and version remain stable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptanceEnvelopeCodecBytesAndVersionRemainStable() throws Exception {
         byte[] encoded = envelopeBytes(operationId(10));

@@ -72,10 +72,25 @@ final class BcExtensions {
     private BcExtensions() {
     }
 
+    /**
+     * Converts a JCA principal by its encoded X.500 name.
+     *
+     * @param principal non-null distinguished-name principal
+     * @return equivalent Bouncy Castle name
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static X500Name toX500Name(X500Principal principal) {
         return X500Name.getInstance(principal.getEncoded());
     }
 
+    /**
+     * Converts an ASN.1 X.500 name into a JCA principal.
+     *
+     * @param name non-null Bouncy Castle distinguished name
+     * @return equivalent JCA principal
+     * @throws IllegalArgumentException if the name cannot be encoded
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static X500Principal toPrincipal(X500Name name) {
         try {
             return new X500Principal(name.getEncoded());
@@ -84,10 +99,26 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Decodes a JCA public key as an ASN.1 SubjectPublicKeyInfo.
+     *
+     * @param publicKey non-null key with X.509 encoding
+     * @return decoded SubjectPublicKeyInfo
+     * @throws IllegalArgumentException if the key encoding is not a valid SubjectPublicKeyInfo
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static SubjectPublicKeyInfo spki(PublicKey publicKey) {
         return SubjectPublicKeyInfo.getInstance(publicKey.getEncoded());
     }
 
+    /**
+     * Converts a typed general name into the corresponding ASN.1 choice.
+     *
+     * @param name non-null typed general name
+     * @return corresponding Bouncy Castle general name
+     * @throws IllegalArgumentException if an address, OID, or otherName DER value is invalid
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static GeneralName toBc(zeroecho.pkix.GeneralName name) {
         return switch (name) {
             case zeroecho.pkix.GeneralName.DnsName dns -> new GeneralName(GeneralName.dNSName, dns.value());
@@ -114,6 +145,14 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Converts an ASN.1 general name into the typed PKIX representation.
+     *
+     * @param name non-null Bouncy Castle general name
+     * @return typed name; unrecognized tags are retained as OtherName data
+     * @throws IllegalArgumentException if an IP address or name encoding is invalid
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static zeroecho.pkix.GeneralName fromBc(GeneralName name) {
         return switch (name.getTagNo()) {
             case GeneralName.dNSName ->
@@ -150,11 +189,28 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Converts an ordered list of general names to the ASN.1 sequence.
+     *
+     * @param names ordered names; must not be null or contain null
+     * @return sequence preserving input order
+     * @throws IllegalArgumentException if a name cannot be converted
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static GeneralNames generalNames(List<zeroecho.pkix.GeneralName> names) {
         GeneralName[] converted = names.stream().map(BcExtensions::toBc).toArray(GeneralName[]::new);
         return new GeneralNames(converted);
     }
 
+    /**
+     * Encodes the selected RFC 5280 key-usage bits in an extension.
+     *
+     * @param usage usage flags; must not be null or contain null
+     * @param critical whether relying parties must understand the extension
+     * @return encoded keyUsage extension
+     * @throws IllegalArgumentException if the extension cannot be encoded
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension keyUsage(Set<zeroecho.pkix.KeyUsage> usage, boolean critical) {
         int bits = 0;
         for (zeroecho.pkix.KeyUsage single : usage) {
@@ -181,6 +237,15 @@ final class BcExtensions {
         };
     }
 
+    /**
+     * Encodes the selected purpose OIDs as an extended-key-usage extension.
+     *
+     * @param eku typed purpose OIDs; must not be null
+     * @param critical whether relying parties must understand the extension
+     * @return encoded extendedKeyUsage extension
+     * @throws IllegalArgumentException if an OID or extension encoding is invalid
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension extendedKeyUsage(zeroecho.pkix.ExtendedKeyUsage eku, boolean critical) {
         KeyPurposeId[] purposes = eku.keyPurposeOids().stream()
                 .map(oid -> KeyPurposeId.getInstance(new ASN1ObjectIdentifier(oid)))
@@ -193,6 +258,15 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Encodes CA status and any path-length bound as basic constraints.
+     *
+     * @param constraints non-null typed constraints
+     * @param critical whether relying parties must understand the extension
+     * @return encoded basicConstraints extension
+     * @throws IllegalArgumentException if the extension cannot be encoded
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension basicConstraints(zeroecho.pkix.BasicConstraints constraints, boolean critical) {
         BasicConstraints value;
         if (constraints.certificateAuthority()) {
@@ -211,6 +285,15 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Encodes ordered general names as a subject-alternative-name extension.
+     *
+     * @param names ordered names; must not be null or contain null
+     * @param critical whether relying parties must understand the extension
+     * @return encoded subjectAlternativeName extension
+     * @throws IllegalArgumentException if a name or extension cannot be encoded
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension subjectAlternativeNames(List<zeroecho.pkix.GeneralName> names, boolean critical) {
         try {
             return new Extension(Extension.subjectAlternativeName, critical,
@@ -220,10 +303,28 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Derives a noncritical subject-key-identifier extension from a public key.
+     *
+     * @param publicKey non-null key with SubjectPublicKeyInfo encoding
+     * @return noncritical subjectKeyIdentifier extension
+     * @throws IllegalArgumentException if the key or extension encoding is invalid
+     * @throws IllegalStateException if SHA-1 is unavailable for key-identifier derivation
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension subjectKeyIdentifier(PublicKey publicKey) {
         return subjectKeyIdentifier(spki(publicKey));
     }
 
+    /**
+     * Derives a noncritical subject-key-identifier extension from the subject key bits.
+     *
+     * @param spki non-null SubjectPublicKeyInfo
+     * @return noncritical subjectKeyIdentifier extension
+     * @throws IllegalArgumentException if the extension cannot be encoded
+     * @throws IllegalStateException if SHA-1 is unavailable for key-identifier derivation
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension subjectKeyIdentifier(SubjectPublicKeyInfo spki) {
         try {
             return new Extension(Extension.subjectKeyIdentifier, false, new DEROctetString(
@@ -233,6 +334,14 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Encodes a copied key identifier in a noncritical authority-key-identifier extension.
+     *
+     * @param keyIdentifier non-null authority key-identifier bytes
+     * @return noncritical authorityKeyIdentifier extension
+     * @throws IllegalArgumentException if the extension cannot be encoded
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension authorityKeyIdentifier(byte[] keyIdentifier) {
         try {
             return new Extension(Extension.authorityKeyIdentifier, false, new DEROctetString(
@@ -242,11 +351,25 @@ final class BcExtensions {
         }
     }
 
+    /**
+     * Converts an already encoded typed extension without changing its criticality.
+     *
+     * @param extension non-null OID, criticality, and inner DER value
+     * @return equivalent Bouncy Castle extension
+     * @throws IllegalArgumentException if the object identifier is invalid
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static Extension generic(CertificateExtension extension) {
         return new Extension(new ASN1ObjectIdentifier(extension.oid()), extension.critical(),
                 new DEROctetString(extension.derValue()));
     }
 
+    /**
+     * Copies all ASN.1 extensions into typed extension values in encoded OID order.
+     *
+     * @param extensions source extensions, or null when none are present
+     * @return new mutable list, empty when no extensions are present
+     */
     /* default */ static List<CertificateExtension> fromBc(Extensions extensions) {
         List<CertificateExtension> result = new ArrayList<>();
         if (extensions == null) {
@@ -260,6 +383,13 @@ final class BcExtensions {
         return result;
     }
 
+    /**
+     * Reads and converts the subject-alternative-name extension when present.
+     *
+     * @param extensions source extensions, or null when none are present
+     * @return new mutable list in encoded order, empty when the extension is absent
+     * @throws IllegalArgumentException if the extension or a contained name is malformed
+     */
     /* default */ static List<zeroecho.pkix.GeneralName> sansFromBc(Extensions extensions) {
         List<zeroecho.pkix.GeneralName> result = new ArrayList<>();
         if (extensions == null) {
@@ -276,6 +406,15 @@ final class BcExtensions {
         return result;
     }
 
+    /**
+     * Derives the RFC 5280 SHA-1 subject-key identifier from public-key bits.
+     *
+     * @param publicKey non-null key with SubjectPublicKeyInfo encoding
+     * @return newly allocated key-identifier bytes
+     * @throws IllegalArgumentException if the key encoding is malformed
+     * @throws IllegalStateException if SHA-1 is unavailable
+     * @throws NullPointerException if a required input or collection entry is null
+     */
     /* default */ static byte[] keyIdentifier(PublicKey publicKey) {
         return extensionUtils().createSubjectKeyIdentifier(spki(publicKey)).getKeyIdentifier();
     }

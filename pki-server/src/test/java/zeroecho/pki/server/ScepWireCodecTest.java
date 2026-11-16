@@ -50,6 +50,9 @@ import zeroecho.pkix.Pkix;
 import zeroecho.pkix.scep.ScepCodec;
 import zeroecho.pkix.scep.ScepCodecException;
 
+/**
+ * Checks SCEP wire-message structure, canonical protocol fields and protected request/response handling.
+ */
 class ScepWireCodecTest {
     private static KeyPair requester;
     private static KeyPair ra;
@@ -57,6 +60,11 @@ class ScepWireCodecTest {
     private static X509Certificate raCertificate;
     private static final byte[] NONCE = new byte[16];
 
+    /**
+     * Creates shared requester/RA cryptographic fixtures and their signed CSR before wire scenarios.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @BeforeAll static void keys() throws Exception {
         SecureRandom random = SecureRandom.getInstance("SHA1PRNG"); random.setSeed(new byte[] {91, 13, 6});
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048, random);
@@ -74,6 +82,11 @@ class ScepWireCodecTest {
                 .build(Pkix.signer(pair.getPrivate(), AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11")));
     }
 
+    /**
+     * Checks independent CMS verification binds requester/nonce/transaction before decryption permits only the exact RA recipient.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void independentEnvelopeVerifiesBeforeExactRecipientDecryption() throws Exception {
         byte[] csr = ScepTestClient.csr(requester, "scep-test-challenge");
         byte[] encoded = ScepTestClient.request(csr, "transaction-one", NONCE, 19, requester, requesterCertificate, raCertificate);
@@ -86,6 +99,11 @@ class ScepWireCodecTest {
         assertEquals("scep-test-challenge", ScepCodec.extractChallengePassword(csr));
     }
 
+    /**
+     * Checks hostile signer/attribute/algorithm variants, short nonce, wrong signing key and oversized wire inputs are rejected.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsUnverifiedSignerAttributesAlgorithmsAndBounds() throws Exception {
         byte[] csr = ScepTestClient.csr(requester, "challenge");
         for (String variant : java.util.List.of("badSignature", "duplicateSigner", "duplicateAttribute", "wrongType", "sha1", "wrongOuterType")) {
@@ -104,6 +122,11 @@ class ScepWireCodecTest {
         }
     }
 
+    /**
+     * Checks challenge-password decoding preserves actual Unicode scalars across ASN.1 string forms and rejects malformed code points.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void challengeDirectoryStringUsesActualUnicodeScalarsAcrossEncodings() throws Exception {
         String oid = "1.2.840.113549.1.9.7";
         String expected = "challenge";
@@ -124,6 +147,11 @@ class ScepWireCodecTest {
                 java.util.List.of(new org.bouncycastle.asn1.DERBMPString("\uD800").getEncoded())).challengePassword());
     }
 
+    /**
+     * Checks pending, failure and encrypted success replies through independent signature, nonce and certificate verification.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void pendingFailureAndSuccessAreIndependentlyVerified() throws Exception {
         assertEquals("3", ScepTestClient.response(ScepCodec.buildCertRepPending("transaction", NONCE, raCertificate, ra.getPrivate()),
                 raCertificate, requester, NONCE).status());

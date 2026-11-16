@@ -47,6 +47,9 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for sign workflow store due page.
+ */
 final class SignWorkflowStoreDuePageTest {
     private static final PkiId FIRST = id(1L, '1');
     private static final PkiId SECOND = id(2L, '2');
@@ -54,6 +57,9 @@ final class SignWorkflowStoreDuePageTest {
             new SignWorkflowStore.SchedulingCoordinates(
                     new KeyRef("test-key"), new PkiId("test-authority"));
 
+    /**
+     * Snapshots candidates and accepts consistent lightweight page.
+     */
     @Test
     void snapshotsCandidatesAndAcceptsConsistentLightweightPage() {
         List<SignWorkflowStore.DueCandidate> source = new ArrayList<>();
@@ -74,6 +80,9 @@ final class SignWorkflowStoreDuePageTest {
                         SECOND, SCHEDULING, false)));
     }
 
+    /**
+     * Rejects noncanonical ids order duplicates cursor counts and watermark.
+     */
     @Test
     void rejectsNoncanonicalIdsOrderDuplicatesCursorCountsAndWatermark() {
         SignWorkflowStore.DueCandidate first = new SignWorkflowStore.DueCandidate(

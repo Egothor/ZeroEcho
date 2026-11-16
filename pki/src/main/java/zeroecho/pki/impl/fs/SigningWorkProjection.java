@@ -48,13 +48,21 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
-/** Atomic signing-work projections sharing one canonical identity per operation. */
+/**
+ * Atomic signing-work projections sharing one canonical identity per operation.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidDeeplyNestedIfStmts",
         "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource", "PMD.CommentRequired",
         "PMD.CompareObjectsWithEquals", "PMD.ControlStatementBraces",
         "PMD.UseTryWithResources" })
 final class SigningWorkProjection implements AutoCloseable {
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.signing-state}; persisted identities depend on this value.
+     */
     /* default */ static final String STATE_NAMESPACE = "io.zeroecho.pki.signing-state";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.signing-envelope}; persisted identities depend on this value.
+     */
     /* default */ static final String ENVELOPE_NAMESPACE = "io.zeroecho.pki.signing-envelope";
     private static final long COORDINATE_FIXED_BYTES = 128L;
 
@@ -66,12 +74,31 @@ final class SigningWorkProjection implements AutoCloseable {
     private long reservedIdentityBytes;
     private final Set<String> residentOnly = new HashSet<>();
 
+    /**
+     * Creates a derived signing-work projection borrowing the due, retention, ownership, and capacity collaborators.
+     *
+     * @param due borrowed due-work index; must not be null
+     * @param retention borrowed terminal-retention index; must not be null
+     * @param owners borrowed owner-work index validated for composition; must not be null
+     * @param capacity borrowed resident index workspace budget; must not be null
+     * @throws NullPointerException if a required index or capacity collaborator is null
+     */
     /* default */ SigningWorkProjection(SigningDueWorkIndex due,
             SigningRetentionIndex retention, SigningDueWorkIndex owners,
             SigningIndexCapacityBudget capacity) {
         this(due, retention, owners, capacity, null);
     }
 
+    /**
+     * Creates a derived signing-work projection borrowing the due, retention, ownership, and capacity collaborators.
+     *
+     * @param due borrowed due-work index; must not be null
+     * @param retention borrowed terminal-retention index; must not be null
+     * @param owners borrowed owner-work index validated for composition; must not be null
+     * @param capacity borrowed resident index workspace budget; must not be null
+     * @param stagedContent optional borrowed content store for exact content-ownership validation, or null
+     * @throws NullPointerException if a required index or capacity collaborator is null
+     */
     /* default */ SigningWorkProjection(SigningDueWorkIndex due,
             SigningRetentionIndex retention, SigningDueWorkIndex owners,
             SigningIndexCapacityBudget capacity, StagedContentStore stagedContent) {
@@ -82,14 +109,33 @@ final class SigningWorkProjection implements AutoCloseable {
         this.stagedContent = stagedContent;
     }
 
-    /** Reserves every identity and derived structural change before WAL admission. */
+    /**
+     * Reserves every identity and derived structural change before WAL admission.
+     * @param payload validated committed or direct-committed transaction payload
+     * @param pointer exact physical pointer assigned to that mutation frame
+     * @return owned prepared projection; publish or close it to roll back reservations
+     * @throws IOException if stored workflow/dependency semantics cannot be decoded or validated
+     * @throws NullPointerException if a required payload or admission-class input is null
+     * @throws IllegalArgumentException if workflow identity, scheduling, or dependency handoff differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if projection workspace is unavailable
+     */
     /* default */ Prepared prepare(SigningTransactionPayloadCodec.Payload payload,
             SigningMvccIndex.RecordPointer pointer) throws IOException {
         return prepare(payload, pointer, null,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
-    /** Reserves changes while transferring one ephemeral initial due-work admission. */
+    /**
+     * Reserves changes while transferring one ephemeral initial due-work admission.
+     * @param payload validated committed or direct-committed transaction payload
+     * @param pointer exact physical pointer assigned to that mutation frame
+     * @param dueAdmission optional active admission reserved for an initial due entry, or null
+     * @return owned prepared projection; publish or close it to roll back reservations
+     * @throws IOException if stored workflow/dependency semantics cannot be decoded or validated
+     * @throws NullPointerException if a required payload or admission-class input is null
+     * @throws IllegalArgumentException if workflow identity, scheduling, or dependency handoff differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if projection workspace is unavailable
+     */
     /* default */ Prepared prepare(SigningTransactionPayloadCodec.Payload payload,
             SigningMvccIndex.RecordPointer pointer,
             SigningDueWorkIndex.Admission dueAdmission) throws IOException {
@@ -97,6 +143,19 @@ final class SigningWorkProjection implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Reserves all identity, due, retention, and dependency changes before WAL admission.
+     *
+     * @param payload validated committed or direct-committed transaction payload
+     * @param pointer exact physical pointer assigned to that mutation frame
+     * @param dueAdmission optional active admission reserved for an initial due entry, or null
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned prepared projection; publish or close it to roll back reservations
+     * @throws IOException if stored workflow/dependency semantics cannot be decoded or validated
+     * @throws NullPointerException if a required payload or admission-class input is null
+     * @throws IllegalArgumentException if workflow identity, scheduling, or dependency handoff differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if projection workspace is unavailable
+     */
     /* default */ Prepared prepare(SigningTransactionPayloadCodec.Payload payload,
             SigningMvccIndex.RecordPointer pointer,
             SigningDueWorkIndex.Admission dueAdmission,
@@ -105,6 +164,20 @@ final class SigningWorkProjection implements AutoCloseable {
                 SigningHybridCrlDependencies.View.empty());
     }
 
+    /**
+     * Reserves all identity, due, retention, and dependency changes before WAL admission.
+     *
+     * @param payload validated committed or direct-committed transaction payload
+     * @param pointer exact physical pointer assigned to that mutation frame
+     * @param dueAdmission optional active admission reserved for an initial due entry, or null
+     * @param admissionClass workspace admission class; must not be null
+     * @param dependencies validated hybrid parent/child dependency view; must not be null
+     * @return owned prepared projection; publish or close it to roll back reservations
+     * @throws IOException if stored workflow/dependency semantics cannot be decoded or validated
+     * @throws NullPointerException if a required payload or admission-class input is null
+     * @throws IllegalArgumentException if workflow identity, scheduling, or dependency handoff differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if projection workspace is unavailable
+     */
     /* default */ Prepared prepare(SigningTransactionPayloadCodec.Payload payload,
             SigningMvccIndex.RecordPointer pointer,
             SigningDueWorkIndex.Admission dueAdmission,
@@ -264,12 +337,33 @@ final class SigningWorkProjection implements AutoCloseable {
         return SignWorkflowStore.SchedulingPlan.from(envelope);
     }
 
-    /** Bulk-rebuilds active state pointers from canonical metadata-key order. */
+    /**
+     * Bulk-rebuilds active state pointers from canonical metadata-key order.
+     * @param recoveredStates validated retained workflow states in canonical identity order
+     * @param schedulingByOperation exact frozen scheduling plans indexed by operation identity
+     * @return immutable state-visit and projection-entry reconstruction statistics
+     * @throws NullPointerException if required recovery inputs are null
+     * @throws IllegalStateException if the target projection already owns identities
+     * @throws IllegalArgumentException if recovery identity, scheduling, or dependency evidence is inconsistent
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if recovery workspace is unavailable
+     */
     /* default */ RecoveryStatistics recoverAll(List<RecoveredState> recoveredStates,
             Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation) {
         return recoverAll(recoveredStates, schedulingByOperation, SigningHybridCrlDependencies.View.empty());
     }
 
+    /**
+     * Bulk-rebuilds derived work projections from validated canonical state and scheduling evidence.
+     *
+     * @param recoveredStates validated retained workflow states in canonical identity order
+     * @param schedulingByOperation exact frozen scheduling plans indexed by operation identity
+     * @param dependencies validated recovered hybrid dependency view
+     * @return immutable state-visit and projection-entry reconstruction statistics
+     * @throws NullPointerException if required recovery inputs are null
+     * @throws IllegalStateException if the target projection already owns identities
+     * @throws IllegalArgumentException if recovery identity, scheduling, or dependency evidence is inconsistent
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if recovery workspace is unavailable
+     */
     /* default */ RecoveryStatistics recoverAll(List<RecoveredState> recoveredStates,
             Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation,
             SigningHybridCrlDependencies.View dependencies) {
@@ -338,6 +432,15 @@ final class SigningWorkProjection implements AutoCloseable {
         return slot;
     }
 
+    /**
+     * Measures shared canonical identity and all primary/alternative proof scheduling coordinates.
+     *
+     * @param identity reused canonical operation identity
+     * @param scheduling exact immutable operation scheduling plan
+     * @return tracked resident identity and scheduling reservation in bytes
+     * @throws NullPointerException if identity or scheduling is null
+     * @throws ArithmeticException if tracked byte arithmetic overflows
+     */
     /* default */ static long identityResidentBytes(SigningDueWorkIndex.CanonicalOperationId identity,
             SignWorkflowStore.SchedulingPlan scheduling) {
         long bytes = Math.addExact(identity.sharedResidentBytes(), 64L);
@@ -394,14 +497,33 @@ final class SigningWorkProjection implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns current identity counts and tracked shared reservation bytes.
+     *
+     * @return immutable projection identity cardinality and byte reservation statistics
+     */
     /* default */ Statistics statistics() {
         return new Statistics(identities.size(), reservedIdentityBytes);
     }
 
+    /**
+     * Tests whether the projection retains the exact operation identity.
+     *
+     * @param operationId logical operation identity; must not be null
+     * @return true when its shared identity slot remains retained
+     * @throws NullPointerException if operationId is null
+     */
     /* default */ boolean containsOperation(String operationId) {
         return identities.containsKey(Objects.requireNonNull(operationId, "operationId"));
     }
 
+    /**
+     * Releases committed shared-identity workspace and clears this projection's retained identity maps.
+     *
+     * <p>The due and retention indexes, staged-content store, and capacity budget are
+     * borrowed and remain open. Repeated cleanup of the emptied projection is a no-op;
+     * separately owned prepared changes retain their own rollback obligations.</p>
+     */
     @Override public void close() {
         if (reservedIdentityBytes > 0L) capacity.releaseCommitted(reservedIdentityBytes);
         reservedIdentityBytes = 0L;
@@ -518,7 +640,9 @@ final class SigningWorkProjection implements AutoCloseable {
             Map<String, IdentitySlot> identities, long identityBytes) {
     }
 
-    /** Prepared derived changes with idempotent rollback. */
+    /**
+     * Prepared derived changes with idempotent rollback.
+     */
     /* default */ final class Prepared implements AutoCloseable {
         private final List<SigningDueWorkIndex.PreparedChange> orderedChanges;
         private final List<SigningRetentionIndex.PreparedChange> retentionChanges;
@@ -543,9 +667,22 @@ final class SigningWorkProjection implements AutoCloseable {
             this.residentChanges = Map.copyOf(residentChanges);
         }
 
+        /**
+         * Attaches prepared hybrid dependencies for publication; rollback also requires closeDependencies.
+         *
+         * @param prepared owned prepared dependency changes to publish with this projection
+         */
         /* default */ void attach(SigningHybridCrlDependencies.Prepared prepared) { dependencies = prepared; }
+        /**
+         * Closes attached prepared dependency changes when present; leaves unrelated collaborators open.
+         */
         /* default */ void closeDependencies() { if (dependencies != null) dependencies.close(); }
 
+        /**
+         * Publishes all ordered changes, commits identity reservations, and publishes attached dependencies.
+         *
+         * @throws IllegalStateException if this preparation is inactive or child publication ownership differs
+         */
         /* default */ void publish() {
             if (!active) throw new IllegalStateException("Signing work projection is closed");
             for (SigningDueWorkIndex.PreparedChange change : orderedChanges) change.publish();
@@ -560,6 +697,13 @@ final class SigningWorkProjection implements AutoCloseable {
             active = false;
         }
 
+        /**
+         * Rolls back this unpublished projection's due, retention, and identity reservations once.
+         *
+         * <p>Published or already closed preparations are no-ops. Attached hybrid dependency
+         * preparations are not closed here; their owner must also call closeDependencies.
+         * Borrowed indexes, budgets, and content stores remain open.</p>
+         */
         @Override public void close() {
             if (!active) return;
             active = false;
@@ -567,12 +711,31 @@ final class SigningWorkProjection implements AutoCloseable {
         }
     }
 
+    /**
+     * Projected operation identity count and its accounted memory reservation.
+     *
+     * @param identities number of retained projected operation identities
+     * @param reservedBytes current accounted reservation in bytes
+     */
     /* default */ record Statistics(int identities, long reservedBytes) {
     }
 
-    /** One state record read through the recovered MVCC pointer. */
+    /**
+     * One state record read through the recovered MVCC pointer.
+     * @param key exact logical metadata identity
+     * @param content exact encoded metadata content bytes
+     * @param pointer exact retained physical record pointer
+     */
     /* default */ record RecoveredState(MetadataKey key, byte[] content,
             SigningMvccIndex.RecordPointer pointer) {
+        /**
+         * Creates one state record read through the recovered MVCC pointer.
+         *
+         * @param key exact logical metadata identity
+         * @param content exact encoded metadata content bytes
+         * @param pointer exact retained physical record pointer
+         * @throws NullPointerException if {@code key} is null; or if {@code content} is null; or if {@code pointer} is null
+         */
         RecoveredState {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(content, "content");
@@ -580,7 +743,12 @@ final class SigningWorkProjection implements AutoCloseable {
         }
     }
 
-    /** Scalar evidence emitted by the production bulk reconstruction path. */
+    /**
+     * Scalar evidence emitted by the production bulk reconstruction path.
+     * @param statesVisited number of mutable-state records visited during reconstruction
+     * @param activeEntriesBuilt number of active work descriptors built during reconstruction
+     * @param statePointersRetained number of physical state pointers retained by the reconstructed projection
+     */
     /* default */ record RecoveryStatistics(long statesVisited, long activeEntriesBuilt,
             long statePointersRetained) {
     }

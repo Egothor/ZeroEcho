@@ -155,6 +155,7 @@ public final class PkiBootstrap {
      *
      * @param dependencies authoritative process-local store dependencies
      * @return opened store owned by the caller
+     * @throws NullPointerException if dependencies is null
      */
     public static PkiStore openStore(PkiStoreRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies");
@@ -207,6 +208,7 @@ public final class PkiBootstrap {
      * @param config immutable store-provider configuration
      * @param dependencies authoritative process-local store dependencies
      * @return opened store owned by the caller
+     * @throws NullPointerException if dependencies is null
      */
     public static PkiStore openStore(ProviderConfig config, PkiStoreRuntimeDependencies dependencies) {
         validateStoreConfiguration(config);
@@ -323,6 +325,7 @@ public final class PkiBootstrap {
      * @param config immutable signing-provider configuration
      * @throws RuntimeException if the provider identity, property set, or
      *         provider-specific values are invalid
+     * @throws NullPointerException if config is null
      */
     public static void validateSigningProviderConfiguration(ProviderConfig config) {
         SigningProviderFactory provider = selectSigningProviderFactory(
@@ -354,6 +357,7 @@ public final class PkiBootstrap {
      * @param dependencies process-local security capabilities
      * @return exact allocated provider and its factory's immutable contribution
      * @throws RuntimeException if validation, contribution capture or allocation fails
+     * @throws NullPointerException if dependencies, config is null
      */
     public static SigningComposition openConfiguredSigningComposition(ProviderConfig config,
             SigningProviderRuntimeDependencies dependencies) {
@@ -377,6 +381,7 @@ public final class PkiBootstrap {
          * Captures an allocation and a defensive snapshot of its contribution.
          * @param provider non-null allocated provider
          * @param capabilities non-null contribution without null entries
+         * @throws NullPointerException if provider is null
          */
         public SigningComposition {
             Objects.requireNonNull(provider, "provider");
@@ -484,6 +489,7 @@ public final class PkiBootstrap {
      *
      * @param config immutable framework-provider configuration
      * @throws RuntimeException if provider selection or configuration is invalid
+     * @throws NullPointerException if config is null
      */
     public static void validateCredentialFrameworkConfiguration(ProviderConfig config) {
         CredentialFrameworkProvider provider = selectCredentialFrameworkProvider(
@@ -497,6 +503,7 @@ public final class PkiBootstrap {
      *
      * @param config immutable publisher-provider configuration
      * @throws RuntimeException if provider selection or configuration is invalid
+     * @throws NullPointerException if config is null
      */
     public static void validatePublisherConfiguration(ProviderConfig config) {
         PublisherProvider provider = selectPublisherProvider(Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
@@ -525,6 +532,7 @@ public final class PkiBootstrap {
      *
      * @param <T> provider allocation result type
      * @param provider provider (never {@code null})
+     * @throws NullPointerException if provider is null
      */
     public static <T> void logSupportedKeys(ConfigurableProvider<T> provider) {
         Objects.requireNonNull(provider, "provider");

@@ -82,10 +82,20 @@ import zeroecho.pki.server.confirmation.SignatureKeyPossessionProofProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 
-/** Realm composition, one-session lifecycle and exposure-policy tests. */
+/**
+ * Realm composition, one-session lifecycle and exposure-policy tests.
+ */
 class ServerRealmContextTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks incompatible active profile changes are refused and retained endpoint/profile state remains restartable.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void incompatibleEnrollmentPolicyUpdateCannotPreventRealmRestart() throws Exception {
         ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
@@ -114,6 +124,11 @@ class ServerRealmContextTest {
         }
     }
 
+    /**
+     * Checks enrollment administration is installed and corrupt retained policy prevents realm readiness without deleting evidence.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void enrollmentRegistryIsInstalledAndRejectsCorruptPolicyBeforeRealmReadiness() throws Exception {
         ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
@@ -139,6 +154,11 @@ class ServerRealmContextTest {
         }
     }
 
+    /**
+     * Checks pending approvals expire in metrics while administrative-entry and safe schedule-failure counters advance independently.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void dashboardCountsRealPendingApprovalsAndRecordsSafeScheduleFailures() throws Exception {
         ServerRealmConfiguration config = configuration(new AuthorityExposurePolicy(
@@ -169,6 +189,11 @@ class ServerRealmContextTest {
         }
     }
 
+    /**
+     * Checks concurrent realm closure shares one successful attempt and closes session, control and request coordinator once.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentCloseSharesOneSuccessfulAttemptAndClosesExactlyOnce() throws Exception {
         PkiSession session = mock(PkiSession.class);
@@ -204,6 +229,11 @@ class ServerRealmContextTest {
         order.verify(control).close();
     }
 
+    /**
+     * Checks close callers share the exact failed attempt, retain still-dependent resources and allow a later completion retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentFailureIsSharedAndOneLaterRetryClosesRemainingResources() throws Exception {
         PkiSession session = mock(PkiSession.class);
@@ -263,6 +293,11 @@ class ServerRealmContextTest {
         order.verify(control).close();
     }
 
+    /**
+     * Checks worker-origin closure moves the realm to closing without tearing down dependencies before an external retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void serverWorkerOnlyQuiescesAndRequestsExternalRetry() throws Exception {
         PkiSession session = mock(PkiSession.class);
@@ -289,6 +324,11 @@ class ServerRealmContextTest {
         order.verify(control).close();
     }
 
+    /**
+     * Checks shared session/service identity and durable control recovery across realm close/reopen.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void opensOneLongLivedSessionClosesAndRecoversControlState() throws Exception {
         System.out.println("opensOneLongLivedSessionClosesAndRecoversControlState");
@@ -318,6 +358,9 @@ class ServerRealmContextTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks configured nondefault confirmation realm, audience, TTL and 4,096-bit RSA policy select the exact installed provider descriptor.
+     */
     @Test
     void composesExactNondefaultProofRuntimeWithoutMutableRegistration() {
         ServerRealmConfiguration configured = configuration(new AuthorityExposurePolicy(
@@ -349,6 +392,9 @@ class ServerRealmContextTest {
                 () -> runtime.keyPossessionProofProviders().clear());
     }
 
+    /**
+     * Checks explicit exposure permits the selected CA, rejects another and requires a nonempty explicit set.
+     */
     @Test
     void supportsExplicitOneAuthorityAndRejectsOtherAuthority() {
         System.out.println("supportsExplicitOneAuthorityAndRejectsOtherAuthority");
@@ -362,6 +408,11 @@ class ServerRealmContextTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a changed realm configuration commitment prevents reopening existing durable authority.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsChangedRealmCommitmentOnReopen() throws Exception {
         System.out.println("rejectsChangedRealmCommitmentOnReopen");
@@ -387,6 +438,11 @@ class ServerRealmContextTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks retained cross-store audit anchoring detects rewritten audit history on realm reopen.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void auditAnchorDetectsAuditLogRewriteAcrossReopen() throws Exception {
         System.out.println("auditAnchorDetectsAuditLogRewriteAcrossReopen");
@@ -461,6 +517,11 @@ class ServerRealmContextTest {
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
     }
 
+    /**
+     * Checks unsafe restore/control colocation is rejected before changing control bytes, pending journal or PKI initialization state.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void pendingRestoreRejectsNestedControlBeforeOpeningOrMutatingAnyStore() throws Exception {
         ServerRealmConfiguration original = configuration(new AuthorityExposurePolicy(

@@ -87,17 +87,31 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for filesystem CRL number reservation.
+ */
 class FilesystemCrlNumberReservationTest {
     private static final Instant BEFORE = Instant.parse("2025-01-01T00:00:00Z");
     private static final Instant AFTER = Instant.parse("2030-01-01T00:00:00Z");
     private static KeyPair key;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void key() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         key = generator.generateKeyPair();
     }
 
+    /**
+     * Defaults custom and zero numbers are durably consumed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void defaultsCustomAndZeroNumbersAreDurablyConsumed(@TempDir Path root) throws Exception {
         for (BigInteger initial : List.of(BigInteger.ZERO, BigInteger.ONE, BigInteger.valueOf(400))) {
             Path directory = root.resolve(initial.toString());
@@ -114,6 +128,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Same scope rollover and replay preserve sequence while distinct scopes are independent.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sameScopeRolloverAndReplayPreserveSequenceWhileDistinctScopesAreIndependent(@TempDir Path root)
             throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
@@ -136,6 +156,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Reopened unissued reservation is not reused and changed initial only affects new scopes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reopenedUnissuedReservationIsNotReusedAndChangedInitialOnlyAffectsNewScopes(@TempDir Path root)
             throws Exception {
         Issuer original;
@@ -157,6 +183,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Snapshots and historical reexports preserve current counter high water.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void snapshotsAndHistoricalReexportsPreserveCurrentCounterHighWater(@TempDir Path root) throws Exception {
         Path current = root.resolve("current");
         Path historical = root.resolve("historical");
@@ -193,6 +225,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Concurrent allocations are unique and contiguous.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void concurrentAllocationsAreUniqueAndContiguous(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
                 ExecutorService workers = Executors.newFixedThreadPool(8)) {
@@ -215,6 +253,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Maximum issued number transitions once to exhaustion.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void maximumIssuedNumberTransitionsOnceToExhaustion(@TempDir Path root) throws Exception {
         BigInteger maximum = CrlScopeCounter.EXHAUSTED.subtract(BigInteger.ONE);
         try (FilesystemPkiStore store = new FilesystemPkiStore(root,
@@ -228,6 +272,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Missing generation and wrong scope owner do not allocate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingGenerationAndWrongScopeOwnerDoNotAllocate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             assertThrows(IllegalStateException.class, () -> store.reserveCrlNumber(new PkiId("missing")));
@@ -249,6 +299,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Definite precommit failure leaves number reusable.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void definitePrecommitFailureLeavesNumberReusable(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             PkiId generation = issuer(store, "Definite", 1).generation().issuerId();
@@ -260,6 +316,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Metadata capacity rejection does not fence store or consume number.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void metadataCapacityRejectionDoesNotFenceStoreOrConsumeNumber(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Issuer issuer = issuer(store, "Capacity", 1);
@@ -286,6 +348,12 @@ class FilesystemCrlNumberReservationTest {
         }
     }
 
+    /**
+     * Unknown commit prefixes return no number fence and recover same or advanced authority.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unknownCommitPrefixesReturnNoNumberFenceAndRecoverSameOrAdvancedAuthority(@TempDir Path root)
             throws Exception {
         for (CrlScopeReservationStore.CounterCommitFault fault : List.of(

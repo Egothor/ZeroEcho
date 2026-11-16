@@ -53,6 +53,14 @@ public final class X509SignedObjectCompletion implements zeroecho.pki.spi.framew
     private final X509ExecutionPlan<SigningProvider> signingPlan;
     private final Object authorityToken;
 
+    /**
+     * Captures live completion evidence with its exact signing plan and authority provenance.
+     *
+     * @param statusObject immutable completed status metadata
+     * @param signingPlan exact process-local plan used to sign the object
+     * @param authorityToken opaque provenance token retained by the owning authority
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ X509SignedObjectCompletion(StatusObject statusObject,
             X509ExecutionPlan<SigningProvider> signingPlan, Object authorityToken) {
         this.statusObject = Objects.requireNonNull(statusObject, "statusObject");
@@ -70,10 +78,21 @@ public final class X509SignedObjectCompletion implements zeroecho.pki.spi.framew
         return statusObject;
     }
 
+    /**
+     * Returns the process-local plan bound to the completed status object.
+     *
+     * @return exact retained signing plan; no private key material is returned
+     */
     /* default */ X509ExecutionPlan<SigningProvider> signingPlan() {
         return signingPlan;
     }
 
+    /**
+     * Tests candidate authority provenance without exposing the retained token.
+     *
+     * @param candidate candidate token; null never matches
+     * @return true when the retained authority token equals the candidate
+     */
     /* default */ boolean isOwnedBy(Object candidate) {
         return authorityToken.equals(candidate);
     }

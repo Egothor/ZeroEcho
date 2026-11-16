@@ -42,9 +42,20 @@ import zeroecho.pki.server.http.HybridSdkHttpCodec;
 import zeroecho.pki.server.http.StrictJson;
 import zeroecho.pki.application.PkiOperationValue;
 
+/**
+ * Contract coverage for SDK OpenAPI schemas and strict enrollment decoding.
+ */
 class OpenApiSdkContractTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporary;
 
+    /**
+     * Checks SDK schema agreement with strict enrollment decoding and rejection of extra fields.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void sdkSchemasMatchTheStrictEnrollmentCodecAndRejectExtraMembers() throws Exception {
         Path output=temporary.resolve("api.yaml");
         OpenApiGenerator.main(new String[]{"test","src/main/resources/openapi-supplement.yaml",output.toString()});

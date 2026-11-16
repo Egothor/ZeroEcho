@@ -55,11 +55,17 @@ public final class BikeKeyGenSpec implements AlgorithmKeySpec, Describable {
      * Available BIKE parameter sets.
      */
     public enum Variant {
-        /** BIKE with 128-bit security strength. */
+        /**
+         * BIKE with 128-bit security strength.
+         */
         BIKE_128,
-        /** BIKE with 192-bit security strength. */
+        /**
+         * BIKE with 192-bit security strength.
+         */
         BIKE_192,
-        /** BIKE with 256-bit security strength. */
+        /**
+         * BIKE with 256-bit security strength.
+         */
         BIKE_256
     }
 

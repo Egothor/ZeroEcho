@@ -114,6 +114,7 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
      * @param secureRandom session-local cryptographically secure nonce source
      * @param auditSink optional session-owned best-effort audit sink
      * @param clock authoritative session clock used for proof liveness and audit timestamps
+     * @throws NullPointerException if store, lifecycleGuard, proofProviders, proofPolicy, secureRandom, clock is null or a supplied collection contains a null member
      */
     public DefaultCredentialConfirmationService(PkiStore store, Runnable lifecycleGuard,
             Map<String, KeyPossessionProofProvider> proofProviders,
@@ -128,6 +129,9 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
         this.audit = new CredentialConfirmationAudit(auditSink, this.clock);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationLifecycle initialize(
             CredentialConfirmationInitialization initialization) {
@@ -136,12 +140,18 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
                 Objects.requireNonNull(initialization, "initialization"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialConfirmationLifecycle> get(PkiId credentialId) {
         lifecycleGuard.run();
         return store.getCredentialConfirmation(Objects.requireNonNull(credentialId, "credentialId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationProofChallenge issueProofChallenge(
             CredentialConfirmationProofChallengeRequest request) {
@@ -195,6 +205,9 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationProofResult verifyAndComplete(
             CredentialConfirmationProofSubmission submission) {
@@ -246,6 +259,9 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CredentialConfirmationReviewPage pagePendingReviews(PkiId authorityId,
             Optional<String> profileId, Instant cutoffInclusive,
@@ -258,6 +274,13 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
                 Objects.requireNonNull(afterExclusive, "afterExclusive"), limit);
     }
 
+    /**
+     * Looks up a configured proof provider by its canonical suite identity.
+     *
+     * @param suiteId canonical proof suite identity; must not be null
+     * @return borrowed provider, or an empty optional when the suite is unconfigured
+     * @throws NullPointerException if suiteId is null
+     */
     /* default */ Optional<KeyPossessionProofProvider> proofProvider(String suiteId) {
         return Optional.ofNullable(proofProviders.get(Objects.requireNonNull(suiteId, "suiteId")));
     }

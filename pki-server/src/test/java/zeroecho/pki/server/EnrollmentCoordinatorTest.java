@@ -107,8 +107,13 @@ import zeroecho.pki.server.est.EstEndpoint;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 
-/** Durable protocol identity, approvals, receipt ordering and restart contracts. */
+/**
+ * Durable protocol identity, approvals, receipt ordering and restart contracts.
+ */
 class EnrollmentCoordinatorTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
     private static byte[] csr;
     private static byte[] crmf;
@@ -118,6 +123,11 @@ class EnrollmentCoordinatorTest {
     private static final PkiId AUTHORITY = new PkiId("ca:enrollment");
     private static final PkiId ISSUER = new PkiId("issuer:enrollment");
 
+    /**
+     * Generates shared RSA recipient, PKCS#10, CRMF, and replacement request fixtures before the scenarios.
+     *
+     * @throws Exception if key generation, certificate construction, or CSR/CRMF signing and encoding fails
+     */
     @BeforeAll static void request() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048);
         KeyPair pair = generator.generateKeyPair();
@@ -144,6 +154,11 @@ class EnrollmentCoordinatorTest {
                 .setProofOfPossessionSigningKeySigner(new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate())).build().getEncoded();
     }
 
+    /**
+     * Checks that EST key generation durably retains encrypted key output before approval and reuses it on retry.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void estServicePersistsEncryptedGeneratedKeyBeforeApprovalAndNeverRegeneratesOnRetry() throws Exception {
         EnrollmentRuntimeConfiguration base = keygenConfiguration(directory.resolve("encrypted"), 3, 64, 1);
         EnrollmentRuntimeConfiguration config = new EnrollmentRuntimeConfiguration(base.budgets(), base.keyrings(), base.credentialSets(), base.activeCredentials(),
@@ -213,6 +228,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects generated enrollment requests with invalid proof even when the original template signature is not authoritative.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenGeneratedRequestStillRequiresValidProofDespiteIgnoredOriginalSignature() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 32, 1);
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
@@ -233,6 +253,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks atomic attachment of generated requests while retaining original template bindings and ciphertext after restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenAtomicAttachmentPreservesTemplateAndCiphertextAcrossPhysicalRestart() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 3, 64, 2);
         EnrollmentTransaction attached;
@@ -280,6 +305,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Bounds encrypted-key delivery by the frozen generator credential expiry and rejects stale recovered state.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenDeliveryCannotOutliveFrozenGeneratorValidity() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 64, 1);
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
@@ -306,6 +336,11 @@ class EnrollmentCoordinatorTest {
                 value.createdAt(), value.expiresAt());
     }
 
+    /**
+     * Checks fencing after unknown reservation or attachment acknowledgements and recovery without generating another key.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenUnknownReservationAndAttachmentAcksFenceThenRecoverWithoutRegeneration() throws Exception {
         for (boolean attachment : List.of(false, true)) {
             Path root = java.nio.file.Files.createDirectory(directory.resolve("ack-" + attachment));
@@ -349,6 +384,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks capacity reservation before generation and retained failure evidence after template substitution is rejected.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenCapacityPrecedesGenerationAndFailedTemplateSubstitutionLeavesOnlyTombstone() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 32, 1);
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
@@ -372,6 +412,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks expiry and byte reclamation for abandoned generated-key delivery when later work is admitted.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenAbandonedDeliveryExpiresAndReclaimsBytesOnNewAdmission() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 32, 1);
         java.time.Clock clock = mock(java.time.Clock.class);
@@ -397,6 +442,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks that delivery capacity rejection leaves the coordinator usable while active leases retain expired ciphertext.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenDeliveryCapacityDoesNotFenceAndLeasesPinExpiredCiphertext() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 3, 64, 1);
         java.time.Clock clock = mock(java.time.Clock.class);
@@ -439,6 +489,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Retains ciphertext while acceptance is uncertain and rejects forged expiry evidence before destructive cleanup.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenAcceptedUncertaintyPinsCiphertextAndForgedExpiryCannotDeleteIt() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 32, 1);
         java.time.Clock clock = mock(java.time.Clock.class);
@@ -476,6 +531,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks generation-handle release after uncertain terminalization so shutdown and recovery can complete.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenFailedTerminalizationAckReleasesGenerationForShutdownAndRecovery() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 32, 1);
         KeygenInput input;
@@ -500,6 +560,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects exhausted shared capacity before storing an enrollment template or generating key material.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenGlobalReservationRejectsBeforeTemplatePersistenceOrGeneration() throws Exception {
         EnrollmentRuntimeConfiguration full = keygenConfiguration(directory.resolve("encrypted"), 2, 64, 1);
         EnrollmentRuntimeConfiguration.Budgets b = full.budgets();
@@ -519,6 +584,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects inconsistent keygen descriptors and missing source requests without deleting retained ciphertext.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void keygenStrictDescriptorAndMissingRequestFailBeforeCiphertextCleanup() throws Exception {
         EnrollmentRuntimeConfiguration config = keygenConfiguration(directory.resolve("encrypted"), 2, 64, 1);
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
@@ -606,6 +676,11 @@ class EnrollmentCoordinatorTest {
                 Optional.of(new EnrollmentRuntimeConfiguration.KeygenArtifacts(spool, 32, bytes, count, concurrency, Duration.ofMinutes(10))));
     }
 
+    /**
+     * Checks independent approval decisions and their threshold state after physical control-store restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void independentThresholdDecisionsSurvivePhysicalControlRestart() throws Exception {
         Path log;
         EnrollmentTransaction admitted;
@@ -635,6 +710,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects fresh claims under suspension while preserving exact replay and the original endpoint identity across configuration ABA.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void suspensionBlocksClaimButIdenticalReplayAndEndpointAbaRetainOriginalIdentity() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -653,6 +733,11 @@ class EnrollmentCoordinatorTest {
     }
 
 
+    /**
+     * Checks discard of unaccepted prepared work when cancellation arrives before claim ownership.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cancellationBeforeClaimDiscardsPreparedReceiptWithoutAcceptance() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -674,6 +759,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks dispatch-slot release and no signing acceptance on failed transport claims, invalid preparation, or cancellation.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void transportClaimValidationFailuresAndCancellationNeverAcceptAndReleaseDispatchSlot() throws Exception {
         for (int failurePosition : List.of(1, 2)) {
             for (boolean cancellation : List.of(false, true)) {
@@ -706,6 +796,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks protocol deadline enforcement during pending polling and preparation that crosses its expiry.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void protocolDeadlineExpiresPendingPollAndCrossingPreparationCannotClaim() throws Exception {
         java.time.Clock clock = mock(java.time.Clock.class);
         AtomicReference<java.time.Instant> now = new AtomicReference<>(ServerTestSupport.CLOCK.instant());
@@ -738,6 +833,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Requires the exact receipt to become durable before acceptance and prevents preparation retry while resolution is unknown.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void persistsExactReceiptBeforeAcceptAndUnknownResolutionCannotPrepareAgain() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -768,6 +868,11 @@ class EnrollmentCoordinatorTest {
 
 
 
+    /**
+     * Checks that old account-key aliases remain excluded after directory configuration changes.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void historicalAccountAliasesRemainExcludedAfterConfigurationChange() throws Exception {
         byte[] a = lineageKey(1); byte[] b = lineageKey(2); byte[] c = lineageKey(3);
         String bHash = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(b).equivalentSubjectPublicKeyInfoSha256().iterator().next();
@@ -833,6 +938,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects an authenticated endpoint commitment mismatch before any durable admission mutation.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void authenticatedEndpointCommitmentMustMatchBeforeAnyAdmissionWrite() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -845,6 +955,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects checksum-valid account history that omits the current authoritative account key.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void checksumConsistentAccountHistoryMissingCurrentKeyFailsStartup() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -872,6 +987,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks shared account-history transaction capacity and reconstruction after an unknown account-creation outcome.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void accountHistorySharesTransactionCapacityAndRebuildsAfterUnknownCreation() throws Exception {
         EnrollmentRuntimeConfiguration limited = EnrollmentRuntimeConfiguration.decode(EnrollmentTestSupport.runtimeJson()
                 .replace("\"maximumTransactions\":1000", "\"maximumTransactions\":1")
@@ -899,6 +1019,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects account creation and key rollover before mutation when account-history byte capacity is exhausted.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void accountHistoryByteExhaustionRejectsCreationAndRolloverBeforeMutation() throws Exception {
         EnrollmentRuntimeConfiguration limited = EnrollmentRuntimeConfiguration.decode(EnrollmentTestSupport.runtimeJson()
                 .replace("\"maximumRequestBytes\":1048576", "\"maximumRequestBytes\":4096")
@@ -948,6 +1073,11 @@ class EnrollmentCoordinatorTest {
                 ServerTestSupport.CLOCK.instant(), ServerTestSupport.CLOCK.instant(), "0".repeat(64));
     }
 
+    /**
+     * Revalidates current policy before preparing a new receipt after recovered uncertain nonacceptance.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void uncertainNonacceptanceAfterRestartRequiresCurrentPolicyBeforeNewReceipt() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -988,6 +1118,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Retains established acceptance across lookup failure and fences contradictory later nonacceptance evidence.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void establishedAcceptanceSurvivesLookupFailureAndContradictoryNonacceptanceFences() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -1017,6 +1152,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks current suspension after proven nonacceptance and rejects recovery without required retained request input.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void provenNonacceptanceRevalidatesSuspensionAndMissingRetainedInputBlocksRestart() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -1034,6 +1174,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Releases pending-only budget on expiry while preserving exact replay evidence across restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void expiredPendingReleasesOnlyPendingBudgetAndRetainsReplayAcrossRestart() throws Exception {
         java.time.Clock clock = mock(java.time.Clock.class);
         AtomicReference<java.time.Instant> now = new AtomicReference<>(ServerTestSupport.CLOCK.instant());
@@ -1061,6 +1206,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Charges both request metadata and future decision reservations before storing domain request content.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void metadataAndFutureDecisionReservationAreChargedBeforeRequestStorage() throws Exception {
         EnrollmentRuntimeConfiguration configuration = EnrollmentRuntimeConfiguration.decode(EnrollmentTestSupport.runtimeJson()
                 .replace("\"maximumRequestBytes\":1048576", "\"maximumRequestBytes\":4096")
@@ -1075,6 +1225,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects unsupported future formats and tampered durable metadata during startup.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void futureFormatAndTamperedPersistentMetadataFailStartup() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -1098,6 +1253,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks coordinator fencing after uncertain durable admission and recovery of the original request identity.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void uncertainDurableAdmissionFencesInstanceAndRestartRecoversOriginalRequest() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
             ServerControlStore uncertain = mock(ServerControlStore.class, org.mockito.AdditionalAnswers.delegatesTo(opened.store()));
@@ -1118,6 +1278,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks admission budgeting and shutdown fencing while parsing proceeds outside the control monitor.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void admissionBudgetAndShutdownFenceWhileParserRunsOutsideControlMonitor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -1143,6 +1308,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects contradictory acceptance without fresh preparation and preserves final rejection outcomes.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void conflictingAcceptanceFencesWithoutFreshPreparationAndRejectionIsFinal() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 1);
@@ -1162,6 +1332,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks a consistent protocol snapshot and caller ownership of its cursor lifetime.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void protocolSnapshotIsConsistentAndOwnsItsCursorLifetime() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -1177,6 +1352,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks record-handle closure before a protocol cursor returns or rejects a decoded value.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void protocolCursorClosesEachRecordBeforeReturningOrRejectingIt() throws Exception {
         DurableTransactionalMetadataStore durable = DurableTransactionalMetadataStore.create(directory.resolve("metadata.log"), ServerTestSupport.STORE_ID);
         zeroecho.pki.spi.store.TransactionalMetadataStore metadata = mock(zeroecho.pki.spi.store.TransactionalMetadataStore.class,
@@ -1220,6 +1400,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Enforces requester/approver separation even when generic approval policy would permit the same actor.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void protocolRequesterSeparationCannotBeDisabledByGenericApprovalPolicy() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 2)) {
@@ -1243,6 +1428,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects forged frozen decision evidence both at construction and during checksum-valid recovery.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void forgedFrozenDecisionsFailConstructionAndChecksumConsistentRecovery() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 2)) {
@@ -1276,6 +1466,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks frozen proof validation before durable admission and again during recovery.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void frozenProofValidationRunsBeforeAdmissionAndDuringRecovery() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -1316,6 +1511,11 @@ class EnrollmentCoordinatorTest {
                 value.payload(), value.validity(), value.predecessorId());
     }
 
+    /**
+     * Checks that administrative approval uses retained authority scope and trusted execution evidence.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void administrativeGatewayUsesRetainedScopeAndTrustedEvidenceForRealDecision() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 1)) {
@@ -1358,6 +1558,11 @@ class EnrollmentCoordinatorTest {
     }
 
 
+    /**
+     * Revalidates current CMP source policy for fresh effects while keeping retained responses replayable.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpNonEnrollmentFreshEffectsRevalidateSourceButRetainedResponsesRemainReadable() throws Exception {
         for (String change : List.of("suspend", "profile", "delete")) {
             Path root = java.nio.file.Files.createDirectory(directory.resolve(change));
@@ -1383,6 +1588,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks durable fixed-slot CMP responses after restart and replacement with a shorter response.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpFixedResponseSlotsSurviveRestartAndShrinkWithoutStaleBytes() throws Exception {
         Path log; CmpTransaction retained; byte[] large = new byte[1_048_700];
         java.util.Arrays.fill(large, (byte) 37);
@@ -1414,6 +1624,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Recovers an unlinked CMP reservation after a crash and charges attachment to one logical transaction.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpUnlinkedReservationSurvivesCrashAndAttachmentChargesOneLogicalTransaction() throws Exception {
         EnrollmentRuntimeConfiguration config = EnrollmentRuntimeConfiguration.decode(EnrollmentTestSupport.runtimeJson()
                 .replace("\"maximumTransactions\":1000", "\"maximumTransactions\":1")
@@ -1443,6 +1658,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks atomic CMP attachment and protocol-wide write fencing after an unknown acknowledgement.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpAttachmentIsAtomicAndUnknownAcknowledgementFencesAllProtocolWrites() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
             ServerControlStore uncertain = mock(ServerControlStore.class, org.mockito.AdditionalAnswers.delegatesTo(opened.store()));
@@ -1470,6 +1690,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Recovers uncertain CMP reservation/response writes without refunding owned capacity or losing nonce state.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpUnknownReservationAndResponseWritesRecoverWithoutRefundOrNonceLoss() throws Exception {
         for (boolean responseWrite : List.of(false, true)) {
             Path root = directory.resolve(Boolean.toString(responseWrite));
@@ -1497,6 +1722,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects CMP admission before domain storage when shared bytes are exhausted and rebuilds charges on restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpSharedByteCapacityRejectsBeforeDomainStorageAndReconstructsOnRestart() throws Exception {
         EnrollmentRuntimeConfiguration config = EnrollmentRuntimeConfiguration.decode(EnrollmentTestSupport.runtimeJson()
                 .replace("\"maximumRequestBytes\":1048576", "\"maximumRequestBytes\":4096")
@@ -1515,6 +1745,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects future, malformed, orphaned, and corrupt CMP response-slot records during recovery.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpFutureMalformedOrphanAndCorruptSlotRecordsFailRecovery() throws Exception {
         for (String corruption : List.of("version", "orphan", "extra", "data")) {
             Path root = directory.resolve(corruption);
@@ -1542,6 +1777,11 @@ class EnrollmentCoordinatorTest {
     }
 
 
+    /**
+     * Rejects substitution of CMP request identity or original message type before storage and during recovery.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpExactRequestIdentifierAndOriginalTypeRejectSubstitutionBeforeStorageAndOnRecovery() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0)) {
@@ -1567,6 +1807,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks exact replacement payload retention through correlated CMP preparation and recovery.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpReplacementUsesExactPayloadCorrelatedPreparationAndRecovery() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -1609,6 +1854,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks concurrent response compare-and-set publishes one nonce while leaving a losing writer unfenced.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpConcurrentResponseCasPublishesExactlyOneNonceAndDoesNotFenceLoser() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory);
                 Fixture fixture = new Fixture(opened.store(), directory.resolve("pki"), 0);
@@ -1634,6 +1884,11 @@ class EnrollmentCoordinatorTest {
     }
 
 
+    /**
+     * Checks confirmation verdict consistency and required response slots after restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void cmpConfirmationVerdictsAndMissingSlotsRemainStrictOnRestart() throws Exception {
         for (CmpTransaction.Confirmation verdict : List.of(CmpTransaction.Confirmation.ACCEPTED, CmpTransaction.Confirmation.REJECTED,
                 CmpTransaction.Confirmation.EXPIRED)) {
@@ -1719,6 +1974,11 @@ class EnrollmentCoordinatorTest {
                 && ordinary.outcome() instanceof zeroecho.pki.application.PkiOperationOutcome.Completed;
     }
 
+    /**
+     * Checks fresh hybrid SDK proof, exact acceptance replay, and one retained pending receipt after restart.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void sdkFreshProofAcceptanceReplayAndRestartRetainOnePendingReceipt() throws Exception {
         var clock = new SdkClock(); var keys = sdkKeys(); String enrollmentId; String intentId; byte[] primary; byte[] alternative;
         try (var opened = ServerTestSupport.open(directory)) {
@@ -1755,6 +2015,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Rejects insufficient future approval capacity before creating an SDK challenge or signing request.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void sdkFutureApprovalBudgetRejectsBeforeChallengeOrSigning() throws Exception {
         var clock = new SdkClock(); var keys = sdkKeys();
         try (var opened = ServerTestSupport.open(directory); var fixture = new Fixture(opened.store(), directory.resolve("sdk-budget"), 1, clock, EnrollmentTestSupport.runtimeConfiguration())) {
@@ -1767,6 +2032,11 @@ class EnrollmentCoordinatorTest {
         }
     }
 
+    /**
+     * Checks fencing after committed-but-unacknowledged SDK acceptance and recovery without duplicate receipts.
+     *
+     * @throws Exception if fixture setup, enrollment processing, persistence, or cleanup fails
+     */
     @Test void sdkCommittedButUnknownAcceptanceFencesUntilReopenWithoutDuplicateReceipt() throws Exception {
         var clock = new SdkClock(); var keys = sdkKeys(); Path log;
         try (var initialized = ServerTestSupport.open(directory)) { log = initialized.log(); }
@@ -1858,8 +2128,17 @@ class EnrollmentCoordinatorTest {
     private static final class SdkClock extends java.time.Clock {
         private Instant current = ServerTestSupport.CLOCK.instant();
         void advance(long seconds) { current = current.plusSeconds(seconds); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Instant instant() { return current; }
     }
 
@@ -1964,6 +2243,9 @@ class EnrollmentCoordinatorTest {
             return new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.EST, "est", requester, "a".repeat(64), EnrollmentTransaction.Operation.ISSUE,
                     new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, csr), Optional.empty(), Optional.empty());
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws java.io.IOException {
             coordinator.close();
             try { keygenSpool.close(); } catch (Exception failure) { throw new java.io.IOException(failure); }

@@ -124,27 +124,74 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
      * @param root    private storage directory
      * @param storeId stable runtime/store identifier
      * @throws IOException              if the directory cannot be created
-     * @throws IllegalArgumentException if {@code storeId} is blank
+     * @throws IllegalArgumentException if storeId is not 32 lowercase hexadecimal characters
+     * @throws NullPointerException if root or storeId is null
      */
     public FilesystemStagedContentStore(Path root, String storeId) throws IOException {
         this(root, storeId, Integer.MAX_VALUE, null);
     }
 
+    /**
+     * Creates a filesystem content store with bounded concurrent sinks and optional calling-thread read instrumentation.
+     *
+     * @param root private real storage directory
+     * @param storeId stable identifier of 32 lowercase hexadecimal characters
+     * @param observer payload read instrumentation, or null to disable it
+     * @throws NullPointerException if root or storeId is null, or a supplied mutation barrier is null
+     * @throws IllegalArgumentException if the identifier is noncanonical or the sink limit is not positive
+     * @throws IOException if the root is not a real directory or initialization and cleanup fail
+     */
     /* default */ FilesystemStagedContentStore(Path root, String storeId, ContentReadObserver observer)
             throws IOException {
         this(root, storeId, Integer.MAX_VALUE, observer);
     }
 
+    /**
+     * Creates a filesystem content store with bounded concurrent sinks and optional calling-thread read instrumentation.
+     *
+     * @param root private real storage directory
+     * @param storeId stable identifier of 32 lowercase hexadecimal characters
+     * @param maximumOpenSinks positive concurrent sink limit
+     * @param observer payload read instrumentation, or null to disable it
+     * @throws NullPointerException if root or storeId is null, or a supplied mutation barrier is null
+     * @throws IllegalArgumentException if the identifier is noncanonical or the sink limit is not positive
+     * @throws IOException if the root is not a real directory or initialization and cleanup fail
+     */
     /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
             ContentReadObserver observer) throws IOException {
         this(root, storeId, maximumOpenSinks, observer, true);
     }
 
+    /**
+     * Creates a filesystem content store with bounded concurrent sinks and optional calling-thread read instrumentation.
+     *
+     * @param root private real storage directory
+     * @param storeId stable identifier of 32 lowercase hexadecimal characters
+     * @param maximumOpenSinks positive concurrent sink limit
+     * @param observer payload read instrumentation, or null to disable it
+     * @param cleanupTemporaryState whether to create the root and remove abandoned temporary state
+     * @throws NullPointerException if root or storeId is null, or a supplied mutation barrier is null
+     * @throws IllegalArgumentException if the identifier is noncanonical or the sink limit is not positive
+     * @throws IOException if the root is not a real directory or initialization and cleanup fail
+     */
     /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
             ContentReadObserver observer, boolean cleanupTemporaryState) throws IOException {
         this(root, storeId, maximumOpenSinks, observer, cleanupTemporaryState, new StoreMutationBarrier());
     }
 
+    /**
+     * Creates a filesystem content store with bounded concurrent sinks and optional calling-thread read instrumentation.
+     *
+     * @param root private real storage directory
+     * @param storeId stable identifier of 32 lowercase hexadecimal characters
+     * @param maximumOpenSinks positive concurrent sink limit
+     * @param observer payload read instrumentation, or null to disable it
+     * @param cleanupTemporaryState whether to create the root and remove abandoned temporary state
+     * @param mutationBarrier owning store admission barrier
+     * @throws NullPointerException if root or storeId is null, or a supplied mutation barrier is null
+     * @throws IllegalArgumentException if the identifier is noncanonical or the sink limit is not positive
+     * @throws IOException if the root is not a real directory or initialization and cleanup fail
+     */
     /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
             ContentReadObserver observer, boolean cleanupTemporaryState, StoreMutationBarrier mutationBarrier)
             throws IOException {
@@ -173,18 +220,34 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Opens a resolver whose construction and supported operation are read-only. */
+    /**
+     * Opens an existing real storage directory without creating directories or cleaning temporary state.
+     *
+     * @param root existing staged-content directory
+     * @param storeId canonical store identifier
+     * @return resolver restricted to read-only content operations
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalArgumentException if storeId is noncanonical
+     * @throws IOException if the root is not a real directory
+     */
     /* default */ static StagedContentStore readOnlyResolver(Path root, String storeId)
             throws IOException {
         return new ReadOnlyResolver(new FilesystemStagedContentStore(
                 root, storeId, Integer.MAX_VALUE, null, false));
     }
 
-    /** Runs restart cleanup only after signing metadata passes semantic validation. */
+    /**
+     * Removes abandoned incomplete payloads, temporary metadata and transient indexes after semantic validation.
+     *
+     * @throws IOException if abandoned temporary state cannot be enumerated or removed
+     */
     /* default */ void cleanupValidatedTemporaryState() throws IOException {
         cleanupAbandonedTemporaryState();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String contentStoreId() {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -193,6 +256,13 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * Validates bounded staged-content directory names and entry types without following symbolic links.
+     *
+     * @param root existing directory to inspect
+     * @throws NullPointerException if root is null
+     * @throws IOException if the layout is malformed, exceeds the entry limit or cannot be inspected
+     */
     /* package */ static void validateExistingLayout(Path root) throws IOException {
         Objects.requireNonNull(root, "root");
         long entries = 0L;
@@ -231,7 +301,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Cause-free marker distinguishing invalid layout from operational I/O. */
+    /**
+     * Cause-free marker distinguishing invalid layout from operational I/O.
+     */
     /* default */ static final class MalformedLayoutException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -240,32 +312,61 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Cause-free marker for malformed staged-content metadata or reference binding. */
+    /**
+     * Cause-free marker for malformed staged-content metadata or reference binding.
+     */
     /* default */ static final class MalformedStagedContentException extends IOException {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * Installs the calling-thread fault callback for the corresponding persistence boundary.
+     *
+     * @param injector replacement non-null callback
+     * @throws NullPointerException if the callback is null
+     */
     /* default */ static void installSealFault(SealFaultInjector injector) {
         SEAL_FAULTS.set(Objects.requireNonNull(injector, "injector"));
     }
 
+    /**
+     * Clears the corresponding calling-thread persistence fault callback.
+     */
     /* default */ static void clearSealFault() {
         SEAL_FAULTS.remove();
     }
 
+    /**
+     * Installs the calling-thread fault callback for the corresponding persistence boundary.
+     *
+     * @param fault replacement non-null callback
+     * @throws NullPointerException if the callback is null
+     */
     /* default */ static void installMetadataReadFault(MetadataReadFaultInjector fault) {
         METADATA_READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
     }
 
+    /**
+     * Clears the corresponding calling-thread persistence fault callback.
+     */
     /* default */ static void clearMetadataReadFault() {
         METADATA_READ_FAULTS.remove();
     }
 
+    /**
+     * Installs the calling-thread fault callback for the corresponding persistence boundary.
+     *
+     * @param fault replacement non-null callback
+     * @throws NullPointerException if the callback is null
+     */
     /* default */ static void installMetadataAttributeReadFault(
             MetadataAttributeReadFaultInjector fault) {
         METADATA_ATTRIBUTE_READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
     }
 
+    /**
+     * Clears the corresponding calling-thread persistence fault callback.
+     */
     /* default */ static void clearMetadataAttributeReadFault() {
         METADATA_ATTRIBUTE_READ_FAULTS.remove();
     }
@@ -277,7 +378,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Resolves staged content without exposing mutation of the backing store. */
+    /**
+     * Resolves staged content without exposing mutation of the backing store.
+     */
     private static final class ReadOnlyResolver implements StagedContentStore {
         private final FilesystemStagedContentStore delegate;
 
@@ -285,8 +388,14 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             this.delegate = delegate;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public String contentStoreId() { return delegate.contentStoreId(); }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public DurableContentReference restoreReference(String storeId, String contentId,
                 Encoding encoding, long length, String sha256,
@@ -295,40 +404,64 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
                     lifecycle);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public ContentSink beginContent(Encoding encoding,
                 DurableContentReference.Lifecycle lifecycle) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public RepeatableContent openContent(DurableContentReference reference) throws IOException {
             // Recovery validates live proof bytes before activating metadata or reclaiming content.
             return delegate.openContent(reference);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean retainContent(DurableContentReference reference,
                 DurableContentOwner owner) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean releaseContent(DurableContentReference reference,
                 DurableContentOwner owner) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Set<DurableContentOwner> contentOwners(
                 DurableContentReference reference) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void retireUnownedContent(DurableContentReference reference) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void recoverContent(TemporaryUniqueIndex retained,
                 TemporaryUniqueIndex retainedOwners) {
             throw readOnly();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public TemporaryUniqueIndex beginUniqueIndex() {
             throw readOnly();
         }
@@ -338,6 +471,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ContentSink beginContent(Encoding encoding, DurableContentReference.Lifecycle lifecycle) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -360,6 +496,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public RepeatableContent openContent(DurableContentReference reference) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -381,6 +520,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public DurableContentReference restoreReference(String persistedStoreId, String contentId, Encoding encoding,
             long length, String sha256, DurableContentReference.Lifecycle lifecycle) throws IOException {
@@ -399,6 +541,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean retainContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -422,6 +567,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean releaseContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -449,6 +597,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<DurableContentOwner> contentOwners(DurableContentReference reference) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -467,6 +618,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void retireUnownedContent(DurableContentReference reference) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -484,6 +638,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners) throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -494,12 +651,24 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Recovery input separating transactional authority from general references and sidecars. */
+    /**
+     * Recovers content using separate retained-reference, sidecar-owner and transactional-authority indexes.
+     * Unreferenced content is retired; transactionally owned payloads must remain present.
+     *
+     * @param retained content identifiers referenced by accepted metadata
+     * @param retainedOwners canonical sidecar owner identities retained by accepted metadata
+     * @param transactionalOwners content identifiers with authoritative transactional ownership
+     * @throws NullPointerException if an index is null
+     * @throws IOException if namespace validation, metadata recovery or cleanup fails
+     */
     /* package */ void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners,
             TemporaryUniqueIndex transactionalOwners) throws IOException {
         StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public TemporaryUniqueIndex beginUniqueIndex() throws IOException {
         StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -511,6 +680,12 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * Creates a private transient index for canonical durable-owner identities.
+     *
+     * @return new owner index whose resources the caller must close
+     * @throws IOException if the index directory cannot be created or protected
+     */
     /* default */ TemporaryUniqueIndex beginOwnerIndex() throws IOException {
         Path directory = root.resolve(UUID.randomUUID() + ".unique-index");
         Files.createDirectory(directory);
@@ -518,6 +693,13 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         return FilesystemTemporaryUniqueIndex.owners(directory);
     }
 
+    /**
+     * Encodes a durable owner as its canonical owner-index key.
+     *
+     * @param owner durable ownership identity
+     * @return canonical key accepted by the owner index
+     * @throws NullPointerException if owner is null
+     */
     /* default */ static String ownerIndexKey(DurableContentOwner owner) {
         Objects.requireNonNull(owner, "owner");
         return FilesystemTemporaryUniqueIndex.ownerKey(owner);
@@ -543,7 +725,17 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         return resolveOwned(reference.contentId() + ".content");
     }
 
-    /** Called only while the owning store's exclusive backup barrier is held. */
+    /**
+     * Copies selected content metadata and sidecars, with payloads only for required content identifiers.
+     * The owning store exclusive backup barrier must remain held throughout this call.
+     *
+     * @param target backup destination directory
+     * @param budget shared backup size and entry limits
+     * @param selected index of content identifiers selected for backup
+     * @param requiredPayload selected identifiers whose payload must be copied
+     * @throws NullPointerException if an argument is null
+     * @throws IOException if metadata, source files, destination writes or backup bounds fail
+     */
     /* default */ void copyBackupContent(Path target, FsBackupFiles.Budget budget, TemporaryUniqueIndex selected,
             TemporaryUniqueIndex requiredPayload)
             throws IOException {
@@ -589,6 +781,14 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         StoreIo.writeOwners(this, contentId, owners);
     }
 
+    /**
+     * Deletes only the validated signing payload, retaining its metadata for authoritative lifecycle accounting.
+     *
+     * @param reference exact store-issued reference
+     * @throws NullPointerException if reference is null
+     * @throws IllegalArgumentException if reference is foreign or not store-issued
+     * @throws IOException if validation, deletion or directory durability fails
+     */
     /* package */ void retireSigningContent(DurableContentReference reference) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         ReentrantLock lock = ownerLock(exact.contentId());
@@ -602,6 +802,14 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * Deletes the signing payload and its metadata and owner sidecars under the content ownership lock.
+     *
+     * @param reference exact store-issued reference
+     * @throws NullPointerException if reference is null
+     * @throws IllegalArgumentException if reference is foreign or not store-issued
+     * @throws IOException if validation, deletion or directory durability fails
+     */
     /* package */ void purgeSigningContent(DurableContentReference reference) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         ReentrantLock lock = ownerLock(exact.contentId());
@@ -614,29 +822,60 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
+    /**
+     * Replaces the authoritative transactional ownership callback used when deciding whether content may be retired.
+     *
+     * @param ownership live signing, status and credential ownership resolver
+     * @throws NullPointerException if ownership is null
+     */
     /* package */ void bindTransactionalOwnership(TransactionalOwnership ownership) {
         transactionalOwnership.set(Objects.requireNonNull(ownership, "ownership"));
     }
 
+    /**
+     * Validates exact content and retains a transient publication reservation under its ownership lock.
+     *
+     * @param reference exact store-issued content reference
+     * @return reservation to close after publication, or preserve if recovery is required
+     * @throws NullPointerException if reference is null
+     * @throws IllegalArgumentException if reference is foreign or not store-issued
+     * @throws IOException if content validation fails or reservation count overflows
+     */
     /* package */ TransactionalReservation reserveTransactionalPublication(DurableContentReference reference)
             throws IOException {
         return TransactionalOwnershipIo.reserveTransactionalPublication(this, reference);
     }
 
-    /** Internal callback to signing and status transactional owner authority. */
+    /**
+     * Internal callback to signing and status transactional owner authority.
+     */
     /* default */
     @FunctionalInterface
     interface TransactionalOwnership {
-        /** Finds every exact transactional owner for a durable content reference. */
+        /**
+         * Finds every exact transactional owner for a durable content reference.
+         *
+         * @param reference content whose authoritative ownership is requested
+         * @return exact transactional owner identities, empty if unowned
+         * @throws IOException if authoritative ownership cannot be read
+         */
         Set<DurableContentOwner> findOwners(DurableContentReference reference) throws IOException;
 
-        /** Tests exact transactional ownership without materializing owner identities. */
+        /**
+         * Tests authoritative ownership without requiring callers to materialize owner identities.
+         *
+         * @param reference content whose ownership is requested
+         * @return true if at least one transactional owner exists
+         * @throws IOException if authoritative ownership cannot be read
+         */
         default boolean hasOwner(DurableContentReference reference) throws IOException {
             return !findOwners(reference).isEmpty();
         }
     }
 
-    /** Short-lived reference-counted reservation spanning validation and commit. */
+    /**
+     * Short-lived reference-counted reservation spanning validation and commit.
+     */
     /* package */ final class TransactionalReservation implements AutoCloseable {
         private final String contentId;
         private final AtomicBoolean closed = new AtomicBoolean();
@@ -646,10 +885,17 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             this.contentId = contentId;
         }
 
+        /**
+         * Keeps this reservation retained when close is called, so unresolved publication remains protected until recovery.
+         */
         /* package */ void preserveUntilRecovery() {
             recoveryRequired.set(true);
         }
 
+        /**
+         * Releases this reservation at most once unless it has been preserved for startup recovery.
+         * A preserved reservation remains authoritative even after this method returns.
+         */
         @Override
         public void close() {
             if (!recoveryRequired.get() && closed.compareAndSet(false, true)) {
@@ -714,7 +960,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Atomic file-backed sink with explicit terminal lifecycle. */
+    /**
+     * Atomic file-backed sink with explicit terminal lifecycle.
+     */
     private final class FileSink implements ContentSink {
         private final String contentId;
         private final Path incomplete;
@@ -736,6 +984,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             this.lock = new ReentrantLock();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OutputStream outputStream() throws IOException {
             lock.lock();
@@ -750,6 +1001,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public long length() {
             lock.lock();
@@ -760,6 +1014,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public DurableContentReference complete() throws IOException {
             StoreMutationBarrier.Lease admission = mutationBarrier.enter();
@@ -799,6 +1056,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void abort() throws IOException {
             lock.lock();
@@ -815,6 +1075,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             lock.lock();
@@ -849,35 +1112,68 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
                 LinkOption.NOFOLLOW_LINKS), sha256());
     }
 
-    /** Durable payload publication boundaries used by deterministic fault tests. */
+    /**
+     * Durable payload publication boundaries used by deterministic fault tests.
+     */
     /* default */ enum SealFaultPoint {
+        /**
+         * Fault injection point for forcing staged payload content.
+         */
         PAYLOAD_FORCE,
+        /**
+         * Fault injection point for atomically publishing staged payload content.
+         */
         PAYLOAD_ATOMIC_MOVE,
+        /**
+         * Fault injection point for forcing the staged payload directory.
+         */
         PAYLOAD_DIRECTORY_FORCE
     }
 
-    /** Test seam for failing one durable payload publication boundary. */
+    /**
+     * Test seam for failing one durable payload publication boundary.
+     */
     /* default */ @FunctionalInterface
     interface SealFaultInjector {
-        /** Fails the selected publication boundary. */
+        /**
+         * Fails the selected publication boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(SealFaultPoint point) throws IOException;
     }
 
-    /** Test seam for operational staged-metadata reads during recovery validation. */
+    /**
+     * Test seam for operational staged-metadata reads during recovery validation.
+     */
     /* default */ @FunctionalInterface
     interface MetadataReadFaultInjector {
-        /** Runs before the selected metadata access and may inject an I/O failure. */
+        /**
+         * Runs before the selected metadata access and may inject an I/O failure.
+         *
+         * @param metadata exact metadata path about to be accessed
+         * @throws IOException to inject an operational read failure
+         */
         void beforeRead(Path metadata) throws IOException;
     }
 
-    /** Test seam for operational staged-metadata attribute reads during recovery. */
+    /**
+     * Test seam for operational staged-metadata attribute reads during recovery.
+     */
     /* default */ @FunctionalInterface
     interface MetadataAttributeReadFaultInjector {
-        /** Runs before the selected metadata access and may inject an I/O failure. */
+        /**
+         * Runs before the selected metadata access and may inject an I/O failure.
+         *
+         * @param metadata exact metadata path about to be accessed
+         * @throws IOException to inject an operational read failure
+         */
         void beforeRead(Path metadata) throws IOException;
     }
 
-    /** Overflow-checked streaming digest and length adapter. */
+    /**
+     * Overflow-checked streaming digest and length adapter.
+     */
     private static final class CountingOutputStream extends FilterOutputStream {
         private final DigestOutputStream digestOutput;
         private long length;
@@ -887,12 +1183,18 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             this.digestOutput = (DigestOutputStream) out;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void write(int value) throws IOException {
             out.write(value);
             length = Math.addExact(length, 1L);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void write(byte[] bytes, int offset, int count) throws IOException {
             Objects.checkFromIndexSize(offset, count, bytes.length);
@@ -910,7 +1212,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Repeatable immutable view over one completed staged file. */
+    /**
+     * Repeatable immutable view over one completed staged file.
+     */
     private static final class FileContent implements RepeatableContent {
         private final Path path;
         private final DurableContentReference reference;
@@ -922,6 +1226,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             this.observer = observer;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() throws IOException {
             BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
@@ -932,23 +1239,34 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             return new VerifiedChannelInputStream(path, reference, observer);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(reference.length());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "sha256:" + reference.sha256();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // The durable store owns the underlying file lifecycle.
         }
     }
 
-    /** Read stream validating the retained file identity during caller consumption. */
+    /**
+     * Read stream validating the retained file identity during caller consumption.
+     */
     @SuppressWarnings("PMD.AvoidMessageDigestField")
     private static final class VerifiedChannelInputStream extends InputStream {
         private final FileChannel channel;
@@ -979,6 +1297,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             int value = delegate.read();
@@ -993,6 +1314,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             return value;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] bytes, int offset, int length) throws IOException {
             int count = delegate.read(bytes, offset, length);
@@ -1007,6 +1331,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             return count;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() throws IOException {
             channel.close();
@@ -1052,12 +1379,20 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Package-local instrumentation seam for proving production stream I/O shape. */
+    /**
+     * Package-local instrumentation seam for proving production stream I/O shape.
+     */
     /* default */ interface ContentReadObserver {
-        /** Records one successful payload-channel open. */
+        /**
+         * Records one successful payload-channel open.
+         */
         void opened();
 
-        /** Records payload bytes returned to the consumer. */
+        /**
+         * Records payload bytes returned to a consumer by a successful read.
+         *
+         * @param count number of payload bytes returned by that read
+         */
         void read(int count);
     }
 
@@ -1085,7 +1420,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         requireCanonicalUuid(contentId, true);
     }
 
-    /** Mechanical home for filesystem metadata branches kept outside the store coordinator. */
+    /**
+     * Mechanical home for filesystem metadata branches kept outside the store coordinator.
+     */
     private static final class StoreIo {
         private static void recoverContent(FilesystemStagedContentStore store, TemporaryUniqueIndex retained,
                 TemporaryUniqueIndex retainedOwners, TemporaryUniqueIndex transactionalOwners) throws IOException {
@@ -1354,7 +1691,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Isolates transactional staged-content ownership lifecycle decisions. */
+    /**
+     * Isolates transactional staged-content ownership lifecycle decisions.
+     */
     private static final class TransactionalOwnershipIo {
         private static void requireSidecarOwners(Set<DurableContentOwner> owners) {
             for (DurableContentOwner owner : owners) {
@@ -1429,7 +1768,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
     }
 
-    /** Store-branded immutable reference; arbitrary interface implementations are rejected. */
+    /**
+     * Store-branded immutable reference; arbitrary interface implementations are rejected.
+     */
     private record StoreReference(String storeId, String contentId, Encoding encoding, long length, String sha256,
             DurableContentReference.Lifecycle lifecycle) implements DurableContentReference {
         private StoreReference {

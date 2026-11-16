@@ -70,7 +70,16 @@ import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for intermediate signing preparation.
+ */
 final class IntermediateSigningPreparationTest {
+    /**
+     * Preflight rejects known pure ed dsa limit before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preflightRejectsKnownPureEdDsaLimitBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -85,6 +94,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Preflight checks issuer subject and key without any staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preflightChecksIssuerSubjectAndKeyWithoutAnyStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -110,6 +125,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Existing legacy subject rotation preserves actual DER and metadata.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void existingLegacySubjectRotationPreservesActualDerAndMetadata(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -139,6 +160,12 @@ final class IntermediateSigningPreparationTest {
             }
         }
     }
+    /**
+     * Enforces every path level and counts only non self issued certificates.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void enforcesEveryPathLevelAndCountsOnlyNonSelfIssuedCertificates(@TempDir Path root) throws Exception {
         for (int scenario = 0; scenario < 3; scenario++) {
             try (FilesystemPkiStore store = open(root.resolve(Integer.toString(scenario)))) {
@@ -175,6 +202,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Rejects child proof algorithm different from captured outgoing binding.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsChildProofAlgorithmDifferentFromCapturedOutgoingBinding(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -205,6 +238,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Substituted candidate rejects at adoption and acceptance before dispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void substitutedCandidateRejectsAtAdoptionAndAcceptanceBeforeDispatch(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -232,6 +271,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Cancellation after first stage and adoption failure retire owned candidates.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationAfterFirstStageAndAdoptionFailureRetireOwnedCandidates(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -276,6 +321,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Invalid issuer and profile reject before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidIssuerAndProfileRejectBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -305,6 +356,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Public facade owns preparation and publishes exact child metadata.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publicFacadeOwnsPreparationAndPublishesExactChildMetadata(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         PkiId operation;
@@ -341,6 +398,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Freezes proof SPKI profile parent and deterministic authority before both stages.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void freezesProofSpkiProfileParentAndDeterministicAuthorityBeforeBothStages(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -369,6 +432,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Enforces anchor path length and exempts self issued child from count.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void enforcesAnchorPathLengthAndExemptsSelfIssuedChildFromCount(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -385,6 +454,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Cancellation rejects before subject key lookup or signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationRejectsBeforeSubjectKeyLookupOrSigning(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -395,6 +470,12 @@ final class IntermediateSigningPreparationTest {
             assertEquals(0, fixture.provider.dispatches);
         }
     }
+    /**
+     * Partial discard retries only unfinished content and never permits acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void partialDiscardRetriesOnlyUnfinishedContentAndNeverPermitsAcceptance(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -443,6 +524,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Discard attempts both candidates and preserves primary and suppressed failures.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void discardAttemptsBothCandidatesAndPreservesPrimaryAndSuppressedFailures(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -481,6 +568,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * Second stage failure or cancellation reclaims every completed candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void secondStageFailureOrCancellationReclaimsEveryCompletedCandidate(@TempDir Path root) throws Exception {
         for (boolean cancel : new boolean[] {false, true}) {
             try (FilesystemPkiStore actual = open(root.resolve(Boolean.toString(cancel)))) {
@@ -531,6 +624,12 @@ final class IntermediateSigningPreparationTest {
         }
     }
 
+    /**
+     * One preparation exports once stages twice and admits one parent.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void onePreparationExportsOnceStagesTwiceAndAdmitsOneParent(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             IntermediateCreationFixture fixture = new IntermediateCreationFixture();

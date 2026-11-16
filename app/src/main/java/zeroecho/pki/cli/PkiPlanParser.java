@@ -46,10 +46,18 @@ import java.util.regex.Pattern;
 
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Strict parser and reference-order validator for plan schema version 1. */
+/**
+ * Strict parser and reference-order validator for plan schema version 1.
+ */
 final class PkiPlanParser {
 
+    /**
+     * Maximum number of operations accepted in one plan, bounding execution and reference state.
+     */
     /* default */ static final int MAXIMUM_STEPS = 1_000;
+    /**
+     * Recognizes a whole-value backward reference; groups identify the earlier step and output field.
+     */
     /* default */ static final Pattern REFERENCE = Pattern
             .compile("\\$\\{([a-z][a-z0-9-]{0,63})\\.([a-z][a-zA-Z0-9]{0,63})}");
 
@@ -61,6 +69,18 @@ final class PkiPlanParser {
     private PkiPlanParser() {
     }
 
+    /**
+     * Reads a bounded version-one plan and validates closed schemas, supported operation names and backward
+     * references.
+     *
+     * @param path regular plan file; its parent becomes the relative-input base
+     * @param supportedOperations allowed semantic operation names, borrowed without modification
+     * @return immutable ordered plan with unique IDs and references to earlier steps only
+     * @throws NullPointerException if path or the required supported-operation set is null when used
+     * @throws IOException if the bounded regular-file read fails
+     * @throws IllegalArgumentException if JSON, schemas, version, names, count or references are invalid
+     * @throws ArithmeticException if the version cannot be represented as an int
+     */
     /* default */ static PkiPlan read(Path path, Set<String> supportedOperations) throws IOException {
         Path exact = path.toAbsolutePath().normalize();
         PkiOperationValue.ObjectValue root = PkiCliConfiguration

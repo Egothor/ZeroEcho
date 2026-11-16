@@ -34,12 +34,20 @@
 
 package zeroecho.pki.api.signing;
 
-/** Closed purposes of managed private-key possession proofs. */
+/**
+ * Closed purposes of managed private-key possession proofs.
+ */
 public enum ManagedKeyProofPurpose {
-    /** Possession of a CA subject key. */
+    /**
+     * Possession of a CA subject key.
+     */
     CA_SUBJECT_KEY,
-    /** Possession of a managed OCSP responder key. */
+    /**
+     * Possession of a managed OCSP responder key.
+     */
     OCSP_RESPONDER_KEY,
-    /** Possession of one frozen managed responder subject key before certificate issuance. */
+    /**
+     * Possession of one frozen managed responder subject key before certificate issuance.
+     */
     OCSP_RESPONDER_CANDIDATE_KEY
 }

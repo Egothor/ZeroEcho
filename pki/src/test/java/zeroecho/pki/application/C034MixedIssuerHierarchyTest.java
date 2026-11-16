@@ -49,8 +49,20 @@ import zeroecho.pki.api.hybrid.HybridCertificateMode;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.testkit.RootCreationFixture;
 
-/** Native managed-key chains prove incoming and outgoing algorithms remain distinct in one realm. */
+/**
+ * Native managed-key chains prove incoming and outgoing algorithms remain distinct in one realm.
+ */
 final class C034MixedIssuerHierarchyTest {
+    /**
+     * Issues and reopens mixed algorithm root intermediate leaf.
+     *
+     * @param rootAlgorithm JCA algorithm used for the root key pair
+     * @param rootFamily canonical family of the root signing key
+     * @param childAlgorithm JCA algorithm used for the child key pair
+     * @param childFamily canonical family of the child key
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @CsvSource({"EC384,ECDSA,ML-DSA-87,ML-DSA", "ML-DSA-87,ML-DSA,RSA4096,RSA", "RSA4096,RSA,EC384,ECDSA"})
     void issuesAndReopensMixedAlgorithmRootIntermediateLeaf(String rootAlgorithm, String rootFamily,
@@ -91,6 +103,12 @@ final class C034MixedIssuerHierarchyTest {
             fixture.certificate(leaf).verify(fixture.childKey.getPublic(), "BC");
         }
     }
+    /**
+     * Managed hybrid child preparation binds both proof roles to final tbs.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.api.Test void managedHybridChildPreparationBindsBothProofRolesToFinalTbs(@TempDir Path directory) throws Exception {
         var rootMode = new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
                 HybridIssuanceFixture.key("alt").value());
@@ -152,6 +170,13 @@ final class C034MixedIssuerHierarchyTest {
         }
     }
 
+    /**
+     * Invalid alternative subject proof prevents primary issuer dispatch.
+     *
+     * @param fault named failure injected at the selected lifecycle boundary
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"wrong-key", "changed-proof"})
     void invalidAlternativeSubjectProofPreventsPrimaryIssuerDispatch(String fault, @TempDir Path directory) throws Exception {

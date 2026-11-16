@@ -43,7 +43,11 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * @param reference exact certificate-profile version
  */
 public record EndEntityProfileBinding(CertificateProfileRef reference) implements CredentialProfileBinding {
-    /** Creates an end-entity binding. */
+    /**
+     * Creates an end-entity binding.
+     * @param reference exact certificate-profile version
+     * @throws NullPointerException if reference is null
+     */
     public EndEntityProfileBinding {
         Objects.requireNonNull(reference, "reference");
     }

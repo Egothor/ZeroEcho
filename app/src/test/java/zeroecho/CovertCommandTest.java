@@ -49,8 +49,14 @@ import org.apache.commons.cli.ParseException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * CLI integration coverage for EXIF covert payload embedding and extraction.
+ */
 public class CovertCommandTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tempDir;
 
@@ -66,6 +72,11 @@ public class CovertCommandTest {
         }
     }
 
+    /**
+     * Checks covert CLI embedding and extraction using the default EXIF slots.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testEmbedAndExtractDefaultSlots() throws Exception {
         System.out.println("testEmbedAndExtractDefaultSlots");
@@ -101,6 +112,9 @@ public class CovertCommandTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the CLI failure for an embed invocation without a payload.
+     */
     @Test
     void testEmbedFailsWithoutPayload() {
         System.out.println("testEmbedFailsWithoutPayload");
@@ -114,6 +128,11 @@ public class CovertCommandTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks CLI embedding using explicitly selected EXIF slots.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testCustomSlotsEmbedding() throws Exception {
         System.out.println("testCustomSlotsEmbedding");

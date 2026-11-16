@@ -52,16 +52,24 @@ import zeroecho.pki.spi.audit.AuditSinkProvider;
 public class StdoutAuditSinkProvider implements AuditSinkProvider {
     private static final Logger LOG = Logger.getLogger(StdoutAuditSinkProvider.class.getName());
 
-    /** Creates a standard-output audit-sink provider descriptor. */
+    /**
+     * Creates a standard-output audit-sink provider descriptor.
+     */
     public StdoutAuditSinkProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "stdout";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Collections.emptySet();
@@ -82,6 +90,9 @@ public class StdoutAuditSinkProvider implements AuditSinkProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AuditSink allocate(ProviderConfig config) {
         validateConfig(config);

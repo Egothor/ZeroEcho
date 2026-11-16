@@ -66,6 +66,9 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for keyring cryptographic format.
+ */
 class KeyringCryptographicFormatTest {
     private static final char[] PASSWORD = { 'f', 'o', 'r', 'm', 'a', 't' };
     private static final int VERSION_OFFSET = 8;
@@ -80,9 +83,17 @@ class KeyringCryptographicFormatTest {
     private static final int WRAPPED_OFFSET = 86;
     private static final int ENTRY_COUNT_OFFSET = 134;
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Master wrap authentication and header matrix fails closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void masterWrapAuthenticationAndHeaderMatrixFailsClosed() throws Exception {
         start("masterWrapAuthenticationAndHeaderMatrixFailsClosed");
@@ -146,6 +157,11 @@ class KeyringCryptographicFormatTest {
         ok();
     }
 
+    /**
+     * Entry and manifest outer tamper matrix fails before exposure.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void entryAndManifestOuterTamperMatrixFailsBeforeExposure() throws Exception {
         start("entryAndManifestOuterTamperMatrixFailsBeforeExposure");
@@ -208,6 +224,11 @@ class KeyringCryptographicFormatTest {
         ok();
     }
 
+    /**
+     * Authenticated manifest and entry binding tamper matrix fails closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void authenticatedManifestAndEntryBindingTamperMatrixFailsClosed() throws Exception {
         start("authenticatedManifestAndEntryBindingTamperMatrixFailsClosed");
@@ -279,6 +300,11 @@ class KeyringCryptographicFormatTest {
         ok();
     }
 
+    /**
+     * Decoded entry and manifest schemas reject type confusion and bounds.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void decodedEntryAndManifestSchemasRejectTypeConfusionAndBounds() throws Exception {
         start("decodedEntryAndManifestSchemasRejectTypeConfusionAndBounds");
@@ -326,6 +352,11 @@ class KeyringCryptographicFormatTest {
         ok();
     }
 
+    /**
+     * Hard limits old formats and plaintext sentinels fail closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hardLimitsOldFormatsAndPlaintextSentinelsFailClosed() throws Exception {
         start("hardLimitsOldFormatsAndPlaintextSentinelsFailClosed");

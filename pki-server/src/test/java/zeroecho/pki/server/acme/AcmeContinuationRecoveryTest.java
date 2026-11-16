@@ -94,14 +94,22 @@ import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Restart recovery at the durable-ledger/order attachment boundary. */
+/**
+ * Restart recovery at the durable-ledger/order attachment boundary.
+ */
 class AcmeContinuationRecoveryTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @org.junit.jupiter.api.io.TempDir java.nio.file.Path temporaryDirectory;
     private static final Instant NOW = Instant.parse("2026-08-20T10:00:00Z");
     private static final String DIRECTORY_ID = "directory:restart:r1";
     private static final String ORDER_ID = "order:restart";
     private static final String ACCOUNT_ID = "account:restart";
 
+    /**
+     * Checks recovery attaches the already retained signing operation after a crash before ACME order attachment, without resubmitting issuance.
+     */
     @Test
     void pollingAttachesSameLedgerOperationAfterCrashBeforeOrderAttachment() {
         PkiId authorityId = new PkiId("ca:restart");
@@ -193,6 +201,9 @@ class AcmeContinuationRecoveryTest {
         assertEquals(stored.get(), recovered);
     }
 
+    /**
+     * Checks a processing order retains its real issuance commitment across encoding while leaving an unaccepted signing receipt absent.
+     */
     @Test
     void processingApprovalBindingSurvivesCodecRoundTripWithoutFakeSigningReceipt() {
         PkiId authorityId = new PkiId("ca:restart");
@@ -211,6 +222,12 @@ class AcmeContinuationRecoveryTest {
 
     private enum Scenario { NORMAL, CANCEL_BEFORE_ACCEPT, MUTATE_CALLER_CSR, UNCERTAIN_ACCEPT }
 
+    /**
+     * Checks repeated finalization adopts the same retained coordinator linkage across a simulated restart.
+     *
+     * @param scenario retained continuation state and expected replay behavior
+     * @throws Exception if fixture setup, CSR construction or continuation execution fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.EnumSource(Scenario.class)
     void repeatedFinalizeReusesCoordinatorBindingAcrossRestart(Scenario scenario) throws Exception {
@@ -333,6 +350,9 @@ class AcmeContinuationRecoveryTest {
         }
     }
 
+    /**
+     * Checks successful recovered issuance enters shared confirmation/disclosure publication before the order transitions to valid.
+     */
     @Test
     void completedRecoveryRegistersSharedPublicationBeforeOrderBecomesValid() {
         PkiId authorityId = new PkiId("ca:restart");

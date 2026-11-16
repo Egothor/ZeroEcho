@@ -68,7 +68,9 @@ import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.cert.CertificateBuilder;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** BouncyCastle-backed builder for canonical unsigned bodies and JDK certificates. */
+/**
+ * BouncyCastle-backed builder for canonical unsigned bodies and JDK certificates.
+ */
 final class BcCertificateBuilder implements CertificateBuilder {
 
     private BigInteger serialNumber;
@@ -81,24 +83,36 @@ final class BcCertificateBuilder implements CertificateBuilder {
     private boolean addSubjectKeyIdentifier;
     private final List<Extension> extensions = new ArrayList<>();
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder serialNumber(BigInteger serialNumber) {
         this.serialNumber = serialNumber;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder subject(X500Principal subject) {
         this.subject = subject;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder issuer(X500Principal issuer) {
         this.issuer = issuer;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder validity(Instant notBefore, Instant notAfter) {
         this.notBefore = notBefore;
@@ -106,71 +120,107 @@ final class BcCertificateBuilder implements CertificateBuilder {
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder publicKey(PublicKey subjectPublicKey) {
         this.publicKey = subjectPublicKey;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder publicKeyInfo(byte[] subjectPublicKeyInfoDer) {
         this.publicKeyInfoDer = subjectPublicKeyInfoDer == null ? null : subjectPublicKeyInfoDer.clone();
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder basicConstraints(BasicConstraints basicConstraints, boolean critical) {
         extensions.add(BcExtensions.basicConstraints(basicConstraints, critical));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder keyUsage(Set<KeyUsage> keyUsage, boolean critical) {
         extensions.add(BcExtensions.keyUsage(keyUsage, critical));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder extendedKeyUsage(ExtendedKeyUsage extendedKeyUsage, boolean critical) {
         extensions.add(BcExtensions.extendedKeyUsage(extendedKeyUsage, critical));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder subjectAlternativeNames(List<GeneralName> names, boolean critical) {
         extensions.add(BcExtensions.subjectAlternativeNames(names, critical));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder subjectKeyIdentifier() {
         this.addSubjectKeyIdentifier = true;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder authorityKeyIdentifier(byte[] keyIdentifier) {
         extensions.add(BcExtensions.authorityKeyIdentifier(keyIdentifier));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateBuilder addExtension(CertificateExtension extension) {
         extensions.add(BcExtensions.generic(extension));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm) {
         Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
         return buildBody(signatureAlgorithm, false);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] buildAlternativeSignatureTbs() {
         return buildBody(null, true);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] buildAlternativeSignatureTbs(AlgorithmIdentifier nativeAlgorithm) {
         Objects.requireNonNull(nativeAlgorithm, "nativeAlgorithm");
@@ -240,6 +290,9 @@ final class BcCertificateBuilder implements CertificateBuilder {
         org.bouncycastle.asn1.x509.AlgorithmIdentifier.getInstance(alternativeAlgorithm.getParsedValue());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509Certificate build(ContentSigner signer) {
         Objects.requireNonNull(serialNumber, "serialNumber");

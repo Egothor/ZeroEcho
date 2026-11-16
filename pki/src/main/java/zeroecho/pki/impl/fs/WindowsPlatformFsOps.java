@@ -77,21 +77,33 @@ final class WindowsPlatformFsOps implements PlatformFsOps {
 
     private static final FileAttribute<?>[] NO_ATTRIBUTES = new FileAttribute<?>[0];
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceDirectory(final Path directory) {
         // Correct no-op: durability is carried by the write-through atomic publish.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] directoryCreateAttributes() {
         return NO_ATTRIBUTES;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] fileCreateAttributes() {
         return NO_ATTRIBUTES;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void restrictToOwner(final Path directory) throws IOException {
         AclFileAttributeView view = Files.getFileAttributeView(directory, AclFileAttributeView.class,
@@ -114,11 +126,17 @@ final class WindowsPlatformFsOps implements PlatformFsOps {
         view.setAcl(List.of(ownerFullControl));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String platformId() {
         return "windows-acl";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean enterpriseGrade() {
         return true;

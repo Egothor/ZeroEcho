@@ -57,6 +57,9 @@ final class SigningHybridCrlDependencies {
     private static final String DOMAIN = "io.zeroecho.pki.domain-continuation";
     private static final zeroecho.pki.api.attr.AttributeId CRL_COMMAND =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.full-crl.command-sha256");
+    /**
+     * Exact status-object metadata namespace used to resolve hybrid CRL publication dependencies.
+     */
     static final String STATUS = FilesystemPkiStore.statusRecordKey(
             new zeroecho.pki.api.PkiId("crl:" + "f".repeat(64))).namespace();
     private final Map<String, CrlHybridExecution> parents = new HashMap<>();
@@ -77,26 +80,65 @@ final class SigningHybridCrlDependencies {
     private final Set<String> pendingParents = new HashSet<>();
     private final Set<Prepared> pendingChanges = new HashSet<>();
 
+    /**
+     * Creates a dependency graph without capacity accounting.
+     *
+     * @param content durable resolver used to validate accepted content
+     */
     SigningHybridCrlDependencies(StagedContentStore content) {
         this(content, null, null, 1);
     }
 
+    /**
+     * Creates the hybrid dependency graph with optional resident and future capacity accounting.
+     *
+     * @param content durable resolver used for accepted content
+     * @param capacity shared signing index budget, or null to disable accounting
+     * @param due live due-work index used by capacity accounting
+     * @param maximumIndexKeys maximum actual and reserved future index keys
+     */
     SigningHybridCrlDependencies(StagedContentStore content, SigningIndexCapacityBudget capacity,
             SigningDueWorkIndex due, int maximumIndexKeys) {
         this.content = content; this.capacity = capacity; this.due = due;
         this.maximumIndexKeys = maximumIndexKeys;
     }
 
-    /** Reads one prepared MVCC value without entering the metadata-store façade. */
+    /**
+     * Reads one prepared MVCC value without entering the metadata-store façade.
+     */
     @FunctionalInterface
     interface RowReader {
-        /** Returns canonical bytes, or null when the key is absent. */
+        /**
+         * Reads a prepared MVCC value without entering the metadata-store facade.
+         *
+         * @param key exact namespaced record key
+         * @return canonical bytes, or null if absent
+         * @throws IOException if the pinned value cannot be read
+         */
         byte[] read(MetadataKey key) throws IOException;
-        /** Reports existence without requiring an uncommitted WAL frame to be readable. */
+        /**
+         * Tests record presence without requiring callers to read an uncommitted WAL frame.
+         *
+         * @param key exact namespaced record key
+         * @return true if the record exists
+         * @throws IOException if existence cannot be determined
+         */
         default boolean exists(MetadataKey key) throws IOException { return read(key) != null; }
     }
 
-    /** Builds a bounded overlay and validates every affected reserved identity. */
+    /**
+     * Builds a bounded transaction overlay, validates affected reserved identities and reserves future graph capacity.
+     * The returned change must be published only after authoritative commit, or closed to roll back reservations.
+     *
+     * @param payload exact transaction mutations
+     * @param current reader of the current pinned metadata view
+     * @param projectedActualKeys actual key count projected after this transaction
+     * @return transaction-local dependency change and due-ownership view
+     * @throws NullPointerException if payload or current is null
+     * @throws IOException if graph invariants, authority, reserved identities or capacity validation fail
+     * @throws IllegalStateException if resident or future capacity cannot be reserved
+     * @throws ArithmeticException if capacity arithmetic overflows
+     */
     synchronized Prepared prepare(SigningTransactionPayloadCodec.Payload payload, RowReader current,
             int projectedActualKeys) throws IOException {
         Map<MetadataKey, SigningTransactionPayloadCodec.Mutation> mutations = new HashMap<>();
@@ -261,11 +303,36 @@ final class SigningHybridCrlDependencies {
         return prepared;
     }
 
-    /** Reconstructs immutable reservations and due ownership before accepting live work. */
+    /**
+     * Reconstructs immutable parent-child reservations, future capacity and effective due ownership before live work begins.
+     * This graph must be empty before recovery.
+     *
+     * @param executions recovered executions keyed by parent identifier
+     * @param rows reader of recovered authoritative metadata
+     * @return recovered suppressed and resident operation identities
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if the graph is nonempty, authority is inconsistent or reserved key capacity cannot fit
+     * @throws IllegalStateException if recovered resident or future byte capacity cannot be reserved
+     * @throws ArithmeticException if recovered capacity arithmetic overflows
+     */
     synchronized View recover(Map<String, CrlHybridExecution> executions, RowReader rows) throws IOException {
         return recover(executions, rows, Map.of(), 0);
     }
 
+    /**
+     * Reconstructs immutable parent-child reservations, future capacity and effective due ownership before live work begins.
+     * This graph must be empty before recovery.
+     *
+     * @param executions recovered executions keyed by parent identifier
+     * @param rows reader of recovered authoritative metadata
+     * @param publications published status identity by parent operation
+     * @param actualKeys recovered actual metadata key count
+     * @return recovered suppressed and resident operation identities
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if the graph is nonempty, authority is inconsistent or reserved key capacity cannot fit
+     * @throws IllegalStateException if recovered resident or future byte capacity cannot be reserved
+     * @throws ArithmeticException if recovered capacity arithmetic overflows
+     */
     synchronized View recover(Map<String, CrlHybridExecution> executions, RowReader rows,
             Map<String, String> publications, int actualKeys) throws IOException {
         if (!parents.isEmpty() || !children.isEmpty()) throw invalid();
@@ -327,6 +394,13 @@ final class SigningHybridCrlDependencies {
         return keys;
     }
 
+    /**
+     * Extracts the single string command commitment that binds a published CRL to its hybrid parent.
+     *
+     * @param status published status object
+     * @return command commitment, or an empty string if the attribute is absent, repeated or not a string
+     * @throws NullPointerException if status is null
+     */
     static String publicationCommitment(zeroecho.pki.api.status.StatusObject status) {
         var values = status.attributes().getAll(CRL_COMMAND);
         return values.size() == 1 && values.getFirst() instanceof zeroecho.pki.api.attr.AttributeValue.StringValue value
@@ -352,7 +426,9 @@ final class SigningHybridCrlDependencies {
         return Math.addExact(plan.childResidentBytes(), Math.multiplyExact(peak, 4L));
     }
 
-    /** Freezes actual immutable serializers and key shapes once; claims allocate no sizing vectors. */
+    /**
+     * Freezes actual immutable serializers and key shapes once; claims allocate no sizing vectors.
+     */
     private CapacityPlan buildCapacityPlan(CrlHybridExecution execution, RowReader rows) throws IOException {
         long graphBytes = graphBytes(execution, rows);
         if (retained(state(rows, execution.parentId().value()).state())) {
@@ -400,7 +476,9 @@ final class SigningHybridCrlDependencies {
         return new CapacityPlan(peak, childResident, graphBytes, childKeys, statusKeys, otherKeys);
     }
 
-    /** Resident plan strings and phase maxima are owned by exactly one parent. */
+    /**
+     * Resident plan strings and phase maxima are owned by exactly one parent.
+     */
     private record CapacityPlan(long peakBytes, long childResidentBytes, long graphBytes,
             Set<MetadataKey> childKeys, Set<MetadataKey> statusKeys, Set<MetadataKey> otherKeys) {
         CapacityPlan { childKeys = Set.copyOf(childKeys); statusKeys = Set.copyOf(statusKeys); otherKeys = Set.copyOf(otherKeys); }
@@ -421,7 +499,9 @@ final class SigningHybridCrlDependencies {
         return Math.addExact(256L, Math.multiplyExact(2L, stringsAndReferences));
     }
 
-    /** Releases only this graph's committed reservations when the engine closes. */
+    /**
+     * Releases only this graph's committed reservations when the engine closes.
+     */
     synchronized void close() {
         for (Prepared pending : List.copyOf(pendingChanges)) {
             if (pending.rollbackBeforeClose != null) pending.rollbackBeforeClose.run();
@@ -503,7 +583,9 @@ final class SigningHybridCrlDependencies {
                 || after.leaseUntil().isPresent()) throw invalid();
     }
 
-    /** EncodedObject defensively owns arrays, so record equality is not content equality. */
+    /**
+     * EncodedObject defensively owns arrays, so record equality is not content equality.
+     */
     private static boolean sameResult(java.util.Optional<zeroecho.pki.api.EncodedObject> left,
             java.util.Optional<zeroecho.pki.api.EncodedObject> right) {
         if (left.isEmpty() || right.isEmpty()) return left.isEmpty() && right.isEmpty();
@@ -530,7 +612,23 @@ final class SigningHybridCrlDependencies {
         return state;
     }
 
+    /**
+     * Returns the signing mutable-state metadata key for an exact operation identifier.
+     *
+     * @param id operation identifier text
+     * @return namespaced metadata key
+     * @throws NullPointerException if id is null
+     * @throws IllegalArgumentException if id violates metadata key bounds
+     */
     static MetadataKey stateKey(String id) { return new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, id); }
+    /**
+     * Returns the signing acceptance-envelope metadata key for an exact operation identifier.
+     *
+     * @param id operation identifier text
+     * @return namespaced metadata key
+     * @throws NullPointerException if id is null
+     * @throws IllegalArgumentException if id violates metadata key bounds
+     */
     static MetadataKey envelopeKey(String id) { return new MetadataKey(SigningWorkProjection.ENVELOPE_NAMESPACE, id); }
     private static boolean retained(SignWorkflowStore.State state) {
         return state == SignWorkflowStore.State.RETIRED || state == SignWorkflowStore.State.EXPIRED;
@@ -543,13 +641,33 @@ final class SigningHybridCrlDependencies {
     }
     private static IOException invalid() { return new IOException("Hybrid CRL dependency graph is inconsistent"); }
 
-    /** Effective due ownership for the exact transaction, never arbitrary caller credits. */
+    /**
+     * Effective due ownership for the exact transaction, never arbitrary caller credits.
+     * @param suppressed operation identities suppressed by exact dependency ownership
+     * @param handoffs parent-to-child ownership handoffs retained by the transaction
+     * @param resident operation identities already resident in due-work ownership
+     */
     record View(Set<String> suppressed, Map<String, String> handoffs, Set<String> resident) {
+        /**
+         * Creates the effective due ownership for the exact transaction, never arbitrary caller credits.
+         *
+         * @param suppressed operation identities suppressed by exact dependency ownership
+         * @param handoffs parent-to-child ownership handoffs retained by the transaction
+         * @param resident operation identities already resident in due-work ownership
+         * @throws NullPointerException if a set or map, or any of its elements, keys or values, is null
+         */
         View { suppressed = Set.copyOf(suppressed); handoffs = Map.copyOf(handoffs); resident = Set.copyOf(resident); }
+        /**
+         * Creates an empty dependency ownership view.
+         *
+         * @return immutable view with no suppressions, handoffs or resident operations
+         */
         static View empty() { return new View(Set.of(), Map.of(), Set.of()); }
     }
 
-    /** Publishes graph coordinates only after the authoritative transaction commits. */
+    /**
+     * Publishes graph coordinates only after the authoritative transaction commits.
+     */
     final class Prepared implements AutoCloseable {
         private final Map<String, CrlHybridExecution> replacements;
         private final Set<String> deleted;
@@ -579,10 +697,39 @@ final class SigningHybridCrlDependencies {
             this.nextGraphBytes = nextGraphBytes; this.reservations = reservations;
             this.borrowed = borrowed; this.residual = residual;
         }
+        /**
+         * Attaches transaction rollback to run before abandoning this prepared change.
+         *
+         * @param rollback caller-owned rollback action
+         * @throws NullPointerException if rollback is null
+         */
         void attachRollback(Runnable rollback) { rollbackBeforeClose = Objects.requireNonNull(rollback); }
+        /**
+         * Borrows committed capacity for this prepared transaction when accounting and a positive borrowed amount are present.
+         *
+         * @throws IllegalStateException if the shared budget cannot honor the committed-capacity loan
+         */
         void enterLoan() { if (capacity != null && borrowed > 0L) loan = capacity.borrowCommitted(borrowed); }
+        /**
+         * Detaches the active transaction capacity loan and requires the computed residual reservation before commit.
+         *
+         * @throws IllegalStateException if detachment occurs from a different preparation thread or loan scope
+         * @throws SigningIndexCapacityBudget.CapacityExceededException if the residual capacity requirement cannot be met
+         */
         void detachLoan() { if (loan != null) { loan.detach(); loan.requireResidual(residual); } }
+        /**
+         * Returns the exact prepared transaction-local hybrid CRL dependency view.
+         *
+         * @return exact prepared transaction-local hybrid CRL dependency view
+         */
         View view() { return view; }
+        /**
+         * Publishes graph replacements, due ownership and capacity changes after the authoritative transaction commits.
+         * Transfers reservations, releases deleted graph capacity and removes this change from the pending set.
+         *
+         * @throws IllegalStateException if this change has already been closed or published
+         * @throws ArithmeticException if committed future-key accounting overflows
+         */
         void publish() {
             synchronized (SigningHybridCrlDependencies.this) {
             if (!active) throw new IllegalStateException("Hybrid CRL dependency change is closed");
@@ -624,6 +771,9 @@ final class SigningHybridCrlDependencies {
                 pendingChildren.remove(entry.getValue().nativeChildId().value(), entry.getKey());
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             synchronized (SigningHybridCrlDependencies.this) {
             if (active) {

@@ -40,19 +40,43 @@ import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole;
 
 /**
- * Pre-certificate managed responder proof context; it is not a credential or authority grant.
- * @param parentOperationId exact parent signing identity @param parentIntentCommitment ocsp-intent:v1 digest
- * @param frozenTargetCommitment SHA256 frozen final TBS/profile/issuer/public-key target @param role exact subject role
+ * Binds a managed responder possession proof to a frozen pre-certificate candidate.
+ *
+ * <p>The parent signing identity and intent distinguish the enclosing issuance from
+ * its child key proofs. The target commitment binds the final TBS, profile, issuer
+ * and public keys. Possessing this value is neither a credential nor an authority grant.
+ *
+ * @param parentOperationId exact parent signing-submission identity; must not be {@code null}
+ * @param parentIntentCommitment {@code ocsp-intent:v1:} followed by 64 lowercase
+ *        hexadecimal characters
+ * @param frozenTargetCommitment final candidate's SHA-256 commitment as 64 lowercase
+ *        hexadecimal characters
+ * @param role subject-key role proved by the child operation; must not be {@code null}
  */
 public record ManagedOcspResponderProofTarget(PkiId parentOperationId, String parentIntentCommitment,
         String frozenTargetCommitment, SubjectKeyRole role) {
-    /** Validates finite canonical context without a provider or store. */
+    /**
+     * Validates the signing identity, commitment encodings and required subject role.
+     *
+     * <p>No provider or store is consulted. The enclosing workflow must still validate
+     * the relationship between the parent operation and the child proof operation.
+     *
+     * @throws NullPointerException if the parent identity or role is null
+     * @throws IllegalArgumentException if the parent identifier is invalid or either
+     *         commitment is null or has an invalid representation
+     * @param parentOperationId exact parent signing-submission identity; must not be {@code null}
+     * @param parentIntentCommitment {@code ocsp-intent:v1:} followed by 64 lowercase hexadecimal characters
+     * @param frozenTargetCommitment final candidate's SHA-256 commitment as 64 lowercase hexadecimal characters
+     * @param role subject-key role proved by the child operation; must not be {@code null}
+     */
     public ManagedOcspResponderProofTarget {
         ManagedKeyProofInputs.identifier(parentOperationId);
-        var parent = SigningSubmissionId.parse(parentOperationId);
+        SigningSubmissionId parent = SigningSubmissionId.parse(parentOperationId);
         if (!parent.id().equals(parentOperationId) || parentIntentCommitment == null
                 || !parentIntentCommitment.matches("ocsp-intent:v1:[0-9a-f]{64}") || frozenTargetCommitment == null
-                || !frozenTargetCommitment.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Responder proof target invalid");
+                || !frozenTargetCommitment.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Responder proof target invalid");
+        }
         Objects.requireNonNull(role, "role");
     }
 }

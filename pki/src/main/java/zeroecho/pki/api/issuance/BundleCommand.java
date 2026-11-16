@@ -60,6 +60,9 @@ public record BundleCommand(PkiId credentialId, Optional<PkiId> preferredTrustAn
      *
      * @throws IllegalArgumentException if inputs are invalid or optional containers
      *                                  are null
+     * @param credentialId credential id
+     * @param preferredTrustAnchorId optional preferred trust anchor id (implementation-defined)
+     * @param compatibilityProfileId optional compatibility profile id influencing chain selection
      */
     public BundleCommand {
         if (credentialId == null) {

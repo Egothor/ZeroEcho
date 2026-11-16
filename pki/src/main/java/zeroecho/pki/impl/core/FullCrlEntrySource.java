@@ -90,6 +90,15 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
 
     /* default */ // Exceptional cleanup retains ownership and releases resources after failed validation or provider invocation.
                   // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+                  /**
+                   * Opens an owned revocation snapshot and checks delta-base provenance before exposing entries.
+                   *
+                   * @param store borrowed PKI store; must not be null
+                   * @param prepared frozen CRL preparation including any delta base; must not be null
+                   * @param cancellation cooperative cancellation signal; must not be null
+                   * @throws IOException if cancellation, snapshot creation, or delta-prefix validation fails
+                   * @throws NullPointerException if a required collaborator or snapshot is null
+                   */
                   @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ExceptionAsFlowControl" })
                   FullCrlEntrySource(PkiStore store, FullCrlPreparation.Prepared prepared, CancellationSignal cancellation)
             throws IOException {
@@ -118,21 +127,66 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
         }
     }
 
+    /**
+     * Returns the open snapshot identity.
+     *
+     * @return identity assigned by the underlying snapshot
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ String snapshotId() { requireOpen(); return snapshot.snapshotId(); }
+    /**
+     * Returns the provenance identity of the open source store.
+     *
+     * @return stable metadata store identity
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() { requireOpen(); return snapshot.sourceStoreId(); }
+    /**
+     * Returns the frozen source revision.
+     *
+     * @return nonnegative snapshot revision
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ long revision() { requireOpen(); return snapshot.revision(); }
+    /**
+     * Returns the frozen revocation transition boundary.
+     *
+     * @return snapshot boundary used for provenance checks
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ long boundary() { requireOpen(); return snapshot.boundary(); }
+    /**
+     * Returns the frozen revocation-prefix commitment.
+     *
+     * @return snapshot prefix commitment
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ String commitment() { requireOpen(); return snapshot.commitment(); }
+    /**
+     * Returns the underlying raw snapshot count before CRL entry filtering.
+     *
+     * @return raw entry count when available, otherwise an empty optional
+     * @throws IllegalStateException if this source is closed
+     */
     /* default */ OptionalLong rawCount() { requireOpen(); return snapshot.count(); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Cursor openCursor() throws IOException {
         requireOpen();
         cancellation.throwIfCancelled();
         return new EntryCursor(snapshot.openCursor());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public OptionalLong count() { requireOpen(); return OptionalLong.empty(); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() throws IOException {
         if (!closed) {
             closed = true;
@@ -272,7 +326,9 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
 
     private static IOException invalid(String code) { return new IOException("Full CRL entry rejected: code=" + code); }
 
-    /** Validates each frozen revocation entry before exposing it to the CRL writer. */
+    /**
+     * Validates each frozen revocation entry before exposing it to the CRL writer.
+     */
     private final class EntryCursor implements Cursor {
         private final RevocationSnapshot.Cursor cursor;
         private CrlEntry current;
@@ -284,6 +340,9 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
         private EntryCursor(RevocationSnapshot.Cursor cursor) { this.cursor = Objects.requireNonNull(cursor, "cursor"); }
 
         // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
         @Override public boolean next() throws IOException {
             requireUsable();
@@ -308,9 +367,18 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public CrlEntry current() { requirePositioned(); return current; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long ordinal() { requirePositioned(); return ordinal; }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException {
             if (!cursorClosed) {
                 cursorClosed = true;

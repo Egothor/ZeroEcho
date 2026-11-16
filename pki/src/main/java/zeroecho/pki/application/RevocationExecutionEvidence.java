@@ -68,71 +68,131 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
         Authentication authentication, Authorization authorization, Optional<AuthorizationPath> authorizationPath,
         Optional<String> operationCommitment, Optional<String> justificationCommitment, Outcome outcome) {
 
-    /** Stable evidence actor classifications. */
+    /**
+     * Stable evidence actor classifications.
+     */
     public enum ActorType {
-        /** Authenticated administrative principal. */
+        /**
+         * Authenticated administrative principal.
+         */
         ADMIN_PRINCIPAL,
-        /** Protocol-native ACME account. */
+        /**
+         * Protocol-native ACME account.
+         */
         ACME_ACCOUNT,
-        /** Certificate-authenticated CMP requester. */
+        /**
+         * Certificate-authenticated CMP requester.
+         */
         CMP_SIGNER
     }
-    /** Stable evidence authentication classifications. */
+    /**
+     * Stable evidence authentication classifications.
+     */
     public enum Authentication {
-        /** Direct mutual-TLS client authentication. */
+        /**
+         * Direct mutual-TLS client authentication.
+         */
         DIRECT_MTLS,
-        /** Identity asserted by a trusted reverse proxy. */
+        /**
+         * Identity asserted by a trusted reverse proxy.
+         */
         TRUSTED_REVERSE_PROXY,
-        /** ACME account JSON Web Signature authentication. */
+        /**
+         * ACME account JSON Web Signature authentication.
+         */
         ACME_ACCOUNT_JWS,
-        /** Verified CMP signature protection. */
+        /**
+         * Verified CMP signature protection.
+         */
         CMP_SIGNATURE
     }
-    /** Stable evidence authorization classifications. */
+    /**
+     * Stable evidence authorization classifications.
+     */
     public enum Authorization {
-        /** Administrative policy allowed the operation. */
+        /**
+         * Administrative policy allowed the operation.
+         */
         ALLOWED,
-        /** ACME account ownership authorized the operation. */
+        /**
+         * ACME account ownership authorized the operation.
+         */
         ACME_OWNERSHIP,
-        /** Exact issued-certificate holder authorized CMP revocation. */
+        /**
+         * Exact issued-certificate holder authorized CMP revocation.
+         */
         CMP_CERTIFICATE_HOLDER,
-        /** Explicit authority-scoped CMP registration-agent grant. */
+        /**
+         * Explicit authority-scoped CMP registration-agent grant.
+         */
         CMP_AUTHORIZED_RA
     }
-    /** Administrative authorization path, with break-glass taking precedence. */
+    /**
+     * Administrative authorization path, with break-glass taking precedence.
+     */
     public enum AuthorizationPath {
-        /** Ordinary administrative grant. */
+        /**
+         * Ordinary administrative grant.
+         */
         ORDINARY_GRANT,
-        /** Explicit approval workflow. */
+        /**
+         * Explicit approval workflow.
+         */
         APPROVAL,
-        /** Audited emergency break-glass path. */
+        /**
+         * Audited emergency break-glass path.
+         */
         BREAK_GLASS
     }
-    /** Outcome committed atomically with the transition. */
+    /**
+     * Outcome committed atomically with the transition.
+     */
     public enum Outcome {
-        /** Revocation transition and evidence committed atomically. */
+        /**
+         * Revocation transition and evidence committed atomically.
+         */
         COMMITTED
     }
 
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ACTOR_TYPE = id("actor-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ACTOR_ID = id("actor-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId REALM_ID = id("realm-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId REQUEST_ID = id("request-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHENTICATION = id("authentication");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHORIZATION = id("authorization");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId AUTHORIZATION_PATH = id("authorization-path");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OPERATION_COMMITMENT = id("operation-commitment");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId JUSTIFICATION_COMMITMENT = id("justification-commitment");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OUTCOME = id("outcome");
 
     private static final String EVIDENCE_PREFIX = "urn:zeroecho:pki:revocation-evidence:";
@@ -144,7 +204,21 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
     private static final byte[] JUSTIFICATION_DOMAIN =
             "ZEROECHO-REVOCATION-JUSTIFICATION-V1\0".getBytes(StandardCharsets.US_ASCII);
 
-    /** Validates the closed evidence model. */
+    /**
+     * Validates the closed evidence model.
+     * @param actorType administrative or protocol-native actor classification
+     * @param actorId bounded stable administrative or protocol-native actor identifier
+     * @param realmId bounded realm in which authorization was evaluated
+     * @param requestId bounded transport request identifier
+     * @param authentication authentication mechanism that established the actor
+     * @param authorization authorization decision classification
+     * @param authorizationPath optional administrative authorization path
+     * @param operationCommitment administrative operation or exact CMP request commitment
+     * @param justificationCommitment optional administrative justification commitment
+     * @param outcome atomically committed revocation outcome
+     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath, operationCommitment, justificationCommitment, outcome is null
+     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment classifications do not form a supported revocation-evidence combination
+     */
     public RevocationExecutionEvidence {
         Objects.requireNonNull(actorType, "actorType");
         requireBounded(actorId, "actor ID");
@@ -187,6 +261,7 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
      * @param operationCommitment lowercase 64-hex-character operation commitment
      * @param operatorJustification optional plaintext justification committed but not retained
      * @return validated immutable administrative evidence
+     * @throws NullPointerException if operatorJustification, path is null
      */
     @SuppressWarnings("PMD.UseObjectForClearerAPI")
     public static RevocationExecutionEvidence administrative(String principalId, String realmId, String requestId,
@@ -255,6 +330,7 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
      * @return empty only when no version-one evidence attribute is present
      * @throws IllegalArgumentException if evidence is unknown, partial, duplicated,
      *         mistyped, or semantically inconsistent
+     * @throws NullPointerException if attributes is null
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // untrusted evidence values must not escape through causes
     public static Optional<RevocationExecutionEvidence> decode(AttributeSet attributes) {
@@ -296,6 +372,7 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
      *
      * @param operatorJustification optional operator justification or ticket text
      * @return lowercase SHA-256 commitment over presence and exact UTF-8 bytes
+     * @throws NullPointerException if operatorJustification is null
      */
     public static String commitJustification(Optional<String> operatorJustification) {
         Objects.requireNonNull(operatorJustification, "operatorJustification");

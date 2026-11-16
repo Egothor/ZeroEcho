@@ -43,7 +43,15 @@ import java.io.StringReader;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for pair seq.
+ */
 class PairSeqTest {
+    /**
+     * Round-trips typed pair sequences through the checked codec.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void checkedRoundTrip() throws Exception {
         System.out.println("checkedRoundTrip");
@@ -63,6 +71,9 @@ class PairSeqTest {
         System.out.println("checkedRoundTrip...ok");
     }
 
+    /**
+     * Checks pair-sequence input validation and ownership of retained values.
+     */
     @Test
     void validationAndOwnership() {
         System.out.println("validationAndOwnership");
@@ -85,6 +96,9 @@ class PairSeqTest {
         System.out.println("validationAndOwnership...ok");
     }
 
+    /**
+     * Checks that codec failures retain their expected exception contract.
+     */
     @Test
     void failurePropagation() {
         System.out.println("failurePropagation");

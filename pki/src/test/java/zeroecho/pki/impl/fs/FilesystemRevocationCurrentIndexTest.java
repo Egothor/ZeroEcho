@@ -64,6 +64,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for filesystem revocation current index.
+ */
 final class FilesystemRevocationCurrentIndexTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -77,6 +80,11 @@ final class FilesystemRevocationCurrentIndexTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Rebuild provides exact authoritative lookup and stable reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rebuildProvidesExactAuthoritativeLookupAndStableReopen() throws Exception {
         System.out.print("rebuildProvidesExactAuthoritativeLookupAndStableReopen ");
@@ -98,6 +106,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open applies authoritative suffix and persists it.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void openAppliesAuthoritativeSuffixAndPersistsIt() throws Exception {
         System.out.print("openAppliesAuthoritativeSuffixAndPersistsIt ");
@@ -121,6 +134,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cell force failure leaves prior generation recoverable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cellForceFailureLeavesPriorGenerationRecoverable() throws Exception {
         System.out.print("cellForceFailureLeavesPriorGenerationRecoverable ");
@@ -150,6 +168,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Superblock force failure never loses authoritative transition.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void superblockForceFailureNeverLosesAuthoritativeTransition() throws Exception {
         System.out.print("superblockForceFailureNeverLosesAuthoritativeTransition ");
@@ -175,6 +198,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rebuild grows on disk without aggregate state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rebuildGrowsOnDiskWithoutAggregateState() throws Exception {
         System.out.print("rebuildGrowsOnDiskWithoutAggregateState ");
@@ -198,6 +226,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Failed rebuild preserves published index.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failedRebuildPreservesPublishedIndex() throws Exception {
         System.out.print("failedRebuildPreservesPublishedIndex ");
@@ -221,6 +254,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Corrupt superblocks fail closed and remain rebuildable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptSuperblocksFailClosedAndRemainRebuildable() throws Exception {
         System.out.print("corruptSuperblocksFailClosedAndRemainRebuildable ");
@@ -243,6 +281,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Corrupt newest superblock falls back and reapplies suffix.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptNewestSuperblockFallsBackAndReappliesSuffix() throws Exception {
         System.out.print("corruptNewestSuperblockFallsBackAndReappliesSuffix ");
@@ -267,6 +310,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Exact frame and identity binding rejects forged update.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactFrameAndIdentityBindingRejectsForgedUpdate() throws Exception {
         System.out.print("exactFrameAndIdentityBindingRejectsForgedUpdate ");
@@ -289,6 +337,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Second writer and closed use are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void secondWriterAndClosedUseAreRejected() throws Exception {
         System.out.print("secondWriterAndClosedUseAreRejected ");
@@ -306,6 +359,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rebuild cannot replace index held by live writer.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rebuildCannotReplaceIndexHeldByLiveWriter() throws Exception {
         System.out.print("rebuildCannotReplaceIndexHeldByLiveWriter ");
@@ -326,6 +384,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Suffix replay uses one final derived force.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void suffixReplayUsesOneFinalDerivedForce() throws Exception {
         System.out.print("suffixReplayUsesOneFinalDerivedForce ");
@@ -359,6 +422,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Live and suffix updates grow across multiple doublings.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void liveAndSuffixUpdatesGrowAcrossMultipleDoublings() throws Exception {
         System.out.print("liveAndSuffixUpdatesGrowAcrossMultipleDoublings ");
@@ -403,6 +471,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Colliding keys probe across physical wrap boundary.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void collidingKeysProbeAcrossPhysicalWrapBoundary() throws Exception {
         System.out.print("collidingKeysProbeAcrossPhysicalWrapBoundary ");
@@ -426,6 +499,11 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Structural contract has no history collection or checkpoint publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void structuralContractHasNoHistoryCollectionOrCheckpointPublication() throws Exception {
         System.out.print("structuralContractHasNoHistoryCollectionOrCheckpointPublication ");
@@ -442,6 +520,9 @@ final class FilesystemRevocationCurrentIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Fs paths uses one stable current index location.
+     */
     @Test
     void fsPathsUsesOneStableCurrentIndexLocation() {
         System.out.print("fsPathsUsesOneStableCurrentIndexLocation ");

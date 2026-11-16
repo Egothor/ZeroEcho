@@ -60,6 +60,13 @@ public final class PkiStatusAccess {
         if (code != 0) System.exit(code);
     }
 
+    /**
+     * Runs status-access capability provisioning and reports classified process status without exiting the JVM.
+     *
+     * @param arguments exact command-line arguments; no null entries
+     * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
+     * @throws NullPointerException if the arguments array is null
+     */
     static int run(String[] arguments) {
         if (arguments.length == 1 && "--help".equals(arguments[0])) { System.out.print(HELP); return 0; }
         try {

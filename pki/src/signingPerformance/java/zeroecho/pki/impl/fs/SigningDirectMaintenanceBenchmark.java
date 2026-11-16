@@ -56,10 +56,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.LongSupplier;
 import zeroecho.pki.spi.store.MetadataKey;
 
-/** Opt-in direct maintenance characterization over real segmented-ledger primitives. */
+/**
+ * Opt-in direct maintenance characterization over real segmented-ledger primitives.
+ */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CommentRequired",
         "PMD.SystemPrintln", "PMD.UseObjectForClearerAPI" })
 public final class SigningDirectMaintenanceBenchmark {
+    /**
+     * Stable schema identifier emitted in this benchmark's JSON reports.
+     */
     static final String SCHEMA = "zeroecho-signing-direct-maintenance-v1";
     private static final String NAMESPACE = "io.zeroecho.pki.benchmark-maintenance";
 
@@ -67,7 +72,12 @@ public final class SigningDirectMaintenanceBenchmark {
         // entry point
     }
 
-    /** Builds one fresh fixture, directly compacts once, and writes a diagnostic sidecar. */
+    /**
+     * Builds one fresh fixture, directly compacts once, and writes a diagnostic sidecar.
+     *
+     * @param arguments closed --name=value options selecting the benchmark scenario and report paths
+     * @throws Exception if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static void main(String[] arguments) throws Exception {
         Configuration configuration = Configuration.parse(arguments);
         Result result = run(configuration);
@@ -76,6 +86,14 @@ public final class SigningDirectMaintenanceBenchmark {
         System.out.println(json);
     }
 
+    /**
+     * Writes a complete JSON report without following a symbolic link at its destination.
+     *
+     * @param output JSON report destination outside the benchmark work image
+     * @param json complete serialized JSON report to persist
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     * @throws NullPointerException if any of {@code output}, {@code json} is null
+     */
     /* default */ static void writeReport(Path output, String json) throws IOException {
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(json, "json");
@@ -99,10 +117,26 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Builds a fresh production fixture and measures direct rotation, checkpoint, and reclamation.
+     *
+     * @param configuration validated benchmark scenario, limits, paths, and output metadata
+     * @return measured result and production evidence; this method does not write the report
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     /* default */ static Result run(Configuration configuration) throws IOException {
         return run(configuration, System::nanoTime);
     }
 
+    /**
+     * Builds a fresh production fixture and measures direct rotation, checkpoint, and reclamation.
+     *
+     * @param configuration validated benchmark scenario, limits, paths, and output metadata
+     * @param nanoClock monotonic nanosecond source injected for deterministic timing checks
+     * @return measured result and production evidence; this method does not write the report
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     * @throws NullPointerException if any of {@code configuration}, {@code nanoClock} is null
+     */
     /* default */ static Result run(Configuration configuration, LongSupplier nanoClock)
             throws IOException {
         Objects.requireNonNull(configuration, "configuration");
@@ -190,6 +224,18 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Explicit scenario configuration retained with the benchmark report.
+     *
+     * @param liveRecords retained live metadata records used by the maintenance fixture
+     * @param sourceGenerations maximum source-generation count selected for direct compaction
+     * @param sealedSegments sealed WAL segment count in the controlled image
+     * @param firstGenerationIdentity first generation identity assigned to fixture WAL artifacts
+     * @param checkpointIdentity fresh generation identity selected for the new checkpoint
+     * @param nextActiveIdentity fresh generation identity selected for the post-maintenance active WAL
+     * @param output JSON report destination outside the benchmark work image
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     */
     /* default */ record Configuration(int liveRecords, int sourceGenerations,
             int sealedSegments, long firstGenerationIdentity, long checkpointIdentity,
             long nextActiveIdentity, Path output, Path workRoot) {
@@ -197,6 +243,20 @@ public final class SigningDirectMaintenanceBenchmark {
         private static final int MAXIMUM_SOURCE_GENERATIONS = 64;
         private static final int MAXIMUM_SEALED_SEGMENTS = 63;
 
+        /**
+         * Validates scenario bounds and normalizes the benchmark input/output paths.
+         *
+         * @param liveRecords retained live metadata records used by the maintenance fixture
+         * @param sourceGenerations maximum source-generation count selected for direct compaction
+         * @param sealedSegments sealed WAL segment count in the controlled image
+         * @param firstGenerationIdentity first generation identity assigned to fixture WAL artifacts
+         * @param checkpointIdentity fresh generation identity selected for the new checkpoint
+         * @param nextActiveIdentity fresh generation identity selected for the post-maintenance active WAL
+         * @param output JSON report destination outside the benchmark work image
+         * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+         * @throws ContractException if populations, topology, identities, timing bounds, or path relationships violate this scenario
+         * @throws NullPointerException if any of {@code output}, {@code workRoot} is null
+         */
         Configuration {
             int actualSources;
             long highestFixtureIdentity;
@@ -226,6 +286,13 @@ public final class SigningDirectMaintenanceBenchmark {
             }
         }
 
+        /**
+         * Parses the closed benchmark option set and enforces the scenario's bounded configuration.
+         *
+         * @param arguments closed --name=value benchmark options; duplicate or unknown options are rejected
+         * @return validated normalized configuration
+         * @throws ContractException if option syntax, names, numeric values, or scenario bounds are invalid
+         */
         /* default */ static Configuration parse(String[] arguments) {
             Map<String, String> values = parseArguments(arguments);
             try {
@@ -244,6 +311,11 @@ public final class SigningDirectMaintenanceBenchmark {
             }
         }
 
+        /**
+         * Computes the SHA-256 commitment of the canonical measurement-shaping configuration.
+         *
+         * @return lowercase hexadecimal configuration fingerprint; report/work paths are not measurement axes
+         */
         /* default */ String fingerprint() {
             String canonical = "schema=" + SCHEMA + "|liveRecords=" + liveRecords
                     + "|sourceGenerations=" + sourceGenerations
@@ -285,8 +357,25 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Validated decomposition of direct-maintenance time around its rotation boundary.
+     *
+     * @param rotationToBoundaryNanos elapsed time from compaction start to its rotation boundary, in nanoseconds
+     * @param checkpointAfterBoundaryNanos elapsed time from the boundary to compaction return, in nanoseconds
+     * @param totalCompactionNanos total measured compaction duration, in nanoseconds
+     */
     /* default */ record Timings(long rotationToBoundaryNanos,
             long checkpointAfterBoundaryNanos, long totalCompactionNanos) {
+        /**
+         * Validates one rotation boundary and computes nonnegative phase durations.
+         *
+         * @param started monotonic nanosecond timestamp before compaction
+         * @param boundary monotonic nanosecond timestamp observed at the rotation boundary
+         * @param returned monotonic nanosecond timestamp after compaction returned
+         * @param callbacks number of boundary observations; exactly one is required
+         * @return timings whose rotation and checkpoint components sum to the total
+         * @throws BenchmarkException if benchmark setup, filesystem access, measurement, or evidence validation fails
+         */
         /* default */ static Timings checked(long started, long boundary, long returned, int callbacks)
                 throws BenchmarkException {
             try {
@@ -304,9 +393,32 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Immutable identity and commitment observations of one authoritative manifest.
+     *
+     * @param committedRevision authoritative manifest committed metadata revision
+     * @param committedSequence authoritative manifest committed record sequence
+     * @param sealedCount sealed WAL descriptor count in the manifest
+     * @param activeIdentity active WAL generation identity
+     * @param activeName store-local active WAL artifact name
+     * @param checkpointName optional store-local checkpoint artifact name
+     * @param fingerprint lowercase SHA-256 commitment of the encoded manifest or scenario configuration
+     */
     /* default */ record ManifestEvidence(long committedRevision, long committedSequence,
             int sealedCount, long activeIdentity, String activeName,
             Optional<String> checkpointName, String fingerprint) {
+        /**
+         * Retains the benchmark evidence after checking its required components.
+         *
+         * @param committedRevision authoritative manifest committed metadata revision
+         * @param committedSequence authoritative manifest committed record sequence
+         * @param sealedCount sealed WAL descriptor count in the manifest
+         * @param activeIdentity active WAL generation identity
+         * @param activeName store-local active WAL artifact name
+         * @param checkpointName optional store-local checkpoint artifact name
+         * @param fingerprint lowercase SHA-256 commitment of the encoded manifest or scenario configuration
+         * @throws NullPointerException if any of {@code activeName}, {@code checkpointName}, {@code fingerprint} is null
+         */
         ManifestEvidence {
             Objects.requireNonNull(activeName, "activeName");
             checkpointName = Objects.requireNonNull(checkpointName, "checkpointName");
@@ -323,16 +435,51 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Before/after artifact and reclamation evidence from direct maintenance.
+     *
+     * @param beforeManifest authoritative manifest evidence captured before maintenance
+     * @param afterManifest authoritative manifest evidence captured after maintenance
+     * @param preSealedBytes total sealed-artifact bytes before maintenance
+     * @param postSealedBytes total sealed-artifact bytes after maintenance
+     * @param checkpointBytes encoded checkpoint size, in bytes
+     * @param checkpointLiveRecords live metadata record count emitted into the checkpoint
+     * @param sourceChannelsOpened number of source artifact channels opened by direct maintenance
+     * @param reclaimedArtifacts number of physical artifacts reclaimed
+     * @param reclaimedActions number of classified reclamation actions completed
+     */
     /* default */ record Evidence(ManifestEvidence beforeManifest,
             ManifestEvidence afterManifest, long preSealedBytes, long postSealedBytes,
             long checkpointBytes, int checkpointLiveRecords, long sourceChannelsOpened,
             int reclaimedArtifacts, int reclaimedActions) {
+        /**
+         * Retains the benchmark evidence after checking its required components.
+         *
+         * @param beforeManifest authoritative manifest evidence captured before maintenance
+         * @param afterManifest authoritative manifest evidence captured after maintenance
+         * @param preSealedBytes total sealed-artifact bytes before maintenance
+         * @param postSealedBytes total sealed-artifact bytes after maintenance
+         * @param checkpointBytes encoded checkpoint size, in bytes
+         * @param checkpointLiveRecords live metadata record count emitted into the checkpoint
+         * @param sourceChannelsOpened number of source artifact channels opened by direct maintenance
+         * @param reclaimedArtifacts number of physical artifacts reclaimed
+         * @param reclaimedActions number of classified reclamation actions completed
+         * @throws NullPointerException if any of {@code beforeManifest}, {@code afterManifest} is null
+         */
         Evidence {
             Objects.requireNonNull(beforeManifest, "beforeManifest");
             Objects.requireNonNull(afterManifest, "afterManifest");
         }
     }
 
+    /**
+     * JVM telemetry differences sampled around the measured operation.
+     *
+     * @param usedHeapDeltaBytes signed change in observed used heap, in bytes
+     * @param gcCollections observed garbage-collection count delta
+     * @param gcMillis observed garbage-collection time delta, in milliseconds
+     * @param liveThreadAllocatedBytesEstimate estimated allocation delta, in bytes, or a negative unavailable sentinel
+     */
     /* default */ record JvmDelta(long usedHeapDeltaBytes, long gcCollections,
             long gcMillis, long liveThreadAllocatedBytesEstimate) {
         private static JvmDelta between(JvmSample before, JvmSample after) {
@@ -374,13 +521,34 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Measured timing and validated evidence returned by this benchmark run.
+     *
+     * @param timings validated direct-maintenance phase timings
+     * @param evidence before/after manifest and artifact evidence
+     * @param jvm JVM counter observations captured around the measurement
+     */
     /* default */ record Result(Timings timings, Evidence evidence, JvmDelta jvm) {
+        /**
+         * Retains the benchmark evidence after checking its required components.
+         *
+         * @param timings validated direct-maintenance phase timings
+         * @param evidence before/after manifest and artifact evidence
+         * @param jvm JVM counter observations captured around the measurement
+         * @throws NullPointerException if any of {@code timings}, {@code evidence}, {@code jvm} is null
+         */
         Result {
             Objects.requireNonNull(timings, "timings");
             Objects.requireNonNull(evidence, "evidence");
             Objects.requireNonNull(jvm, "jvm");
         }
 
+        /**
+         * Serializes the measured result and its exact scenario/evidence coordinates as JSON.
+         *
+         * @param configuration validated benchmark scenario, limits, paths, and output metadata
+         * @return complete JSON report without an acceptance verdict
+         */
         /* default */ String toJson(Configuration configuration) {
             StringBuilder json = new StringBuilder(2_048).append('{');
             field(json, "schema", SCHEMA).append(',');
@@ -673,6 +841,9 @@ public final class SigningDirectMaintenanceBenchmark {
         }
     }
 
+    /**
+     * Stable configuration-rejection exception for the benchmark command.
+     */
     /* default */ static final class ContractException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
@@ -687,11 +858,19 @@ public final class SigningDirectMaintenanceBenchmark {
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         /* default */ String reasonCode() {
             return reasonCode;
         }
     }
 
+    /**
+     * Stable fail-closed exception for benchmark execution or evidence mismatches.
+     */
     /* default */ static final class BenchmarkException extends IOException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
@@ -706,6 +885,11 @@ public final class SigningDirectMaintenanceBenchmark {
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         /* default */ String reasonCode() {
             return reasonCode;
         }

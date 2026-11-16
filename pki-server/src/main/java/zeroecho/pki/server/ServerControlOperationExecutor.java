@@ -57,7 +57,9 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.server.acme.AcmeState;
 
-/** Sole closed dispatcher for transport-neutral server-control operations. */
+/**
+ * Sole closed dispatcher for transport-neutral server-control operations.
+ */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
         "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
 public final class ServerControlOperationExecutor {
@@ -118,6 +120,10 @@ public final class ServerControlOperationExecutor {
      * @param repositoryAliases optional repository-alias capability
      * @param descriptors closed operation-security descriptor catalog
      * @param approvalPolicies approval policy by operation category
+     * @throws NullPointerException if any of {@code pkiExecutor}, {@code realmId}, {@code exposure}, {@code
+     *         store}, {@code roles}, {@code authorization}, {@code approvals}, {@code breakGlass}, {@code
+     *         disclosure}, {@code credentialPublication}, {@code auditorViews}, {@code repositoryAliases},
+     *         {@code descriptors}, {@code approvalPolicies} is null
      */
     public ServerControlOperationExecutor(zeroecho.pki.application.PkiOperationExecutor pkiExecutor, RealmId realmId, AuthorityExposurePolicy exposure,
             ServerControlStore store, RoleTemplateCatalog roles, AuthorizationEngine authorization,
@@ -142,6 +148,13 @@ public final class ServerControlOperationExecutor {
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
     }
 
+    /**
+     * Installs the realm-owned generate-only managed-key service exactly once.
+     *
+     * @param service configured managed-key admission and public-receipt service
+     * @throws NullPointerException if service is null
+     * @throws IllegalStateException if a managed-key service is already installed
+     */
     void installManagedKeys(ManagedKeyGenerationService service) {
         if (managedKeys != null) throw new IllegalStateException("Managed key service already installed");
         managedKeys = Objects.requireNonNull(service, "service");
@@ -168,7 +181,17 @@ public final class ServerControlOperationExecutor {
                 cancellation);
     }
 
-    /** Executes one gateway-authorized control operation with proven target approval eligibility. */
+    /**
+     * Executes a gateway-authorized control operation with proven target approval eligibility.
+     *
+     * @param actorPrincipalId trusted authenticated actor identity
+     * @param operation exact already-authorized control operation
+     * @param authorizedResource resource proven by gateway authorization
+     * @param approvalId optional approval identity presented for execution
+     * @param approvedTargetCategory target approval category proven by the gateway
+     * @param cancellation exact cancellation signal checked before dispatch
+     * @return finite control-operation result, including safe classified failures
+     */
     /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
             String actorPrincipalId,
             Permission.Resource authorizedResource, Optional<String> approvalId,
@@ -178,6 +201,18 @@ public final class ServerControlOperationExecutor {
                 approvedTargetCategory, cancellation, null);
     }
 
+    /**
+     * Executes an authorized control operation with an optional transport-owned backup channel.
+     *
+     * @param actorPrincipalId trusted authenticated actor identity
+     * @param channel streaming backup channel, or null for operations without streaming
+     * @param operation exact already-authorized control operation
+     * @param authorizedResource resource proven by gateway authorization
+     * @param approvalId optional approval identity presented for execution
+     * @param approvedTargetCategory target approval category proven by the gateway
+     * @param cancellation exact cancellation signal checked before dispatch
+     * @return finite control-operation result, including safe classified failures
+     */
     /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
             String actorPrincipalId, Permission.Resource authorizedResource, Optional<String> approvalId,
             Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
@@ -186,6 +221,21 @@ public final class ServerControlOperationExecutor {
                 authorizedResource, approvalId, approvedTargetCategory, cancellation, channel);
     }
 
+    /**
+     * Executes an authorized control operation while preserving verified decision-actor evidence.
+     *
+     * @param actor trusted actor with optional realm-bound credential evidence
+     * @param channel transport-owned backup channel, or null when unused
+     * @param operation exact already-authorized control operation
+     * @param authorizedResource resource proven by gateway authorization
+     * @param approvalId optional approval identity presented for execution
+     * @param approvedTargetCategory target approval category proven by the gateway
+     * @param cancellation exact cancellation signal checked before dispatch
+     * @return finite control-operation result, including safe classified failures
+     * @throws NullPointerException if a required operation, actor, resource, category container or signal is
+     *         null
+     * @throws IllegalArgumentException if decision evidence belongs to another realm
+     */
     /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
             AdministrativeDecisionActor actor, Permission.Resource authorizedResource, Optional<String> approvalId,
             Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
@@ -230,6 +280,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned ACME service
      * @throws IllegalStateException if an ACME service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installAcme(AcmeService service) {
         if (!acme.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -242,6 +293,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned OCSP responder service
      * @throws IllegalStateException if an OCSP service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installOcsp(OcspResponderService service) {
         if (!ocsp.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -254,6 +306,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned EST service
      * @throws IllegalStateException if an EST service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installEst(zeroecho.pki.server.est.EstService service) {
         if (!est.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -266,6 +319,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned SCEP service
      * @throws IllegalStateException if a SCEP service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installScep(zeroecho.pki.server.scep.ScepService service) {
         if (!scep.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -278,6 +332,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned CMP service
      * @throws IllegalStateException if a CMP service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installCmp(zeroecho.pki.server.cmp.CmpService service) {
         if (!cmp.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -285,7 +340,13 @@ public final class ServerControlOperationExecutor {
         }
     }
 
-    /** Whether the configured service for a protocol operation is installed. */
+    /**
+     * Checks deployment capability independently of caller authorization.
+     *
+     * @param operationId stable catalog operation identity
+     * @return whether the operation's required protocol or managed-generation companion is installed
+     * @throws NullPointerException if operation identity is null
+     */
     /* default */ boolean protocolAvailable(String operationId) {
         if (ServerControlOperation.GenerateManagedKey.NAME.equals(operationId)) {
             return managedKeys != null && managedKeys.available();
@@ -302,6 +363,7 @@ public final class ServerControlOperationExecutor {
      *
      * @param service realm-owned enrollment profile service
      * @throws IllegalStateException if an enrollment profile service is already installed
+     * @throws NullPointerException if {@code service} is null
      */
     public void installEnrollmentProfiles(zeroecho.pki.server.enrollment.EnrollmentProfileService service) {
         if (!enrollmentProfiles.compareAndSet(null, Objects.requireNonNull(service, TEXT_SERVICE))) {
@@ -312,6 +374,8 @@ public final class ServerControlOperationExecutor {
     /**
      * Installs the realm-owned durable protocol approval coordinator exactly once.
      * @param service validated coordinator
+     * @throws NullPointerException if {@code service} is null
+     * @throws IllegalStateException if an enrollment coordinator is already installed
      */
     public void installEnrollmentCoordinator(zeroecho.pki.server.enrollment.EnrollmentCoordinator service) {
         if (!enrollment.compareAndSet(null, Objects.requireNonNull(service, "service"))) throw new IllegalStateException("Enrollment coordinator already installed");
@@ -336,6 +400,8 @@ public final class ServerControlOperationExecutor {
      *
      * @param search bounded audit-log search capability
      * @param integrity audit-log integrity-verification capability
+     * @throws NullPointerException if any of {@code search}, {@code integrity} is null
+     * @throws IllegalStateException if an audit-query capability is already installed
      */
     public void installAudit(AuditService search, AuditIntegrityService integrity) {
         Objects.requireNonNull(search, "search");
@@ -360,14 +426,35 @@ public final class ServerControlOperationExecutor {
         }
     }
 
+    /**
+     * Installs the realm-owned durable streaming-backup companion exactly once.
+     *
+     * @param service durable artifact-transfer lifecycle owner
+     * @throws NullPointerException if service is null
+     * @throws IllegalStateException if the transfer companion is already installed
+     */
     /* default */ void installBackupTransfers(BackupTransferService service) {
         if (!transfers.compareAndSet(null, Objects.requireNonNull(service))) {
             throw new IllegalStateException("Backup transfer service already installed");
         }
     }
 
+    /**
+     * Observes whether the durable streaming-backup companion is installed.
+     *
+     * @return whether streaming transfer storage is available
+     */
     /* default */ boolean backupTransfersAvailable() { return transfers.get() != null; }
 
+    /**
+     * Binds a command to the exact owner-authorized artifact snapshot before approval canonicalization.
+     *
+     * @param owner trusted requesting principal
+     * @param operation public backup-artifact selection
+     * @return replacement command carrying the exact descriptor commitment
+     * @throws SecurityException if the artifact/workflow is unavailable
+     * @throws IllegalStateException if streaming backup is disabled
+     */
     /* default */ ServerControlOperation.BackupArtifactCommand bindBackup(String owner,
             ServerControlOperation.BackupArtifactCommand operation) {
         try {
@@ -385,14 +472,24 @@ public final class ServerControlOperationExecutor {
         return service;
     }
 
-    /** Resolves the authoritative credential authorization resource before admission. */
+    /**
+     * Resolves the authoritative credential authorization resource before admission.
+     *
+     * @param operation requested credential publication and optional owner
+     * @return exact credential resource and ownership coordinates
+     */
     /* default */ Permission.Resource credentialPublicationResource(
             ServerControlOperation.EnrollCredentialPublication operation) {
         return credentialPublication.publicationResource(realmId, operation.credentialId(),
                 operation.ownerPrincipalId().map(DisclosureService.Owner::principal));
     }
 
-    /** Resolves exact ACME authority/profile scope from durable records. */
+    /**
+     * Resolves ACME authority/profile scope from retained directory/account records.
+     *
+     * @param operation ACME control operation selecting the target
+     * @return exact directory scope, registration scope or realm-only scope when no directory is selected
+     */
     /* default */ Permission.Scope acmeScope(ServerControlOperation operation) {
         AcmeState.Directory directory = switch (operation) {
             case ServerControlOperation.RegisterAcmeDirectory ignored -> null;
@@ -411,7 +508,13 @@ public final class ServerControlOperationExecutor {
                 Optional.of(directory.profile().profileId()));
     }
 
-    /** Resolves the exact active profile precondition before approval canonicalization. */
+    /**
+     * Captures the exact active-profile precondition before approval canonicalization.
+     *
+     * @param operation requested directory registration
+     * @return registration bound to the authoritative active-profile precondition
+     * @throws IllegalStateException if the ACME administration companion is unavailable
+     */
     /* default */ ServerControlOperation.RegisterAcmeDirectory bindAcmeDirectoryRegistration(
             ServerControlOperation.RegisterAcmeDirectory operation) {
         AcmeService service = acme();
@@ -419,7 +522,12 @@ public final class ServerControlOperationExecutor {
                 Optional.of(service.resolveDirectoryProfilePrecondition(operation.registration())));
     }
 
-    /** Reports high-risk control operations with a shared pure admission validator. */
+    /**
+     * Identifies high-risk control operations with a shared side-effect-free admission validator.
+     *
+     * @param operation stable catalog operation identity
+     * @return whether pure administrative preflight is implemented for the operation
+     */
     static boolean administrativeValidationAvailable(String operation) {
         return Set.of(ServerControlOperation.GenerateManagedKey.NAME, ServerControlOperation.SetPrincipalEnabled.DISABLE,
                 ServerControlOperation.CreateRoleAssignment.NAME,ServerControlOperation.CreateGrant.NAME,
@@ -433,7 +541,17 @@ public final class ServerControlOperationExecutor {
                 ServerControlOperation.SetOcspResponderActive.ACTIVATE).contains(operation);
     }
 
-    /** Checks current control preconditions without creating approvals or changing metadata. */
+    /**
+     * Checks current control preconditions without creating approvals or changing metadata.
+     *
+     * @param operation exact normalized control operation
+     * @param actor trusted authenticated requesting principal
+     * @throws SecurityException if realm, owner or actor constraints reject the target
+     * @throws IllegalArgumentException if current target/policy preconditions are invalid
+     * @throws IllegalStateException if a required deployment companion is unavailable
+     * @throws UnsupportedOperationException if the operation has no supported side-effect-free control
+     *         validator
+     */
     void validateAdministrative(ServerControlOperation operation,String actor) {
         switch(operation) {
             case ServerControlOperation.GenerateManagedKey ignored -> managedKeys().requireAdministrator(actor);
@@ -843,6 +961,13 @@ public final class ServerControlOperationExecutor {
         return new PkiOperationValue.ObjectValue(fields);
     }
 
+    /**
+     * Resolves one retained responder through the installed OCSP administration service.
+     *
+     * @param responderId retained responder identity
+     * @return authoritative responder record
+     * @throws IllegalStateException if OCSP administration is unavailable
+     */
     /* default */ OcspResponderService.Responder ocspResponder(String responderId) {
         return ocsp().require(responderId);
     }

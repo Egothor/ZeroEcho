@@ -51,11 +51,16 @@ import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.RealmId;
 
-/** Strict HTTP decoding coverage for the credential and CA lifecycle operations. */
+/**
+ * Strict HTTP decoding coverage for the credential and CA lifecycle operations.
+ */
 class HttpLifecycleOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks that credential renewal preserves the certificate object identity under the outer authority scope.
+     */
     @Test
     void decodesRenewAsAuthorityScopedCredentialOperation() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RenewCredential.NAME,
@@ -67,6 +72,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.CERTIFICATE, decoded.resource().type());
     }
 
+    /**
+     * Checks that replacement preserves the predecessor/request coordinates and includes the selected certificate profile in authorization scope.
+     */
     @Test
     void decodesReplaceWithProfileScope() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.ReplaceCredential.NAME,
@@ -81,6 +89,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of("leaf"), decoded.resource().scope().profileId());
     }
 
+    /**
+     * Checks that certificate reissuance binds the supplied credential as the authorization object.
+     */
     @Test
     void decodesReissue() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.ReissueCredential.NAME,
@@ -91,6 +102,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of(new PkiId("credential-a")), decoded.resource().objectId());
     }
 
+    /**
+     * Checks that same-key CA rollover targets the subject authority itself without selecting another issuer.
+     */
     @Test
     void decodesRolloverAsSelfScopedAuthorityAndObject() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RolloverCaCertificate.NAME,
@@ -104,6 +118,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.AUTHORITY, decoded.resource().type());
     }
 
+    /**
+     * Checks preservation of a managed replacement-key reference and the absence of an implicit parent issuer.
+     */
     @Test
     void decodesRotateWithNewKey() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RotateCaKey.NAME,
@@ -115,12 +132,18 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.empty(), operation.issuerCaId());
     }
 
+    /**
+     * Rejects rollover when outer authorization scope names a different CA from the typed operation.
+     */
     @Test
     void rejectsRolloverWhenEnvelopeAuthorityDiffersFromCaId() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.RolloverCaCertificate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-b\",\"arguments\":{\"caId\":\"ca-a\"}}"));
     }
 
+    /**
+     * Checks request inspection as a realm-wide request resource with the exact request object identity.
+     */
     @Test
     void decodesInspectRequestAsRealmWideRequestRead() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.InspectRequest.NAME,
@@ -132,6 +155,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.REQUEST, decoded.resource().type());
     }
 
+    /**
+     * Checks decoding of a three-byte X.509 request without inventing an authority or existing object identity.
+     */
     @Test
     void decodesImportRequestBase64Encoded() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.ImportRequest.NAME,
@@ -143,12 +169,18 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.empty(), decoded.resource().scope().authorityId());
     }
 
+    /**
+     * Rejects caller-supplied authority scope on realm-wide request import.
+     */
     @Test
     void rejectsImportRequestWithAuthorityId() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiOperation.ImportRequest.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"formatId\":\"x509\",\"encoded\":\"AQID\"}}"));
     }
 
+    /**
+     * Checks three-byte profile-document decoding under the realm-wide profile resource type.
+     */
     @Test
     void decodesRegisterProfileBase64Document() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.RegisterProfile.NAME,
@@ -159,6 +191,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.empty(), decoded.resource().scope().authorityId());
     }
 
+    /**
+     * Checks that an empty argument object selects the server-configuration validation resource.
+     */
     @Test
     void decodesValidateConfigurationWithNoArguments() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.ValidateConfiguration.NAME,
@@ -167,6 +202,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.SERVER_CONFIGURATION, decoded.resource().type());
     }
 
+    /**
+     * Checks realm-wide profile validation and rejects an added outer authority identity.
+     */
     @Test
     void decodesValidateProfileDocumentAndRejectsAuthorityScope() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.ValidateProfile.NAME,
@@ -176,6 +214,9 @@ class HttpLifecycleOperationCodecTest {
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"document\":\"AQID\"}}"));
     }
 
+    /**
+     * Checks that revocation observation uses the credential object with the revocation resource type and exact authority.
+     */
     @Test
     void decodesInspectRevocationAsAuthorityScopedCredentialObject() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.InspectRevocation.NAME,
@@ -188,6 +229,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.REVOCATION, decoded.resource().type());
     }
 
+    /**
+     * Checks the preserved snapshot limit of 50 and rejects added authority scope.
+     */
     @Test
     void decodesSnapshotRevocationsAsRealmWideLimit() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.SnapshotRevocations.NAME,
@@ -201,6 +245,9 @@ class HttpLifecycleOperationCodecTest {
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"limit\":50}}"));
     }
 
+    /**
+     * Checks exact status-object identity without attaching a caller-selected authority.
+     */
     @Test
     void decodesInspectStatusAsRealmWideStatusObject() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.InspectStatus.NAME,
@@ -212,6 +259,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.STATUS_OBJECT, decoded.resource().type());
     }
 
+    /**
+     * Checks issuer/list scope agreement and rejects a different outer authority.
+     */
     @Test
     void decodesListStatusAsAuthorityScopedIssuer() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.ListStatus.NAME,
@@ -225,6 +275,9 @@ class HttpLifecycleOperationCodecTest {
                 "{\"version\":1,\"authorityId\":\"ca-b\",\"arguments\":{\"issuerCaId\":\"ca-a\",\"limit\":25}}"));
     }
 
+    /**
+     * Checks a realm-wide publication listing with limit 100 and no selected publication object.
+     */
     @Test
     void decodesListPublicationsAsRealmWideLimit() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.ListPublications.NAME,
@@ -237,6 +290,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.PUBLICATION, decoded.resource().type());
     }
 
+    /**
+     * Checks credential-source and filesystem-target decoding while binding the publication object to its outer authority.
+     */
     @Test
     void decodesRegisterPublicationWithNestedTarget() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.RegisterPublication.NAME,
@@ -254,6 +310,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of(new PkiId("ca-a")), decoded.resource().scope().authorityId());
     }
 
+    /**
+     * Checks retry and reconciliation preserve the same publication object and authority coordinates.
+     */
     @Test
     void decodesRetryAndReconcilePublicationAsAuthorityScopedObject() {
         HttpOperationCodec.Decoded retry = decode(PkiOperation.RetryPublication.NAME,
@@ -269,6 +328,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of(new PkiId("pub-a")), reconcile.resource().objectId());
     }
 
+    /**
+     * Checks managed-key intermediate creation with issuer authority/profile scope and no pre-existing subject object.
+     */
     @Test
     void decodesCreateIntermediateAsAuthorityAndProfileScoped() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.CreateIntermediate.NAME,
@@ -286,6 +348,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.AUTHORITY, decoded.resource().type());
     }
 
+    /**
+     * Rejects intermediate creation that omits its required managed signing-key reference.
+     */
     @Test
     void rejectsCreateIntermediateWithoutManagedKey() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.CreateIntermediate.NAME,
@@ -293,6 +358,9 @@ class HttpLifecycleOperationCodecTest {
                         + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\"}}"));
     }
 
+    /**
+     * Checks distinct issuer/subject CA identities and exact requested UTC validity bounds for intermediate certification.
+     */
     @Test
     void decodesIssueIntermediateCertificateWithRequestedValidity() {
         HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.IssueIntermediateCertificate.NAME,
@@ -310,6 +378,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of(new PkiId("ca-a")), decoded.resource().scope().authorityId());
     }
 
+    /**
+     * Rejects intermediate certification with a not-before bound but no matching not-after bound.
+     */
     @Test
     void rejectsIssueIntermediateCertificateWithPartialValidity() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.IssueIntermediateCertificate.NAME,
@@ -318,6 +389,9 @@ class HttpLifecycleOperationCodecTest {
                         + "\"notBefore\":\"2026-01-01T00:00:00Z\"}}"));
     }
 
+    /**
+     * Checks issuer-generation inspection as a realm-wide issuer object.
+     */
     @Test
     void decodesInspectIssuerGenerationAsRealmWide() {
         HttpOperationCodec.Decoded decoded = decode(PkiOperation.InspectIssuerGeneration.NAME,
@@ -330,6 +404,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Permission.ResourceType.ISSUER, decoded.resource().type());
     }
 
+    /**
+     * Checks exact chain-path inspection identity and issuer-based listing without added authority scope.
+     */
     @Test
     void decodesInspectAndListIssuerChainPaths() {
         HttpOperationCodec.Decoded inspect = decode(PkiOperation.InspectIssuerChainPath.NAME,
@@ -344,6 +421,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.empty(), list.resource().scope().authorityId());
     }
 
+    /**
+     * Checks CA self-scope, retained path-selection reason and parent-path coordinates across selection and registration.
+     */
     @Test
     void decodesSelectAndRegisterIssuancePathAsSelfScopedAuthority() {
         HttpOperationCodec.Decoded select = decode(PkiOperation.SelectIssuancePath.NAME,
@@ -364,6 +444,9 @@ class HttpLifecycleOperationCodecTest {
         assertEquals(Optional.of(new PkiId("ca-a")), register.resource().scope().authorityId());
     }
 
+    /**
+     * Rejects intermediate creation whose outer authority differs from the requested issuing CA.
+     */
     @Test
     void rejectsCreateIntermediateWhenEnvelopeAuthorityDiffersFromIssuer() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.CreateIntermediate.NAME,
@@ -371,6 +454,9 @@ class HttpLifecycleOperationCodecTest {
                         + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\"}}"));
     }
 
+    /**
+     * Checks that renewal rejects an unexpected boolean argument before gateway execution.
+     */
     @Test
     void rejectsUnknownArgumentForRenew() {
         assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.RenewCredential.NAME,
@@ -378,6 +464,9 @@ class HttpLifecycleOperationCodecTest {
                         + "\"unexpected\":true}}"));
     }
 
+    /**
+     * Checks that key role, selected-head epoch and distribution acknowledgement affect commitments, while caller-supplied audit actors are rejected.
+     */
     @Test void rotationAndActivationCommitEveryRoleHeadAndAcknowledgmentAndRejectForgedAuditFields() {
         String head="{\"version\":1,\"caId\":\"ca-a\",\"epoch\":1,\"issuerId\":\"issuer-a\",\"pathId\":\"path-a\",\"bindingCommitment\":\""+"a".repeat(64)+"\"}";
         String rotation="{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"caId\":\"ca-a\",\"newAlternativeKeyRef\":\"managed:key;role=alt\",\"alternativeSignatureAlgorithmId\":\"canonical:alt\",\"expectedHead\":"+head+"}}";

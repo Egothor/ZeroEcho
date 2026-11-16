@@ -63,11 +63,17 @@ import zeroecho.pki.spi.crypto.SigningProvider.ObservationState;
 import zeroecho.pki.spi.crypto.SigningProvider.SignRequest;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 
+/**
+ * Contract and regression tests for remote signing provider.
+ */
 final class RemoteSigningProviderTest {
     private static final String NAMESPACE = "store.zeroecho-remote";
     private static final PkiId OPERATION_ID = new PkiId("remote-operation");
     private static final Instant UPDATED_AT = Instant.parse("2026-09-10T08:00:00Z");
 
+    /**
+     * Rejects stateful algorithms before reading content or calling transport.
+     */
     @Test
     void rejectsStatefulAlgorithmsBeforeReadingContentOrCallingTransport() {
         RemoteSigningTransport transport = new FixedTransport(status(RemoteSigningTransport.RemoteSigningState.DENIED)) {
@@ -98,6 +104,9 @@ final class RemoteSigningProviderTest {
         }
     }
 
+    /**
+     * Rejects mismatched operation id from dispatch reconcile and cancel.
+     */
     @Test
     void rejectsMismatchedOperationIdFromDispatchReconcileAndCancel() {
         MismatchTransport transport = new MismatchTransport();
@@ -113,6 +122,9 @@ final class RemoteSigningProviderTest {
         }
     }
 
+    /**
+     * Denied remote outcome maps to finite provider boundary.
+     */
     @Test
     void deniedRemoteOutcomeMapsToFiniteProviderBoundary() {
         RemoteSigningTransport transport = new FixedTransport(new RemoteSigningTransport.RemoteSigningStatus(
@@ -128,6 +140,9 @@ final class RemoteSigningProviderTest {
         }
     }
 
+    /**
+     * Retryable unknown and pending remain distinct from terminal unrecoverable.
+     */
     @Test
     void retryableUnknownAndPendingRemainDistinctFromTerminalUnrecoverable() {
         try (RemoteSigningProvider unknown = provider(new FixedTransport(status(
@@ -146,6 +161,9 @@ final class RemoteSigningProviderTest {
         }
     }
 
+    /**
+     * Transport uncertainty maps all calls to exact bounded retryable unknown.
+     */
     @Test
     void transportUncertaintyMapsAllCallsToExactBoundedRetryableUnknown() {
         UncertainTransport transport = new UncertainTransport();
@@ -160,6 +178,9 @@ final class RemoteSigningProviderTest {
         }
     }
 
+    /**
+     * Unexpected failures are not reclassified as transport uncertainty.
+     */
     @Test
     void unexpectedFailuresAreNotReclassifiedAsTransportUncertainty() {
         ProgrammingFailureTransport transport = new ProgrammingFailureTransport();

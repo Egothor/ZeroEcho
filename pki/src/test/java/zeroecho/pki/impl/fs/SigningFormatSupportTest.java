@@ -47,8 +47,16 @@ import java.security.MessageDigest;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing format support.
+ */
 final class SigningFormatSupportTest {
 
+    /**
+     * Partial read and write channels make complete progress.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialReadAndWriteChannelsMakeCompleteProgress() throws Exception {
         byte[] bytes = "bounded-content".getBytes(StandardCharsets.US_ASCII);
@@ -62,6 +70,11 @@ final class SigningFormatSupportTest {
         assertArrayEquals(bytes, target.array());
     }
 
+    /**
+     * Streaming commitment uses bounded partial reads.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void streamingCommitmentUsesBoundedPartialReads() throws Exception {
         byte[] bytes = "commitment".getBytes(StandardCharsets.US_ASCII);
@@ -69,6 +82,9 @@ final class SigningFormatSupportTest {
         assertArrayEquals(expected, SigningFileCommitment.sha256(new PartialReadable(bytes)));
     }
 
+    /**
+     * Zero progress fails instead of spinning.
+     */
     @Test
     void zeroProgressFailsInsteadOfSpinning() {
         ZeroProgressChannel channel = new ZeroProgressChannel();
@@ -78,6 +94,11 @@ final class SigningFormatSupportTest {
                 channel, ByteBuffer.allocate(1)));
     }
 
+    /**
+     * Strict UTF-8 rejects malformed utf16 and round trips canonical text.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void strictUtf8RejectsMalformedUtf16AndRoundTripsCanonicalText() throws Exception {
         for (String invalid : new String[] { "high\ud800", "low\udc00", "e\u0301" }) {

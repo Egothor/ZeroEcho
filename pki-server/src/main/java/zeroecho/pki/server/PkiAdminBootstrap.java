@@ -75,6 +75,13 @@ public final class PkiAdminBootstrap {
         if (result != 0) System.exit(result);
     }
 
+    /**
+     * Runs initial administrator bootstrap and reports classified process status without exiting the JVM.
+     *
+     * @param arguments exact command-line arguments; no null entries
+     * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
+     * @throws NullPointerException if the arguments array is null
+     */
     static int run(String[] arguments) {
         if (arguments.length == 1 && "--help".equals(arguments[0])) {
             System.out.print(HELP);
@@ -107,6 +114,19 @@ public final class PkiAdminBootstrap {
         return options;
     }
 
+    /**
+     * Creates the initial three mapped identities and explicit grants in fresh durable server state.
+     *
+     * <p>A durable reservation prevents bootstrap replay after an interrupted invocation.</p>
+     *
+     * @param configuration validated server configuration and authentication mappings
+     * @param administrator exact original administrator principal identity
+     * @param approver exact original separate approver principal identity
+     * @param proxy exact original reverse-proxy service principal identity
+     * @throws IOException if configuration state or durable control resources cannot be accessed
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
+     *         match
+     */
     static void bootstrap(PkiServerConfiguration configuration, String administrator, String approver, String proxy)
             throws IOException {
         validate(configuration, administrator, approver, proxy);
@@ -151,16 +171,49 @@ public final class PkiAdminBootstrap {
         }
     }
 
+    /**
+     * Provisions the explicit root-approval capability for the original bootstrap administrator.
+     *
+     * @param configuration validated server configuration and authentication mappings
+     * @param administrator exact original administrator principal identity
+     * @param approver exact original separate approver principal identity
+     * @param proxy exact original reverse-proxy service principal identity
+     * @throws IOException if configuration state or durable control resources cannot be accessed
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
+     *         match
+     */
     static void provisionRootAdmin(PkiServerConfiguration configuration, String administrator, String approver, String proxy)
             throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,true,false,false);
     }
 
+    /**
+     * Provisions explicit certificate metadata/content permissions for the original bootstrap identities.
+     *
+     * @param configuration validated server configuration and authentication mappings
+     * @param administrator exact original administrator principal identity
+     * @param approver exact original separate approver principal identity
+     * @param proxy exact original reverse-proxy service principal identity
+     * @throws IOException if configuration state or durable control resources cannot be accessed
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
+     *         match
+     */
     static void provisionCertificateAccess(PkiServerConfiguration configuration,String administrator,String approver,String proxy)
             throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,false,true,false);
     }
 
+    /**
+     * Provisions explicit status-object access for the original bootstrap identities.
+     *
+     * @param configuration validated server configuration and authentication mappings
+     * @param administrator exact original administrator principal identity
+     * @param approver exact original separate approver principal identity
+     * @param proxy exact original reverse-proxy service principal identity
+     * @throws IOException if configuration state or durable control resources cannot be accessed
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
+     *         match
+     */
     static void provisionStatusAccess(PkiServerConfiguration configuration,String administrator,String approver,String proxy)throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,false,false,true);
     }

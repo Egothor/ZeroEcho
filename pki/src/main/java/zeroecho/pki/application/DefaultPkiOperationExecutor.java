@@ -94,7 +94,9 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
 
-/** Explicit non-reflective executor for synchronous non-signing operations. */
+/**
+ * Explicit non-reflective executor for synchronous non-signing operations.
+ */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.TooManyMethods" })
 final class DefaultPkiOperationExecutor implements PkiOperationExecutor, RevocationEvidenceExecutor, PkiSelectionExecutor, PkiConfigurationChoicesSource { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private static final String TEXT_CA_ID = "caId";
@@ -124,14 +126,45 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
     private static final int CREDENTIAL_SCAN_CAP = 100_000;
     private static final int DASHBOARD_PAGE_SIZE = 100;
 
-    /** Only the diagnostic configuration facts used by the core operation catalog. */
+    /**
+     * Only the diagnostic configuration facts used by the core operation catalog.
+     *
+     * @param version session configuration schema version
+     * @param storeProvider configured metadata store provider identity
+     * @param auditProvider configured audit sink provider identity
+     */
     /* default */ record ConfigurationSummary(int version, String storeProvider, String auditProvider) {
+        /**
+         * Captures diagnostic provider identities without opening provider resources.
+         *
+         * @param version session configuration schema version
+         * @param storeProvider configured metadata store provider identity
+         * @param auditProvider configured audit sink provider identity
+         * @throws NullPointerException if either provider identity is null
+         */
         ConfigurationSummary {
             Objects.requireNonNull(storeProvider, "storeProvider");
             Objects.requireNonNull(auditProvider, "auditProvider");
         }
     }
 
+    /**
+     * Binds the operation catalog to explicitly configured borrowed application services.
+     *
+     * @param configuration safe diagnostic configuration summary
+     * @param store authoritative metadata store
+     * @param profiles profile lifecycle service
+     * @param revocations revocation lifecycle service
+     * @param requests optional certification request service
+     * @param publications optional publication lifecycle service
+     * @param confirmations credential confirmation lifecycle service
+     * @param algorithmBindings immutable public X.509 algorithm registry
+     * @param openCheck session lifecycle guard
+     * @param configurationChoices configuration metadata source
+     * @param clock timestamp source for operation projections
+     * @param liveSource runtime dashboard counters
+     * @throws NullPointerException if an argument is null
+     */
     // Explicit collaborators or atomic persisted coordinates remain visible at this boundary.
     @SuppressWarnings("PMD.ExcessiveParameterList")
     /* default */ DefaultPkiOperationExecutor(ConfigurationSummary configuration, PkiStore store,
@@ -154,12 +187,18 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         this.liveSource = Objects.requireNonNull(liveSource, "liveSource");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiConfigurationChoicesSource.Choices configurationChoices(int limit, Optional<String> after,
             CancellationSignal cancellation) {
         return configurationChoices.configurationChoices(limit, after, cancellation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validate(PkiOperation operation, CancellationSignal cancellation) {
         openCheck.run();
@@ -186,6 +225,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         if (cancellation.isCancelled()) throw new java.util.concurrent.CancellationException("Validation cancelled");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
@@ -208,9 +250,15 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsHoldTransitions() { return true; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationOutcome executeHold(PkiOperation.HoldCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
@@ -218,6 +266,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 () -> hold(operation, Objects.requireNonNull(evidence, "evidence").attributes()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationOutcome executeUnhold(PkiOperation.UnholdCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
@@ -225,6 +276,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 () -> unhold(operation, Objects.requireNonNull(evidence, "evidence").attributes()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
             RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
@@ -232,6 +286,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
                 () -> revoke(operation, Objects.requireNonNull(evidence, "evidence").attributes()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationOutcome executePendingConfirmationRevocation(
             PkiOperation.RevokePendingCredentialConfirmation operation,
@@ -257,6 +314,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
 
     // The selection callback must abort traversal on cancellation; returning false would continue scanning.
     // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ExceptionAsFlowControl" })
     @Override
     public PkiOperationOutcome executeSelection(PkiOperation operation,
@@ -275,6 +335,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         } catch (RuntimeException failure) { return classify(operation.name(), failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean credentialSearchAvailable() { openCheck.run(); return store.credentialSearchAvailable(); }
 
@@ -374,7 +437,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result(operation, fields);
     }
 
-    /** Internal cancellation marker for bounded selection traversal. */
+    /**
+     * Internal cancellation marker for bounded selection traversal.
+     */
     private static final class SelectionCancelled extends RuntimeException {
         private static final long serialVersionUID = 1L;
     }
@@ -655,7 +720,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return result(request.name(), authorityFields(store.getCa(request.caId()).orElseThrow(Missing::new)));
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiOperation normalize(PkiOperation operation) {
         openCheck.run(); Objects.requireNonNull(operation, "operation");
         if (!(operation instanceof PkiOperation.SelectIssuancePath selected)) return operation;
@@ -671,7 +738,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return normalized;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<PkiOperationResult> observeRootActivation(PkiOperation.SelectIssuancePath operation,
             zeroecho.pki.api.ca.RootTrustAnchorActivation expected, CancellationSignal cancellation) {
         openCheck.run(); Objects.requireNonNull(cancellation, "cancellation");
@@ -683,7 +752,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return Optional.of(activationResult(operation, retained.orElseThrow()));
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public PkiOperationOutcome executeRootActivation(PkiOperation.SelectIssuancePath operation,
@@ -1500,15 +1571,23 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor, Revocat
         return object(fields);
     }
 
-    /** Internal control signal for a missing authoritative object. */
+    /**
+     * Internal control signal for a missing authoritative object.
+     */
     private static final class Missing extends RuntimeException { private static final long serialVersionUID = 1L; }
-    /** Internal control signal for an authoritative conflict. */
+    /**
+     * Internal control signal for an authoritative conflict.
+     */
     private static final class Conflict extends RuntimeException { private static final long serialVersionUID = 1L; }
-    /** Internal control signal for an unavailable optional capability. */
+    /**
+     * Internal control signal for an unavailable optional capability.
+     */
     private static final class CapabilityMissing extends RuntimeException {
         private static final long serialVersionUID = 1L;
     }
-    /** Internal control signal for an uncertain external outcome. */
+    /**
+     * Internal control signal for an uncertain external outcome.
+     */
     private static final class ExternalUnknown extends RuntimeException {
         private static final long serialVersionUID = 1L;
     }

@@ -64,9 +64,13 @@ public record CredentialConfirmationChallengeIssuance(ConfirmationRealmBinding r
         String expectedLifecycleRecordCommitment, ConfirmationProofSuiteBinding proofSuiteBinding,
         byte[] rawChallenge, Duration timeToLive) {
 
-    /** Minimum permitted challenge lifetime. */
+    /**
+     * Minimum permitted challenge lifetime.
+     */
     public static final Duration MINIMUM_TIME_TO_LIVE = Duration.ofSeconds(10L);
-    /** Maximum permitted challenge lifetime. */
+    /**
+     * Maximum permitted challenge lifetime.
+     */
     public static final Duration MAXIMUM_TIME_TO_LIVE = Duration.ofHours(1L);
 
     /**
@@ -74,6 +78,14 @@ public record CredentialConfirmationChallengeIssuance(ConfirmationRealmBinding r
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if any component is outside its canonical bound
+     * @param realm exact portable realm identity
+     * @param serverAudience exact strict UTF-8 server audience, 1 through 512 bytes and without ISO controls
+     * @param credentialId exact credential identity
+     * @param expectedLifecycleRevision expected lifecycle revision, exactly {@link CredentialConfirmationLifecycle#INITIAL_REVISION}
+     * @param expectedLifecycleRecordCommitment exact expected pending lifecycle-record commitment
+     * @param proofSuiteBinding exact proof-suite coordinates
+     * @param rawChallenge exactly 32 caller-generated nonce bytes, defensively owned
+     * @param timeToLive whole-second challenge lifetime from {@code PT10S} through {@code PT1H}, inclusive
      */
     public CredentialConfirmationChallengeIssuance {
         Objects.requireNonNull(realm, "realm");
@@ -103,7 +115,11 @@ public record CredentialConfirmationChallengeIssuance(ConfirmationRealmBinding r
         return rawChallenge.clone();
     }
 
-    /** Compares nonce bytes by content while preserving normal record component semantics. */
+    /**
+     * Compares nonce bytes by content while preserving normal record component semantics.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -122,7 +138,10 @@ public record CredentialConfirmationChallengeIssuance(ConfirmationRealmBinding r
                 && timeToLive.equals(candidate.timeToLive);
     }
 
-    /** Returns a content-based hash code for every command component. */
+    /**
+     * Returns a content-based hash code for every command component.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         int result = Objects.hash(realm, serverAudience, credentialId, expectedLifecycleRevision,
@@ -130,7 +149,10 @@ public record CredentialConfirmationChallengeIssuance(ConfirmationRealmBinding r
         return 31 * result + Arrays.hashCode(rawChallenge);
     }
 
-    /** Returns a structural description without disclosing nonce bytes. */
+    /**
+     * Returns a structural description without disclosing nonce bytes.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CredentialConfirmationChallengeIssuance[realm=" + realm + ", serverAudience="

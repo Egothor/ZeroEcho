@@ -47,8 +47,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 
+/**
+ * Contract and regression tests for RSA large data.
+ */
 public class RsaLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // If you register providers elsewhere, this can be empty.
@@ -79,7 +85,11 @@ public class RsaLargeDataTest {
         return data;
     }
 
-    /** OAEP(SHA-256) round-trip on >16KB payload (non-multiple of block size). */
+    /**
+     * OAEP(SHA-256) round-trip on >16KB payload (non-multiple of block size).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void rsaOaepLargeData() throws Exception {
         final int SIZE = 32 * 1024 + 777; // >16KB, odd length to cross block boundaries
@@ -110,7 +120,11 @@ public class RsaLargeDataTest {
         logEnd();
     }
 
-    /** PKCS#1 v1.5 round-trip on >16KB payload (non-multiple of block size). */
+    /**
+     * PKCS#1 v1.5 round-trip on >16KB payload (non-multiple of block size).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void rsaPkcs1v15LargeData() throws Exception {
         final int SIZE = 32 * 1024 + 777; // >16KB, odd length

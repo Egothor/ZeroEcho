@@ -60,9 +60,17 @@ import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest;
 import zeroecho.pki.api.request.CertificationRequest;
 
+/**
+ * Contract and regression tests for BC hybrid SDK proof verifier.
+ */
 class BcHybridSdkProofVerifierTest {
     private static final Instant NOW = Instant.parse("2026-11-14T12:00:00Z");
 
+    /**
+     * Verifies both client keys and returns the bound f3 commitment.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesBothClientKeysAndReturnsTheBoundF3Commitment() throws Exception {
         Fixture fixture = fixture();
         ParsedHybridSdkRequest parsed = new BcX509CertificationRequestParser().parseHybridSdk(request(fixture.csr));
@@ -87,6 +95,11 @@ class BcHybridSdkProofVerifierTest {
         assertThrows(PkiException.class, () -> verifier.verify(wrong, frame, primary, alternative, NOW));
     }
 
+    /**
+     * Preserves ordinary parser and rejects missing duplicate and critical alternative requests.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preservesOrdinaryParserAndRejectsMissingDuplicateAndCriticalAlternativeRequests() throws Exception {
         Fixture fixture = fixture(); var parser = new BcX509CertificationRequestParser();
         assertThrows(PkiException.class, () -> parser.parse(request(fixture.csr)));
@@ -122,6 +135,11 @@ class BcHybridSdkProofVerifierTest {
         assertThrows(PkiException.class, () -> parser.parseHybridSdk(request(nullParameters)));
     }
 
+    /**
+     * Verifies canonical crmf original and fresh dual proofs without kind substitution.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesCanonicalCrmfOriginalAndFreshDualProofsWithoutKindSubstitution() throws Exception {
         Fixture original = fixture();
         byte[] crmf = new org.bouncycastle.cert.crmf.CertificateRequestMessageBuilder(java.math.BigInteger.valueOf(7))

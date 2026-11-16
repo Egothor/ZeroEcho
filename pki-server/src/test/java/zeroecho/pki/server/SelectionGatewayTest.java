@@ -67,9 +67,20 @@ import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiResourceScopeResolver;
 import zeroecho.pki.application.PkiSelectionExecutor;
 
+/**
+ * Checks bounded selection dispatch against exact gateway scope and permission requirements.
+ */
 final class SelectionGatewayTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks unavailable credential search is omitted from discovery and denied without backend execution, then appears after explicit capability installation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void disabledSearchIsAbsentFromDiscoveryAndCannotInvokeTheExecutor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -92,6 +103,11 @@ final class SelectionGatewayTest {
         }
     }
 
+    /**
+     * Checks per-object authorization filters generation/publication rows before enforcing the visible page limit and continuation cursor.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void broadCollectionAllowStillFiltersEveryGenerationAndPublicationBeforeThePageLimit() throws Exception {
         for (boolean publication : List.of(false, true)) {
@@ -144,6 +160,11 @@ final class SelectionGatewayTest {
         }
     }
 
+    /**
+     * Checks capability paging returns only authorized object metadata in stable order, excludes bearer values and respects profile denies.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void capabilityPagesContainOnlyTheAuthorizedObjectsNonBearerMetadataAndHonorProfileDeny() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -183,6 +204,11 @@ final class SelectionGatewayTest {
         }
     }
 
+    /**
+     * Checks configuration choices require their existing read permission and project only safe installed capabilities without provider options.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void configurationNeedsItsExistingPermissionAndNeverProjectsSecretsOrUnconfiguredAcmeProviders() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {

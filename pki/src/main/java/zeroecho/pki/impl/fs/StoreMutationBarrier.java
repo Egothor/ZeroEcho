@@ -37,11 +37,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-/** Store admission precedes every domain/content lock; no read-to-write upgrades. */
+/**
+ * Store admission precedes every domain/content lock; no read-to-write upgrades.
+ */
 final class StoreMutationBarrier {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
     private final AtomicBoolean accepting = new AtomicBoolean(true);
 
+    /**
+     * Acquires shared mutation admission before any domain or content lock.
+     *
+     * <p>Nested operations already holding the barrier remain permitted during shutdown.</p>
+     *
+     * @return thread-affine shared lease; the acquiring thread must close it
+     * @throws IllegalStateException if shutdown admission is closed and this thread has no existing nested store lease
+     */
     /* default */ Lease enter() {
         boolean nested = lock.getReadHoldCount() > 0 || lock.isWriteLockedByCurrentThread();
         if (!nested && !accepting.get()) { throw new IllegalStateException("Store is closing"); }
@@ -54,6 +64,14 @@ final class StoreMutationBarrier {
         return new Lease(shared);
     }
 
+    /**
+     * Acquires exclusive mutation admission for a consistent snapshot boundary.
+     *
+     * <p>This method waits without interruptible cancellation; read-to-write upgrades are rejected.</p>
+     *
+     * @return thread-affine exclusive lease; the acquiring thread must close it
+     * @throws IllegalStateException if the caller holds only a shared lease or shutdown admission is closed
+     */
     /* default */ Lease freeze() {
         if (lock.getReadHoldCount() > 0 && !lock.isWriteLockedByCurrentThread()) {
             throw new IllegalStateException("Backup cannot start within a store operation");
@@ -67,7 +85,17 @@ final class StoreMutationBarrier {
         return new Lease(exclusive);
     }
 
-    /** Deadline-aware search admission, preserving the domain lock order. */
+    /**
+     * Deadline-aware search admission, preserving the domain lock order.
+     *
+     * @param deadline absolute monotonic deadline in the {@link System#nanoTime()} coordinate space
+     * @param cancellation cooperative cancellation signal checked during timed admission waits
+     * @return thread-affine shared lease; the acquiring thread must close it
+     * @throws NullPointerException if the cancellation signal is null
+     * @throws IllegalStateException if shutdown admission is closed
+     * @throws java.io.InterruptedIOException if the waiting thread is interrupted; its interrupt flag is restored
+     * @throws java.io.IOException if cancellation is requested or the deadline expires
+     */
     /* default */ Lease enter(long deadline, zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
         Lock shared = lock.readLock();
         boolean acquired = false;
@@ -100,6 +128,12 @@ final class StoreMutationBarrier {
         }
     }
 
+    /**
+     * Permanently closes new admission and waits for exclusive lifecycle ownership.
+     *
+     * @return thread-affine exclusive shutdown lease; the acquiring thread must close it
+     * @throws IllegalStateException if the caller is inside a shared store operation
+     */
     /* default */ Lease stop() {
         if (lock.getReadHoldCount() > 0) { throw new IllegalStateException("Cannot close within a store operation"); }
         accepting.set(false);
@@ -108,11 +142,23 @@ final class StoreMutationBarrier {
         return new Lease(exclusive);
     }
 
-    /** Releases exactly one admission or exclusive lifecycle lock acquisition. */
+    /**
+     * Releases exactly one admission or exclusive lifecycle lock acquisition.
+     */
     /* default */ static final class Lease implements AutoCloseable {
         private final Lock held;
         private boolean closed;
+        /**
+         * Captures responsibility for releasing one lock acquisition by the current thread.
+         *
+         * @param held already acquired lock; the current thread retains exclusive release responsibility
+         */
         /* default */ Lease(Lock held) { this.held = held; }
+        /**
+         * Releases the captured barrier lock exactly once on its acquiring thread.
+         *
+         * @throws IllegalMonitorStateException if a different thread attempts the first release
+         */
         @Override public void close() {
             if (!closed) { held.unlock(); closed = true; }
         }

@@ -103,6 +103,7 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
      * @param realm lifecycle-owned realm
      * @param clock authoritative protocol clock
      * @param random thread-safe cryptographic nonce and salt source
+     * @throws NullPointerException if any of {@code realm}, {@code clock}, {@code random} is null
      */
     public CmpService(ServerRealmContext realm, Clock clock, SecureRandom random) {
         this.realm = Objects.requireNonNull(realm, "realm");
@@ -120,6 +121,7 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
     /**
      * Registers a fully bound endpoint.
      * @param endpoint mandatory policy and authority binding
+     * @throws NullPointerException if {@code endpoint} is null
      */
     public void register(CmpEndpoint endpoint) { endpoints.register(Objects.requireNonNull(endpoint, "endpoint")); }
     /**
@@ -138,7 +140,9 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
     public Optional<CmpEndpoint> find(String label) {
         return endpoints.find(EnrollmentEndpointRegistry.Protocol.CMP, label).map(value -> (CmpEndpoint) value);
     }
-    /** {@return immutable endpoints in deterministic registry order} */
+    /**
+     * {@return immutable endpoints in deterministic registry order}
+     */
     public List<CmpEndpoint> list() {
         return endpoints.list(EnrollmentEndpointRegistry.Protocol.CMP).stream().map(value -> (CmpEndpoint) value).toList();
     }
@@ -162,6 +166,7 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
      * @param cancellation owned HTTP deadline/cancellation signal
      * @return same-mode protected response
      * @throws CmpProtocolException for malformed, unauthenticated or unavailable work
+     * @throws NullPointerException if any of {@code endpoint}, {@code cancellation} is null
      */
     public byte[] processMessage(CmpEndpoint endpoint, byte[] pkiMessageDer, CancellationSignal cancellation) throws CmpProtocolException {
         Objects.requireNonNull(endpoint, "endpoint"); Objects.requireNonNull(cancellation, "cancellation");
@@ -244,6 +249,7 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
      * @param cancellation request cancellation
      * @return immutable dual-proof challenge
      * @throws CmpProtocolException for invalid or unavailable native input
+     * @throws IllegalArgumentException if the endpoint does not support the selected CMP SDK profile
      */
     public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(CmpEndpoint endpoint, byte[] wire,
             byte[] clientNonce, String origin, CancellationSignal cancellation) throws CmpProtocolException {
@@ -277,6 +283,8 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
      * @param cancellation request cancellation
      * @return normal protected native response
      * @throws CmpProtocolException for rejected or unavailable input
+     * @throws IllegalArgumentException if the repeated CMP wire bytes differ from the retained request or the
+     *         CMP endpoint/source binding changed
      */
     public byte[] acceptSdk(CmpEndpoint endpoint, byte[] wire, String intentId, String sdkRequestId, byte[] primaryProof,
             byte[] alternativeProof, String origin, CancellationSignal cancellation) throws CmpProtocolException {
@@ -715,7 +723,9 @@ public final class CmpService { // NOPMD CyclomaticComplexity - Aggregate CMP pr
         catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
     private static IllegalStateException unavailable() { return new IllegalStateException("CMP continuation is unavailable"); }
-    /** Distinguishes authorization rejection from malformed CMP request syntax. */
+    /**
+     * Distinguishes authorization rejection from malformed CMP request syntax.
+     */
     private static final class AuthorizationDenied extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         /* default */ AuthorizationDenied() { super("CMP authorization denied"); }

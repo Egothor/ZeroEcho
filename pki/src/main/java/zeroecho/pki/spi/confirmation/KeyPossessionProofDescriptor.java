@@ -53,6 +53,9 @@ public record KeyPossessionProofDescriptor(ConfirmationProofSuiteBinding proofSu
      *
      * @throws NullPointerException if {@code proofSuiteBinding} is {@code null}
      * @throws IllegalArgumentException if a byte bound is invalid
+     * @param proofSuiteBinding exact proof-suite reference and RSA modulus ceiling
+     * @param challengeBytes exact raw challenge length, currently 32 bytes
+     * @param maximumResponseBytes inclusive suite-specific response bound in bytes
      */
     public KeyPossessionProofDescriptor {
         Objects.requireNonNull(proofSuiteBinding, "proofSuiteBinding");

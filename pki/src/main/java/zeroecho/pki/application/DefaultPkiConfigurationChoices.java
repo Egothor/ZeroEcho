@@ -47,7 +47,9 @@ import java.util.Map;
 import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Borrowed runtime metadata; owns no provider, store, keyring, or lifecycle. */
+/**
+ * Borrowed runtime metadata; owns no provider, store, keyring, or lifecycle.
+ */
 final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSource {
     private final List<KeyRef> configuredKeys;
     private final PkiStore store;
@@ -56,17 +58,49 @@ final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSou
     private final Runnable openCheck;
     private final Map<FormatId, FormatMetadata> formats;
 
+    /**
+     * Extracts explicitly configured keys and binds borrowed runtime metadata sources.
+     *
+     * @param configuration validated session configuration supplying exact signing groups
+     * @param store borrowed metadata store
+     * @param provider optional borrowed signing provider
+     * @param targets publication targets, copied into an immutable list
+     * @param openCheck session lifecycle guard
+     * @throws NullPointerException if configuration, targets or an entry needed for extraction is null
+     */
     /* default */ DefaultPkiConfigurationChoices(PkiSessionConfiguration configuration, PkiStore store,
             Optional<SigningProvider> provider, List<PublicationTarget> targets, Runnable openCheck) {
         this(configuration.signing().stream().flatMap(signing -> signing.topology().exactGroups().stream())
                 .flatMap(group -> group.keyRefs().stream()).toList(), store, provider, targets, openCheck);
     }
 
+    /**
+     * Captures configured key and publication metadata with no framework metadata.
+     *
+     * @param configuredKeys exact configured key references, copied into an immutable list
+     * @param store borrowed metadata store
+     * @param provider optional borrowed signing provider
+     * @param targets publication targets, copied into an immutable list
+     * @param openCheck session lifecycle guard
+     * @throws NullPointerException if a copied list or one of its elements is null
+     */
     /* default */ DefaultPkiConfigurationChoices(List<KeyRef> configuredKeys, PkiStore store,
             Optional<SigningProvider> provider, List<PublicationTarget> targets, Runnable openCheck) {
         this(configuredKeys, store, provider, targets, List.of(), openCheck);
     }
 
+    /**
+     * Captures immutable key, target and format metadata while borrowing live collaborators.
+     *
+     * @param configuredKeys exact configured key references, copied into an immutable list
+     * @param store borrowed metadata store; must remain available for later calls
+     * @param provider optional borrowed provider; must remain available for later calls
+     * @param targets publication targets, copied into an immutable list
+     * @param frameworks frameworks indexed by exact format identity
+     * @param openCheck session lifecycle guard retained for later calls
+     * @throws NullPointerException if a copied collection, framework or required format metadata is null
+     * @throws IllegalStateException if frameworks advertise duplicate format identities
+     */
     /* default */ DefaultPkiConfigurationChoices(List<KeyRef> configuredKeys, PkiStore store,
             Optional<SigningProvider> provider, List<PublicationTarget> targets,
             List<CredentialFramework> frameworks, Runnable openCheck) {
@@ -79,6 +113,9 @@ final class DefaultPkiConfigurationChoices implements PkiConfigurationChoicesSou
         this.openCheck = openCheck;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Choices configurationChoices(int limit, Optional<String> after, CancellationSignal cancellation) {
         openCheck.run();

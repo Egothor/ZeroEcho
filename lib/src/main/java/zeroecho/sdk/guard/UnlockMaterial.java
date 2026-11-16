@@ -57,12 +57,19 @@ public sealed interface UnlockMaterial extends Describable {
      * @param key non-null private key
      */
     record Private(java.security.PrivateKey key) implements UnlockMaterial {
-        /** Validates the key. */
+        /**
+         * Validates the key.
+         *
+         * @param key non-null private key
+         * @throws NullPointerException if {@code key} is null
+         */
         public Private {
             Objects.requireNonNull(key, "key must not be null");
         }
 
-        /** {@inheritDoc} */
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String description() {
             return "Unlock via key of " + key.getAlgorithm();
@@ -111,13 +118,17 @@ public sealed interface UnlockMaterial extends Describable {
             }
         }
 
-        /** {@inheritDoc} */
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String description() {
             return "Unlock via password";
         }
 
-        /** {@inheritDoc} */
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void destroy() {
             lifecycleLock.lock();
@@ -131,7 +142,9 @@ public sealed interface UnlockMaterial extends Describable {
             }
         }
 
-        /** {@inheritDoc} */
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean isDestroyed() {
             lifecycleLock.lock();

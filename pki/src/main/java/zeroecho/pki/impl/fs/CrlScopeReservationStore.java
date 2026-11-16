@@ -65,7 +65,9 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     private final TransactionalMetadataStore metadata;
     private final Consumer<MetadataCommitResult> outcome;
     private final BigInteger initialCrlNumber;
-    /** Visits an owner participating in CRL counter reservation. */
+    /**
+     * Visits an owner participating in CRL counter reservation.
+     */
     /* default */ @FunctionalInterface interface OwnerVisitor {
         /** Processes one retained scope owner.
          * @param owner retained scope owner
@@ -74,6 +76,15 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         void accept(CrlScopeOwner owner) throws IOException;
     }
 
+    /**
+     * Creates the permanent scope owner, counter and issuance serial authority.
+     *
+     * @param metadata transactional metadata store
+     * @param initialCrlNumber first number assigned to each newly claimed scope
+     * @param outcome callback observing each attempted commit outcome
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if the initial number is negative or exceeds 159 bits
+     */
     /* default */ CrlScopeReservationStore(TransactionalMetadataStore metadata, BigInteger initialCrlNumber,
             Consumer<MetadataCommitResult> outcome) {
         this.metadata = Objects.requireNonNull(metadata, "metadata");
@@ -85,14 +96,22 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     }
 
     /**
-     * Streams permanent authority and validates owner/counter pairs without
-     * reconstruction. Adds O(S) point reads for S scopes and retains only one
-     * bounded record at a time, independent of the scope population.
+     * Streams permanent authority and validates owner/counter pairs and reservation keys without reconstructing authority.
+     *
+     * @param visitor callback for each validated owner and serial reservation pair
+     * @throws IOException if authority is inconsistent, cannot be read or visitor processing fails
      */
     /* default */ void validateAuthority(ReservationVisitor visitor) throws IOException {
         validateAuthority(owner -> { }, visitor);
     }
 
+    /**
+     * Streams all authority rows from one pinned view, validating bidirectional owner/counter links and serial reservation keys.
+     *
+     * @param owners callback for each validated retained scope owner
+     * @param visitor callback for each validated owner and serial reservation pair
+     * @throws IOException if authority is inconsistent, cannot be read or either visitor fails
+     */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
                   void validateAuthority(OwnerVisitor owners, ReservationVisitor visitor) throws IOException {
@@ -141,24 +160,59 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         }
     }
 
-    /** Checked visitor over a scope owner and its serial reservation. */
+    /**
+     * Checked visitor over a scope owner and its serial reservation.
+     */
     /* default */
     @FunctionalInterface
     interface ReservationVisitor {
-        /** Consumes one owner and reservation pair. */
+        /**
+         * Processes one validated scope owner and issuance serial reservation.
+         *
+         * @param owner authoritative owner of the reservation scope
+         * @param reservation retained serial reservation
+         * @throws IOException if processing cannot complete
+         */
         void accept(CrlScopeOwner owner, ScopeSerialReservation reservation) throws IOException;
     }
 
+    /**
+     * Durably claims an immutable scope owner and initial counter, accepting an identical retained claim idempotently.
+     * Create conflicts are retried within a fixed bound before the final authoritative state is checked.
+     *
+     * @param owner exact scope authority to retain
+     * @throws NullPointerException if owner is null
+     * @throws IllegalArgumentException if a supplied reservation belongs to another scope
+     * @throws ConflictException if retained ownership or serial issuance differs
+     * @throws IOException if owner/counter state is incomplete or the commit cannot be confirmed
+     */
     /* default */ void claim(CrlScopeOwner owner) throws IOException { claim(owner, null); }
 
-    /** Adds only missing immutable claims to the caller's atomic acceptance transaction. */
+    /**
+     * Stages only missing immutable owner/counter and serial claims without committing the caller transaction.
+     *
+     * @param transaction caller-owned acceptance transaction
+     * @param claims frozen owner and serial claims
+     * @throws NullPointerException if a required argument is null
+     * @throws ConflictException if retained claims differ from the requested authority
+     * @throws IOException if metadata is inconsistent or staging fails
+     */
     /* default */ void stageAcceptance(MetadataTransaction transaction, SignAcceptanceCrlScope claims) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             stageAcceptance(snapshot, transaction, claims);
         }
     }
 
-    /** Stages in the caller's pinned view and transaction, without committing. */
+    /**
+     * Stages only missing immutable owner/counter and serial claims without committing the caller transaction.
+     *
+     * @param transaction caller-owned acceptance transaction
+     * @param claims frozen owner and serial claims
+     * @param snapshot caller-owned pinned view
+     * @throws NullPointerException if a required argument is null
+     * @throws ConflictException if retained claims differ from the requested authority
+     * @throws IOException if metadata is inconsistent or staging fails
+     */
     /* default */ void stageAcceptance(MetadataSnapshot snapshot, MetadataTransaction transaction, SignAcceptanceCrlScope claims) throws IOException {
             CrlScopeOwner previous = null;
             for (CrlScopeOwner owner : claims.owners()) {
@@ -177,7 +231,18 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
             }
     }
 
-    /** Stages an immutable owner/counter and optional serial claim without committing. */
+    /**
+     * Stages an immutable owner/counter and optional serial claim against the caller pinned view without committing.
+     *
+     * @param snapshot caller-owned pinned view
+     * @param transaction caller-owned transaction
+     * @param owner scope owner to retain
+     * @param reservation optional serial claim, or null
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if reservation belongs to another scope
+     * @throws ConflictException if retained authority differs
+     * @throws IOException if metadata is inconsistent or staging fails
+     */
     /* default */ void stageClaim(MetadataSnapshot snapshot, MetadataTransaction transaction, CrlScopeOwner owner,
             ScopeSerialReservation reservation) throws IOException {
         if (reservation != null && !owner.scope().equals(reservation.scope())) {
@@ -189,7 +254,15 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         }
     }
 
-    /** Publication cannot introduce an accepted signing operation's reservation. */
+    /**
+     * Requires that publication reuse an already accepted immutable owner and serial reservation.
+     *
+     * @param owner expected scope authority
+     * @param reservation expected serial issuance claim
+     * @throws NullPointerException if either argument is null
+     * @throws IllegalStateException if a claim is missing or conflicts with retained authority
+     * @throws IOException if metadata is inconsistent or cannot be read
+     */
     /* default */ void verify(CrlScopeOwner owner, ScopeSerialReservation reservation) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             if (requireOwner(snapshot, owner) || requireReservation(snapshot, reservation)) {
@@ -198,12 +271,28 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         }
     }
 
-    /** Signals a conflicting immutable scope or serial claim. */
+    /**
+     * Signals a conflicting immutable scope or serial claim.
+     */
     /* default */ static final class ConflictException extends IllegalStateException {
         private static final long serialVersionUID = 1L;
+        /**
+         * Creates the fixed diagnostic for a conflicting immutable scope or serial claim.
+         */
         /* default */ ConflictException() { super("CRL scope or serial belongs to another authority or issuance"); }
     }
 
+    /**
+     * Durably claims an immutable scope owner and initial counter, accepting an identical retained claim idempotently.
+     * Create conflicts are retried within a fixed bound before the final authoritative state is checked.
+     *
+     * @param owner exact scope authority to retain
+     * @param reservation optional serial claim; null claims only the scope
+     * @throws NullPointerException if owner is null
+     * @throws IllegalArgumentException if a supplied reservation belongs to another scope
+     * @throws ConflictException if retained ownership or serial issuance differs
+     * @throws IOException if owner/counter state is incomplete or the commit cannot be confirmed
+     */
     /* default */ void claim(CrlScopeOwner owner, ScopeSerialReservation reservation) throws IOException {
         Objects.requireNonNull(owner, "owner");
         if (reservation != null && !owner.scope().equals(reservation.scope())) {
@@ -244,18 +333,54 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         }
     }
 
+    /**
+     * Reads the retained owner for the exact CRL scope.
+     *
+     * @param scope authority scope to inspect
+     * @return retained owner, or empty if unclaimed
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if retained metadata cannot be read or fails validation
+     */
     /* default */ Optional<CrlScopeOwner> findOwner(CrlScope scope) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             return readOwner(snapshot, scope);
         }
     }
 
+    /**
+     * Reads the retained owner for the exact CRL scope.
+     *
+     * @param scope authority scope to inspect
+     * @param snapshot caller-owned pinned metadata view
+     * @return retained owner, or empty if unclaimed
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if retained metadata cannot be read or fails validation
+     */
     /* default */ Optional<CrlScopeOwner> findOwner(MetadataSnapshot snapshot, CrlScope scope) throws IOException { return readOwner(snapshot, scope); }
 
+    /**
+     * Reads the immutable issuance reservation for a scope and certificate serial.
+     *
+     * @param scope authority scope to inspect
+     * @param serial certificate serial reserved within that scope
+     * @param snapshot caller-owned pinned metadata view
+     * @return retained reservation, or empty if unclaimed
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if retained metadata cannot be read or fails validation
+     */
     /* default */ Optional<ScopeSerialReservation> findReservation(MetadataSnapshot snapshot, CrlScope scope, BigInteger serial) throws IOException {
         return readReservation(snapshot, scope, serial);
     }
 
+    /**
+     * Reads the immutable issuance reservation for a scope and certificate serial.
+     *
+     * @param scope authority scope to inspect
+     * @param serial certificate serial reserved within that scope
+     * @return retained reservation, or empty if unclaimed
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if retained metadata cannot be read or fails validation
+     */
     /* default */ Optional<ScopeSerialReservation> findReservation(CrlScope scope, BigInteger serial) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             return readReservation(snapshot, scope, serial);
@@ -280,7 +405,16 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
         create(transaction, CrlScopeMetadataCodec.key(counter), CrlScopeMetadataCodec.encode(counter));
     }
 
-    /** Reserves with one counter-row CAS; owner authority is immutable. */
+    /**
+     * Reserves the next CRL number with a revision-checked counter update and a fixed contention bound.
+     * A successful return confirms durable allocation; unknown outcomes fail without reusing the candidate number.
+     *
+     * @param owner existing exact immutable scope owner
+     * @return durably allocated CRL number
+     * @throws NullPointerException if owner is null
+     * @throws IllegalStateException if ownership is missing or conflicting, the sequence is exhausted, or contention or a definite commit failure prevents allocation
+     * @throws IOException if counter state is inconsistent or allocation durability cannot be confirmed
+     */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
                   BigInteger reserve(CrlScopeOwner owner) throws IOException {
@@ -339,13 +473,36 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     private record CounterValue(CrlScopeCounter counter, long revision) { }
 
     // Calling-thread fault seam follows the store's existing commit-prefix tests.
-    /** Injection points for uncertain counter commit outcomes. */
-    /* default */ enum CounterCommitFault { BEFORE_COMMIT_FAILURE, BEFORE_COMMIT_AS_UNKNOWN, AFTER_COMMIT_AS_UNKNOWN }
+    /**
+     * Injection points for uncertain counter commit outcomes.
+     */
+    /* default */ enum CounterCommitFault {
+        /**
+         * Fault injection point for failure before invoking the commit.
+         */
+        BEFORE_COMMIT_FAILURE,
+        /**
+         * Fault injection point for a simulated unknown outcome before the commit.
+         */
+        BEFORE_COMMIT_AS_UNKNOWN,
+        /**
+         * Fault injection point for a simulated unknown outcome after the commit.
+         */
+        AFTER_COMMIT_AS_UNKNOWN }
 
+    /**
+     * Installs a calling-thread fault at the CRL counter commit boundary.
+     *
+     * @param fault deterministic commit fault to install
+     * @throws NullPointerException if fault is null
+     */
     /* default */ static void installCounterCommitFault(CounterCommitFault fault) {
         COUNTER_COMMIT_FAULT.set(Objects.requireNonNull(fault, "fault"));
     }
 
+    /**
+     * Removes the calling-thread counter commit fault and restores normal commit behavior.
+     */
     /* default */ static void clearCounterCommitFault() { COUNTER_COMMIT_FAULT.remove(); }
 
     private static MetadataCommitResult commitCounter(MetadataTransaction transaction) throws IOException {

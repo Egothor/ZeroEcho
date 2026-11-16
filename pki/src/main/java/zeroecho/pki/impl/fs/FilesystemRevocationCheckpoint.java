@@ -58,7 +58,9 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Immutable checkpoint view derived from the authoritative revocation log. */
+/**
+ * Immutable checkpoint view derived from the authoritative revocation log.
+ */
 final class FilesystemRevocationCheckpoint implements AutoCloseable {
 
     private static final Logger LOGGER =
@@ -90,6 +92,22 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         this.validated = validated;
     }
 
+    /**
+     * Builds and validates a complete current-state generation before atomic publication.
+     *
+     * <p>Forces the containing directory after publication. If publication has not occurred,
+     * failed construction attempts to delete its temporary generation.</p>
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param logPath authoritative revocation log path used to verify prefix binding
+     * @param recovery validated authoritative log recovery endpoint; must not be null
+     * @param coverage exact store/revision/boundary/commitment represented by the source
+     * @param source borrowed canonically sorted current-state source; must not be null
+     * @return immutable published generation identity, path, covered revision, and publication flag
+     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability acknowledgement fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if source count or coverage is invalid
+     */
     /* default */ static PublishedGeneration publish(
             Path directory,
             Path logPath,
@@ -100,6 +118,24 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
                 DefaultPublicationOperations.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Builds and validates a complete current-state generation before atomic publication.
+     *
+     * <p>Forces the containing directory after publication. If publication has not occurred,
+     * failed construction attempts to delete its temporary generation.</p>
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param logPath authoritative revocation log path used to verify prefix binding
+     * @param recovery validated authoritative log recovery endpoint; must not be null
+     * @param coverage exact store/revision/boundary/commitment represented by the source
+     * @param source borrowed canonically sorted current-state source; must not be null
+     * @param operations filesystem publication/durability operations; must not be null
+     * @param faults deterministic build/publication fault callback; must not be null
+     * @return immutable published generation identity, path, covered revision, and publication flag
+     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability acknowledgement fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if source count or coverage is invalid
+     */
     /* default */ static PublishedGeneration publish(
             Path directory,
             Path logPath,
@@ -118,6 +154,17 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
                 checkpoint -> Binding.validateGeneration(checkpoint, logPath, recovery));
     }
 
+    /**
+     * Publishes the sorted state bound to one immutable frozen authoritative log prefix.
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param frozen borrowed open frozen current-index snapshot; remains owned by the caller
+     * @param source borrowed canonically sorted current-state source; must not be null
+     * @return published generation bound to that historical prefix
+     * @throws IOException if source encoding, frozen binding, publication, or durability acknowledgement fails
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalStateException if frozen is closed
+     */
     /* default */ static PublishedGeneration publishHistorical(
             Path directory,
             FilesystemRevocationCurrentIndex.FrozenSnapshot frozen,
@@ -168,13 +215,27 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Exact post-build binding check selected by the publication boundary. */
+    /**
+     * Exact post-build binding check selected by the publication boundary.
+     */
     @FunctionalInterface
     private interface GenerationValidator {
-        /** Validates the completed temporary generation before publication. */
+        /**
+         * Validates the completed temporary generation before publication.
+         */
         void validate(Path checkpoint) throws IOException;
     }
 
+    /**
+     * Finds the newest valid checkpoint generation bound to the recovered authoritative log.
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param logPath authoritative revocation log path used to verify prefix binding
+     * @param recovery validated authoritative log recovery endpoint; must not be null
+     * @return owned open checkpoint to close, or empty when no valid generation qualifies
+     * @throws IOException if checkpoint discovery or authoritative log access fails
+     * @throws NullPointerException if recovery is null
+     */
     /* default */ static Optional<FilesystemRevocationCheckpoint> discover(
             Path directory,
             Path logPath,
@@ -183,6 +244,19 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         return Discovery.discover(directory, logPath, LogBinding.from(recovery));
     }
 
+    /**
+     * Finds a valid checkpoint under the requested revision bound and exact recovery target.
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param logPath authoritative revocation log path used to verify prefix binding
+     * @param target exact authoritative prefix the checkpoint must not exceed
+     * @param upper upper covered-revision bound
+     * @param includeUpper whether upper itself is eligible
+     * @param observer deterministic discovery fault observer; must not be null
+     * @return owned qualifying checkpoint to close, or empty when no candidate qualifies
+     * @throws IOException if bounded discovery or authoritative prefix validation fails
+     * @throws NullPointerException if target or observer is null
+     */
     /* default */ static Optional<FilesystemRevocationCheckpoint> discoverBelow(
             Path directory,
             Path logPath,
@@ -197,6 +271,16 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
                 includeUpper, observer);
     }
 
+    /**
+     * Opens one named immutable checkpoint and validates its format, name, and authoritative log binding.
+     *
+     * @param checkpointPath regular nonsymlink checkpoint generation path; must not be null
+     * @param logPath authoritative revocation log path used to verify prefix binding
+     * @param recovery validated authoritative log recovery endpoint; must not be null
+     * @return owned read-only checkpoint; caller must close it
+     * @throws IOException if the name, file kind, encoding, commitment, or log binding is invalid
+     * @throws NullPointerException if checkpointPath or recovery is null
+     */
     /* default */ static FilesystemRevocationCheckpoint open(
             Path checkpointPath,
             Path logPath,
@@ -227,38 +311,91 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
+    /**
+     * Best-effort deletes all recognized checkpoint generations except the retained publication.
+     *
+     * <p>Deletion and enumeration failures are logged without undoing authoritative
+     * publication or deleting unrecognized files.</p>
+     *
+     * @param directory checkpoint generation directory; must not be null
+     * @param retained published generation to preserve; must not be null
+     * @return number of generation files successfully deleted
+     * @throws NullPointerException if directory or retained is null
+     */
     /* default */ static long retireObsolete(Path directory, PublishedGeneration retained) {
         return Retirement.retire(directory, retained);
     }
 
+    /**
+     * Returns the validated immutable checkpoint generation identity.
+     *
+     * @return validated immutable checkpoint generation identity
+     */
     /* default */ String generationId() {
         return validated.generationId();
     }
 
+    /**
+     * Returns the store identity captured by the validated checkpoint header.
+     *
+     * @return immutable metadata store identity
+     */
     /* default */ MetadataStoreId storeId() {
         return validated.header().storeId();
     }
 
+    /**
+     * Returns the authoritative revision represented by this generation.
+     *
+     * @return covered nonnegative global revision
+     */
     /* default */ long coveredRevision() {
         return validated.header().coveredRevision();
     }
 
+    /**
+     * Returns the exclusive authoritative log byte boundary represented by this generation.
+     *
+     * @return covered prefix byte boundary
+     */
     /* default */ long coveredBoundary() {
         return validated.header().coveredBoundary();
     }
 
+    /**
+     * Returns the validated authoritative log-prefix commitment.
+     *
+     * @return immutable exact global commitment
+     */
     /* default */ RevocationTransitionFrameCodec.Commitment coveredCommitment() {
         return validated.header().globalCommitment();
     }
 
+    /**
+     * Returns the count declared and validated in the checkpoint header.
+     *
+     * @return number of retained current credential states
+     */
     /* default */ long entryCount() {
         return validated.header().entryCount();
     }
 
+    /**
+     * Opens a cursor over every retained current credential state in canonical order.
+     *
+     * @return owned cursor; its checkpoint must remain open during traversal
+     * @throws IllegalStateException if the checkpoint is closed
+     */
     /* default */ Cursor allCurrentStates() {
         return newCursor(false);
     }
 
+    /**
+     * Opens a canonical cursor retaining held and permanently revoked states while excluding CLEAR.
+     *
+     * @return owned filtered cursor; its checkpoint must remain open during traversal
+     * @throws IllegalStateException if the checkpoint is closed
+     */
     /* default */ Cursor currentRevokedStates() {
         return newCursor(true);
     }
@@ -273,6 +410,14 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
+    /**
+     * Invalidates every owned cursor and closes the checkpoint's read-only file channel.
+     *
+     * <p>Closure is idempotent. The checkpoint remains marked closed even if channel
+     * closure fails; cursor traversal cannot resume afterward.</p>
+     *
+     * @throws IOException if closing the checkpoint channel fails
+     */
     @Override
     public void close() throws IOException {
         lifecycleLock.lock();
@@ -458,54 +603,112 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         return FINAL_PREFIX + revision + "-" + generationId + FINAL_SUFFIX;
     }
 
-    /** Current-state source that transfers deterministic close ownership to publication. */
+    /**
+     * Current-state source that transfers deterministic close ownership to publication.
+     */
     /* default */ interface SortedSource extends AutoCloseable {
-        /** Returns the exact non-negative entry count. */
+        /**
+         * Returns the exact non-negative entry count.
+         * @return number of current-state entries retained by the captured generation
+         */
         long entryCount();
 
-        /** Opens the owned one-entry-at-a-time cursor. */
+        /**
+         * Opens the owned one-entry-at-a-time cursor.
+         * @return new independently positioned cursor; the caller must close it
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         SourceCursor openCursor() throws IOException;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         void close() throws IOException;
     }
 
-    /** One-entry-at-a-time source cursor; current is invalidated by advancement. */
+    /**
+     * One-entry-at-a-time source cursor; current is invalidated by advancement.
+     */
     /* default */ interface SourceCursor extends AutoCloseable {
-        /** Advances to the next source entry. */
+        /**
+         * Advances to the next source entry.
+         * @return true when a current entry is available; false when the captured input is exhausted
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         boolean advance() throws IOException;
 
-        /** Returns the current source entry. */
+        /**
+         * Returns the current source entry.
+         * @return current immutable entry selected by the most recent successful advance
+         */
         RevocationCheckpointCodec.CurrentStateEntry current();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         void close() throws IOException;
     }
 
-    /** Read-only ordered checkpoint cursor. */
+    /**
+     * Read-only ordered checkpoint cursor.
+     */
     /* default */ interface Cursor extends AutoCloseable {
-        /** Advances without an externally cancellable recovery operation. */
+        /**
+         * Advances without an externally cancellable recovery operation.
+         * @return true when a current entry is available; false when the captured input is exhausted
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         default boolean advance() throws IOException {
             return advance(CancellationSignal.NONE);
         }
 
-        /** Advances to the next matching checkpoint entry. */
+        /**
+         * Advances to the next matching checkpoint entry.
+         * @param cancellation cooperative cancellation signal checked while advancing the stream
+         * @return true when a current entry is available; false when the captured input is exhausted
+         * @throws IOException if captured content cannot be read, its integrity fails or cancellation is requested
+         */
         boolean advance(CancellationSignal cancellation) throws IOException;
 
-        /** Returns the current checkpoint entry. */
+        /**
+         * Returns the current checkpoint entry.
+         * @return current immutable entry selected by the most recent successful advance
+         */
         RevocationCheckpointCodec.CurrentStateEntry current();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         void close();
     }
 
-    /** Exact authoritative coverage declared by a derived generation. */
+    /**
+     * Exact authoritative coverage declared by a derived generation.
+     * @param storeId exact authoritative metadata store identity
+     * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+     * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+     * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
+     * @param globalCommitment global revocation commitment at the captured boundary
+     */
     /* default */ record Coverage(
             MetadataStoreId storeId,
             long coveredRevision,
             OptionalLong finalRecordStart,
             long coveredBoundary,
             RevocationTransitionFrameCodec.Commitment globalCommitment) {
+        /**
+         * Creates the exact authoritative coverage declared by a derived generation.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+         * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+         * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
+         * @param globalCommitment global revocation commitment at the captured boundary
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         */
         Coverage {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(finalRecordStart, "finalRecordStart");
@@ -525,58 +728,119 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Immutable publication result; {@code newlyPublished} distinguishes idempotent reuse. */
+    /**
+     * Immutable publication result; {@code newlyPublished} distinguishes idempotent reuse.
+     * @param path exact local filesystem path
+     * @param generationId canonical immutable checkpoint generation name
+     * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+     * @param newlyPublished whether this call published a new generation rather than reusing identical content
+     */
     /* default */ record PublishedGeneration(
             Path path, String generationId, long coveredRevision, boolean newlyPublished) {
+        /**
+         * Creates an immutable publication result; {@code newlyPublished} distinguishes idempotent reuse.
+         *
+         * @param path exact local filesystem path
+         * @param generationId canonical immutable checkpoint generation name
+         * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+         * @param newlyPublished whether this call published a new generation rather than reusing identical content
+         * @throws NullPointerException if {@code path} is null; or if {@code generationId} is null
+         */
         PublishedGeneration {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(generationId, "generationId");
         }
     }
 
-    /** Deterministic publication fault seam; not production API. */
+    /**
+     * Deterministic publication fault seam; not production API.
+     */
     /* default */ @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails one deterministic lifecycle point. */
+        /**
+         * Fails one deterministic lifecycle point.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
     }
 
-    /** Finite lifecycle fault points used by deterministic tests. */
+    /**
+     * Finite lifecycle fault points used by deterministic tests.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for file content writes.
+         */
         WRITE,
+        /**
+         * Fault injection point for forcing file data and metadata.
+         */
         FILE_FORCE,
+        /**
+         * Fault injection point for atomic file publication.
+         */
         ATOMIC_MOVE,
+        /**
+         * Fault injection point for forcing the parent directory.
+         */
         DIRECTORY_FORCE
     }
 
-    /** publication operations isolated for deterministic fault validation. */
+    /**
+     * publication operations isolated for deterministic fault validation.
+     */
     /* default */ interface PublicationOperations {
-        /** Publishes one completed file using an atomic move. */
+        /**
+         * Publishes one completed file using an atomic move.
+         * @param source exact source path of the owned artifact
+         * @param target exact destination path for atomic publication
+         * @throws IOException if atomic namespace publication fails
+         */
         void atomicMove(Path source, Path target) throws IOException;
 
-        /** Forces the containing directory when supported. */
+        /**
+         * Forces the containing directory when supported.
+         * @param directory parent directory whose namespace durability must be confirmed
+         * @throws IOException if parent-directory durability cannot be confirmed
+         */
         void forceDirectory(Path directory) throws IOException;
     }
 
-    /** Default publication operations. */
+    /**
+     * Default publication operations.
+     */
     private enum DefaultPublicationOperations implements PublicationOperations {
-        /** Stateless singleton. */
+        /**
+         * Stateless singleton.
+         */
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void atomicMove(Path source, Path target) throws IOException {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceDirectory(Path directory) throws IOException {
             PlatformFs.forceDirectory(directory);
         }
     }
 
-    /** Log-binding validation never replays the covered authoritative prefix. */
+    /**
+     * Log-binding validation never replays the covered authoritative prefix.
+     */
     private static final class Binding {
         private static void validateGeneration(
                 Path checkpointPath,
@@ -715,7 +979,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
 
     }
 
-    /** Exact set-equality proof between a generation and its immutable frozen index. */
+    /**
+     * Exact set-equality proof between a generation and its immutable frozen index.
+     */
     private static final class HistoricalBinding {
         private static void validateGeneration(
                 Path checkpointPath,
@@ -775,7 +1041,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Streaming discovery keeps one candidate descriptor and repeats only for ambiguity fallback. */
+    /**
+     * Streaming discovery keeps one candidate descriptor and repeats only for ambiguity fallback.
+     */
     private static final class Discovery {
         private static Optional<FilesystemRevocationCheckpoint> discover(
                 Path directory,
@@ -936,7 +1204,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Scalar authoritative prefix used without retaining recovered current state. */
+    /**
+     * Scalar authoritative prefix used without retaining recovered current state.
+     */
     private record LogBinding(
             MetadataStoreId storeId,
             long globalRevision,
@@ -961,7 +1231,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Sequential cursor with lifecycle ownership held by its checkpoint. */
+    /**
+     * Sequential cursor with lifecycle ownership held by its checkpoint.
+     */
     private final class CheckpointCursor implements Cursor, CursorState {
         private final boolean revokedOnly;
         private long offset = RevocationCheckpointCodec.HEADER_BYTES;
@@ -976,6 +1248,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             cursors.add(this);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean advance(CancellationSignal cancellation) throws IOException {
             Objects.requireNonNull(cancellation, "cancellation");
@@ -1005,6 +1280,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             current = null;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public RevocationCheckpointCodec.CurrentStateEntry current() {
             lifecycleLock.lock();
@@ -1019,6 +1297,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             lifecycleLock.lock();
@@ -1034,6 +1315,9 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void closeFromOwner() {
             cursorClosed = true;
@@ -1048,14 +1332,20 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         }
     }
 
-    /** Non-resource invalidation view retained by the checkpoint owner. */
+    /**
+     * Non-resource invalidation view retained by the checkpoint owner.
+     */
     @FunctionalInterface
     private interface CursorState {
-        /** Invalidates the cursor without touching the shared file channel. */
+        /**
+         * Invalidates the cursor without touching the shared file channel.
+         */
         void closeFromOwner();
     }
 
-    /** Non-authoritative retirement of exact obsolete generation names. */
+    /**
+     * Non-authoritative retirement of exact obsolete generation names.
+     */
     private static final class Retirement {
         private static long retire(Path directory, PublishedGeneration retained) {
             Objects.requireNonNull(directory, "directory");

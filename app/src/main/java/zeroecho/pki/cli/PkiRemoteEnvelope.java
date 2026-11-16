@@ -57,7 +57,9 @@ import zeroecho.pki.application.PkiOperationValue;
  */
 final class PkiRemoteEnvelope {
 
-    /** Wire protocol version carried by every request and expected on every response. */
+    /**
+     * Wire protocol version carried by every request and expected on every response.
+     */
     /* default */ static final long PROTOCOL_VERSION = 1L;
 
     private static final JsonFactory JSON_FACTORY = JsonFactory.builder().build();
@@ -73,6 +75,9 @@ final class PkiRemoteEnvelope {
      * @param deadline ISO-8601 instant bounding server-side execution, when set
      * @param arguments typed operation arguments
      * @return canonical UTF-8 JSON request body
+     * @throws NullPointerException if an optional container or arguments is null
+     * @throws IllegalArgumentException if the encoded request exceeds the envelope size limit
+     * @throws IllegalStateException if JSON encoding fails
      */
     /* default */ static byte[] encodeRequest(Optional<String> authorityId, Optional<String> approvalId,
             Optional<String> deadline, PkiOperationValue.ObjectValue arguments) {
@@ -152,13 +157,20 @@ final class PkiRemoteEnvelope {
         return Optional.of(nested);
     }
 
-    /** Signals a request exceeding the supported encoded envelope size. */
+    /**
+     * Signals a request exceeding the supported encoded envelope size.
+     */
     /* default */ static final class RequestTooLargeException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
+        /**
+         * Creates the fixed diagnostic for an encoded request exceeding the bounded envelope size.
+         */
         /* default */ RequestTooLargeException() { super("Remote request exceeds the size limit"); }
     }
 
-    /** Checks the request size before growing the in-memory encoding buffer. */
+    /**
+     * Checks the request size before growing the in-memory encoding buffer.
+     */
     private static final class BoundedRequestOutput extends ByteArrayOutputStream {
         private static final int MAXIMUM_BYTES = 16 * 1_048_576;
 

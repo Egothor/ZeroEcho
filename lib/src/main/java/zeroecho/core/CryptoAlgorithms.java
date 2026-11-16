@@ -70,6 +70,11 @@ public final class CryptoAlgorithms {
         return Collections.unmodifiableMap(new LinkedHashMap<>(algorithms));
     }
 
+    /**
+     * Returns the process-wide algorithm registry after provider initialization.
+     *
+     * @return immutable registry in deterministic identifier order
+     */
     /* default */ static Map<String, CryptoAlgorithm> registry() {
         return BY_ID;
     }

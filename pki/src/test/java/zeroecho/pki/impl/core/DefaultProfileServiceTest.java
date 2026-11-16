@@ -84,6 +84,12 @@ import zeroecho.pki.testkit.TestX509AlgorithmBindingProvider;
 final class DefaultProfileServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-30T10:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Built in import is inactive until explicit activation and survives restart.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void builtInImportIsInactiveUntilExplicitActivationAndSurvivesRestart(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
@@ -104,6 +110,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Repeat import is idempotent and conflicting version is rejected.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void repeatImportIsIdempotentAndConflictingVersionIsRejected(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
@@ -122,6 +134,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Activation switches exact version without rewriting version one.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void activationSwitchesExactVersionWithoutRewritingVersionOne(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("vpn-client");
@@ -144,6 +162,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Historical snapshot fails before target creation when active pointer exists.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void historicalSnapshotFailsBeforeTargetCreationWhenActivePointerExists(@TempDir Path directory) throws Exception {
         Path target = directory.resolve("snapshot");
@@ -159,6 +183,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Concurrent identical and conflicting imports are serialized per profile.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentIdenticalAndConflictingImportsAreSerializedPerProfile(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
@@ -185,6 +215,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Concurrent activations leave one complete exact pointer.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentActivationsLeaveOneCompleteExactPointer(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("vpn-client");
@@ -207,6 +243,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Activation requires an imported version and repeated activation is idempotent.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void activationRequiresAnImportedVersionAndRepeatedActivationIsIdempotent(@TempDir Path directory)
             throws Exception {
@@ -227,6 +269,12 @@ final class DefaultProfileServiceTest {
         }
     }
 
+    /**
+     * Explicit private binding is pinned and changed commitment fails closed.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void explicitPrivateBindingIsPinnedAndChangedCommitmentFailsClosed(@TempDir Path directory) throws Exception {
         System.out.println("explicitPrivateBindingIsPinnedAndChangedCommitmentFailsClosed");
@@ -261,6 +309,12 @@ final class DefaultProfileServiceTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Persisted deployer binding requires identical registry after reopen.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void persistedDeployerBindingRequiresIdenticalRegistryAfterReopen(@TempDir Path directory) throws Exception {
         System.out.println("persistedDeployerBindingRequiresIdenticalRegistryAfterReopen");
@@ -292,6 +346,9 @@ final class DefaultProfileServiceTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Lifecycle operations sanitize store diagnostics and audit codes.
+     */
     @Test
     void lifecycleOperationsSanitizeStoreDiagnosticsAndAuditCodes() {
         String sentinel = "unsafe-profile-store-sentinel";

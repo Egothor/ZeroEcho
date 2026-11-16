@@ -60,6 +60,9 @@ import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
 import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
 import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 
+/**
+ * Contract and regression tests for certificate profile document codec.
+ */
 final class CertificateProfileDocumentCodecTest {
 
     private static boolean initializationProbe;
@@ -146,6 +149,9 @@ final class CertificateProfileDocumentCodecTest {
             }
             """;
 
+    /**
+     * Parses every supported rule shape into authoritative typed policies.
+     */
     @Test
     void parsesEverySupportedRuleShapeIntoAuthoritativeTypedPolicies() {
         CertificateProfileDefinition definition = parse(VALID_DOCUMENT);
@@ -171,6 +177,9 @@ final class CertificateProfileDocumentCodecTest {
                 leaf.extendedKeyUsages());
     }
 
+    /**
+     * Round trips every required typed profile category without activation state.
+     */
     @Test
     void roundTripsEveryRequiredTypedProfileCategoryWithoutActivationState() {
         List<CertificateProfileDefinition> definitions = List.of(
@@ -208,6 +217,9 @@ final class CertificateProfileDocumentCodecTest {
                 () -> immutable.leafPolicy().subjectAlternativeNamePolicy().allowedUriSchemes().add("ssh"));
     }
 
+    /**
+     * Round trips root and intermediate ca policies and rejects wrong kind shapes.
+     */
     @Test
     void roundTripsRootAndIntermediateCaPoliciesAndRejectsWrongKindShapes() {
         CertificateProfileDefinition root = caDefinition("root-test", CertificateProfileKind.ROOT_CA, 1);
@@ -248,6 +260,9 @@ final class CertificateProfileDocumentCodecTest {
                 "\"extendedKeyUsage\":[],\"allowedSubjectKeyAlgorithms\":"), "UNKNOWN_FIELD");
     }
 
+    /**
+     * Canonical output has fixed order sorted sets and is idempotent.
+     */
     @Test
     void canonicalOutputHasFixedOrderSortedSetsAndIsIdempotent() {
         byte[] first = CertificateProfileDocumentCodec.writeCanonical(parse(VALID_DOCUMENT));
@@ -272,6 +287,9 @@ final class CertificateProfileDocumentCodecTest {
         assertTrue(json.contains("\"allowedKeyAlgorithms\":[\"ECDSA\",\"Ed25519\",\"Ed448\",\"RSA\"]"));
     }
 
+    /**
+     * Writer rejects profile strings that its parser would reject.
+     */
     @Test
     void writerRejectsProfileStringsThatItsParserWouldReject() {
         CertificateProfileDefinition valid = definition("valid", requesterCn(), noSan(), Set.of(), Set.of("RSA"));
@@ -291,6 +309,9 @@ final class CertificateProfileDocumentCodecTest {
         }
     }
 
+    /**
+     * Input stream remains caller owned.
+     */
     @Test
     void inputStreamRemainsCallerOwned() {
         TrackingInputStream input = new TrackingInputStream(bytes(VALID_DOCUMENT));
@@ -301,6 +322,9 @@ final class CertificateProfileDocumentCodecTest {
         assertFalse(input.closed);
     }
 
+    /**
+     * Rejects malformed JSON extensions trailing content bom and malformed UTF-8.
+     */
     @Test
     void rejectsMalformedJsonExtensionsTrailingContentBomAndMalformedUtf8() {
         assertCode(VALID_DOCUMENT.replace("{", "{/*comment*/"), "MALFORMED_JSON");
@@ -321,6 +345,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(malformed, "MALFORMED_JSON");
     }
 
+    /**
+     * Rejects duplicate unknown missing null wrong and nonintegral fields.
+     */
     @Test
     void rejectsDuplicateUnknownMissingNullWrongAndNonintegralFields() {
         assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 5,", "\"schemaVersion\": 5,\"schemaVersion\": 5,"),
@@ -365,6 +392,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(VALID_DOCUMENT.replace("\"profileVersion\": 7", "\"profileVersion\": 7e0"), "WRONG_TYPE");
     }
 
+    /**
+     * Rejects missing leaf and forbidden ca confirmation policies.
+     */
     @Test
     void rejectsMissingLeafAndForbiddenCaConfirmationPolicies() {
         String leaf = canonical(parse(VALID_DOCUMENT));
@@ -377,6 +407,9 @@ final class CertificateProfileDocumentCodecTest {
                 "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
     }
 
+    /**
+     * Rejects malformed or uncommitted confirmation policy fields.
+     */
     @Test
     void rejectsMalformedOrUncommittedConfirmationPolicyFields() {
         String document = canonical(parse(VALID_DOCUMENT));
@@ -401,6 +434,9 @@ final class CertificateProfileDocumentCodecTest {
                 "SEMANTIC_INVALID");
     }
 
+    /**
+     * Rejects unsupported versions tokens case whitespace and noncanonical duration.
+     */
     @Test
     void rejectsUnsupportedVersionsTokensCaseWhitespaceAndNoncanonicalDuration() {
         assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 5", "\"schemaVersion\": 1"),
@@ -426,6 +462,9 @@ final class CertificateProfileDocumentCodecTest {
         }
     }
 
+    /**
+     * Rejects type specific shape violations and semantic invariants.
+     */
     @Test
     void rejectsTypeSpecificShapeViolationsAndSemanticInvariants() {
         assertCode(VALID_DOCUMENT.replace("\"wildcardAllowed\": true", "\"ipv4Allowed\": true"), "MISSING_FIELD");
@@ -470,6 +509,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(empty.replace("\"minimumTotal\":1", "\"minimumTotal\":0"), "SEMANTIC_INVALID");
     }
 
+    /**
+     * Rejects duplicate set like values.
+     */
     @Test
     void rejectsDuplicateSetLikeValues() {
         assertCode(VALID_DOCUMENT.replace("\"DIGITAL_SIGNATURE\"]", "\"DIGITAL_SIGNATURE\",\"DIGITAL_SIGNATURE\"]"),
@@ -481,6 +523,9 @@ final class CertificateProfileDocumentCodecTest {
                 "TOKEN_INVALID");
     }
 
+    /**
+     * Enforces document array and UTF-8 string bounds.
+     */
     @Test
     void enforcesDocumentArrayAndUtf8StringBounds() {
         byte[] oversized = new byte[CertificateProfileDocumentCodec.MAXIMUM_DOCUMENT_BYTES + 1];
@@ -511,6 +556,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(VALID_DOCUMENT.replace("\"spiffe\", \"https\"", schemes), "LIMIT_EXCEEDED");
     }
 
+    /**
+     * Enforces depth before schema dispatch.
+     */
     @Test
     void enforcesDepthBeforeSchemaDispatch() {
         String document = "{\"unknown\":" + "[".repeat(17) + "0" + "]".repeat(17) + "}";
@@ -518,6 +566,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(document, "LIMIT_EXCEEDED");
     }
 
+    /**
+     * Redacts hostile input and parser details from failures.
+     */
     @Test
     void redactsHostileInputAndParserDetailsFromFailures() {
         String secret = "do-not-disclose-credential";
@@ -533,6 +584,9 @@ final class CertificateProfileDocumentCodecTest {
                 .startsWith("Certificate profile document rejected: code=UNKNOWN_FIELD path=$.?"));
     }
 
+    /**
+     * Rejects polymorphic metadata without loading classes or logging input.
+     */
     @Test
     void rejectsPolymorphicMetadataWithoutLoadingClassesOrLoggingInput() {
         String probeName = "zeroecho.pki.api.profile.CertificateProfileDocumentCodecTest" + "$InitializationProbe";
@@ -571,6 +625,9 @@ final class CertificateProfileDocumentCodecTest {
         assertTrue(records.isEmpty());
     }
 
+    /**
+     * Preserves managed canonical bytes and separates requested subject key source.
+     */
     @Test
     void preservesManagedCanonicalBytesAndSeparatesRequestedSubjectKeySource() {
         var managed = withHybrid(caDefinition("managed-alt", CertificateProfileKind.ROOT_CA, 1),
@@ -592,6 +649,9 @@ final class CertificateProfileDocumentCodecTest {
         assertCode(requestJson.replace("\"type\":\"ALT_SIGNATURE\"", "\"type\":\"TWIN_CERTIFICATE\""), "SEMANTIC_INVALID");
     }
 
+    /**
+     * Managed leaf is limited to dedicated OCSP signing policy.
+     */
     @Test void managedLeafIsLimitedToDedicatedOcspSigningPolicy() {
         var base = parse(VALID_DOCUMENT); var original = base.leafPolicy();
         var ocsp = new LeafCertificatePolicy(original.subjectAlternativeNamePolicy(), java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE),

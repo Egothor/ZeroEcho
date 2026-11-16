@@ -69,9 +69,20 @@ import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
+/**
+ * Contract and regression tests for status schedule signing.
+ */
 class StatusScheduleSigningTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path root;
 
+    /**
+     * Backup still rejects missing payload of accepted live signing work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void backupStillRejectsMissingPayloadOfAcceptedLiveSigningWork() throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             FullCrlStreamingPublicationTest.Fixture fixture = fixture(store, "RSA", "SHA256withRSA",
@@ -86,6 +97,12 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Corrupt accepted receipt linkage rejects reopen.
+     *
+     * @param corruption named malformed state or encoded-field modification
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"future", "trailing", "missing-head", "missing-receipt", "wrong-operation"})
     void corruptAcceptedReceiptLinkageRejectsReopen(String corruption) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
@@ -99,6 +116,11 @@ class StatusScheduleSigningTest {
         assertThrows(IllegalStateException.class, () -> open(root));
     }
 
+    /**
+     * Concurrent acceptance attaches only to the same claim.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void concurrentAcceptanceAttachesOnlyToTheSameClaim() throws Exception {
         try (FilesystemPkiStore store = open(root);
                 java.util.concurrent.ExecutorService callers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
@@ -132,6 +154,11 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Ordinary acceptance cannot be attached as scheduled work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void ordinaryAcceptanceCannotBeAttachedAsScheduledWork() throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             FullCrlStreamingPublicationTest.Fixture fixture = fixture(store, "RSA", "SHA256withRSA",
@@ -147,6 +174,11 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Custom store default publication hook preserves crash replay without duplicate insertion.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void customStoreDefaultPublicationHookPreservesCrashReplayWithoutDuplicateInsertion() throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             FullCrlStreamingPublicationTest.Fixture fixture = fixture(store, "RSA", "SHA256withRSA",
@@ -175,6 +207,12 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Unknown acceptance recovers one coherent claim.
+     *
+     * @param cut named lifecycle boundary at which execution or snapshotting stops
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"BEFORE_COMMIT_AS_UNKNOWN", "AFTER_COMMIT_AS_UNKNOWN"})
     void unknownAcceptanceRecoversOneCoherentClaim(String cut) throws Exception {
         FullCrlStreamingPublicationTest.Fixture fixture;
@@ -205,6 +243,11 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Unknown effect recovers the atomic status and receipt.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unknownEffectRecoversTheAtomicStatusAndReceipt() throws Exception {
         PkiId operation;
         try (FilesystemPkiStore store = open(root)) {
@@ -225,6 +268,12 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Snapshot preserves accepted and committed scheduling safety state.
+     *
+     * @param effect whether failure is injected at the effect phase rather than acceptance
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void snapshotPreservesAcceptedAndCommittedSchedulingSafetyState(boolean effect) throws Exception {
         Path source = root.resolve("source");
@@ -265,6 +314,12 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Accepted claim and committed effect survive crashes without regeneration.
+     *
+     * @param delta whether the requested CRL is a delta CRL
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void acceptedClaimAndCommittedEffectSurviveCrashesWithoutRegeneration(boolean delta) throws Exception {
         PkiId operation;
@@ -314,6 +369,12 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Mismatched or stale claim rejects before signing acceptance.
+     *
+     * @param mismatch named identity or semantic field deliberately made inconsistent
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"ca", "type", "interval", "stale", "old"})
     void mismatchedOrStaleClaimRejectsBeforeSigningAcceptance(String mismatch) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(),
@@ -335,6 +396,11 @@ class StatusScheduleSigningTest {
         }
     }
 
+    /**
+     * Explicit no op edit resolves proven terminal failure and fences old effect.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void explicitNoOpEditResolvesProvenTerminalFailureAndFencesOldEffect() throws Exception {
         PkiId operation;
         try (FilesystemPkiStore store = open(root)) {

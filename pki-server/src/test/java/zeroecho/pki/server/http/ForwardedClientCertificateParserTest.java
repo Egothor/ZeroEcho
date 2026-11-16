@@ -51,10 +51,20 @@ import zeroecho.pki.server.HttpServerTestSupport;
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.PkiServerConfigurationCodec;
 
-/** Hostile-input coverage for both explicit forwarded certificate formats. */
+/**
+ * Hostile-input coverage for both explicit forwarded certificate formats.
+ */
 class ForwardedClientCertificateParserTest {
+    /**
+     * JUnit-owned isolated directory for proxy listener configuration and public TLS fixtures.
+     */
     @TempDir java.nio.file.Path temporaryDirectory;
 
+    /**
+     * Checks exact leaf-first RFC 9440 decoding and rejects duplicate leaf values, conflicting legacy fields and byte-sequence parameters.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void parsesStrictRfc9440LeafAndChain() throws Exception {
         System.out.println("parsesStrictRfc9440LeafAndChain");
@@ -77,6 +87,11 @@ class ForwardedClientCertificateParserTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks five malformed/empty structured byte sequences against the configured forwarded leaf-certificate parser.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsMalformedRfc9440ByteSequences() throws Exception {
         System.out.println("rejectsMalformedRfc9440ByteSequences");
@@ -91,6 +106,11 @@ class ForwardedClientCertificateParserTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks escaped PEM parsing and rejects raw PEM, malformed escapes, plus substitutions, concatenated certificates and other PEM object types.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void parsesOnlyCanonicalNginxEscapedPem() throws Exception {
         System.out.println("parsesOnlyCanonicalNginxEscapedPem");
@@ -110,6 +130,9 @@ class ForwardedClientCertificateParserTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that schema version one is rejected without guessing a current authentication configuration.
+     */
     @Test
     void rejectsObsoleteConfigurationSchemaWithoutFallback() {
         System.out.println("rejectsObsoleteConfigurationSchemaWithoutFallback");

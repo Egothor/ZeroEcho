@@ -59,6 +59,10 @@ public record ReplaceCommand(PkiId existingCredentialId, ParsedCertificationRequ
      * Creates a replacement command.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param existingCredentialId existing credential id
+     * @param newRequest new parsed request for the replacement credential
+     * @param profileId profile id governing issuance
+     * @param overrides universal attribute overrides (policy-validated; may be empty but not null)
      */
     public ReplaceCommand {
         if (existingCredentialId == null) {

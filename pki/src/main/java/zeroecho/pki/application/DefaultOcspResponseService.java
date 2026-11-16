@@ -110,11 +110,32 @@ final class DefaultOcspResponseService implements OcspResponseService {
     private final Runnable requireOpen;
     private final java.time.Clock clock;
 
+    /**
+     * Binds an OCSP response service using the UTC system clock.
+     *
+     * @param store borrowed store for certificate and revocation evidence
+     * @param signing borrowed durable signing service
+     * @param provider borrowed configured provider
+     * @param authority immutable public X.509 verification authority
+     * @param requireOpen session lifecycle guard
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ DefaultOcspResponseService(PkiStore store, SigningService signing, SigningProvider provider,
             X509AuthoritySnapshot authority, Runnable requireOpen) {
         this(store, signing, provider, authority, requireOpen, java.time.Clock.systemUTC());
     }
 
+    /**
+     * Binds an OCSP response service to explicit public authority and time sources.
+     *
+     * @param store borrowed store for certificate and revocation evidence
+     * @param signing borrowed durable signing service
+     * @param provider borrowed configured provider
+     * @param authority immutable public X.509 verification authority
+     * @param requireOpen session lifecycle guard
+     * @param clock clock supplying authoritative response timestamps
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ DefaultOcspResponseService(PkiStore store, SigningService signing, SigningProvider provider,
             X509AuthoritySnapshot authority, Runnable requireOpen, java.time.Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -125,10 +146,16 @@ final class DefaultOcspResponseService implements OcspResponseService {
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Response respond(Command command) {
         return respond(command, CancellationSignal.NONE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Response respond(Command command, CancellationSignal cancellation) {
         requireOpen.run();
         Objects.requireNonNull(command, "command");
@@ -168,11 +195,17 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void validateSdkResponderMetadata(PkiId authorityId, PkiId issuerId, PkiId responderCredentialId,
             PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative, ResponderId responderId, CancellationSignal cancellation) {
         captureSdkMaterial(authorityId, issuerId, responderCredentialId, chainPathId, primary, alternative, responderId, cancellation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SdkResponderBinding captureSdkResponderBinding(String trustedRealm, String canonicalOrigin, PkiId authorityId,
             PkiId issuerId, PkiId responderCredentialId, PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative,
             ResponderId responderId, CancellationSignal cancellation) {
@@ -224,6 +257,9 @@ final class DefaultOcspResponseService implements OcspResponseService {
     private record SdkCapturedMaterial(PkiId issuerCredentialId, String pathCommitment, String bindingCommitment,
             List<PkiId> chain, List<zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline> baselines) { }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence respondSdk(SdkCommand query, CancellationSignal cancellation) {
         requireOpen.run(); Objects.requireNonNull(query, "query"); Objects.requireNonNull(cancellation, "cancellation");
         try {
@@ -407,6 +443,9 @@ final class DefaultOcspResponseService implements OcspResponseService {
     }
     private static long sdkBase64Bytes(int bytes) { return (Math.addExact(Math.multiplyExact(4L,bytes),2))/3; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void validateSigningMetadata(PkiId authorityId, PkiId responderCredentialId,
             KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
             CancellationSignal cancellation) {
@@ -432,6 +471,9 @@ final class DefaultOcspResponseService implements OcspResponseService {
         } catch (IOException failure) { throw new PkiException("OCSP metadata validation failed: code=OCSP_SIGNING_BINDING_FAILED", failure); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void validateSigningBinding(PkiId authorityId, PkiId responderCredentialId,
             KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
             CancellationSignal cancellation) {

@@ -69,10 +69,19 @@ import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for normalized ca metadata.
+ */
 final class NormalizedCaMetadataTest {
     private static final MetadataStoreId STORE = new MetadataStoreId("1".repeat(32));
     private static final PkiId CA = new PkiId("ca:normalized");
 
+    /**
+     * Ledger export borrows exact pinned revision and rejects foreign snapshot.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void ledgerExportBorrowsExactPinnedRevisionAndRejectsForeignSnapshot(@TempDir Path root) throws Exception {
         Path target = Files.createDirectory(root.resolve("target"));
         MetadataKey key = new MetadataKey("test.pinned", "record");
@@ -96,6 +105,13 @@ final class NormalizedCaMetadataTest {
         }
     }
 
+    /**
+     * Bounded restore order history and constant mutation footprint.
+     *
+     * @param count population or record count selected for the boundary case
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(ints = {32, 10_000})
     void boundedRestoreOrderHistoryAndConstantMutationFootprint(int count, @TempDir Path root) throws Exception {
         CaRecord ca;

@@ -102,6 +102,15 @@ public record HybridSignatureProfile(String classicSigId, String pqcSigId, Conte
      *
      * @throws NullPointerException if {@code classicSigId}, {@code pqcSigId}, or
      *                              {@code verifyRule} is {@code null}
+     * @param classicSigId canonical identifier of the classical signature algorithm
+     *                     (for example {@code "Ed25519"})
+     * @param pqcSigId canonical identifier of the post-quantum signature
+     *                     algorithm (for example {@code "ML-DSA-65"})
+     * @param classicSpec optional {@link ContextSpec} for the classical signature
+     *                     engine; may be {@code null}
+     * @param pqcSpec optional {@link ContextSpec} for the post-quantum
+     *                     signature engine; may be {@code null}
+     * @param verifyRule aggregation rule applied during verification
      */
     public HybridSignatureProfile {
         Objects.requireNonNull(classicSigId, "classicSigId");

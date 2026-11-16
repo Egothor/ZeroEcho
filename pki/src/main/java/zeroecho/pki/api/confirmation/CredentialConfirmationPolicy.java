@@ -53,12 +53,22 @@ import java.util.Objects;
  */
 public record CredentialConfirmationPolicy(ConfirmationDisclosurePolicy disclosurePolicy,
         Duration confirmationWindow, ConfirmationProofSuiteRef proofSuite) {
-    /** Largest accepted confirmation window. */
+    /**
+     * Largest accepted confirmation window.
+     */
     public static final Duration MAXIMUM_CONFIRMATION_WINDOW = Duration.ofDays(36_525L);
     private static final byte[] DOMAIN =
             "zeroecho:credential-confirmation-policy:v1".getBytes(StandardCharsets.US_ASCII);
 
-    /** Validates the complete immutable policy. */
+    /**
+     * Validates the complete immutable policy.
+     * @param disclosurePolicy disclosure state frozen by issuance
+     * @param confirmationWindow positive confirmation interval, at most 100 years
+     * @param proofSuite exact proof-suite configuration frozen by issuance
+     * @throws NullPointerException if disclosurePolicy, confirmationWindow or proofSuite is null
+     * @throws IllegalArgumentException if confirmationWindow is zero, negative or greater than
+     *     MAXIMUM_CONFIRMATION_WINDOW
+     */
     public CredentialConfirmationPolicy {
         Objects.requireNonNull(disclosurePolicy, "disclosurePolicy");
         Objects.requireNonNull(confirmationWindow, "confirmationWindow");

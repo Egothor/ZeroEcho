@@ -48,9 +48,14 @@ import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.server.ServerOperationGateway;
 import zeroecho.pki.api.PkiId;
 
-/** Stable typed overload mappings at each signing-capable HTTP boundary. */
+/**
+ * Stable typed overload mappings at each signing-capable HTTP boundary.
+ */
 final class SigningOverloadMappingTest {
 
+    /**
+     * Checks that typed administrative overload produces HTTP 429 and the stable OVERLOADED classification.
+     */
     @Test
     void administrativeFailureMapsToHttp429WithoutMessageParsing() {
         PkiOperationOutcome outcome = new PkiOperationOutcome.Failed("issue-credential",
@@ -64,6 +69,9 @@ final class SigningOverloadMappingTest {
                 .contains("\"classification\":\"OVERLOADED\""));
     }
 
+    /**
+     * Checks HTTP 202 pending encoding and the exact private signing-operation polling location.
+     */
     @Test
     void administrativePendingMapsTo202WithPrivateStatusLocation() {
         PkiId operationId = new PkiId("signing:private-operation");
@@ -78,6 +86,14 @@ final class SigningOverloadMappingTest {
         assertTrue(new String(response.body(), StandardCharsets.UTF_8).contains("\"status\":\"PENDING\""));
     }
 
+    /**
+     * Checks that recovery-required and externally unknown outcomes publish distinct status codes and guidance flags.
+     *
+     * @param classification typed backend failure classification
+     * @param expectedStatus expected HTTP status for that classification
+     * @param recoveryRequired expected operator-recovery flag
+     * @param reconciliationRequired expected external-outcome reconciliation flag
+     */
     @ParameterizedTest
     @CsvSource({
             "RECOVERY_REQUIRED, 503, true, false",
@@ -100,6 +116,9 @@ final class SigningOverloadMappingTest {
         assertTrue(body.contains("\"reconciliationRequired\":" + reconciliationRequired));
     }
 
+    /**
+     * Checks ACME rateLimited mapping from typed overload despite unrelated exception message text.
+     */
     @Test
     void acmeFailureMapsToRateLimitedFromTypedClassification() {
         SigningExecutionException overload = failure(SigningExecutionException.Classification.OVERLOADED,
@@ -112,6 +131,9 @@ final class SigningOverloadMappingTest {
                 .contains("urn:ietf:params:acme:error:rateLimited"));
     }
 
+    /**
+     * Checks that typed OCSP overload maps to 429 while shutdown maps to 503 even with overload-looking message text.
+     */
     @Test
     void ocspFailureMapsOnlyTypedOverloadToHttp429() {
         assertEquals(429, OcspHttpHandler.signingFailureStatus(failure(
@@ -120,6 +142,11 @@ final class SigningOverloadMappingTest {
                 SigningExecutionException.Classification.SHUTTING_DOWN, "SIGNING_OVERLOADED")));
     }
 
+    /**
+     * Parses the generated OCSP tryLater response independently and checks its exact canonical DER round-trip.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void ocspPendingUsesCanonicalDerTryLaterBody() throws Exception {
         byte[] encoded = OcspHttpHandler.protocolFailureBody(

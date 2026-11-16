@@ -49,8 +49,16 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
+/**
+ * Contract and regression tests for metadata state index.
+ */
 final class MetadataStateIndexTest {
 
+    /**
+     * Committed revision is the record revision and empty commit advances once.
+     *
+     * @throws MetadataStoreException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedRevisionIsTheRecordRevisionAndEmptyCommitAdvancesOnce() throws MetadataStoreException {
         System.out.print("committedRevisionIsTheRecordRevisionAndEmptyCommitAdvancesOnce ");
@@ -71,6 +79,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Conflicts and duplicate keys publish no partial delta.
+     *
+     * @throws MetadataStoreException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictsAndDuplicateKeysPublishNoPartialDelta() throws MetadataStoreException {
         System.out.print("conflictsAndDuplicateKeysPublishNoPartialDelta ");
@@ -93,6 +106,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Multi key publication and iteration are deterministic and immutable.
+     *
+     * @throws MetadataStoreException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void multiKeyPublicationAndIterationAreDeterministicAndImmutable() throws MetadataStoreException {
         System.out.print("multiKeyPublicationAndIterationAreDeterministicAndImmutable ");
@@ -108,6 +126,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Invalid revision and descriptor shapes fail with stable safe categories.
+     *
+     * @throws MetadataStoreException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void invalidRevisionAndDescriptorShapesFailWithStableSafeCategories() throws MetadataStoreException {
         System.out.print("invalidRevisionAndDescriptorShapesFailWithStableSafeCategories ");
@@ -129,6 +152,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed value regions fail checked and publish no state.
+     *
+     * @throws MetadataStoreException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedValueRegionsFailCheckedAndPublishNoState() throws MetadataStoreException {
         System.out.print("malformedValueRegionsFailCheckedAndPublishNoState ");
@@ -160,6 +188,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Concurrent readers observe only atomic immutable states.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentReadersObserveOnlyAtomicImmutableStates() throws Exception {
         System.out.print("concurrentReadersObserveOnlyAtomicImmutableStates ");
@@ -199,6 +232,11 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Updates avoid full index copies without pinned snapshot and preserve pinned view.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void updatesAvoidFullIndexCopiesWithoutPinnedSnapshotAndPreservePinnedView() throws Exception {
         MetadataStateIndex index = new MetadataStateIndex();

@@ -50,12 +50,33 @@ import zeroecho.pki.application.PkiOperationValue;
 sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteResult.Pending,
         PkiRemoteResult.ApprovalRequired, PkiRemoteResult.Failed {
 
-    /** @return stable operation identity the result belongs to */
+    /**
+     * Returns the requested semantic operation associated with this local result.
+     *
+     * @return stable nonblank requested operation identity
+     */
     String operation();
 
-    /** Successful operation with its safe structured result view. */
+    /**
+     * Successful operation with the decoded structured result and optional durable identity.
+     *
+     * <p>Construction does not revalidate HTTP status, completion fields or remote
+     * authenticity; the transport validates its envelope before creating this value.</p>
+     *
+     * @param operation requested nonblank semantic operation
+     * @param result immutable decoded result fields, retained without rebuilding
+     * @param operationId optional durable operation identity; present text is not validated here
+     */
     record Succeeded(String operation, PkiOperationValue.ObjectValue result, Optional<String> operationId) implements PkiRemoteResult {
-        /** Validates the successful result. */
+        /**
+         * Requires a nonblank operation and non-null structured result/identity container.
+         *
+         * @param operation requested semantic operation
+         * @param result immutable structured result
+         * @param operationId optional durable identity
+         * @throws NullPointerException if the result or identity container is null
+         * @throws IllegalArgumentException if the operation is null or blank
+         */
         public Succeeded {
             requireOperation(operation);
             Objects.requireNonNull(result, "result");
@@ -66,9 +87,21 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
     /**
      * A signing hand-off that had not terminalized when the bounded wait elapsed;
      * the operator resumes it later using {@code operationId}.
+     *
+     * @param operation requested nonblank semantic operation
+     * @param operationId nonblank identity of the already submitted operation
+     * @param observationFailure optional local observation failure; it does not replace backend state
      */
     record Pending(String operation, String operationId, Optional<ObservationFailure> observationFailure) implements PkiRemoteResult {
-        /** Validates the pending identity. */
+        /**
+         * Retains a pending identity without polling, resubmitting or mutating the remote operation.
+         *
+         * @param operation requested semantic operation
+         * @param operationId already submitted operation identity
+         * @param observationFailure optional local observation failure
+         * @throws NullPointerException if the observation-failure container is null
+         * @throws IllegalArgumentException if the operation or identifier is null or blank
+         */
         public Pending {
             requireOperation(operation);
             Objects.requireNonNull(observationFailure, "observationFailure");
@@ -78,15 +111,37 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
         }
     }
 
-    /** Safe local observation failure; the backend operation remains pending. */
+    /**
+     * Local observation failure attached to an operation that remains pending.
+     *
+     * <p>The transport supplies finite safe classification/code values. The implicit
+     * constructor does not validate those strings or constrain the exit code; this
+     * carrier does not establish a terminal backend failure.</p>
+     *
+     * @param classification local observation classification, retained as supplied
+     * @param code local observation detail, retained as supplied
+     * @param exitCode CLI exit status selected by the transport
+     */
     record ObservationFailure(String classification, String code, int exitCode) { }
 
     /**
      * The operation requires an out-of-band approval; the caller must obtain an
      * approval identifier for {@code operationCommitment} and re-submit it.
+     *
+     * @param operation requested nonblank semantic operation
+     * @param operationCommitment nonblank immutable operation commitment to be approved
      */
     record ApprovalRequired(String operation, String operationCommitment) implements PkiRemoteResult {
-        /** Validates the approval commitment. */
+        /**
+         * Requires nonblank operation and commitment text without granting approval.
+         *
+         * <p>The transport checks the expected hexadecimal commitment format before
+         * construction; this constructor does not repeat that syntax check.</p>
+         *
+         * @param operation requested semantic operation
+         * @param operationCommitment commitment requiring an external approval decision
+         * @throws IllegalArgumentException if either text value is null or blank
+         */
         public ApprovalRequired {
             requireOperation(operation);
             if (operationCommitment == null || operationCommitment.isBlank()) {
@@ -95,15 +150,48 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
         }
     }
 
-    /** A safely-classified server failure carrying the stable classification and code. */
+    /**
+     * Classified failure with explicit recovery/reconciliation flags and optional durable identity.
+     *
+     * <p>Construction checks nonblank text, not membership in a trusted finite error
+     * vocabulary. It does not perform recovery or reconcile an unknown remote outcome.</p>
+     *
+     * @param operation requested nonblank semantic operation
+     * @param classification nonblank failure classification
+     * @param code nonblank failure detail code
+     * @param recoveryRequired whether the reported outcome requires recovery handling
+     * @param reconciliationRequired whether the reported outcome requires reconciliation
+     * @param operationId optional retained durable operation identity; present text is not validated here
+     */
     record Failed(String operation, String classification, String code, boolean recoveryRequired,
             boolean reconciliationRequired, Optional<String> operationId) implements PkiRemoteResult {
-        /** Validates the failure identity. */
+        /**
+         * Creates a classified failure without a durable operation identity.
+         *
+         * @param operation requested semantic operation
+         * @param classification nonblank failure classification
+         * @param code nonblank failure detail code
+         * @param recoveryRequired reported recovery requirement
+         * @param reconciliationRequired reported reconciliation requirement
+         * @throws IllegalArgumentException if the operation, classification or code is null or blank
+         */
         public Failed(String operation, String classification, String code, boolean recoveryRequired,
                 boolean reconciliationRequired) {
             this(operation, classification, code, recoveryRequired, reconciliationRequired, Optional.empty());
         }
 
+        /**
+         * Checks failure text and the optional identity container without acting on the flags.
+         *
+         * @param operation requested semantic operation
+         * @param classification nonblank failure classification
+         * @param code nonblank failure detail code
+         * @param recoveryRequired reported recovery requirement
+         * @param reconciliationRequired reported reconciliation requirement
+         * @param operationId optional durable operation identity
+         * @throws NullPointerException if the identity container is null
+         * @throws IllegalArgumentException if the operation, classification or code is null or blank
+         */
         public Failed {
             Objects.requireNonNull(operationId, "operationId");
             requireOperation(operation);

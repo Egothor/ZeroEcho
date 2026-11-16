@@ -60,7 +60,9 @@ import zeroecho.pki.application.PkiOperationValue;
  */
 final class PkiSchemaValidator {
 
-    /** Lazy-loaded index: operationId → list of (fieldName, required) pairs. */
+    /**
+     * Lazy-loaded index: operationId → list of (fieldName, required) pairs.
+     */
     private static final AtomicReference<Map<String, List<RequiredField>>> SCHEMA =
             new AtomicReference<>();
 
@@ -73,9 +75,17 @@ final class PkiSchemaValidator {
      * present in the argument map. Unknown fields are ignored; the server
      * validates field types and values.
      *
+     * <p>This checks presence only, not value types, extra fields, approval or
+     * server policy. A missing bundled resource or caught schema I/O failure
+     * yields an empty index. Successful local validation is therefore advisory
+     * and never proof that a current server accepts the request.</p>
+     *
      * @param operationId the dotted operation identifier
      * @param arguments   the parsed argument object
+     *
      * @throws IllegalArgumentException when a required field is absent
+     * @throws NullPointerException if a null operation identifier is rejected by the index,
+     *     or arguments is null when a known required field is inspected
      */
     /* default */ static void validateIfKnown(String operationId, PkiOperationValue.ObjectValue arguments) {
         Map<String, List<RequiredField>> schema = loadSchema();

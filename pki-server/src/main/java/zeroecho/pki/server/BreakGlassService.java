@@ -41,17 +41,33 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Durable, scoped, mandatory-expiry emergency authorization service. */
+/**
+ * Durable, scoped, mandatory-expiry emergency authorization service.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.ExcessiveParameterList" })
 public final class BreakGlassService {
-    /** Break-glass lifecycle states. */
+    /**
+     * Break-glass lifecycle states.
+     */
     public enum State {
-        /** Emergency grant is active and not expired. */ ACTIVE(1),
-        /** Emergency grant was explicitly revoked. */ REVOKED(2),
-        /** Mandatory emergency lifetime elapsed. */ EXPIRED(3),
-        /** Emergency grant awaits independent activation. */ PENDING(4);
+        /**
+         * Emergency grant is active and not expired.
+         */
+        ACTIVE(1),
+        /**
+         * Emergency grant was explicitly revoked.
+         */
+        REVOKED(2),
+        /**
+         * Mandatory emergency lifetime elapsed.
+         */
+        EXPIRED(3),
+        /**
+         * Emergency grant awaits independent activation.
+         */
+        PENDING(4);
         private final int code;
         State(int code) { this.code = code; }
         /**
@@ -65,6 +81,7 @@ public final class BreakGlassService {
          *
          * @param code persisted break-glass state code
          * @return corresponding lifecycle state
+         * @throws IllegalArgumentException if the code does not identify a supported break-glass state
          */
         public static State fromCode(int code) {
             return switch (code) { case 1 -> ACTIVE; case 2 -> REVOKED; case 3 -> EXPIRED; case 4 -> PENDING;
@@ -90,7 +107,25 @@ public final class BreakGlassService {
     public record Record(String breakGlassId, String principalId, Permission.Grant grant, String reason,
             String issuerPrincipalId, Optional<String> approvalId, Instant createdAt, Optional<Instant> activatedAt,
             Instant expiresAt, State state, String auditCommitment) {
-        /** Validates the strict time-limited scoped record. */
+        /**
+         * Validates the strict time-limited scoped record.
+         * @param breakGlassId stable emergency grant identity
+         * @param principalId grantee
+         * @param grant exact scoped permission grant
+         * @param reason mandatory reason
+         * @param issuerPrincipalId independent issuer identity
+         * @param approvalId optional independent approval authority
+         * @param createdAt creation time
+         * @param activatedAt activation time
+         * @param expiresAt mandatory expiry
+         * @param state lifecycle state
+         * @param auditCommitment stable safe commitment
+         * @throws NullPointerException if any of {@code grant}, {@code approvalId}, {@code createdAt}, {@code
+         *         activatedAt}, {@code expiresAt}, {@code state} is null
+         * @throws IllegalArgumentException if the grant is not an explicit scoped allow or issuer and grantee
+         *         are the same principal or the expiry does not define a permitted lifetime or activation
+         *         coordinates do not match lifecycle state or the audit commitment is noncanonical
+         */
         public Record {
             Permission.requireId(breakGlassId, "break-glass");
             Permission.requirePrincipal(principalId);
@@ -152,7 +187,12 @@ public final class BreakGlassService {
      * @param grantIds immutable identifiers of the active grants
      */
     public record ActiveGrants(List<Permission.Grant> grants, java.util.Set<String> grantIds) {
-        /** Defensively snapshots active grants. */
+        /**
+         * Defensively snapshots active grants.
+         * @param grants immutable active grants
+         * @param grantIds immutable identifiers of the active grants
+         * @throws NullPointerException if any of {@code grants}, {@code grantIds} is null
+         */
         public ActiveGrants {
             grants = List.copyOf(Objects.requireNonNull(grants, "grants"));
             grantIds = java.util.Set.copyOf(Objects.requireNonNull(grantIds, "grantIds"));
@@ -169,6 +209,7 @@ public final class BreakGlassService {
      * @param store durable server-control store
      * @param clock authoritative server clock
      * @param auditSink required safe audit sink
+     * @throws NullPointerException if any of {@code store}, {@code clock} is null
      */
     public BreakGlassService(ServerControlStore store, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink) {
         this.store = Objects.requireNonNull(store, "store");
@@ -209,6 +250,7 @@ public final class BreakGlassService {
      * @param actorPrincipalId authenticated administrative actor
      * @param approvalId independent execution approval
      * @return durably active emergency grant
+     * @throws IllegalStateException if the retained grant is not approved for activation
      */
     public synchronized Record activatePending(String breakGlassId, String actorPrincipalId,
             Optional<String> approvalId) {
@@ -232,6 +274,7 @@ public final class BreakGlassService {
      * @param breakGlassId stable emergency grant identifier
      * @param actorPrincipalId authenticated administrative actor
      * @return durably revoked emergency grant
+     * @throws IllegalStateException if the retained grant is not active
      */
     public synchronized Record revoke(String breakGlassId, String actorPrincipalId) {
         Record current = requireCurrent(breakGlassId);

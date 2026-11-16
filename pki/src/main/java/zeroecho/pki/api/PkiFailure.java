@@ -68,6 +68,8 @@ public record PkiFailure(PkiFailureClassification classification, PkiFailureCode
      * @throws NullPointerException if {@code classification} or {@code code} is {@code null}
      * @throws IllegalArgumentException if the code is not assigned to
      *         {@code classification}
+     * @param classification protocol-independent failure classification
+     * @param code stable machine-readable code whose declared classification must equal {@code classification}
      */
     public PkiFailure {
         Objects.requireNonNull(classification, "classification");

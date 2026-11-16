@@ -101,6 +101,13 @@ public final class ExerciseLegacyEnrollmentClient {
         try { run(arguments,password); } finally { Arrays.fill(password,'\0'); }
     }
 
+    /**
+     * Runs an independent SCEP/CMP client phase using only its manifest, public certificates and client custody.
+     *
+     * @param arguments exact client-root, environment nonce, run identity, protocol and phase arguments
+     * @param password independent client keyring unlock password
+     * @throws Exception if arguments/ownership, client configuration, protected wire processing or external interface checks fail
+     */
     static void run(String[] arguments,char[] password) throws Exception {
         if(arguments.length!=5) throw new IllegalArgumentException("Five host client arguments required");
         Path root=Path.of(arguments[0]).toAbsolutePath().normalize();

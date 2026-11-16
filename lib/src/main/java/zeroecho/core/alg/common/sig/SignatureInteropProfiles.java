@@ -193,6 +193,7 @@ public final class SignatureInteropProfiles {
      * @param algorithmId canonical signature algorithm identifier
      * @return a profile when the algorithm has standard interop semantics known to
      *         ZeroEcho; otherwise {@link Optional#empty()}
+     * @throws NullPointerException if {@code algorithmId} is null
      */
     public static Optional<SignatureInteropProfile> resolve(String algorithmId) {
         Objects.requireNonNull(algorithmId, "algorithmId");
@@ -228,6 +229,7 @@ public final class SignatureInteropProfiles {
      * @param algorithmId signature algorithm identifier
      * @return the matching key algorithm id, or the original value when no standard
      *         mapping exists
+     * @throws NullPointerException if {@code algorithmId} is null
      */
     public static String keyAlgorithmIdOrSelf(String algorithmId) {
         Objects.requireNonNull(algorithmId, "algorithmId");

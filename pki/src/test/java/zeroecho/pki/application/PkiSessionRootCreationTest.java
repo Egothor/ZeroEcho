@@ -88,7 +88,16 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for PKI session root creation.
+ */
 final class PkiSessionRootCreationTest {
+    /**
+     * Real session reactor publishes frozen root and reopens without redispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void realSessionReactorPublishesFrozenRootAndReopensWithoutRedispatch(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
         SemanticSigningService semantic;
@@ -148,6 +157,12 @@ final class PkiSessionRootCreationTest {
         }
     }
 
+    /**
+     * Signature from another private key cannot publish any authority.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void signatureFromAnotherPrivateKeyCannotPublishAnyAuthority(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
         fixture.root.wrongSigningKey = true;
@@ -166,6 +181,13 @@ final class PkiSessionRootCreationTest {
         }
     }
 
+    /**
+     * Root lifecycle dispatches through session and retains history.
+     *
+     * @param rotation whether the tested operation uses credential/key rotation
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void rootLifecycleDispatchesThroughSessionAndRetainsHistory(boolean rotation, @TempDir Path root) throws Exception {

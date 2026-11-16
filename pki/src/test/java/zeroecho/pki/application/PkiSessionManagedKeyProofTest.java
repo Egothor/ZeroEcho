@@ -100,6 +100,9 @@ import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for PKI session managed key proof.
+ */
 final class PkiSessionManagedKeyProofTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -109,6 +112,12 @@ final class PkiSessionManagedKeyProofTest {
     private static final ManagedKeyProofRequest REQUEST = new ManagedKeyProofRequest.OcspResponder(
             new PkiId("authority"), new PkiId("responder"), new KeyRef("managed-key"));
 
+    /**
+     * Composed existing intermediate issuance preserves principal and selection.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void composedExistingIntermediateIssuancePreservesPrincipalAndSelection(@TempDir Path root) throws Exception {
         IntermediateIssuanceFixture issuance = new IntermediateIssuanceFixture();
         Fixture fixture = new Fixture(issuance);
@@ -156,6 +165,13 @@ final class PkiSessionManagedKeyProofTest {
         }
     }
 
+    /**
+     * Composed intermediate lifecycle selects new generation and key.
+     *
+     * @param rotation whether the tested operation uses credential/key rotation
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void composedIntermediateLifecycleSelectsNewGenerationAndKey(boolean rotation, @TempDir Path root) throws Exception {
@@ -245,6 +261,12 @@ final class PkiSessionManagedKeyProofTest {
         }
     }
 
+    /**
+     * Composed intermediate preparation publishes and reopens without redispatch.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void composedIntermediatePreparationPublishesAndReopensWithoutRedispatch(@TempDir Path root) throws Exception {
         IntermediateCreationFixture intermediate = new IntermediateCreationFixture();
         Fixture fixture = new Fixture(true, intermediate);
@@ -270,6 +292,12 @@ final class PkiSessionManagedKeyProofTest {
         }
     }
 
+    /**
+     * Composed session prepares without dispatch completes and rejects after close.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void composedSessionPreparesWithoutDispatchCompletesAndRejectsAfterClose(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(true);
         SemanticSigningService semantic;
@@ -293,6 +321,12 @@ final class PkiSessionManagedKeyProofTest {
         }
     }
 
+    /**
+     * Provider without public key source still opens but proof invocation fails.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void providerWithoutPublicKeySourceStillOpensButProofInvocationFails(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture(false);
         try (PkiSession session = fixture.open(root)) {

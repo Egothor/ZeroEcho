@@ -38,7 +38,9 @@ import java.util.Objects;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSigningOperation;
 
-/** One closed administrative namespace spanning PKI and server-control families. */
+/**
+ * One closed administrative namespace spanning PKI and server-control families.
+ */
 public sealed interface AdministrativeOperation permits AdministrativeOperation.Pki,
         AdministrativeOperation.Signing, AdministrativeOperation.Control {
     /**
@@ -54,8 +56,15 @@ public sealed interface AdministrativeOperation permits AdministrativeOperation.
      * @param operation exact PKI operation
      */
     record Pki(PkiOperation operation) implements AdministrativeOperation {
-        /** Validates the typed PKI operation. */
+        /**
+         * Validates the typed PKI operation.
+         * @param operation exact PKI operation
+         * @throws NullPointerException if {@code operation} is null
+         */
         public Pki { Objects.requireNonNull(operation, "operation"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String name() { return operation.name(); }
     }
 
@@ -64,8 +73,15 @@ public sealed interface AdministrativeOperation permits AdministrativeOperation.
      * @param operation exact closed signing input
      */
     record Signing(PkiSigningOperation operation) implements AdministrativeOperation {
-        /** Validates the signing input. */
+        /**
+         * Validates the signing input.
+         * @param operation exact closed signing input
+         * @throws NullPointerException if {@code operation} is null
+         */
         public Signing { Objects.requireNonNull(operation, "operation"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String name() { return operation.name(); }
     }
 
@@ -75,8 +91,15 @@ public sealed interface AdministrativeOperation permits AdministrativeOperation.
      * @param operation exact server-control operation
      */
     record Control(ServerControlOperation operation) implements AdministrativeOperation {
-        /** Validates the typed control operation. */
+        /**
+         * Validates the typed control operation.
+         * @param operation exact server-control operation
+         * @throws NullPointerException if {@code operation} is null
+         */
         public Control { Objects.requireNonNull(operation, "operation"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String name() { return operation.name(); }
     }
 }

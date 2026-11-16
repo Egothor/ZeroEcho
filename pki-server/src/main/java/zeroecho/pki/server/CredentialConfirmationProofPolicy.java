@@ -55,7 +55,15 @@ import zeroecho.pki.application.CredentialConfirmationProofRuntimePolicy;
 public record CredentialConfirmationProofPolicy(CredentialConfirmationProofAudience audience,
         Duration challengeTimeToLive, int rsaMaximumModulusBits) {
 
-    /** Validates the exact audience and shared portable proof bounds. */
+    /**
+     * Validates the exact audience and shared portable proof bounds.
+     * @param audience exact public proof audience
+     * @param challengeTimeToLive whole-second challenge lifetime from 10 seconds through 1 hour
+     * @param rsaMaximumModulusBits inclusive configured RSA modulus ceiling from 2048 through 16384 bits
+     * @throws NullPointerException if any of {@code audience}, {@code challengeTimeToLive} is null
+     * @throws IllegalArgumentException if the proof TTL is outside the supported range or the RSA modulus bound
+     *         is outside the supported range
+     */
     public CredentialConfirmationProofPolicy {
         Objects.requireNonNull(audience, "audience");
         Objects.requireNonNull(challengeTimeToLive, "challengeTimeToLive");

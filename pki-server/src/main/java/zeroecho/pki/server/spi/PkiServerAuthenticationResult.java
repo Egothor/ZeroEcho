@@ -66,7 +66,17 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
     record Authenticated(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
             String endClientPrincipalId, Optional<CertificateIdentityEvidence> credentialEvidence)
             implements PkiServerAuthenticationResult {
-        /** Validates the finite principal identity. */
+        /**
+         * Validates the finite principal identity.
+         * @param mode administrative authentication topology
+         * @param transportPrincipalId trusted proxy principal in proxy mode
+         * @param endClientPrincipalId authenticated end-client principal
+         * @param credentialEvidence trusted end-client evidence, absent for unsupported identity algorithms
+         * @throws NullPointerException if any of {@code mode}, {@code transportPrincipalId}, {@code
+         *         credentialEvidence} is null
+         * @throws IllegalArgumentException if the asserted principal, transport principal and authentication
+         *         mode are inconsistent
+         */
         public Authenticated {
             Objects.requireNonNull(mode, "mode");
             transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
@@ -100,7 +110,11 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
             this(mode, transportPrincipalId, endClientPrincipalId, Optional.empty());
         }
 
-        /** @return redacted diagnostic description */
+        /**
+         * Returns a diagnostic representation with sensitive identity and custody details redacted.
+         *
+         * @return redacted diagnostic description
+         */
         @Override public String toString() { return "Authenticated[redacted]"; }
 
         private static void requirePrincipal(String principalId) {
@@ -120,7 +134,15 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
      */
     record Rejected(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
             Optional<String> endClientPrincipalId, Code code) implements PkiServerAuthenticationResult {
-        /** Validates the rejection. */
+        /**
+         * Validates the rejection.
+         * @param mode administrative authentication topology
+         * @param transportPrincipalId trusted proxy principal when resolved
+         * @param endClientPrincipalId end-client principal when safely resolved
+         * @param code stable non-disclosing rejection code
+         * @throws NullPointerException if any of {@code mode}, {@code transportPrincipalId}, {@code
+         *         endClientPrincipalId}, {@code code} is null
+         */
         public Rejected {
             Objects.requireNonNull(mode, "mode");
             transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
@@ -140,21 +162,62 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
         }
     }
 
-    /** Safe non-disclosing rejection codes. */
+    /**
+     * Safe non-disclosing rejection codes.
+     */
     enum Code {
-        /** Presented certificate is invalid. */ CERTIFICATE_INVALID,
-        /** No exact principal mapping exists. */ MAPPING_UNAVAILABLE,
-        /** More than one principal mapping matches. */ MAPPING_AMBIGUOUS,
-        /** Resolved principal is disabled. */ PRINCIPAL_DISABLED,
-        /** Forwarded identity is forbidden in the active topology. */ FORWARDED_IDENTITY_FORBIDDEN,
-        /** Transport proxy is not trusted. */ PROXY_NOT_TRUSTED,
-        /** Proxy may not forward client identities. */ FORWARDING_NOT_AUTHORIZED,
-        /** Required forwarded client identity is absent. */ FORWARDED_IDENTITY_MISSING,
-        /** Forwarded client identity is malformed or untrusted. */ FORWARDED_IDENTITY_INVALID,
-        /** Client certificate trust validation failed. */ CLIENT_TRUST_REJECTED,
-        /** Client certificate usage constraints reject authentication. */ CLIENT_USAGE_REJECTED,
-        /** Transport and end-client identities collide. */ IDENTITY_COLLISION,
-        /** Authentication failed internally without a safe detailed classification. */ INTERNAL_FAILURE
+        /**
+         * Presented certificate is invalid.
+         */
+        CERTIFICATE_INVALID,
+        /**
+         * No exact principal mapping exists.
+         */
+        MAPPING_UNAVAILABLE,
+        /**
+         * More than one principal mapping matches.
+         */
+        MAPPING_AMBIGUOUS,
+        /**
+         * Resolved principal is disabled.
+         */
+        PRINCIPAL_DISABLED,
+        /**
+         * Forwarded identity is forbidden in the active topology.
+         */
+        FORWARDED_IDENTITY_FORBIDDEN,
+        /**
+         * Transport proxy is not trusted.
+         */
+        PROXY_NOT_TRUSTED,
+        /**
+         * Proxy may not forward client identities.
+         */
+        FORWARDING_NOT_AUTHORIZED,
+        /**
+         * Required forwarded client identity is absent.
+         */
+        FORWARDED_IDENTITY_MISSING,
+        /**
+         * Forwarded client identity is malformed or untrusted.
+         */
+        FORWARDED_IDENTITY_INVALID,
+        /**
+         * Client certificate trust validation failed.
+         */
+        CLIENT_TRUST_REJECTED,
+        /**
+         * Client certificate usage constraints reject authentication.
+         */
+        CLIENT_USAGE_REJECTED,
+        /**
+         * Transport and end-client identities collide.
+         */
+        IDENTITY_COLLISION,
+        /**
+         * Authentication failed internally without a safe detailed classification.
+         */
+        INTERNAL_FAILURE
     }
 
     /**

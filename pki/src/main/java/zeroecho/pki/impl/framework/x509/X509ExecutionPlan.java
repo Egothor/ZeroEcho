@@ -55,6 +55,14 @@ public final class X509ExecutionPlan<E> {
     private final E executor;
     private final Object authorityToken;
 
+    /**
+     * Binds an immutable semantic selection to an exact executor and owning authority token.
+     *
+     * @param selection exact resolved public algorithm selection
+     * @param executor process-local runtime executor, borrowed from its owning authority
+     * @param authorityToken opaque non-null ownership token; retained without exposing it
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ X509ExecutionPlan(X509AlgorithmResolver.Selection selection, E executor, Object authorityToken) {
         this.selection = Objects.requireNonNull(selection, "selection");
         this.executor = Objects.requireNonNull(executor, "executor");
@@ -90,6 +98,13 @@ public final class X509ExecutionPlan<E> {
      * Package-private boolean proof deliberately reveals no token value. A
      * same-package caller may reconstruct the public semantic fields but cannot
      * reproduce the owning snapshot's private provenance object.
+     */
+    /**
+     * Tests a candidate provenance token without exposing the retained authority token.
+     *
+     * @param candidateToken non-null process-local candidate token
+     * @return true when the candidate token equals this plan's authority token
+     * @throws NullPointerException if the candidate token is null
      */
     /* default */ boolean isOwnedBy(Object candidateToken) {
         return candidateToken.equals(authorityToken);

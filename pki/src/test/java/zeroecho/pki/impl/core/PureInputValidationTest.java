@@ -68,11 +68,31 @@ import zeroecho.pki.spi.store.*;
 import zeroecho.pki.testkit.*;
 import zeroecho.pkix.Pkix;
 
-/** Actual-store regressions proving lifecycle input validation cannot stage or sign. */
+/**
+ * Actual-store regressions proving lifecycle input validation cannot stage or sign.
+ */
 class PureInputValidationTest {
+    /**
+     * Validates root and intermediate lifecycle without side effects.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void validatesRootAndIntermediateLifecycleWithoutSideEffects(@TempDir Path root) throws Exception { caLifecycle(root); }
+    /**
+     * Validates leaf issuance and lifecycle without side effects.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void validatesLeafIssuanceAndLifecycleWithoutSideEffects(@TempDir Path root) throws Exception { leafLifecycle(root); }
 
+    /**
+     * Wraps a test store with mutation-rejecting proxies while preserving delegated read access.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return borrowed-store view that raises AssertionError on a forbidden mutation
+     */
     static PkiStore readOnly(PkiStore store) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[]{PkiStore.class}, (proxy, method, args) -> {
             if (method.getName().equals("stagedContent")) {
@@ -86,11 +106,40 @@ class PureInputValidationTest {
             try { return method.invoke(store, args); } catch (InvocationTargetException failure) { throw failure.getCause(); }
         });
     }
+    /**
+     * Requires a fixture invariant without relying on enabled JVM assertions.
+     *
+     * @param condition condition that must hold for the fixture assertion to succeed
+     * @param message diagnostic attached to a failed fixture assertion
+     * @throws AssertionError if the required condition is false
+     */
     static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
-    interface Action { void run() throws Exception; }
+    /**
+     * Checked test operation used to assert input rejection without mutation.
+     */
+    interface Action {
+        /**
+         * Executes the checked test action supplied by an input-validation case.
+         *
+         * @throws Exception if fixture construction, execution, or cleanup fails
+         */
+        void run() throws Exception; }
+    /**
+     * Requires the supplied invalid-input action to throw a runtime exception.
+     *
+     * @param action checked operation that must reject the supplied invalid input
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     * @throws AssertionError if the action returns normally instead of rejecting input
+     */
     static void rejected(Action action) throws Exception {
         try { action.run(); throw new AssertionError("Invalid input accepted"); } catch (RuntimeException expected) { }
     }
+    /**
+     * Exercises pure authority validation while rejecting mutation and signing callbacks.
+     *
+     * @param directory temporary directory used by the lifecycle fixture
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void caLifecycle(Path directory) throws Exception {
         try (var store = new FilesystemPkiStore(directory.resolve("root"), FsPkiStoreOptions.defaults(), RootCreationFixture.CLOCK)) {
             var fixture = new RootCreationFixture(); fixture.initialize(store);
@@ -170,6 +219,12 @@ class PureInputValidationTest {
         return store;
     }
 
+    /**
+     * Exercises pure leaf issuance validation while rejecting mutation and signing callbacks.
+     *
+     * @param directory temporary directory used by the lifecycle fixture
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void leafLifecycle(Path directory) throws Exception {
         var generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048); var key = generator.generateKeyPair();
         try (var store = leafFixture(directory.resolve("leaf"), key)) {
@@ -222,6 +277,12 @@ class PureInputValidationTest {
         return new DefaultSemanticSigningService(store, signing, pure);
     }
 
+    /**
+     * Runs the standalone fixture scenario using a newly created temporary directory.
+     *
+     * @param args unused console arguments; the fixture creates its own temporary root
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("zeroecho-pure-lifecycle-"); caLifecycle(root); leafLifecycle(root);
         System.out.println("PASS pure CA issuance/rollover/rotation and leaf issue/renew/replace/reissue; invalid references/CSR rejected; mutation/sign/allocation boundaries blocked");

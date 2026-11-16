@@ -45,10 +45,18 @@ import zeroecho.sdk.content.api.DataContent;
 final class TailDataContent implements DataContent {
     private final InputStream stream;
 
+    /**
+     * Retains the remaining payload stream without buffering or reopening it.
+     *
+     * @param stream already positioned stream to expose; must not be null
+     */
     /* package */ TailDataContent(InputStream stream) {
         this.stream = stream;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public InputStream getStream() throws IOException {
         return stream;

@@ -51,9 +51,20 @@ import zeroecho.pki.spi.framework.ValidatedLeafRequest;
 import zeroecho.pki.spi.framework.ValidatedCaRequest;
 import zeroecho.pki.spi.framework.SignedObjectCompletion;
 
+/**
+ * Contract and regression tests for framework spi module contract.
+ */
 class FrameworkSpiModuleContractTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Named consumer reads sealed spi without access to implementation packages.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void namedConsumerReadsSealedSpiWithoutAccessToImplementationPackages() throws Exception {
         System.out.println("namedConsumerReadsSealedSpiWithoutAccessToImplementationPackages");
@@ -100,6 +111,11 @@ class FrameworkSpiModuleContractTest {
         System.out.println("...ok");
     }
 
+    /**
+     * External providers cannot forge any sealed authority on modulepath or classpath.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void externalProvidersCannotForgeAnySealedAuthorityOnModulepathOrClasspath() throws Exception {
         System.out.println("externalProvidersCannotForgeAnySealedAuthorityOnModulepathOrClasspath");

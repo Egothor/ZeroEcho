@@ -47,8 +47,13 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-/** Authorization and immutable built-in role-template coverage. */
+/**
+ * Authorization and immutable built-in role-template coverage.
+ */
 class AuthorizationAndRoleTest {
+    /**
+     * Checks absent grants deny by default and explicit deny overrides a matching allow.
+     */
     @Test
     void defaultsToDenyAndExplicitDenyOverridesAllow() {
         System.out.println("defaultsToDenyAndExplicitDenyOverridesAllow");
@@ -70,6 +75,9 @@ class AuthorizationAndRoleTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks authority, ownership and view constraints alongside grant expiry and disabled-principal rejection.
+     */
     @Test
     void enforcesAuthorityOwnershipViewsExpiryAndDisabledPrincipal() {
         System.out.println("enforcesAuthorityOwnershipViewsExpiryAndDisabledPrincipal");
@@ -104,6 +112,9 @@ class AuthorizationAndRoleTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks OCSP query authority is distinct from responder administration and remains bound to the selected responder scope.
+     */
     @Test
     void scopesOcspQuerySeparatelyFromResponderAdministration() {
         System.out.println("scopesOcspQuerySeparatelyFromResponderAdministration");
@@ -142,6 +153,11 @@ class AuthorizationAndRoleTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the fixed built-in role set, own-resource relationships, stable action codes and strict schema rejection without implicit proxy ownership.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void loadsExactTemplatesAndRejectsUnknownSchemaFields() throws Exception {
         System.out.println("loadsExactTemplatesAndRejectsUnknownSchemaFields");

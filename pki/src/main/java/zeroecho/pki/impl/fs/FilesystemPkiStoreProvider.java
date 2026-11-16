@@ -70,11 +70,17 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         // no-op
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "fs";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of("root", "initialCrlNumber", CREDENTIAL_SEARCH_PROPERTY, "credentialSearchCacheKiB",
@@ -113,11 +119,17 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiStore allocate(final ProviderConfig config) {
         return allocate(config, PkiStoreRuntimeDependencies.systemUtc());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiStore allocate(final ProviderConfig config, final PkiStoreRuntimeDependencies dependencies) {
         Objects.requireNonNull(config, "config");
@@ -137,6 +149,14 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         return new FilesystemPkiStore(root, options, dependencies.clock());
     }
 
+    /**
+     * Validates provider CRL numbering and explicit optional credential-search settings.
+     *
+     * @param config exact filesystem provider configuration properties
+     * @return immutable options with default policies and validated configured overrides
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if initial CRL numbering or explicit search activation and resource budgets are invalid
+     */
     /* default */ static FsPkiStoreOptions options(ProviderConfig config) {
         String value = config.get("initialCrlNumber").orElse("1");
         requireInitialCrlNumber(value);

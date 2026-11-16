@@ -61,11 +61,23 @@ final class LocalPkiOperationTransport implements PkiOperationTransport {
      * Creates a transport over one already-opened session.
      *
      * @param session lifecycle-owned backend session
+     * @throws NullPointerException if session is null
      */
     /* default */ LocalPkiOperationTransport(PkiSession session) {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * Executes one command against the borrowed local session, retaining signing receipts.
+     *
+     * <p>A missing local signing capability is returned as a classified failure. The caller
+     * continues to own the session and cancellation signal.</p>
+     *
+     * @param command typed core, signing, inspection, or completion command; must not be null
+     * @param cancellation cooperative cancellation signal passed to the backend
+     * @return backend outcome and any requested or newly accepted durable operation identity
+     * @throws IllegalArgumentException if the command variant is unsupported
+     */
     @Override
     public PkiLocalResult execute(PkiLocalCommand command, CancellationSignal cancellation) {
         if (command instanceof PkiLocalCommand.Core core) {

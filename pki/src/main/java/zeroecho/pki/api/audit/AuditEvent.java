@@ -108,6 +108,14 @@ public record AuditEvent(Instant time, String category, String action, Principal
      *                                  {@code principal/purpose} are {@code null},
      *                                  or any of {@code objectId/formatId/details}
      *                                  are {@code null}
+     * @param time event time (server time), never {@code null}
+     * @param category non-blank category (e.g., {@code "ISSUANCE"}, {@code "REVOCATION"}, {@code "ATTRIBUTE_ACCESS"})
+     * @param action non-blank action string (e.g., {@code "ISSUE_END_ENTITY"}, {@code "REVOKE"}, {@code "READ"})
+     * @param principal actor responsible for the event, never {@code null}
+     * @param purpose declared purpose of the operation/access, never {@code null}
+     * @param objectId optional subject object id (credential id, request id, attribute id, etc.), never {@code null}
+     * @param formatId optional format id related to the object (e.g., encoding), never {@code null}
+     * @param details additional non-sensitive key/value details, never {@code null}
      */
     public AuditEvent {
         if (time == null) {

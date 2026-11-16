@@ -46,7 +46,14 @@ import zeroecho.pki.api.PkiId;
  * @param status the outcome for that exact source
  */
 public record RestoreIdentity(PkiId sourceBackupId, String manifestSha256, RestoreStatus status) {
-    /** Validates immutable identity fields without performing I/O. */
+    /**
+     * Validates immutable identity fields without performing I/O.
+     * @param sourceBackupId backup identifier persisted by the restore coordinator
+     * @param manifestSha256 lowercase SHA-256 commitment to the verified manifest
+     * @param status the outcome for that exact source
+     * @throws NullPointerException if sourceBackupId or status is null
+     * @throws IllegalArgumentException if manifestSha256 is null or is not 64 lowercase hexadecimal characters
+     */
     public RestoreIdentity {
         Objects.requireNonNull(sourceBackupId, "sourceBackupId");
         Objects.requireNonNull(status, "status");

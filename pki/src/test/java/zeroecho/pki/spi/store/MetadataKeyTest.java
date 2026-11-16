@@ -41,8 +41,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for metadata key.
+ */
 final class MetadataKeyTest {
 
+    /**
+     * Canonical extension identity round trips.
+     */
     @Test
     void canonicalExtensionIdentityRoundTrips() {
         System.out.print("canonicalExtensionIdentityRoundTrips ");
@@ -54,6 +60,9 @@ final class MetadataKeyTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Reserved and ambiguous identities fail.
+     */
     @Test
     void reservedAndAmbiguousIdentitiesFail() {
         System.out.print("reservedAndAmbiguousIdentitiesFail ");
@@ -66,6 +75,9 @@ final class MetadataKeyTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Ordering and prefix ranges are total.
+     */
     @Test
     void orderingAndPrefixRangesAreTotal() {
         System.out.print("orderingAndPrefixRangesAreTotal ");
@@ -117,6 +129,9 @@ final class MetadataKeyTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Canonical UTF-8 limits are exact across construction and parsing.
+     */
     @Test
     void canonicalUtf8LimitsAreExactAcrossConstructionAndParsing() {
         System.out.print("canonicalUtf8LimitsAreExactAcrossConstructionAndParsing ");
@@ -137,6 +152,9 @@ final class MetadataKeyTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed length framing fails closed.
+     */
     @Test
     void malformedLengthFramingFailsClosed() {
         System.out.print("malformedLengthFramingFailsClosed ");

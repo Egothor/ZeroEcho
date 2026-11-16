@@ -52,7 +52,9 @@ import java.util.Optional;
  */
 public final class AlgorithmIdentityCatalog {
 
-    /** Namespace reserved for immutable built-in identities. */
+    /**
+     * Namespace reserved for immutable built-in identities.
+     */
     public static final String BUILTIN_NAMESPACE = "zeroecho";
 
     private final Map<String, AlgorithmIdentity> identities;
@@ -91,6 +93,7 @@ public final class AlgorithmIdentityCatalog {
      * @param extensions trusted installed extension catalogs
      * @return immutable merged snapshot
      * @throws IllegalArgumentException if any canonical identity collides
+     * @throws NullPointerException if {@code extensions} is null
      */
     public AlgorithmIdentityCatalog merge(List<AlgorithmIdentityCatalog> extensions) {
         Objects.requireNonNull(extensions, "extensions");
@@ -125,6 +128,8 @@ public final class AlgorithmIdentityCatalog {
      *
      * @param additions exact additive identities
      * @return new immutable catalog
+     * @throws NullPointerException if {@code additions} is null
+     * @throws IllegalArgumentException if an extension uses an unknown reserved family or duplicates an algorithm identity
      */
     public AlgorithmIdentityCatalog add(Collection<AlgorithmIdentity> additions) {
         Objects.requireNonNull(additions, "additions");
@@ -148,6 +153,7 @@ public final class AlgorithmIdentityCatalog {
      *
      * @param canonicalForm complete canonical representation
      * @return registered exact identity, or empty when unknown
+     * @throws NullPointerException if {@code canonicalForm} is null
      */
     public Optional<AlgorithmIdentity> resolve(String canonicalForm) {
         Objects.requireNonNull(canonicalForm, "canonicalForm");

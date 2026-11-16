@@ -117,7 +117,13 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 @SuppressWarnings("PMD.CouplingBetweenObjects")
 final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
 
+    /**
+     * Inclusive maximum encoded component length in bytes.
+     */
     /* package */ static final int MAX_COMPONENT_BYTES = 1024 * 1024;
+    /**
+     * Current top-level filesystem metadata codec version.
+     */
     /* package */ static final int CURRENT_CODEC_VERSION = 11;
 
     private static final int CODEC_MAGIC = 0x5A454346;
@@ -457,8 +463,14 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
             FsCodec::writeCredential, FsCodec::readCredential);
     private static final ValueSchema<List<PkiId>> PKI_IDS = listOf(PKI_ID);
 
+    /**
+     * Versioned top-level binary schema for {@code CaRecord} values.
+     */
     /* package */ static final Schema<CaRecord> CA_RECORD = topLevel(TOP_CA_RECORD, "CA_RECORD",
             valueSchema(100, FsCodec::writeCaRecord, FsCodec::readCaRecord));
+    /**
+     * Versioned top-level binary schema for {@code AuthorityMetadataCodec.Base} values.
+     */
     /* package */ static final Schema<AuthorityMetadataCodec.Base> CA_BASE = topLevel(18, "CA_BASE",
             valueSchema(118, (writer, value) -> {
                 writer.writeValue(PKI_ID, value.caId());
@@ -466,6 +478,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 writer.writeValue(SUBJECT_REF, value.subjectRef());
             }, reader -> new AuthorityMetadataCodec.Base(reader.readValue(PKI_ID), reader.readValue(CA_KIND),
                     reader.readValue(SUBJECT_REF))));
+    /**
+     * Versioned top-level binary schema for {@code AuthorityMetadataCodec.Head} values.
+     */
     /* package */ static final Schema<AuthorityMetadataCodec.Head> CA_HEAD = topLevel(19, "CA_HEAD",
             valueSchema(119, (writer, value) -> {
                 writer.writeValue(PKI_ID, value.caId());
@@ -475,38 +490,80 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 writer.writeInt(value.membershipCount());
             }, reader -> new AuthorityMetadataCodec.Head(reader.readValue(PKI_ID), reader.readValue(CA_STATE),
                     reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readInt())));
+    /**
+     * Versioned top-level binary schema for {@code AuthorityMetadataCodec.Membership} values.
+     */
     /* package */ static final Schema<AuthorityMetadataCodec.Membership> CA_MEMBERSHIP = topLevel(20, "CA_MEMBERSHIP",
             valueSchema(120, (writer, value) -> {
                 writer.writeValue(PKI_ID, value.caId());
                 writer.writeValue(PKI_ID, value.generationId());
                 writer.writeInt(value.ordinal());
             }, reader -> new AuthorityMetadataCodec.Membership(reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readInt())));
+    /**
+     * Versioned top-level binary schema for {@code Credential} values.
+     */
     /* package */ static final Schema<Credential> CREDENTIAL = topLevel(TOP_CREDENTIAL, "CREDENTIAL", CREDENTIAL_VALUE);
+    /**
+     * Versioned top-level binary schema for {@code ParsedCertificationRequest} values.
+     */
     /* package */ static final Schema<ParsedCertificationRequest> PARSED_REQUEST = topLevel(TOP_PARSED_REQUEST,
             "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
+    /**
+     * Versioned top-level binary schema for {@code StatusObject} values.
+     */
     /* package */ static final Schema<StatusObject> STATUS_OBJECT = topLevel(TOP_STATUS_OBJECT, "STATUS_OBJECT",
             valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
+    /**
+     * Versioned top-level binary schema for {@code PolicyTrace} values.
+     */
     /* package */ static final Schema<PolicyTrace> POLICY_TRACE = topLevel(TOP_POLICY_TRACE, "POLICY_TRACE",
             valueSchema(106, FsCodec::writePolicyTrace, FsCodec::readPolicyTrace));
+    /**
+     * Versioned top-level binary schema for {@code WorkflowStateRecord} values.
+     */
     /* package */ static final Schema<WorkflowStateRecord> WORKFLOW_STATE = topLevel(TOP_WORKFLOW_STATE,
             "WORKFLOW_STATE", valueSchema(107, FsCodec::writeWorkflowState, FsCodec::readWorkflowState));
+    /**
+     * Versioned top-level binary schema for {@code SignWorkflowStore.AcceptanceEnvelope} values.
+     */
     /* package */ static final Schema<SignWorkflowStore.AcceptanceEnvelope> SIGN_ACCEPTANCE_ENVELOPE = topLevel(
             TOP_SIGN_ACCEPTANCE_ENVELOPE, "SIGN_ACCEPTANCE_ENVELOPE",
             valueSchema(131, FsCodec::writeSignAcceptanceEnvelope, FsCodec::readSignAcceptanceEnvelope));
+    /**
+     * Versioned top-level binary schema for {@code ImportedCertificateProfileVersion} values.
+     */
     /* package */ static final Schema<ImportedCertificateProfileVersion> PROFILE_VERSION = topLevel(TOP_PROFILE_VERSION,
             "PROFILE_VERSION", valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
+    /**
+     * Versioned top-level binary schema for {@code CertificateProfileRef} values.
+     */
     /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF = topLevel(TOP_ACTIVE_PROFILE_REF,
             "ACTIVE_PROFILE_REF", PROFILE_REF);
+    /**
+     * Versioned top-level binary schema for {@code IssuerGeneration} values.
+     */
     /* package */ static final Schema<IssuerGeneration> ISSUER_GENERATION = topLevel(TOP_ISSUER_GENERATION,
             "ISSUER_GENERATION", valueSchema(110, FsCodec::writeIssuerGeneration, FsCodec::readIssuerGeneration));
+    /**
+     * Versioned top-level binary schema for {@code IssuerChainPath} values.
+     */
     /* package */ static final Schema<IssuerChainPath> ISSUER_CHAIN_PATH = topLevel(TOP_ISSUER_CHAIN_PATH,
             "ISSUER_CHAIN_PATH", valueSchema(111, FsCodec::writeIssuerChainPath, FsCodec::readIssuerChainPath));
+    /**
+     * Versioned top-level binary schema for {@code DomainContinuationStore.Record} values.
+     */
     /* package */ static final Schema<DomainContinuationStore.Record> DOMAIN_CONTINUATION = topLevel(
             TOP_DOMAIN_CONTINUATION, "DOMAIN_CONTINUATION",
             valueSchema(112, FsCodec::writeDomainContinuation, FsCodec::readDomainContinuation));
+    /**
+     * Versioned top-level binary schema for {@code SignWorkflowStore.MutableState} values.
+     */
     /* package */ static final Schema<SignWorkflowStore.MutableState> SIGN_MUTABLE_STATE = topLevel(
             TOP_SIGN_MUTABLE_STATE, "SIGN_MUTABLE_STATE",
             valueSchema(132, FsCodec::writeSignMutableState, FsCodec::readSignMutableState));
+    /**
+     * Versioned top-level binary schema for {@code SignWorkflowStore.CandidateBinding} values.
+     */
     /* package */ static final Schema<SignWorkflowStore.CandidateBinding> SIGN_CANDIDATE_BINDING = topLevel(
             TOP_SIGN_CANDIDATE_BINDING, "SIGN_CANDIDATE_BINDING",
             valueSchema(114, FsCodec::writeSignCandidateBinding, FsCodec::readSignCandidateBinding));
@@ -538,6 +595,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                         base.stage(), base.proofOutcome(), readCaProofOutcome(reader));
             }));
 
+    /**
+     * Versioned top-level binary schema for {@code zeroecho.pki.spi.store.CrlHybridExecution} values.
+     */
     /* default */ static final Schema<zeroecho.pki.spi.store.CrlHybridExecution> CRL_HYBRID_EXECUTION = topLevel(
             23, "CRL_HYBRID_EXECUTION", valueSchema(135, FsCodec::writeCrlHybridExecution, FsCodec::readCrlHybridExecution));
 
@@ -560,10 +620,24 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         return (T) PayloadDecoder.decode(schema, encoded, content);
     }
 
+    /**
+     * Encodes mutable signing state with the single-proof or dual-proof schema selected by the accepted envelope.
+     *
+     * @param envelope accepted signing envelope defining required proof roles
+     * @param state mutable signing state to encode
+     * @return new encoded mutable-state payload
+     */
     /* default */ static byte[] encodeSigningState(SignWorkflowStore.AcceptanceEnvelope envelope, SignWorkflowStore.MutableState state) {
         return encode(envelope.alternativeProofStep().isPresent() ? DUAL_SIGN_STATE : SIGN_MUTABLE_STATE, state);
     }
 
+    /**
+     * Checks that the encoded mutable-state variant agrees with the proof roles fixed by the accepted envelope.
+     *
+     * @param envelope accepted signing envelope defining required proof roles
+     * @param bytes encoded mutable-state payload
+     * @throws IOException if the encoded variant is too short or differs from the accepted proof roles
+     */
     /* default */ static void requireSigningStateVariant(SignWorkflowStore.AcceptanceEnvelope envelope, byte[] bytes) throws IOException {
         if (bytes.length < 6 || (Byte.toUnsignedInt(bytes[5]) == 22) != envelope.alternativeProofStep().isPresent()) {
             throw new IOException("Signing mutable-state variant differs from accepted proof roles");
@@ -574,6 +648,16 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         // utility
     }
 
+    /**
+     * Encodes a value using the current version of the supplied top-level schema into a new byte array.
+     *
+     * @param <T> value type represented by the schema
+     * @param schema top-level schema defining the encoded value
+     * @param value non-null schema value to encode
+     * @return newly allocated complete encoded bytes
+     * @throws NullPointerException if schema or the input value/encoded bytes are null
+     * @throws IllegalStateException if schema encoding or current-payload decoding cannot complete
+     */
     /* package */ static <T> byte[] encode(final Schema<T> schema, final T value) {
         if (schema == SIGN_ACCEPTANCE_ENVELOPE && value instanceof SignWorkflowStore.AcceptanceEnvelope envelope
                 && envelope.alternativeProofStep().isPresent()) { return encode(DUAL_SIGN_ACCEPTANCE, envelope); }
@@ -596,10 +680,31 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         }
     }
 
+    /**
+     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an illegal state. Durable content references require their owning staged-content store.
+     *
+     * @param <T> value type represented by the schema
+     * @param schema top-level schema defining the encoded value
+     * @param encoded complete encoded payload
+     * @return authenticated decoded value
+     * @throws NullPointerException if schema or the input value/encoded bytes are null
+     * @throws IllegalStateException if schema encoding or current-payload decoding cannot complete
+     */
     /* package */ static <T> T decode(final Schema<T> schema, final byte[] encoded) {
         return decode(schema, encoded, null);
     }
 
+    /**
+     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an illegal state. Durable content references require their owning staged-content store.
+     *
+     * @param <T> value type represented by the schema
+     * @param schema top-level schema defining the encoded value
+     * @param encoded complete encoded payload
+     * @param stagedContent owning content store for durable references, or null when no such references are present
+     * @return authenticated decoded value
+     * @throws NullPointerException if schema or the input value/encoded bytes are null
+     * @throws IllegalStateException if schema encoding or current-payload decoding cannot complete
+     */
     /* package */ static <T> T decode(final Schema<T> schema, final byte[] encoded,
             final StagedContentStore stagedContent) {
         Objects.requireNonNull(schema, "schema");
@@ -612,12 +717,33 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         }
     }
 
+    /**
+     * Decodes durable data at recovery, classifying malformed payloads without retaining their input-bearing cause. Operational content-resolution I/O failures retain their original identity.
+     *
+     * @param <T> value type represented by the schema
+     * @param schema top-level schema defining the encoded value
+     * @param encoded complete encoded payload
+     * @return decoded schema value
+     * @throws IOException if durable data is malformed or owning content cannot be resolved
+     * @throws NullPointerException if schema or the input value/encoded bytes are null
+     */
     /* package */ static <T> T decodeRecovery(final Schema<T> schema,
             final byte[] encoded) throws IOException {
         return decodeRecovery(schema, encoded, null);
     }
 
     /* package */ // Operational I/O identity is unwrapped; malformed durable data is deliberately reclassified without an unsafe cause.
+                  /**
+                   * Decodes durable data at recovery, classifying malformed payloads without retaining their input-bearing cause. Operational content-resolution I/O failures retain their original identity.
+                   *
+                   * @param <T> value type represented by the schema
+                   * @param schema top-level schema defining the encoded value
+                   * @param encoded complete encoded payload
+                   * @param stagedContent owning content store for durable references, or null when no such references are present
+                   * @return decoded schema value
+                   * @throws IOException if durable data is malformed or owning content cannot be resolved
+                   * @throws NullPointerException if schema or the input value/encoded bytes are null
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static <T> T decodeRecovery(final Schema<T> schema,
             final byte[] encoded, final StagedContentStore stagedContent) throws IOException {
@@ -632,7 +758,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         }
     }
 
-    /** Strict current-schema payload decoder separated from the schema registry. */
+    /**
+     * Strict current-schema payload decoder separated from the schema registry.
+     */
     private static final class PayloadDecoder {
         private static <T> T decode(Schema<T> schema, byte[] encoded, StagedContentStore stagedContent)
                 throws IOException {
@@ -1485,12 +1613,16 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         }
     }
 
-    /** Cause-free internal marker for malformed current-schema payload bytes. */
+    /**
+     * Cause-free internal marker for malformed current-schema payload bytes.
+     */
     /* package */ static final class MalformedPayloadException extends IOException {
         private static final long serialVersionUID = 1L;
     }
 
-    /** Carries an operational reference failure across the decoding boundary. */
+    /**
+     * Carries an operational reference failure across the decoding boundary.
+     */
     private static final class OperationalReferenceException extends IOException {
         private static final long serialVersionUID = 1L;
         private final IOException failure;

@@ -37,11 +37,29 @@ package zeroecho.core.storage;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Immutable, package-local policy for retrying transient atomic-move access denial. */
+/**
+ * Immutable, package-local policy for retrying transient atomic-move access denial.
+ *
+ * @param attempts total move attempts, including the first; between one and five
+ * @param delayMillis nonnegative delay in milliseconds between attempts
+ * @param pause wait implementation used between attempts; must not be null
+ */
 record KeyringAtomicMoveRetryPolicy(int attempts, long delayMillis, Pause pause) {
+    /**
+     * Retry policy selected from the current operating system, using interruptible sleeps.
+     */
     /* default */ static final KeyringAtomicMoveRetryPolicy PLATFORM = forPlatform(
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows"), Thread::sleep); // NOPMD DoNotUseThreads - Standalone Java service uses bounded polling/retry or preserves cancellation; no J2EE container.
 
+    /**
+     * Validates the retry bounds without performing a wait.
+     *
+     * @param attempts total allowed attempts, from one to five
+     * @param delayMillis nonnegative delay in milliseconds
+     * @param pause wait implementation; must not be null
+     * @throws IllegalArgumentException if attempts or delay is outside its range
+     * @throws NullPointerException if the wait implementation is null
+     */
     KeyringAtomicMoveRetryPolicy {
         if (attempts < 1 || attempts > 5 || delayMillis < 0) {
             throw new IllegalArgumentException("Invalid atomic-move retry policy");
@@ -49,11 +67,21 @@ record KeyringAtomicMoveRetryPolicy(int attempts, long delayMillis, Pause pause)
         Objects.requireNonNull(pause, "pause");
     }
 
+    /**
+     * Selects five attempts on Windows and one attempt elsewhere.
+     *
+     * @param windows whether Windows transient access-denial retries are required
+     * @param pause wait implementation; must not be null
+     * @return an immutable policy with a ten-millisecond retry delay
+     * @throws NullPointerException if the wait implementation is null
+     */
     /* default */ static KeyringAtomicMoveRetryPolicy forPlatform(boolean windows, Pause pause) {
         return new KeyringAtomicMoveRetryPolicy(windows ? 5 : 1, 10L, pause);
     }
 
-    /** Injectable wait boundary for deterministic atomic-move retry tests. */
+    /**
+     * Injectable wait boundary for deterministic atomic-move retry tests.
+     */
     /* default */ @FunctionalInterface
     interface Pause {
         /** Waits before retrying a transient move failure.

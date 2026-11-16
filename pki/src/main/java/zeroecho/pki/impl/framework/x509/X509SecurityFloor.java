@@ -68,6 +68,7 @@ public final class X509SecurityFloor {
      * @param identity requested exact identity
      * @throws IllegalArgumentException if the identity contains forbidden SHA-1
      *                                  semantics
+     * @throws NullPointerException if {@code identity} is null
      */
     public static void requirePermitted(AlgorithmIdentity identity) {
         Objects.requireNonNull(identity, "identity");

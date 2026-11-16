@@ -200,6 +200,9 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public DataContent build(boolean encrypt) {
         return delegate.build(encrypt);

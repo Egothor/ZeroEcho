@@ -49,8 +49,14 @@ import zeroecho.pki.api.audit.AuditQuery;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
+/**
+ * Contract and regression tests for in memory audit sink.
+ */
 public final class InMemoryAuditSinkTest {
 
+    /**
+     * Record and snapshot preserves insertion order.
+     */
     @Test
     public void recordAndSnapshot_preservesInsertionOrder() {
         System.out.println("recordAndSnapshot_preservesInsertionOrder");
@@ -78,6 +84,9 @@ public final class InMemoryAuditSinkTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Search returns deterministically sorted results.
+     */
     @Test
     public void search_returnsDeterministicallySortedResults() {
         System.out.println("search_returnsDeterministicallySortedResults");
@@ -110,6 +119,9 @@ public final class InMemoryAuditSinkTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Get by id finds event by stable id.
+     */
     @Test
     public void getById_findsEventByStableId() {
         System.out.println("getById_findsEventByStableId");
@@ -132,6 +144,9 @@ public final class InMemoryAuditSinkTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Record over capacity drops oldest deterministically.
+     */
     @Test
     public void record_overCapacity_dropsOldestDeterministically() {
         System.out.println("record_overCapacity_dropsOldestDeterministically");

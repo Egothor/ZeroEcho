@@ -47,8 +47,14 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Regression coverage for remote connection parsing and safe diagnostics.
+ */
 class PkiRemoteTargetTest {
 
+    /**
+     * Checks that malformed connection URLs are rejected without disclosing their input in diagnostics.
+     */
     @Test
     void malformedUrlDoesNotExposeParserInput() {
         String sentinel = "SENTINEL_REMOTE_URL_SECRET";
@@ -66,6 +72,9 @@ class PkiRemoteTargetTest {
         assertFalse(diagnostic.toString().contains(sentinel));
     }
 
+    /**
+     * Preserves environment-reference spelling and rejects options missing their required value.
+     */
     @Test
     void preservesExistingEnvironmentReferenceSpellingAndRejectsDanglingOptions() {
         PkiRemoteTarget target = PkiRemoteTarget.parse("https://pki.example", "client.p12", "lowercase_env",

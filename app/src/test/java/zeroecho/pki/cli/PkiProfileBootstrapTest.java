@@ -57,9 +57,20 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
+/**
+ * Integration coverage for profile import, canonical-content reuse, and store cleanup.
+ */
 class PkiProfileBootstrapTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Imports changed profile content as a new version and skips an identical bootstrap rerun.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void importsNewVersionWhenContentChangesAndSkipsOnIdenticalRerun() throws Exception {
         Path configuration = configuration();
@@ -87,6 +98,11 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Checks that bootstrap preserves an active profile whose canonical content already matches.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void activeProfileWithMatchingContentIsSkippedByBootstrap() throws Exception {
         Path configuration = configuration();
@@ -106,6 +122,11 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Rejects malformed profile input without disclosing its contents and releases the store afterward.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void malformedInputStopsWithoutLeakingContentsAndClosesStore() throws Exception {
         Path configuration = configuration();
@@ -121,6 +142,11 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Checks that a backend failure stops profile bootstrap and closes the owned store.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void coreFailureStopsAndClosesStore() throws Exception {
         Path configuration = configuration();
@@ -140,6 +166,11 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Rejects a conflicting store lock before another writer begins work.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void storeLockConflictFailsWithoutStartingAnotherWriter() throws Exception {
         Path configuration = configuration();
@@ -153,6 +184,11 @@ class PkiProfileBootstrapTest {
         assertEquals(0, invoke(configuration, profiles).code());
     }
 
+    /**
+     * Exercises configuration and profile files exposed through Kubernetes-style projection symlinks.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void resolvesKubernetesStyleProjectedProfileAndConfigurationLinks() throws Exception {
         Path configuration = configuration();
@@ -168,6 +204,11 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Rejects missing configuration, mismatched store paths, and profile inputs exceeding the size limit.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsMissingConfigWrongStoreAndOversizedProfile() throws Exception {
         Path configuration = configuration();
@@ -206,6 +247,9 @@ class PkiProfileBootstrapTest {
         }
     }
 
+    /**
+     * Preserves cancellation classification across interrupted cleanup while keeping timeouts classified as input failures.
+     */
     @Test
     void translatedInterruptedCloseRemainsCancellationWhileTimeoutRemainsInputFailure() {
         System.out.println("translatedInterruptedCloseRemainsCancellationWhileTimeoutRemainsInputFailure");

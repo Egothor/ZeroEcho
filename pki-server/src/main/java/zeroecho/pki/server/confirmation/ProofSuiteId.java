@@ -36,12 +36,27 @@ package zeroecho.pki.server.confirmation;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-/** Stable, versioned identifier of one exact proof-suite profile. */
+/**
+ * Stable, versioned identifier of one exact proof-suite profile.
+ *
+ * @param value lowercase ASCII suite name ending in a positive {@code .vN} version,
+ *         with at most 128 characters
+ */
 record ProofSuiteId(String value) {
 
+    /**
+     * Maximum canonical suite-identifier length, in ASCII characters.
+     */
     /* default */ static final int MAXIMUM_LENGTH = 128;
     private static final Pattern CANONICAL = Pattern.compile("[a-z0-9][a-z0-9._-]*\\.v[1-9][0-9]*");
 
+    /**
+     * Validates the bounded canonical versioned suite identifier.
+     *
+     * @param value lowercase suite identifier ending in a positive version suffix
+     * @throws NullPointerException if the value is null
+     * @throws IllegalArgumentException if the identifier is oversized or noncanonical
+     */
     ProofSuiteId {
         Objects.requireNonNull(value, "value");
         if (value.length() > MAXIMUM_LENGTH || !CANONICAL.matcher(value).matches()) {

@@ -145,6 +145,7 @@ public final class KemCtxRecipient implements Recipient, AutoCloseable {
      *         wrapped CEK
      * @throws GeneralSecurityException if encapsulation, KDF, or wrapping fails
      * @throws IOException              if an I/O error occurs during encoding
+     * @throws IllegalStateException if the recipient has been closed
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws GeneralSecurityException, IOException {

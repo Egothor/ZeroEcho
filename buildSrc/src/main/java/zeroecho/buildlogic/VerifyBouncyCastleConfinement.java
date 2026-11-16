@@ -64,18 +64,32 @@ import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 
-/** Checks Java syntax trees for provider references outside the owning lib module. */
+/**
+ * Checks Java syntax trees for provider references outside the owning lib module.
+ */
 public abstract class VerifyBouncyCastleConfinement extends DefaultTask {
-    /** @return the owning Gradle project name */
+    /**
+     * Returns the owning module identity used to select the confinement policy.
+     *
+     * @return managed project-name property; the exact lib module is exempt from provider-reference scanning
+     */
     @Input
     public abstract Property<String> getModuleName();
 
-    /** @return the production Java sources to inspect */
+    /**
+     * Returns the production Java source inputs scanned by the task.
+     *
+     * @return configured file collection; non-lib sources are inspected in absolute-path order
+     */
     @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
     public abstract ConfigurableFileCollection getMainSources();
 
-    /** @return the successful verification marker */
+    /**
+     * Returns the marker written after the configured verification completes.
+     *
+     * @return managed output-file property; the task writes UTF-8 ok followed by a newline
+     */
     @OutputFile
     public abstract RegularFileProperty getMarker();
 
@@ -84,6 +98,10 @@ public abstract class VerifyBouncyCastleConfinement extends DefaultTask {
      * Comments and literals are ignored; Unicode escapes use javac's lexical rules.
      * Qualified names are checked syntactically, without type attribution.
      * Sources are parsed separately, retaining at most one syntax tree at a time.
+     * The exact lib module skips scanning and writes the success marker. Outside
+     * that module a JDK compiler is required, and parsing uses release 25 with
+     * annotation processing disabled. This is a syntactic source boundary, not a
+     * check of reflection strings, compiled bytecode or transitive dependencies.
      *
      * @throws IOException if a source or marker cannot be accessed
      * @throws GradleException if parsing fails or a forbidden reference is found

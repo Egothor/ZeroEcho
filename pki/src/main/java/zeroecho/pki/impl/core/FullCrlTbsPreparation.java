@@ -69,12 +69,30 @@ final class FullCrlTbsPreparation {
     private static final int OCTET_STRING_TAG = 0x04;
     private final PkiStore store;
 
+    /**
+     * Creates a streaming TBS preparer borrowing the supplied PKI store.
+     *
+     * @param store borrowed PKI store; must not be null
+     * @throws NullPointerException if store is null
+     */
     /* default */ FullCrlTbsPreparation(PkiStore store) {
         this.store = Objects.requireNonNull(store, "store");
     }
 
     /* default */ // Exceptional cleanup retains ownership and releases resources after failed validation or provider invocation.
                   // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+                  /**
+                   * Measures and stages a complete CRL TBS under a reserved CRL number.
+                   *
+                   * <p>Owns and closes the temporary entry source and content sink. On failure, attempts
+                   * to discard any local staged content before propagating the failure.</p>
+                   *
+                   * @param prepared validated frozen CRL inputs; must not be null
+                   * @param cancellation cooperative cancellation signal; must not be null
+                   * @return prepared TBS carrier owning its staged operation content
+                   * @throws IOException if snapshot processing, cancellation, number reservation, staging, or validation fails
+                   * @throws NullPointerException if prepared, cancellation, staging.contentStoreId() is null
+                   */
                   @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ExceptionAsFlowControl" })
                   PreparedFullCrlTbs prepare(FullCrlPreparation.Prepared prepared, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(prepared, "prepared");
@@ -155,7 +173,12 @@ final class FullCrlTbsPreparation {
         return restored;
     }
 
-    /** Strictly unwraps both DER OCTET STRINGs of a present SubjectKeyIdentifier. */
+    /**
+     * Strictly unwraps both DER OCTET STRINGs of a present SubjectKeyIdentifier.
+     * @param extension complete DER extension value containing both OCTET STRING wrappers
+     * @return nonempty decoded key-identifier bytes in independent storage
+     * @throws IOException if DER is malformed, the wrappers differ, or the identifier is empty
+     */
     /* default */ static byte[] decodeKeyIdentifier(byte[] extension) throws IOException {
         byte[] inner = octets(extension);
         byte[] identifier = octets(inner);

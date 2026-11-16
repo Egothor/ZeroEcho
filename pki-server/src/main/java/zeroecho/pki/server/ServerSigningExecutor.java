@@ -55,14 +55,25 @@ import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.jfr.SigningOperationEvent;
 
-/** Stateless authorized-command adapter; the existing session owns every resource. */
+/**
+ * Stateless authorized-command adapter; the existing session owns every resource.
+ */
 final class ServerSigningExecutor implements ServerOperationGateway.SigningExecutor {
     private final PkiSession session;
 
+    /**
+     * Binds authorized signing commands to one borrowed lifecycle-owned PKI session.
+     *
+     * @param session existing realm-owned session; not closed by this adapter
+     * @throws NullPointerException if session is null
+     */
     /* default */ ServerSigningExecutor(PkiSession session) {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
         var commands=session.signingCommands();
@@ -75,6 +86,9 @@ final class ServerSigningExecutor implements ServerOperationGateway.SigningExecu
         return normalized;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationOutcome execute(ServerOperationGateway.Request request,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {

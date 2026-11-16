@@ -51,15 +51,33 @@ public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiI
         Optional<ManagedOcspResponderProofTarget> candidateTarget) {
     /**
      * Preserves existing post-certificate/CA proof scope constructors.
-     * @param purpose existing purpose @param responderCredentialId existing credential coordinate
+     *
+     * <p>No pre-certificate candidate target is supplied. A CA proof uses no
+     * responder credential; an existing-responder proof requires the exact credential.
+     * Candidate-purpose requests must use the canonical constructor with their target.
+     *
+     * @param purpose CA or existing-responder proof purpose; must not be null
+     * @param responderCredentialId existing responder credential when required by the
+     *        purpose, otherwise an empty optional; the optional must not be null
+     * @throws NullPointerException if a required component is null
+     * @throws IllegalArgumentException if the purpose/credential combination or bounded
+     *         credential identity is invalid, or the purpose requires a candidate target
      */
     public ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiId> responderCredentialId) {
         this(purpose, responderCredentialId, Optional.empty());
     }
     /**
-     * Validates the exact purpose/credential combination and bounded identity.
+     * Validates the exact purpose, credential and candidate-target combination.
+     *
+     * <p>Only an existing-responder purpose carries a credential identity; only a
+     * pre-certificate responder purpose carries a candidate target. This local
+     * validation does not resolve the credential or authorize the proof operation.
+     *
      * @throws NullPointerException if an argument is null
      * @throws IllegalArgumentException if the combination or credential identity is invalid
+     * @param purpose exact managed key role
+     * @param responderCredentialId present exactly for {@link ManagedKeyProofPurpose#OCSP_RESPONDER_KEY}; its identifier is limited to 4,096 strict UTF-8 bytes
+     * @param candidateTarget present exactly for the pre-certificate responder purpose
      */
     public ManagedKeyProofScope {
         Objects.requireNonNull(purpose, "purpose");
@@ -74,6 +92,13 @@ public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiI
         responderCredentialId.ifPresent(ManagedKeyProofInputs::identifier);
     }
 
-    /** Returns a diagnostic representation without privileged coordinates. */
-    @Override public String toString() { return "ManagedKeyProofScope[redacted]"; }
+    /**
+     * Returns a diagnostic label without disclosing responder or candidate coordinates.
+     *
+     * @return the fixed redacted proof-scope label
+     */
+    @Override
+    public String toString() {
+        return "ManagedKeyProofScope[redacted]";
+    }
 }

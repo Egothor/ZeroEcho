@@ -58,26 +58,36 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public final class CrlGenerationEvent extends Event { // NOPMD DataClass - JFR event fields are its runtime schema.
 
-    /** Identifier of the certificate authority issuing this CRL. */
+    /**
+     * Identifier of the certificate authority issuing this CRL.
+     */
     @Label("Authority ID")
     @Description("Identifier of the certificate authority issuing this CRL.")
     public String authorityId;
 
-    /** Number of revoked certificate entries included in the status object. */
+    /**
+     * Number of revoked certificate entries included in the status object.
+     */
     @Label("Revoked Count")
     @Description("Number of revoked certificate entries included in the generated status object.")
     public int revokedCount;
 
-    /** Whether this is a delta CRL rather than a full CRL. */
+    /**
+     * Whether this is a delta CRL rather than a full CRL.
+     */
     @Label("Delta")
     @Description("True if this is a delta CRL; false if it is a full CRL.")
     public boolean delta;
 
-    /** Whether the generation operation completed without failure. */
+    /**
+     * Whether the generation operation completed without failure.
+     */
     @Label("Succeeded")
     @Description("True if the status object was generated and signed successfully.")
     public boolean succeeded;
-    /** Creates an uncommitted event with default field values; populate fields before committing. */
+    /**
+     * Creates an uncommitted event with default field values; populate fields before committing.
+     */
     public CrlGenerationEvent() {
         super();
     }

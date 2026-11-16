@@ -39,10 +39,20 @@ import java.util.Objects;
 
 import zeroecho.pki.api.confirmation.CredentialConfirmationChallenge;
 
-/** Stateless authoritative-clock preflight for persisted proof challenges. */
+/**
+ * Stateless authoritative-clock preflight for persisted proof challenges.
+ */
 final class CredentialConfirmationProofLiveness {
     private CredentialConfirmationProofLiveness() { }
 
+    /**
+     * Checks challenge liveness against the authoritative clock truncated to whole seconds.
+     *
+     * @param challenge persisted challenge with issuance and expiry bounds; must not be null
+     * @param clock authoritative session clock; must not be null or return a null instant
+     * @throws NullPointerException if a required value is null
+     * @throws IllegalStateException if the clock regressed, is unsupported, or the challenge expired
+     */
     /* default */ static void requireLive(CredentialConfirmationChallenge challenge, Clock clock) {
         CredentialConfirmationChallenge exactChallenge = Objects.requireNonNull(challenge, "challenge");
         Instant observed = Objects.requireNonNull(

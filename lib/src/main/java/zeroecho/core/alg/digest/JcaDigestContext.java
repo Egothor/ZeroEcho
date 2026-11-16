@@ -103,28 +103,48 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
 public final class JcaDigestContext implements DigestContext {
     private static final Logger LOG = Logger.getLogger(JcaDigestContext.class.getName());
 
-    /** Algorithm descriptor that owns this context. */
+    /**
+     * Algorithm descriptor that owns this context.
+     */
     private final CryptoAlgorithm algorithm;
-    /** JCA message digest engine used for computation. */
+    /**
+     * JCA message digest engine used for computation.
+     */
     private final MessageDigest md; // NOPMD
-    /** Digest parameters (algorithm choice, output length for XOFs). */
+    /**
+     * Digest parameters (algorithm choice, output length for XOFs).
+     */
     private final DigestSpec spec;
-    /** JCA algorithm name string, cached for diagnostics. */
+    /**
+     * JCA algorithm name string, cached for diagnostics.
+     */
     private final String algorithmName;
 
-    /** Trailer length in bytes (digest size or requested XOF length). */
+    /**
+     * Trailer length in bytes (digest size or requested XOF length).
+     */
     private final int outLen;
 
-    /** Whether this context is operating in verification mode. */
+    /**
+     * Whether this context is operating in verification mode.
+     */
     private boolean verifyMode; // = false;
-    /** Expected digest/tag value provided by caller. */
+    /**
+     * Expected digest/tag value provided by caller.
+     */
     private byte[] expectedTag;
-    /** Verification failure handling policy. */
+    /**
+     * Verification failure handling policy.
+     */
     private VerificationBiPredicate<byte[]> strategy;
 
-    /** Whether {@link #wrap(InputStream)} has already been called. */
+    /**
+     * Whether {@link #wrap(InputStream)} has already been called.
+     */
     private boolean wrapped; // = false;
-    /** Active digesting stream, if {@link #wrap(InputStream)} was invoked. */
+    /**
+     * Active digesting stream, if {@link #wrap(InputStream)} was invoked.
+     */
     private Stream activeStream;
     private boolean autoCloseActiveStream;
 
@@ -278,7 +298,9 @@ public final class JcaDigestContext implements DigestContext {
      * </p>
      */
     private final class Stream extends AbstractPassthroughInputStream {
-        /** Produce mode: cached digest to emit as a trailer. */
+        /**
+         * Produce mode: cached digest to emit as a trailer.
+         */
         private byte[] trailer; // NOPMD
 
         /**

@@ -63,10 +63,18 @@ import org.junit.jupiter.params.provider.EnumSource;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for signing ledger recovery.
+ */
 final class SigningLedgerRecoveryTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Recovery ownership advances once through passive activation and explicit start.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryOwnershipAdvancesOnceThroughPassiveActivationAndExplicitStart()
             throws Exception {
@@ -108,6 +116,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * Activation rechecks validated WAL before any repair or publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void activationRechecksValidatedWalBeforeAnyRepairOrPublication() throws Exception {
         Path root = createRoot("two-phase-recheck");
@@ -131,6 +144,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * Malformed active header after preflight is cause free and releases ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedActiveHeaderAfterPreflightIsCauseFreeAndReleasesOwnership()
             throws Exception {
@@ -165,6 +183,11 @@ final class SigningLedgerRecoveryTest {
         prepared.close();
     }
 
+    /**
+     * Uncertain passive tail repair retains operational cause and releases ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainPassiveTailRepairRetainsOperationalCauseAndReleasesOwnership()
             throws Exception {
@@ -196,6 +219,12 @@ final class SigningLedgerRecoveryTest {
         assertReleased(observedRegistry.get().statistics());
     }
 
+    /**
+     * Partial engine start closes every started recovery thread.
+     *
+     * @param failedStage startup or recovery transition at which the fixture injects failure
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(SigningLedgerStoreEngine.StartStage.class)
     void partialEngineStartClosesEveryStartedRecoveryThread(
@@ -233,6 +262,11 @@ final class SigningLedgerRecoveryTest {
         assertReleased(observedRegistry.get().statistics());
     }
 
+    /**
+     * Post activation budget failure releases WAL pins references and threads.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void postActivationBudgetFailureReleasesWalPinsReferencesAndThreads()
             throws Exception {
@@ -260,6 +294,12 @@ final class SigningLedgerRecoveryTest {
         assertReleased(observedRegistry.get().statistics());
     }
 
+    /**
+     * Recovery boundary faults close ownership without unauthorized mutation.
+     *
+     * @param failedStage startup or recovery transition at which the fixture injects failure
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @EnumSource(SigningLedgerRecovery.RecoveryStage.class)
     void recoveryBoundaryFaultsCloseOwnershipWithoutUnauthorizedMutation(
@@ -325,6 +365,12 @@ final class SigningLedgerRecoveryTest {
                 .count();
     }
 
+    /**
+     * Checks fail-closed recovery for each retained integrity-test image.
+     *
+     * @param image retained integrity-test image selected for reopening
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "integrity/restart image: {0}")
     @EnumSource(IntegrityImage.class)
     void integrityRestartMatrix(IntegrityImage image) throws Exception {
@@ -367,6 +413,11 @@ final class SigningLedgerRecoveryTest {
         assertRedacted(failure, fixture);
     }
 
+    /**
+     * Self contained checkpoint and post boundary suffix recover without pointer join.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void selfContainedCheckpointAndPostBoundarySuffixRecoverWithoutPointerJoin() throws Exception {
         Path root = createRoot("checkpoint-suffix");
@@ -412,6 +463,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * No checkpoint publishes no checkpoint boundary.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void noCheckpointPublishesNoCheckpointBoundary() throws Exception {
         Path root = createRoot("no-checkpoint-boundary");
@@ -428,6 +484,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * Recovered state checkpoint boundary fails closed for missing duplicate and conflict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveredStateCheckpointBoundaryFailsClosedForMissingDuplicateAndConflict()
             throws Exception {
@@ -480,6 +541,11 @@ final class SigningLedgerRecoveryTest {
                         21L, header.committedSequence() + 1L, header.revision()));
     }
 
+    /**
+     * Checkpoint recovery uses metadata semantic order across length prefixes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void checkpointRecoveryUsesMetadataSemanticOrderAcrossLengthPrefixes() throws Exception {
         Path root = createRoot("semantic-checkpoint-order");
@@ -520,6 +586,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * Unsupported root entry and referenced symlink fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void unsupportedRootEntryAndReferencedSymlinkFailClosed() throws Exception {
@@ -544,6 +615,11 @@ final class SigningLedgerRecoveryTest {
         }
     }
 
+    /**
+     * Manifest boundary rejects pre checkpoint segments.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void manifestBoundaryRejectsPreCheckpointSegments() throws Exception {
         byte[] commitment = new byte[SigningFormatSupport.SHA_256_BYTES];

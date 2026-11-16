@@ -50,10 +50,15 @@ import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Maps publication-evidence feed entries to payload-free audit events through the publication adapter. */
+/**
+ * Maps publication-evidence feed entries to payload-free audit events through the publication adapter.
+ */
 class PublicationAuditProjectionTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * Checks successful publication exposes exact source/target identities and safe direct-response evidence classification.
+     */
     @Test
     void projectsSuccessfulPublication() {
         PublicationExecutionEvidence evidence = PublicationExecutionEvidence.terminal("CREDENTIAL", "cred-a",
@@ -73,6 +78,9 @@ class PublicationAuditProjectionTest {
         assertFalse(event.details().containsKey("content"));
     }
 
+    /**
+     * Checks terminal publication failure retains its finite external-failure classification in the audit event.
+     */
     @Test
     void projectsTerminalFailureWithFailureClassification() {
         PublicationExecutionEvidence evidence = PublicationExecutionEvidence.terminal("CREDENTIAL", "cred-a",
@@ -86,6 +94,9 @@ class PublicationAuditProjectionTest {
         assertEquals("EXTERNAL_TERMINAL", event.details().get("failure"));
     }
 
+    /**
+     * Checks an entry without recognized publication evidence produces no fabricated audit event.
+     */
     @Test
     void skipsEntriesWithoutPublicationEvidence() {
         byte[] payload = DomainAttributeEncoding.encode(SimpleAttributeSet.builder().build())
@@ -94,6 +105,9 @@ class PublicationAuditProjectionTest {
         assertTrue(PublicationAuditProjection.toEvent(entry).isEmpty());
     }
 
+    /**
+     * Checks repeated projection of the same authoritative publication entry produces an equal deterministic event identity.
+     */
     @Test
     void deterministicEventIdIsStableAcrossReprojection() {
         PublicationExecutionEvidence evidence = PublicationExecutionEvidence.terminal("STATUS_OBJECT", "crl-a",

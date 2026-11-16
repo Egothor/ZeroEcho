@@ -33,26 +33,48 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
-/** Stable safe classifications for synchronous PKI operation failures. */
+/**
+ * Stable safe classifications for synchronous PKI operation failures.
+ */
 public enum PkiOperationFailure {
-    /** Typed input or operation precondition is malformed. */
+    /**
+     * Typed input or operation precondition is malformed.
+     */
     VALIDATION_FAILURE,
-    /** A valid request is rejected by PKI policy. */
+    /**
+     * A valid request is rejected by PKI policy.
+     */
     POLICY_REJECTION,
-    /** The selected authoritative object does not exist. */
+    /**
+     * The selected authoritative object does not exist.
+     */
     NOT_FOUND,
-    /** The requested state conflicts with committed state. */
+    /**
+     * The requested state conflicts with committed state.
+     */
     CONFLICT,
-    /** Durable recovery is required before the operation can continue. */
+    /**
+     * Durable recovery is required before the operation can continue.
+     */
     RECOVERY_REQUIRED,
-    /** An external operation may have completed and must be reconciled. */
+    /**
+     * An external operation may have completed and must be reconciled.
+     */
     EXTERNAL_OUTCOME_UNKNOWN,
-    /** Filesystem, channel or another required resource failed. */
+    /**
+     * Filesystem, channel or another required resource failed.
+     */
     RESOURCE_FAILURE,
-    /** Cooperative cancellation was observed. */
+    /**
+     * Cooperative cancellation was observed.
+     */
     CANCELLED,
-    /** The bounded signing execution population is fully reserved. */
+    /**
+     * The bounded signing execution population is fully reserved.
+     */
     OVERLOADED,
-    /** An unexpected implementation defect prevented a safe result. */
+    /**
+     * An unexpected implementation defect prevented a safe result.
+     */
     INTERNAL_FAILURE
 }

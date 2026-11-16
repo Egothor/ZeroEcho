@@ -116,7 +116,9 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.cert.CertificateBuilder;
 
-/** Pure public-evidence checks; reference fixtures do not claim filesystem acceptance or adoption. */
+/**
+ * Pure public-evidence checks; reference fixtures do not claim filesystem acceptance or adoption.
+ */
 class CrlHybridPublicVerifierTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
     private static final PkiId CA = new PkiId("ca:public-verifier-fixture");
@@ -136,6 +138,11 @@ class CrlHybridPublicVerifierTest {
     private static KeyPair wrongAlternative;
     private static KeyPair rsa;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         KeyPairGenerator ec = KeyPairGenerator.getInstance("EC");
@@ -145,6 +152,11 @@ class CrlHybridPublicVerifierTest {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(4096); rsa = generator.generateKeyPair();
     }
 
+    /**
+     * Verifies retained alternative result and exact native child for full and delta.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesRetainedAlternativeResultAndExactNativeChildForFullAndDelta() throws Exception {
         for (boolean delta : new boolean[] {false, true}) {
             Fixture fixture = new Fixture(delta, false, alternative, 1);
@@ -153,6 +165,11 @@ class CrlHybridPublicVerifierTest {
         }
     }
 
+    /**
+     * Rejects bad alternative result wrong issuer and changed native reconstruction.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsBadAlternativeResultWrongIssuerAndChangedNativeReconstruction() throws Exception {
         Fixture fixture = new Fixture(false, false, alternative, 1);
         byte[] damaged = fixture.signature.clone(); damaged[0] ^= 1;
@@ -170,6 +187,11 @@ class CrlHybridPublicVerifierTest {
                 new ImmutableByteContent(fixture.transcript), fixture.child, new ImmutableByteContent(fixture.nativeTbs), CancellationSignal.NONE));
     }
 
+    /**
+     * Rejects changed child role deadline and falsified public signature bound.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsChangedChildRoleDeadlineAndFalsifiedPublicSignatureBound() throws Exception {
         Fixture fixture = new Fixture(false, false, alternative, 1);
         assertThrows(IllegalArgumentException.class, () -> fixture.templateWithNativeKey(ALT_KEY));
@@ -188,6 +210,11 @@ class CrlHybridPublicVerifierTest {
         assertThrows(IllegalArgumentException.class, () -> fixture.verify(changedBound, fixture.child, fixture.nativeTbs));
     }
 
+    /**
+     * Derives public bounds and keeps same key tuple across certificate rollover.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void derivesPublicBoundsAndKeepsSameKeyTupleAcrossCertificateRollover() throws Exception {
         Fixture initial = new Fixture(false, false, alternative, 1);
         Fixture renewed = new Fixture(false, false, alternative, 2);
@@ -212,6 +239,9 @@ class CrlHybridPublicVerifierTest {
                 new ImmutableByteContent(privatePresentation.nativeTbs), CancellationSignal.NONE));
     }
 
+    /**
+     * Plan commitment retains authority direction and exact binding semantics.
+     */
     @Test void planCommitmentRetainsAuthorityDirectionAndExactBindingSemantics() {
         X509AlgorithmBinding binding = StandardX509Bindings.descriptors().stream().filter(value ->
                 value.role() == X509AlgorithmBinding.Role.CRL_SIGNATURE

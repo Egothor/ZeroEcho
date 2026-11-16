@@ -61,12 +61,20 @@ import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 
-/** Verifies permission wiring and round-trip correctness for backup/restore operations. */
+/**
+ * Verifies permission wiring and round-trip correctness for backup/restore operations.
+ */
 class BackupOperationsTest {
 
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Checks backup export uses the backup resource/action and is mutating without implicit approval.
+     */
     @Test
     void exportBackupPermissionIsWiredToBackupExportAction() {
         System.out.println("exportBackupPermissionIsWiredToBackupExportAction");
@@ -81,6 +89,9 @@ class BackupOperationsTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks backup verification uses its own read-only action without implicit approval.
+     */
     @Test
     void verifyBackupPermissionIsWiredToBackupVerifyAction() {
         System.out.println("verifyBackupPermissionIsWiredToBackupVerifyAction");
@@ -95,6 +106,9 @@ class BackupOperationsTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks restore execution has its own high-risk permission/schema but remains unavailable in the public operation catalog.
+     */
     @Test
     void executeRestorePermissionIsWiredToRestoreExecuteAction() {
         System.out.println("executeRestorePermissionIsWiredToRestoreExecuteAction");
@@ -112,6 +126,11 @@ class BackupOperationsTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a fresh filesystem PKI store advertises its native backup capability.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void filesystemStoreSupportsBackup() throws Exception {
         System.out.println("filesystemStoreSupportsBackup");
@@ -122,6 +141,11 @@ class BackupOperationsTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a created backup has a nonempty payload/identity and passes structural verification without issues.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void roundTripBackupProducesVerifiableArtifact() throws Exception {
         System.out.println("roundTripBackupProducesVerifiableArtifact");
@@ -144,6 +168,11 @@ class BackupOperationsTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks rejected legacy restore leaves all retained store and unrelated outside-file bytes unchanged.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void localLegacyRestoreRejectsInvalidArchivesWithoutChangingStoreOrOutsideFiles() throws Exception {
         Path storeRoot = temporaryDirectory.resolve("store");
@@ -177,6 +206,11 @@ class BackupOperationsTest {
         }
     }
 
+    /**
+     * Checks remote restore preserves authorization/approval prerequisites while unavailable execution stays hidden and never reports success.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void remoteRestoreRetainsAuthorizationAndApprovalButNeverReportsSuccess() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -267,6 +301,11 @@ class BackupOperationsTest {
         return result;
     }
 
+    /**
+     * Checks malformed archive bytes produce an invalid verification report with explicit issues.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void verifyRejectsInvalidZipPayload() throws Exception {
         System.out.println("verifyRejectsInvalidZipPayload");

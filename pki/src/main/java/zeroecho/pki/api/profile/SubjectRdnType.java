@@ -40,27 +40,50 @@ package zeroecho.pki.api.profile;
 // OID literals are ASN.1 identifiers, not IP addresses.
 @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
 public enum SubjectRdnType {
-    /** X.520 common name. */
+    /**
+     * X.520 common name.
+     */
     COMMON_NAME("2.5.4.3"),
-    /** X.520 organization name. */
+    /**
+     * X.520 organization name.
+     */
     ORGANIZATION_NAME("2.5.4.10"),
-    /** X.520 organizational unit name. */
+    /**
+     * X.520 organizational unit name.
+     */
     ORGANIZATIONAL_UNIT_NAME("2.5.4.11"),
-    /** X.520 country name. */
+    /**
+     * X.520 country name.
+     */
     COUNTRY_NAME("2.5.4.6"),
-    /** X.520 state or province name. */
+    /**
+     * X.520 state or province name.
+     */
     STATE_OR_PROVINCE_NAME("2.5.4.8"),
-    /** X.520 locality name. */
+    /**
+     * X.520 locality name.
+     */
     LOCALITY_NAME("2.5.4.7"),
-    /** X.520 serial number attribute. */
+    /**
+     * X.520 serial number attribute.
+     */
     SERIAL_NUMBER("2.5.4.5"),
-    /** PKCS #9 email address. */
+    /**
+     * PKCS #9 email address.
+     */
     EMAIL_ADDRESS("1.2.840.113549.1.9.1"),
-    /** X.520 pseudonym. */
+    /**
+     * X.520 pseudonym.
+     */
     PSEUDONYM("2.5.4.65");
 
     private final String oid;
 
+    /**
+     * Associates a supported subject attribute with its ASN.1 object identifier.
+     *
+     * @param oid dotted-decimal identifier supplied by the enum declaration
+     */
     SubjectRdnType(String oid) {
         this.oid = oid;
     }

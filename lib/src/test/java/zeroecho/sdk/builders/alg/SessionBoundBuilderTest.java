@@ -52,8 +52,14 @@ import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.builtin.PlainBytes;
 
+/**
+ * Contract and regression tests for session bound builder.
+ */
 class SessionBoundBuilderTest {
 
+    /**
+     * Generated key uses builder session audit sink.
+     */
     @Test
     void generatedKeyUsesBuilderSessionAuditSink() {
         System.out.println("generatedKeyUsesBuilderSessionAuditSink");
@@ -67,6 +73,9 @@ class SessionBoundBuilderTest {
         System.out.println("generatedKeyUsesBuilderSessionAuditSink...ok");
     }
 
+    /**
+     * Policy denial occurs before context creation.
+     */
     @Test
     void policyDenialOccursBeforeContextCreation() {
         System.out.println("policyDenialOccursBeforeContextCreation");
@@ -85,6 +94,11 @@ class SessionBoundBuilderTest {
         System.out.println("policyDenialOccursBeforeContextCreation...ok");
     }
 
+    /**
+     * Wrapped context uses builder session audit configuration.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void wrappedContextUsesBuilderSessionAuditConfiguration() throws Exception {
         System.out.println("wrappedContextUsesBuilderSessionAuditConfiguration");

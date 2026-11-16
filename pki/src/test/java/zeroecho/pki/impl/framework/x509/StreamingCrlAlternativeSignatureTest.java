@@ -94,7 +94,9 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter;
 import zeroecho.pki.spi.framework.CrlEntry;
 import zeroecho.pki.spi.framework.CrlEntrySource;
 
-/** Interoperability of the qualified BC 1.86 transcript, not an OCSP or live-PKI qualification. */
+/**
+ * Interoperability of the qualified BC 1.86 transcript, not an OCSP or live-PKI qualification.
+ */
 class StreamingCrlAlternativeSignatureTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
     private static final X500Name ISSUER = new X500Name("CN=A");
@@ -108,6 +110,11 @@ class StreamingCrlAlternativeSignatureTest {
     private static KeyPair alternative;
     private static KeyPair wrongAlternative;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         KeyPairGenerator ec = KeyPairGenerator.getInstance("EC");
@@ -119,6 +126,11 @@ class StreamingCrlAlternativeSignatureTest {
         wrongAlternative = ml.generateKeyPair();
     }
 
+    /**
+     * Completes and reconstructs independent hand tlv full and delta vectors.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void completesAndReconstructsIndependentHandTlvFullAndDeltaVectors() throws Exception {
         byte[] placeholder = new byte[4627];
         Arrays.fill(placeholder, (byte) 0xa5);
@@ -136,6 +148,11 @@ class StreamingCrlAlternativeSignatureTest {
         }
     }
 
+    /**
+     * Verifies real bouncy castle full and delta signatures and configured private SPKI.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesRealBouncyCastleFullAndDeltaSignaturesAndConfiguredPrivateSpki() throws Exception {
         for (boolean delta : new boolean[] {false, true}) {
             X509CRLHolder crl = independent(delta, true);
@@ -160,6 +177,11 @@ class StreamingCrlAlternativeSignatureTest {
         }
     }
 
+    /**
+     * Product streamed full and delta signatures verify with bouncy castle.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void productStreamedFullAndDeltaSignaturesVerifyWithBouncyCastle() throws Exception {
         for (boolean delta : new boolean[] {false, true}) {
             var writer = StreamingX509CrlTbsWriter.forAlternativeSignature(ALTERNATIVE, ISSUER.getEncoded(), AKI,
@@ -179,6 +201,11 @@ class StreamingCrlAlternativeSignatureTest {
         }
     }
 
+    /**
+     * Rejects wrong signer and tampered signed fields or alternative value.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsWrongSignerAndTamperedSignedFieldsOrAlternativeValue() throws Exception {
         byte[] original = independent(false, false).getEncoded();
         var originalLayout = new StreamingDerReader().inspectAlternativeCrl(bytes(original), CancellationSignal.NONE);
@@ -226,6 +253,11 @@ class StreamingCrlAlternativeSignatureTest {
         }
     }
 
+    /**
+     * Rejects malformed hybrid extension pairs duplicates criticality and entry grammar.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsMalformedHybridExtensionPairsDuplicatesCriticalityAndEntryGrammar() throws Exception {
         byte[] original = independent(false, false).getEncoded();
         List<UnaryOperator<List<ASN1Encodable>>> changes = List.of(
@@ -255,6 +287,11 @@ class StreamingCrlAlternativeSignatureTest {
         assertThrows(IOException.class, () -> new StreamingDerReader().inspectAlternativeCrl(bytes(oversizedNative), CancellationSignal.NONE));
     }
 
+    /**
+     * Borrowed views are repeatable close only owned streams and honor cancellation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void borrowedViewsAreRepeatableCloseOnlyOwnedStreamsAndHonorCancellation() throws Exception {
         TrackedContent source = new TrackedContent(independent(false, false).getEncoded());
         AtomicBoolean cancel = new AtomicBoolean();
@@ -274,6 +311,11 @@ class StreamingCrlAlternativeSignatureTest {
         assertEquals(source.opens, source.closedStreams);
     }
 
+    /**
+     * Lazy large CRL transforms without aggregate reads and closes cancelled stream.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lazyLargeCrlTransformsWithoutAggregateReadsAndClosesCancelledStream() throws Exception {
         LazyCrl source = new LazyCrl(100_000);
         AtomicBoolean cancel = new AtomicBoolean();
@@ -424,7 +466,9 @@ class StreamingCrlAlternativeSignatureTest {
         @Override public void close() { closed = true; }
     }
 
-    /** Generates one bounded serial/time entry at a time; the CRL never exists as an aggregate byte array. */
+    /**
+     * Generates one bounded serial/time entry at a time; the CRL never exists as an aggregate byte array.
+     */
     private static final class LazyCrl implements RepeatableContent {
         private final int count;
         private final byte[] prefix;

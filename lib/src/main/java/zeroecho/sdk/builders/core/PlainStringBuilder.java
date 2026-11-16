@@ -86,12 +86,18 @@ public interface PlainStringBuilder extends DataContentBuilder<PlainString> {
         private DefaultPlainStringBuilder() {
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainStringBuilder value(final String value) {
             this.valueField = value;
             return this;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainString build(final boolean encrypt) {
             return new PlainString(valueField);

@@ -61,6 +61,10 @@ public record PolicyDecision(PkiId decisionId, PolicyDecisionStatus status, List
      * Creates a policy decision.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param decisionId stable decision identifier for correlation and explainability
+     * @param status decision outcome status
+     * @param messages non-sensitive operator-readable messages
+     * @param appliedOverrides policy-enforced overrides to be applied downstream
      */
     public PolicyDecision {
         if (decisionId == null) {

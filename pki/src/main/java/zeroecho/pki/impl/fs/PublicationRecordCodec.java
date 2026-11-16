@@ -54,7 +54,9 @@ import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.spi.store.StagedContentStore;
 
-/** Strict current-schema codec for finite publication control metadata. */
+/**
+ * Strict current-schema codec for finite publication control metadata.
+ */
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidCatchingGenericException",
         "PMD.PreserveStackTrace" })
 final class PublicationRecordCodec {
@@ -68,6 +70,15 @@ final class PublicationRecordCodec {
     private PublicationRecordCodec() {
     }
 
+    /**
+     * Encodes a publication lifecycle record without reading the referenced payload.
+     *
+     * @param record immutable publication metadata with exact content reference and attempt evidence
+     * @return newly allocated versioned publication record
+     * @throws NullPointerException if the record or required metadata is null
+     * @throws IllegalArgumentException if the record exceeds its finite metadata bound
+     * @throws IllegalStateException if modified-UTF field encoding fails
+     */
     /* package */ static byte[] encode(PublicationRecord record) {
         try {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream(512);
@@ -98,6 +109,15 @@ final class PublicationRecordCodec {
         }
     }
 
+    /**
+     * Decodes bounded publication metadata and reconstructs its store-bound content reference.
+     *
+     * @param encoded complete binary publication record
+     * @param stagedContent content store used to restore exact durable reference provenance
+     * @return validated publication lifecycle record
+     * @throws NullPointerException if the encoded input is null
+     * @throws IOException if size, version, framing, codes, content reference or model coordinates are invalid
+     */
     /* package */ static PublicationRecord decode(byte[] encoded, StagedContentStore stagedContent)
             throws IOException {
         if (encoded.length > MAXIMUM_RECORD_BYTES) {

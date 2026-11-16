@@ -63,20 +63,47 @@ import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlStore;
 
-/** Strict ordinary-v2/SDK-v3 bounded encoding; no original request or secret material. */
+/**
+ * Bounded ordinary-v2/SDK-v3 encoding of retained enrollment references and decisions.
+ *
+ * <p>The codec stores no original request DER, private key or encrypted delivery
+ * body. It does retain actor/policy/decision metadata and operator justification;
+ * encoding and SHA-256 commitments are not redaction. Constructing or decoding a
+ * record does not authenticate actors, verify SDK signatures or commit admission.
+ * Text uses Java modified-UTF framing with an 8192-character bound; complete
+ * encoded records are bounded to 524288 bytes.</p>
+ */
 public final class EnrollmentTransactionCodec {
     private static final int MAXIMUM_TEXT_LENGTH = 8_192;
+    /**
+     * Maximum canonical enrollment transaction record size, in bytes.
+     */
     /* default */ static final int MAXIMUM_BYTES = 524_288;
     private static final int VERSION = 2;
     private EnrollmentTransactionCodec() { }
 
-    /** @param value immutable transaction @return exact bounded control record */
+    /**
+     * Encodes one transaction in the existing enrollment-request namespace without mutating persistence.
+     *
+     * @param value immutable transaction
+     * @return new protocol record with payload and exact SHA-256 commitment
+     * @throws NullPointerException if the transaction is null
+     * @throws IllegalStateException if canonical encoding or aggregate byte limits fail
+     */
     public static ServerControlStore.ProtocolRecord record(EnrollmentTransaction value) {
         byte[] payload = encode(value);
         return new ServerControlStore.ProtocolRecord(ServerControlStore.ENROLLMENT_REQUEST, value.id(), sha256(payload), payload);
     }
 
-    /** @param record exact control record @return independently validated transaction */
+    /**
+     * Decodes a closed ordinary-v2 or SDK-v3 record and requires exact canonical re-encoding.
+     *
+     * @param record private enrollment protocol record
+     * @return independently reconstructed transaction with structural state checks
+     * @throws NullPointerException if the record is null
+     * @throws IllegalStateException if namespace, commitment, version, fields, bounds, identity or canonical
+     *     encoding is invalid
+     */
     public static EnrollmentTransaction decode(ServerControlStore.ProtocolRecord record) {
         byte[] payload = record.payload();
         if (!ServerControlStore.ENROLLMENT_REQUEST.equals(record.namespace()) || payload.length > MAXIMUM_BYTES
@@ -114,6 +141,14 @@ public final class EnrollmentTransactionCodec {
         }
     }
 
+    /**
+     * Encodes ordinary version two or proof-bound SDK version three into a new bounded byte array.
+     *
+     * @param value supplied immutable value
+     * @return new bounded canonical bytes
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if field serialization or aggregate byte bounds fail
+     */
     /* default */ static byte[] encode(EnrollmentTransaction value) {
         return bytes(out -> {
             out.writeInt(value.intent().sdkProof().isPresent() ? 3 : VERSION); text(out, value.id()); out.writeLong(value.revision()); intent(out, value.intent());
@@ -131,6 +166,14 @@ public final class EnrollmentTransactionCodec {
         });
     }
 
+    /**
+     * Hashes the complete frozen intent using its ordinary-v2 or SDK-v3 domain discriminator.
+     *
+     * @param value supplied immutable value
+     * @return lowercase 64-character SHA-256 digest
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if encoding bounds or SHA-256 availability fail
+     */
     /* default */ static String intentCommitment(EnrollmentTransaction.Intent value) {
         return sha256(bytes(out -> {
             text(out, value.sdkProof().isPresent() ? "zeroecho.enrollment-intent.sdk.v3" : "zeroecho.enrollment-intent.v2");
@@ -139,16 +182,55 @@ public final class EnrollmentTransactionCodec {
         }));
     }
 
+    /**
+     * Derives the stable replay identity from realm, protocol, endpoint label, requester and transaction/operation.
+     *
+     * @param realm owning realm
+     * @param source frozen source; replay uses protocol and label, not source revision
+     * @param requester frozen requester identity
+     * @param transaction native logical transaction commitment
+     * @param operation operation-specific replay domain
+     * @return enrollment: prefixed deterministic replay identity
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if encoding bounds or SHA-256 availability fail
+     */
     /* default */ static String replayId(RealmId realm, EnrollmentTransaction.Source source, EnrollmentTransaction.Requester requester,
             String transaction, EnrollmentTransaction.Operation operation) {
         return replayId(realm, source.protocol(), source.label(), requester, transaction, operation);
     }
 
+    /**
+     * Derives the stable replay identity from realm, protocol, endpoint label, requester and transaction/operation.
+     *
+     * @param realm owning realm
+     * @param protocol native protocol
+     * @param label stable endpoint label
+     * @param requester frozen requester identity
+     * @param transaction native logical transaction commitment
+     * @param operation operation-specific replay domain
+     * @return enrollment: prefixed deterministic replay identity
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if encoding bounds or SHA-256 availability fail
+     */
     /* default */ static String replayId(RealmId realm, EnrollmentTransaction.Protocol protocol, String label, EnrollmentTransaction.Requester requester,
             String transaction, EnrollmentTransaction.Operation operation) {
         return replayId(realm, protocol, label, requester.type(), requester.actorId(), transaction, operation);
     }
 
+    /**
+     * Derives the stable replay identity from realm, protocol, endpoint label, requester and transaction/operation.
+     *
+     * @param realm owning realm
+     * @param protocol native protocol
+     * @param label stable endpoint label
+     * @param type requester actor classification
+     * @param actorId stable actor identity
+     * @param transaction native logical transaction commitment
+     * @param operation operation-specific replay domain
+     * @return enrollment: prefixed deterministic replay identity
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if encoding bounds or SHA-256 availability fail
+     */
     /* default */ static String replayId(RealmId realm, EnrollmentTransaction.Protocol protocol, String label,
             IssuanceExecutionEvidence.ActorType type, String actorId, String transaction, EnrollmentTransaction.Operation operation) {
         return "enrollment:" + sha256(bytes(out -> {
@@ -158,14 +240,39 @@ public final class EnrollmentTransactionCodec {
         }));
     }
 
+    /**
+     * Writes the proof fields in their canonical record order.
+     *
+     * @param out borrowed output stream; not closed
+     * @param value supplied immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static void proof(DataOutputStream out, EnrollmentTransaction.SdkProofReference value) throws IOException {
         text(out, value.intentId()); text(out, value.proofCommitment()); text(out, value.authenticationContextSha512());
         text(out, value.targetSha512()); instant(out, value.acceptedAt());
     }
+    /**
+     * Reads the next proof representation and applies its value-constructor checks.
+     *
+     * @param in borrowed input stream at the next encoded field; not closed
+     * @return newly decoded immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     * @throws IllegalArgumentException if a decoded enum or immutable value fails its constructor checks
+     */
     /* default */ static EnrollmentTransaction.SdkProofReference proof(DataInputStream in) throws IOException {
         return new EnrollmentTransaction.SdkProofReference(text(in), text(in), text(in), text(in), instant(in));
     }
 
+    /**
+     * Writes the intent fields in their canonical record order.
+     *
+     * @param out borrowed output stream; not closed
+     * @param value supplied immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static void intent(DataOutputStream out, EnrollmentTransaction.Intent value) throws IOException {
         text(out, value.realmId().value());
         source(out, value.source());
@@ -192,11 +299,27 @@ public final class EnrollmentTransactionCodec {
         instant(out, value.createdAt()); instant(out, value.expiresAt());
     }
 
+    /**
+     * Writes the source fields in their canonical record order.
+     *
+     * @param out borrowed output stream; not closed
+     * @param source frozen source; replay uses protocol and label, not source revision
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static void source(DataOutputStream out, EnrollmentTransaction.Source source) throws IOException {
         text(out, source.protocol().name()); text(out, source.label()); text(out, source.recordId()); out.writeLong(source.revision());
         text(out, source.commitment()); text(out, source.enrollmentProfileId()); text(out, source.enrollmentCommitment()); optional(out, source.credentialId());
     }
 
+    /**
+     * Writes the requester fields in their canonical record order.
+     *
+     * @param out borrowed output stream; not closed
+     * @param requester frozen requester identity
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static void requester(DataOutputStream out, EnrollmentTransaction.Requester requester) throws IOException {
         text(out, requester.type().name()); text(out, requester.actorId()); text(out, requester.authentication().name());
         out.writeBoolean(requester.certificate().isPresent());
@@ -207,6 +330,15 @@ public final class EnrollmentTransactionCodec {
         text(out, requester.aliases().realmId().value()); strings(out, requester.aliases().principalIds());
     }
 
+    /**
+     * Reads the next intent representation and applies its value-constructor checks.
+     *
+     * @param in borrowed input stream at the next encoded field; not closed
+     * @return newly decoded immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     * @throws IllegalArgumentException if a decoded enum or immutable value fails its constructor checks
+     */
     /* default */ static EnrollmentTransaction.Intent intent(DataInputStream in) throws IOException {
         return intentFields(in).apply(Optional.empty());
     }
@@ -236,10 +368,28 @@ public final class EnrollmentTransactionCodec {
         text(out, value.realmId().value()); text(out, value.certificateSha256()); text(out, value.canonicalKeySha256());
         strings(out, value.legacySpkiSha256()); text(out, value.issuerSerialSha256());
     }
+    /**
+     * Reads the next source representation and applies its value-constructor checks.
+     *
+     * @param in borrowed input stream at the next encoded field; not closed
+     * @return newly decoded immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     * @throws IllegalArgumentException if a decoded enum or immutable value fails its constructor checks
+     */
     /* default */ static EnrollmentTransaction.Source source(DataInputStream in) throws IOException {
         return new EnrollmentTransaction.Source(EnrollmentTransaction.Protocol.valueOf(text(in)), text(in), text(in),
                 in.readLong(), text(in), text(in), text(in), optional(in));
     }
+    /**
+     * Reads the next requester representation and applies its value-constructor checks.
+     *
+     * @param in borrowed input stream at the next encoded field; not closed
+     * @return newly decoded immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     * @throws IllegalArgumentException if a decoded enum or immutable value fails its constructor checks
+     */
     /* default */ static EnrollmentTransaction.Requester requester(DataInputStream in) throws IOException {
         IssuanceExecutionEvidence.ActorType actor = IssuanceExecutionEvidence.ActorType.valueOf(text(in));
         String actorId = text(in); IssuanceExecutionEvidence.Authentication authentication = IssuanceExecutionEvidence.Authentication.valueOf(text(in));
@@ -277,11 +427,27 @@ public final class EnrollmentTransactionCodec {
     private static Optional<String> optional(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(text(in)) : Optional.empty(); }
     private static void instant(DataOutputStream out, Instant value) throws IOException { out.writeLong(value.getEpochSecond()); out.writeInt(value.getNano()); }
     private static Instant instant(DataInputStream in) throws IOException { return Instant.ofEpochSecond(in.readLong(), in.readInt()); }
+    /**
+     * Writes the text fields in their canonical record order.
+     *
+     * @param out borrowed output stream; not closed
+     * @param value supplied immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static void text(DataOutputStream out, String value) throws IOException {
         if (value.length() > MAXIMUM_TEXT_LENGTH) {
             throw invalid();
         } out.writeUTF(value);
     }
+    /**
+     * Reads the next text representation and applies its value-constructor checks.
+     *
+     * @param in borrowed input stream at the next encoded field; not closed
+     * @return newly decoded immutable value
+     * @throws IOException if the borrowed stream cannot complete the field read/write
+     * @throws IllegalStateException if a bounded text/count representation is invalid
+     */
     /* default */ static String text(DataInputStream in) throws IOException {
         String value = in.readUTF(); if (value.length() > MAXIMUM_TEXT_LENGTH) {
             throw invalid();
@@ -294,9 +460,14 @@ public final class EnrollmentTransactionCodec {
             } return bytes.toByteArray();
         } catch (IOException failure) { throw invalid(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
-    /** Rejects encoded transaction growth before the persistent record limit is exceeded. */
+    /**
+     * Rejects encoded transaction growth before the persistent record limit is exceeded.
+     */
     private static final class BoundedBytes extends ByteArrayOutputStream {
         // Preserves ByteArrayOutputStream synchronization while enforcing the encoded-size bound.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized void write(int value) {
             if (count == MAXIMUM_BYTES) {
@@ -305,6 +476,9 @@ public final class EnrollmentTransactionCodec {
             super.write(value);
         }
         // Preserves ByteArrayOutputStream synchronization while enforcing the encoded-size bound.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized void write(byte[] values, int offset, int length) {
             if (length > MAXIMUM_BYTES - count) {
@@ -313,15 +487,26 @@ public final class EnrollmentTransactionCodec {
             super.write(values, offset, length);
         }
     }
+    /**
+     * Computes a lowercase SHA-256 digest of the exact supplied bytes.
+     *
+     * @param bytes borrowed byte array hashed without retention
+     * @return lowercase 64-character SHA-256 digest
+     * @throws NullPointerException if a required supplied value is null
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static String sha256(byte[] bytes) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
     private static IllegalStateException invalid() { return new IllegalStateException("Enrollment transaction encoding is invalid"); }
-    /** Encodes one canonical record into an owned output buffer. */
+    /**
+     * Encodes one canonical record into an owned output buffer.
+     */
     @FunctionalInterface private interface Encoder {
         /**
          * Writes the canonical binary representation.
+         *
          * @param out borrowed output
          * @throws IOException if encoding fails
          */

@@ -55,6 +55,10 @@ public record AccessContext(Principal principal, Purpose purpose, Optional<PkiId
      *
      * @throws IllegalArgumentException if mandatory inputs are null or optional
      *                                  containers are null
+     * @param principal actor requesting access
+     * @param purpose declared purpose of access
+     * @param objectId optional object id being accessed (credential id, request id, etc.)
+     * @param formatId optional format id relevant to the object being accessed
      */
     public AccessContext {
         if (principal == null) {

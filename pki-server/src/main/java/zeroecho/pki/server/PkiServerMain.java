@@ -54,8 +54,9 @@ import zeroecho.pki.impl.secrets.PublisherSecretsStore;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.sdk.guard.UnlockMaterial;
 
-/** Production command-line entry point for the administrative HTTPS server. */
-@SuppressWarnings("PMD")
+/**
+ * Production command-line entry point for the administrative HTTPS server.
+ */
 public final class PkiServerMain {
     private static final Logger LOG = Logger.getLogger(PkiServerMain.class.getName());
     private static final String DEV_PASSWORD_FLAG = "--publisher-secrets-dev-password";
@@ -88,6 +89,13 @@ public final class PkiServerMain {
         if (result != 0) System.exit(result);
     }
 
+    /**
+     * Runs configuration validation or the long-lived HTTPS server and reports classified process status without exiting the JVM.
+     *
+     * @param arguments exact command-line arguments; no null entries
+     * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
+     * @throws NullPointerException if the arguments array is null
+     */
     static int run(String[] arguments) {
         try {
             if (arguments.length == 1 && "--help".equals(arguments[0])) {

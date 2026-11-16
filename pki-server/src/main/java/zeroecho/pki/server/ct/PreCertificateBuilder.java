@@ -55,7 +55,9 @@ import zeroecho.pkix.sign.ContentSigner;
  */
 public final class PreCertificateBuilder {
 
-    /** Prevents instantiation; all methods are static. */
+    /**
+     * Prevents instantiation; all methods are static.
+     */
     private PreCertificateBuilder() {
         // utility class
     }

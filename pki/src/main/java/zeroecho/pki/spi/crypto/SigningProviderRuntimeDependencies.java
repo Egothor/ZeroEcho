@@ -40,7 +40,9 @@ import java.time.Clock;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
 
-/** Immutable process-local capabilities and clock supplied to a signing factory. */
+/**
+ * Immutable process-local capabilities and clock supplied to a signing factory.
+ */
 public final class SigningProviderRuntimeDependencies {
     private static final SigningProviderRuntimeDependencies NONE =
             new SigningProviderRuntimeDependencies(null, Clock.systemUTC());

@@ -39,7 +39,9 @@ import java.util.Objects;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommitment;
 
-/** Immutable redacted receipt for resolving a possibly uncertain acceptance. */
+/**
+ * Immutable redacted receipt for resolving a possibly uncertain acceptance.
+ */
 public final class SigningAcceptanceReceipt {
     private final PkiId operationId;
     private final AcceptanceCommitment commitment;
@@ -74,6 +76,9 @@ public final class SigningAcceptanceReceipt {
      */
     public String encodedCommitment() { return commitment.encoded(); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean equals(Object other) {
         if (!(other instanceof SigningAcceptanceReceipt receipt)) {
             return false;
@@ -83,9 +88,15 @@ public final class SigningAcceptanceReceipt {
         return sameOperation & sameCommitment;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public int hashCode() {
         return 31 * operationId.hashCode() + commitment.hashCode();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public String toString() { return "SigningAcceptanceReceipt[redacted]"; }
 }

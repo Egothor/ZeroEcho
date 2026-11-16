@@ -53,9 +53,17 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pkix.cert.CertificateBuilder;
 
+/**
+ * Contract and regression tests for certificate tbs.
+ */
 final class CertificateTbsTest {
     private static final AlgorithmIdentifier SIGNATURE = AlgorithmIdentifier.derNull("1.2.840.113549.1.1.11");
 
+    /**
+     * Unsigned canonical tbs equals the existing signed builder output.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void unsignedCanonicalTbsEqualsTheExistingSignedBuilderOutput() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -73,6 +81,9 @@ final class CertificateTbsTest {
                 .getTBSCertificate(), tbs);
     }
 
+    /**
+     * Rejects missing fields without any signer.
+     */
     @Test
     void rejectsMissingFieldsWithoutAnySigner() {
         assertThrows(NullPointerException.class, () -> Pkix.certificateBuilder().buildTbs(SIGNATURE));

@@ -50,12 +50,21 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialSearchQuery;
 
+/**
+ * Contract and regression tests for credential search index.
+ */
 final class CredentialSearchIndexTest {
     private static FsPkiStoreOptions enabled() {
         return FsPkiStoreOptions.defaults().withCredentialSearch(
                 Optional.of(new FsPkiStoreOptions.CredentialSearch(1024, 5000, 1048576)));
     }
 
+    /**
+     * Disabled does not open database and never falls back.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void disabledDoesNotOpenDatabaseAndNeverFallsBack(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             assertFalse(store.credentialSearchAvailable());
@@ -67,6 +76,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Published rows filters authorization and rebuild are authoritative.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publishedRowsFiltersAuthorizationAndRebuildAreAuthoritative(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, enabled())) {
@@ -105,6 +120,12 @@ final class CredentialSearchIndexTest {
                 Optional.of("profile"), Optional.empty());
     }
 
+    /**
+     * Derivative failure keeps primary committed and corruption rebuilds.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void derivativeFailureKeepsPrimaryCommittedAndCorruptionRebuilds(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, enabled())) {
@@ -124,6 +145,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Close waits for admitted search without lock inversion.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void closeWaitsForAdmittedSearchWithoutLockInversion(@TempDir Path root) throws Exception {
         FilesystemPkiStore store = new FilesystemPkiStore(root, enabled());
         Credential credential = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "serial", "profile");
@@ -143,6 +170,12 @@ final class CredentialSearchIndexTest {
         } finally { proceed.countDown(); store.close(); }
     }
 
+    /**
+     * Visibility wait uses whole call deadline and returns no partial page.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void visibilityWaitUsesWholeCallDeadlineAndReturnsNoPartialPage(@TempDir Path root) throws Exception {
         FsPkiStoreOptions options = enabled().withCredentialSearch(
                 Optional.of(new FsPkiStoreOptions.CredentialSearch(1024, 100, 1048576)));
@@ -171,6 +204,12 @@ final class CredentialSearchIndexTest {
         catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
     }
 
+    /**
+     * Exact typed sans come from issued DER and survive restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exactTypedSansComeFromIssuedDerAndSurviveRestart(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, enabled())) {
@@ -233,6 +272,12 @@ final class CredentialSearchIndexTest {
                 zeroecho.pki.testkit.PkiTestRuntime.stageCredential(store, encoded), new zeroecho.pki.impl.core.attr.SimpleAttributeSet());
     }
 
+    /**
+     * Sparse authorization continues across sql batches in id order.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sparseAuthorizationContinuesAcrossSqlBatchesInIdOrder(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, enabled())) {
             Credential base = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "serial", "profile");
@@ -249,6 +294,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Denied san candidate never invokes certificate reader.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deniedSanCandidateNeverInvokesCertificateReader(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Credential credential = certificate(store);
@@ -269,6 +320,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Logical snapshot excludes derived database and restored store rebuilds.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void logicalSnapshotExcludesDerivedDatabaseAndRestoredStoreRebuilds(@TempDir Path temporary) throws Exception {
         Path source = temporary.resolve("source");
         Path snapshot = temporary.resolve("snapshot");
@@ -285,6 +342,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Indexed store stages cold restore and rejects unknown derivative children.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void indexedStoreStagesColdRestoreAndRejectsUnknownDerivativeChildren(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, enabled())) {
@@ -306,6 +369,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Authoritative disagreement fences instead of returning incomplete success.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void authoritativeDisagreementFencesInsteadOfReturningIncompleteSuccess(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             Credential original = certificate(store);
@@ -329,6 +398,12 @@ final class CredentialSearchIndexTest {
         }
     }
 
+    /**
+     * Certificate bound is checked before reading and typed filter rejects malformed input.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void certificateBoundIsCheckedBeforeReadingAndTypedFilterRejectsMalformedInput(@TempDir Path root) throws Exception {
         for (String malformed : List.of("", "api.example.test", "DNS_NAME:", "OTHER:api.example.test", "IP_ADDRESS:hostname",
                 "IP_ADDRESS:fe80::1%lo", "URI:urn:example", "RFC822_NAME:missing-at", "DNS_NAME:bad name")) {

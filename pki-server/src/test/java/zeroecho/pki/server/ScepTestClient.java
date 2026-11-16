@@ -51,15 +51,40 @@ import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.cms.DefaultSignedAttributeTableGenerator;
 
-/** Independent BC client envelopes and response verification for SCEP wire tests. */
+/**
+ * Independent BC client envelopes and response verification for SCEP wire tests.
+ */
 final class ScepTestClient {
     private ScepTestClient() { }
+    /**
+     * SCEP signed-attribute OID for message type.
+     */
     static final ASN1ObjectIdentifier TYPE = new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.2");
+    /**
+     * SCEP signed-attribute OID for PKI status.
+     */
     static final ASN1ObjectIdentifier STATUS = new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.3");
+    /**
+     * SCEP signed-attribute OID for the sender nonce.
+     */
     static final ASN1ObjectIdentifier NONCE = new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.5");
+    /**
+     * SCEP signed-attribute OID for the recipient nonce.
+     */
     static final ASN1ObjectIdentifier RECIPIENT_NONCE = new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.6");
+    /**
+     * SCEP signed-attribute OID for the transaction identity.
+     */
     static final ASN1ObjectIdentifier TRANSACTION = new ASN1ObjectIdentifier("2.16.840.1.113733.1.9.7");
 
+    /**
+     * Builds a real RSA-signed localhost PKCS #10 request with challenge password and DNS SAN.
+     *
+     * @param key subject RSA key pair
+     * @param challenge enrollment challenge-password text
+     * @return newly allocated PKCS #10 DER bytes
+     * @throws Exception if request construction, signing or encoding fails
+     */
     static byte[] csr(KeyPair key, String challenge) throws Exception {
         org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder builder =
                 new org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder(new X500Principal("CN=localhost"), key.getPublic());
@@ -74,17 +99,51 @@ final class ScepTestClient {
                 .setProvider("BC").build(key.getPrivate())).getEncoded();
     }
 
+    /**
+     * Builds the SCEP issuer-and-subject polling payload for the localhost fixture subject.
+     *
+     * @param issuer issuer certificate supplying its subject name
+     * @return newly allocated issuer/subject ASN.1 sequence DER
+     * @throws Exception if the polling payload cannot be encoded
+     */
     static byte[] poll(X509Certificate issuer) throws Exception {
         return new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
                 org.bouncycastle.asn1.x500.X500Name.getInstance(issuer.getSubjectX500Principal().getEncoded()),
                 new org.bouncycastle.asn1.x500.X500Name("CN=localhost") }).getEncoded();
     }
 
+    /**
+     * Builds a normal AES-128-CBC/RSA-SHA256 SCEP request with exact protocol attributes.
+     *
+     * @param plaintext CSR or polling payload bytes
+     * @param transaction protocol transaction identity
+     * @param nonce sender nonce bytes
+     * @param type SCEP message-type code
+     * @param requesterKey request signer/decryption RSA key pair
+     * @param requester public requester certificate
+     * @param recipient recipient encryption certificate
+     * @return signed/enveloped SCEP request DER
+     * @throws Exception if CMS encryption, signing or encoding fails
+     */
     static byte[] request(byte[] plaintext, String transaction, byte[] nonce, int type,
             KeyPair requesterKey, X509Certificate requester, X509Certificate recipient) throws Exception {
         return request(plaintext, transaction, nonce, type, requesterKey, requester, recipient, "valid");
     }
 
+    /**
+     * Builds a normal or deliberately malformed CMS/SCEP request for hostile-wire fixtures.
+     *
+     * @param variant selected fixture mutation, or {@code valid} for the normal envelope
+     * @param plaintext CSR or polling payload bytes
+     * @param transaction protocol transaction identity
+     * @param nonce sender nonce bytes
+     * @param type SCEP message-type code
+     * @param requesterKey request signer/decryption RSA key pair
+     * @param requester public requester certificate
+     * @param recipient recipient encryption certificate
+     * @return signed/enveloped SCEP request DER
+     * @throws Exception if CMS encryption, signing or encoding fails
+     */
     static byte[] request(byte[] plaintext, String transaction, byte[] nonce, int type,
             KeyPair requesterKey, X509Certificate requester, X509Certificate recipient, String variant) throws Exception {
         org.bouncycastle.cms.CMSEnvelopedDataGenerator envelope = new org.bouncycastle.cms.CMSEnvelopedDataGenerator();
@@ -142,6 +201,16 @@ final class ScepTestClient {
         return result;
     }
 
+    /**
+     * Verifies a real SCEP response signature, nonce binding and encrypted certificate content.
+     *
+     * @param encoded signed response DER
+     * @param ra expected response-signing certificate
+     * @param requester client key pair used to decrypt successful certificate delivery
+     * @param expectedNonce exact sender nonce from the original request
+     * @return validated status and optional issued certificate
+     * @throws Exception if CMS parsing, verification or decryption setup fails
+     */
     static Response response(byte[] encoded, X509Certificate ra, KeyPair requester, byte[] expectedNonce) throws Exception {
         CMSSignedData data = new CMSSignedData(encoded);
         if (data.getSignedContent() == null) data = new CMSSignedData(new CMSProcessableByteArray(new byte[0]), encoded);
@@ -167,5 +236,11 @@ final class ScepTestClient {
         return new Response(status, certificate);
     }
 
+    /**
+     * Verified SCEP status and issued-certificate observation.
+     *
+     * @param status exact printable PKI status value
+     * @param certificate decrypted issued certificate, or null for a non-success response
+     */
     record Response(String status, X509Certificate certificate) { }
 }

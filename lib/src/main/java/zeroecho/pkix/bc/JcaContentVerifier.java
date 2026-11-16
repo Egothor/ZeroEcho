@@ -52,6 +52,14 @@ final class JcaContentVerifier implements ContentVerifier {
     private final Signature signature;
     private final OutputStream stream;
 
+    /**
+     * Initializes a local JCA verifier for the supplied public key.
+     *
+     * @param publicKey borrowed verification key; must not be null
+     * @param algorithm signature identifier selecting the JCA engine; must not be null
+     * @throws NullPointerException if the key or identifier is null
+     * @throws IllegalArgumentException if the algorithm or key cannot initialize verification
+     */
     /* default */ JcaContentVerifier(PublicKey publicKey, AlgorithmIdentifier algorithm) {
         Objects.requireNonNull(publicKey, "publicKey");
         Objects.requireNonNull(algorithm, "algorithm");
@@ -64,11 +72,17 @@ final class JcaContentVerifier implements ContentVerifier {
         this.stream = new SignatureUpdateOutputStream(signature);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OutputStream contentStream() {
         return stream;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verify(byte[] expectedSignature) {
         try {

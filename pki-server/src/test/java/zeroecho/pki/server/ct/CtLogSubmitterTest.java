@@ -67,6 +67,9 @@ class CtLogSubmitterTest {
                 "SHA256withECDSA", new byte[]{0x30, 0x01, 0x00});
     }
 
+    /**
+     * Checks no configured CT logs produce an empty submission result.
+     */
     @Test
     void emptyLogsReturnsEmptyList() {
         List<SignedCertificateTimestamp> result = CtLogSubmitter.submitAll(
@@ -74,6 +77,9 @@ class CtLogSubmitterTest {
         assertTrue(result.isEmpty());
     }
 
+    /**
+     * Checks successful independent log submissions contribute both returned SCTs.
+     */
     @Test
     void successfulSubmissionCollectsAllScts() {
         byte[] id1 = new byte[32];
@@ -92,6 +98,9 @@ class CtLogSubmitterTest {
         assertEquals(2, result.size());
     }
 
+    /**
+     * Checks one failed CT log does not discard another log successful SCT.
+     */
     @Test
     void failingLogIsSkippedAndDoesNotBlockOthers() {
         byte[] id1 = new byte[32];
@@ -108,6 +117,9 @@ class CtLogSubmitterTest {
         assertEquals(1, result.size());
     }
 
+    /**
+     * Checks the submission boundary rejects a null precertificate even without configured logs.
+     */
     @Test
     void nullPreCertThrows() {
         assertThrows(NullPointerException.class,
@@ -127,17 +139,26 @@ class CtLogSubmitterTest {
             this.sct = sct;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String logId() {
             return logId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SignedCertificateTimestamp submit(byte[] preCert, List<byte[]> chain, Instant deadline)
                 throws CtSubmissionException {
             return sct;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
         }
@@ -150,17 +171,26 @@ class CtLogSubmitterTest {
             this.logId = logId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String logId() {
             return logId;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SignedCertificateTimestamp submit(byte[] preCert, List<byte[]> chain, Instant deadline)
                 throws CtSubmissionException {
             throw new CtSubmissionException("Simulated log failure", logId);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
         }

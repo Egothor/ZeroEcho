@@ -40,8 +40,14 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for commit outcome.
+ */
 final class CommitOutcomeTest {
 
+    /**
+     * Outcomes enforce revision and failure shape.
+     */
     @Test
     void outcomesEnforceRevisionAndFailureShape() {
         System.out.print("outcomesEnforceRevisionAndFailureShape ");

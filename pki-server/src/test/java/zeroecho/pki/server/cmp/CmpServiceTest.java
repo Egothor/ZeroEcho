@@ -54,9 +54,16 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.application.PkiSession;
 
-/** Unit coverage for the CMP endpoint registry. */
+/**
+ * Unit coverage for the CMP endpoint registry.
+ */
 class CmpServiceTest {
 
+    /**
+     * Rejects unprotected CMP requests before signer use or durable admission.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test
     void unprotectedRequestsFailBeforeSigningOrDurableAdmission() throws Exception {
         ServerRealmContext realm = fixture.realm();
@@ -74,19 +81,35 @@ class CmpServiceTest {
         org.mockito.Mockito.verifyNoInteractions(session);
     }
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
     private EnrollmentTestSupport fixture;
     private CmpService service;
 
+    /**
+     * Opens an isolated enrollment realm and constructs the protocol service before each test.
+     *
+     * @throws Exception if the fixture realm cannot be created
+     */
     @BeforeEach
     void setUp() throws Exception {
         fixture = new EnrollmentTestSupport(directory, List.of("profile", "cmp-enroll", "profile-v1", "profile-v2", "profile-a", "profile-b"));
         service = new CmpService(fixture.realm());
     }
 
+    /**
+     * Closes the enrollment fixture and releases its owned realm resources after each test.
+     *
+     * @throws Exception if fixture resource cleanup fails
+     */
     @AfterEach
     void closeFixture() throws Exception { fixture.close(); }
 
+    /**
+     * Checks that registration returns an endpoint retrievable by the exact configured label.
+     */
     @Test
     void registersAndFindsEndpoint() {
         CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll", "enrollment-cmp-enroll",
@@ -97,11 +120,17 @@ class CmpServiceTest {
         assertEquals(endpoint, found.orElseThrow());
     }
 
+    /**
+     * Checks empty lookup results for an unregistered endpoint label.
+     */
     @Test
     void returnsEmptyForUnknownLabel() {
         assertTrue(service.find("unknown").isEmpty());
     }
 
+    /**
+     * Checks removal of an existing endpoint and its subsequent absence.
+     */
     @Test
     void deregistersExistingEndpoint() {
         CmpEndpoint endpoint = new CmpEndpoint("enterprise-cmp", "ca:root", "cmp-enroll", "enrollment-cmp-enroll",
@@ -113,11 +142,17 @@ class CmpServiceTest {
         assertTrue(service.find("enterprise-cmp").isEmpty());
     }
 
+    /**
+     * Checks that removing an absent endpoint returns an empty result.
+     */
     @Test
     void deregisterReturnsEmptyForAbsentLabel() {
         assertTrue(service.deregister("nonexistent").isEmpty());
     }
 
+    /**
+     * Checks replacement semantics when a new endpoint uses an existing label.
+     */
     @Test
     void registerReplacesExistingWithSameLabel() {
         CmpEndpoint first = new CmpEndpoint("iot-cmp", "ca:iot", "profile-v1", "enrollment-profile-v1",
@@ -132,6 +167,9 @@ class CmpServiceTest {
         assertEquals(CmpProtectionPolicy.SIGNATURE_BASED, found.orElseThrow().protectionPolicy());
     }
 
+    /**
+     * Checks that endpoint enumeration includes every registered endpoint.
+     */
     @Test
     void listReturnsAllRegisteredEndpoints() {
         CmpEndpoint a = new CmpEndpoint("endpoint-a", "ca:root", "profile-a", "enrollment-profile-a",
@@ -146,21 +184,33 @@ class CmpServiceTest {
         assertTrue(listed.contains(b));
     }
 
+    /**
+     * Checks empty endpoint enumeration before registration.
+     */
     @Test
     void listIsEmptyWhenNoEndpointsRegistered() {
         assertTrue(service.list().isEmpty());
     }
 
+    /**
+     * Checks the explicit null-endpoint precondition on registration.
+     */
     @Test
     void rejectsNullEndpointOnRegister() {
         assertThrows(NullPointerException.class, () -> service.register(null));
     }
 
+    /**
+     * Checks the explicit null-label precondition on endpoint lookup.
+     */
     @Test
     void rejectsNullLabelOnFind() {
         assertThrows(NullPointerException.class, () -> service.find(null));
     }
 
+    /**
+     * Checks the explicit null-label precondition on endpoint removal.
+     */
     @Test
     void rejectsNullLabelOnDeregister() {
         assertThrows(NullPointerException.class, () -> service.deregister(null));

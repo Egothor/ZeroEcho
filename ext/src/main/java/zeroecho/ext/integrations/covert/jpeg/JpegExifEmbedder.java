@@ -93,6 +93,9 @@ import zeroecho.core.io.Util;
  * </p>
  */
 public final class JpegExifEmbedder {
+    /**
+     * Maximum decoded covert payload size in bytes, bounding allocation before chunk assembly.
+     */
     /* package */ static final int MAXIMUM_PAYLOAD_BYTES = 1024 * 1024;
     private static final int MAXIMUM_PACKED_PREFIX_BYTES = 10;
 
@@ -377,6 +380,16 @@ public final class JpegExifEmbedder {
         return chunk;
     }
 
+    /**
+     * Reassembles the first complete bounded Pack7-framed payload from ordered EXIF chunks.
+     *
+     * <p>Chunks after completion are ignored. The returned payload has independent storage.</p>
+     *
+     * @param chunks ordered non-null chunks, each containing non-null byte data
+     * @return decoded payload, possibly empty
+     * @throws IOException if the length prefix is malformed, exceeds the limit, or data is incomplete
+     * @throws NullPointerException if the list or a consumed chunk is null
+     */
     /* package */ static byte[] decodePayloadChunks(List<byte[]> chunks) throws IOException {
         PackedPayloadCollector collector = new PackedPayloadCollector();
         for (byte[] chunk : chunks) {

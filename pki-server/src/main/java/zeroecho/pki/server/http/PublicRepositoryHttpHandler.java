@@ -70,8 +70,9 @@ import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 
-/** Exact read-only HTTP adapter for the isolated public repository namespace. */
-@SuppressWarnings("PMD")
+/**
+ * Exact read-only HTTP adapter for the isolated public repository namespace.
+ */
 final class PublicRepositoryHttpHandler implements HttpHandler {
     private static final int BUFFER_SIZE = 16_384;
     private static final String JSON = "application/json; charset=utf-8";
@@ -83,6 +84,18 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
+    /**
+     * Composes the public-repository HTTP boundary from borrowed realm and execution services.
+     *
+     * @param configuration listener limits and exposure policy
+     * @param realm lifecycle-owned realm context
+     * @param authenticator transport identity authenticator
+     * @param runtime lifecycle-owned admission and operation execution owner
+     * @param clock deadline and audit time source
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     * @throws NullPointerException if a collaborator is null
+     */
     PublicRepositoryHttpHandler(PkiServerConfiguration.PublicListener configuration,
             ServerRealmContext realm, AdministrativeAuthenticator authenticator, ServerRuntime runtime,
             Clock clock, RequestIds requestIds, BooleanSupplier ready) {
@@ -95,6 +108,9 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
         this.ready = java.util.Objects.requireNonNull(ready);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request";

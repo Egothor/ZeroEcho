@@ -49,8 +49,17 @@ import zeroecho.pki.server.http.StrictJson;
 import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
 import zeroecho.pkix.Pkix;
 
-/** Real native-domain hierarchy and SDK workflow; certificate transport identities are trusted fixtures, not live mTLS. */
+/**
+ * Real native-domain hierarchy and SDK workflow; certificate transport identities are trusted fixtures, not live mTLS.
+ */
 class HybridSdkRealIssuanceTest {
+    /**
+     * Exercises real hybrid CA/leaf issuance, preserving normalized creation defaults and frozen absolute validity across approved restart continuation.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void realHybridHierarchyAndProofApprovedLeafSurviveRestartWithoutChangingFrozenValidityOrCreationDefault(@TempDir Path root)throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         var original=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(root));
@@ -159,6 +168,13 @@ class HybridSdkRealIssuanceTest {
         }
     }
 
+    /**
+     * Checks a newly issued root remains a candidate until explicit activation and an uncertain activation acknowledgement reconciles after later head movement.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void approvedRootCandidatesActivateExplicitlyAndLostServerAcknowledgmentReconcilesAfterLaterHeadChange(@TempDir Path directory)throws Exception {
         var configuration=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));
         PkiAdminBootstrap.bootstrap(ManagedKeyGenerationIntegrationTest.withoutSigning(configuration),"administrator","approver","trusted-proxy");
@@ -206,6 +222,13 @@ class HybridSdkRealIssuanceTest {
         }
     }
 
+    /**
+     * Checks explicit SDK HTTP capability/shape validation, proof-bound wire equality and approval-gated real issuance.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void configuredAdminSdkHttpIssuesAfterApprovalAndRejectsChangedWire(@TempDir Path directory) throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         var original = withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));
@@ -292,6 +315,13 @@ class HybridSdkRealIssuanceTest {
         }
     }
 
+    /**
+     * Checks canonical responder provisioning retains one claim/approval/credential under concurrent replay and permits only explicit next-revision renewal.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void managedResponderProvisioningKeepsOneApprovalAndCredentialAcrossConcurrentReplayAndExplicitRenewal(@TempDir Path directory) throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         var configuration=withIssuancePolicy(ManagedKeyGenerationIntegrationTest.configuration(directory));

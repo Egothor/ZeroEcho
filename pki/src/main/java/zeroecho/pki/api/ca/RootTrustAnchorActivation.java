@@ -55,7 +55,26 @@ public record RootTrustAnchorActivation(int version, PkiId transitionId, String 
         CaHeadSnapshot expectedHead, PkiId candidateIssuerId, PkiId candidatePathId, long newEpoch,
         PkiId activationRequestId, String actorId, String approvalPolicyCommitment, String approvedTargetCommitment,
         Instant acceptedAt, boolean distributionAcknowledged) {
-    /** Creates a complete acknowledged activation receipt. */
+    /**
+     * Creates a complete acknowledged activation receipt.
+     * @param version record version, one
+     * @param transitionId exact candidate transition
+     * @param transitionCommitment exact completed transition SHA-256
+     * @param expectedHead approved original head fence
+     * @param candidateIssuerId selected candidate generation
+     * @param candidatePathId selected candidate path
+     * @param newEpoch expected epoch plus one
+     * @param activationRequestId immutable activation request identity
+     * @param actorId authenticated approving/executing actor identity
+     * @param approvalPolicyCommitment exact approval policy commitment
+     * @param approvedTargetCommitment exact approved activation target commitment
+     * @param acceptedAt authoritative accepted time
+     * @param distributionAcknowledged explicit external-distribution acknowledgment, required true
+     * @throws NullPointerException if transitionId, expectedHead, candidateIssuerId, candidatePathId,
+     *     activationRequestId, acceptedAt is null
+     * @throws IllegalArgumentException if version is not one, distribution is unacknowledged, the new epoch is
+     *     not the nonoverflowing successor, actor identity is blank or oversized, or a commitment is invalid
+     */
     public RootTrustAnchorActivation {
         Objects.requireNonNull(transitionId, "transitionId"); Objects.requireNonNull(expectedHead, "expectedHead");
         Objects.requireNonNull(candidateIssuerId, "candidateIssuerId"); Objects.requireNonNull(candidatePathId, "candidatePathId");

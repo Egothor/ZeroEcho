@@ -73,6 +73,12 @@ import zeroecho.pki.impl.core.DefaultProfileService;
 final class FilesystemProfileLifecycleTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-30T10:00:00Z"), ZoneOffset.UTC);
 
+    /**
+     * Precommit failures preserve absent version and previous active pointer.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void precommitFailuresPreserveAbsentVersionAndPreviousActivePointer(@TempDir Path directory) throws Exception {
         Path root = directory.resolve("store");
@@ -104,6 +110,12 @@ final class FilesystemProfileLifecycleTest {
         }
     }
 
+    /**
+     * Corrupt and noncanonical versions fail closed and cannot be overwritten.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptAndNoncanonicalVersionsFailClosedAndCannotBeOverwritten(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
@@ -153,6 +165,12 @@ final class FilesystemProfileLifecycleTest {
         }
     }
 
+    /**
+     * Unrelated profile ids proceed while another profile coordinator is held.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unrelatedProfileIdsProceedWhileAnotherProfileCoordinatorIsHeld(@TempDir Path directory) throws Exception {
         try (FilesystemPkiStore store = store(directory.resolve("store"))) {
@@ -194,6 +212,12 @@ final class FilesystemProfileLifecycleTest {
         }
     }
 
+    /**
+     * Ca kinds use lifecycle and one logical id cannot change kind across versions.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void caKindsUseLifecycleAndOneLogicalIdCannotChangeKindAcrossVersions(@TempDir Path directory) throws Exception {
         Path root = directory.resolve("store");
@@ -235,6 +259,12 @@ final class FilesystemProfileLifecycleTest {
         }
     }
 
+    /**
+     * Missing corrupt and hash mismatched pointers never fallback.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void missingCorruptAndHashMismatchedPointersNeverFallback(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("vpn-client");
@@ -265,6 +295,12 @@ final class FilesystemProfileLifecycleTest {
         }
     }
 
+    /**
+     * Snapshot preflights corrupt profile artifacts and path identity before output.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void snapshotPreflightsCorruptProfileArtifactsAndPathIdentityBeforeOutput(@TempDir Path directory)
             throws Exception {

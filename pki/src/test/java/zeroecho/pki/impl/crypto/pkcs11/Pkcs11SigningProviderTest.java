@@ -55,7 +55,15 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.crypto.SigningProvider;
 
+/**
+ * Contract and regression tests for pkcs11 signing provider.
+ */
 class Pkcs11SigningProviderTest {
+    /**
+     * Rejects stateful algorithms before key lookup and actual keys before provider use.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsStatefulAlgorithmsBeforeKeyLookupAndActualKeysBeforeProviderUse() throws Exception {
         TestStoreSpi spi = new TestStoreSpi();

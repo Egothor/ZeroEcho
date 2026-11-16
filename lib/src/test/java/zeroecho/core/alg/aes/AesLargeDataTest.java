@@ -55,8 +55,14 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spi.ContextAware;
 
+/**
+ * Contract and regression tests for AES large data.
+ */
 public class AesLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Providers if needed, e.g.:
@@ -100,6 +106,8 @@ public class AesLargeDataTest {
     /**
      * AES-GCM round-trip using Ctx-only parameters (default; IV is shared in the
      * session Ctx).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
      */
     @Test
     void aesGcmLargeData_ctxOnly() throws Exception {
@@ -129,7 +137,11 @@ public class AesLargeDataTest {
         logEnd();
     }
 
-    /** AES-GCM round-trip using an in-band header (codec in Ctx). */
+    /**
+     * AES-GCM round-trip using an in-band header (codec in Ctx).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void aesGcmLargeData_headerCodec() throws Exception {
         final int SIZE = 32 * 1024 + 777;
@@ -160,7 +172,11 @@ public class AesLargeDataTest {
         logEnd();
     }
 
-    /** AES-CBC/PKCS7Padding round-trip (Ctx-only IV). */
+    /**
+     * AES-CBC/PKCS7Padding round-trip (Ctx-only IV).
+     *
+     * @throws Exception if fixture setup, cryptographic processing, or cleanup fails
+     */
     @Test
     void aesCbcPkcs5LargeData_ctxOnly() throws Exception {
         final int SIZE = 32 * 1024 + 777;

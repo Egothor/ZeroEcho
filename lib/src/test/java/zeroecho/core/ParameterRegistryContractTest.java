@@ -55,12 +55,23 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for parameter registry contract.
+ */
 class ParameterRegistryContractTest {
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void provider() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Every advertised concrete spec executes.
+     *
+     * @return dynamic cases exercising each supported algorithm specification
+     */
     @TestFactory
     Stream<DynamicTest> everyAdvertisedConcreteSpecExecutes() {
         List<DynamicTest> tests = new ArrayList<>();

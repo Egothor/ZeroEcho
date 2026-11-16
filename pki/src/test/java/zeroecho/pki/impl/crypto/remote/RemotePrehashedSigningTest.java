@@ -79,11 +79,19 @@ import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteCapabilities;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteSignRequest;
 import zeroecho.pki.testkit.ReferenceRemoteSigner;
 
+/**
+ * Contract and regression tests for remote prehashed signing.
+ */
 final class RemotePrehashedSigningTest {
     private static final String NAMESPACE = "store.zeroecho-remote";
     private static final AccessContext ACCESS = new AccessContext(new Principal("USER", "tester"),
             new Purpose("TEST"), Optional.empty(), Optional.empty());
 
+    /**
+     * Prehashed signatures verify against original message including exact pss and ec truncation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void prehashedSignaturesVerifyAgainstOriginalMessageIncludingExactPssAndEcTruncation() throws Exception {
         AlgorithmIdentity pss = BootstrapAlgorithmIdentities.rsaPss(BootstrapAlgorithmIdentities.SHA256,
@@ -115,6 +123,11 @@ final class RemotePrehashedSigningTest {
         }
     }
 
+    /**
+     * Pure ed uses original message and raw maximum is inclusive.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pureEdUsesOriginalMessageAndRawMaximumIsInclusive() throws Exception {
         AlgorithmIdentity algorithm = BootstrapAlgorithmIdentities.ED25519_SIGNATURE;
@@ -139,6 +152,11 @@ final class RemotePrehashedSigningTest {
         }
     }
 
+    /**
+     * Conflicting replay cannot trust client fingerprint or original digest assertion.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void conflictingReplayCannotTrustClientFingerprintOrOriginalDigestAssertion() throws Exception {
         AlgorithmIdentity algorithm = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256;
@@ -169,6 +187,11 @@ final class RemotePrehashedSigningTest {
         }
     }
 
+    /**
+     * Lost response reconciles without resubmitting.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void lostResponseReconcilesWithoutResubmitting() throws Exception {
         AlgorithmIdentity algorithm = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256;
@@ -184,6 +207,11 @@ final class RemotePrehashedSigningTest {
         }
     }
 
+    /**
+     * Integrity cancellation deadline and configuration failures never submit.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void integrityCancellationDeadlineAndConfigurationFailuresNeverSubmit() throws Exception {
         AlgorithmIdentity algorithm = BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256;
@@ -228,6 +256,9 @@ final class RemotePrehashedSigningTest {
         }
     }
 
+    /**
+     * Effective raw limit cannot exceed client ceiling.
+     */
     @Test
     void effectiveRawLimitCannotExceedClientCeiling() {
         RemoteCapabilities capabilities = new RemoteCapabilities(Set.of(), new byte[32], 2,

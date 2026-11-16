@@ -77,11 +77,19 @@ import zeroecho.pki.spi.store.SignWorkflowStore.Mode;
 import zeroecho.pki.spi.store.SignWorkflowStore.Workflow;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
-/** Real-store evidence for the durable bounded initial attempt, without provider calls. */
+/**
+ * Real-store evidence for the durable bounded initial attempt, without provider calls.
+ */
 final class FilesystemBoundedObservationStoreTest {
     private static final Instant NOW = Instant.parse("2026-09-01T10:00:00Z");
     private static final Duration LEASE = Duration.ofSeconds(5);
 
+    /**
+     * Pending checkpoints reserve one observation and keep cleanup due across reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pendingCheckpointsReserveOneObservationAndKeepCleanupDueAcrossReopen(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -122,6 +130,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Crash before dispatch checkpoint reserves observation and crash after claim fails closed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crashBeforeDispatchCheckpointReservesObservationAndCrashAfterClaimFailsClosed(@TempDir Path root)
             throws Exception {
@@ -152,6 +166,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Elapsed lease without reclaim still allows fenced checkpoints.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void elapsedLeaseWithoutReclaimStillAllowsFencedCheckpoints(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -171,6 +191,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Exception outcome survives retry tuple clearing cancellation retirement and reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exceptionOutcomeSurvivesRetryTupleClearingCancellationRetirementAndReopen(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -204,6 +230,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Terminal outcomes complete unfinished budget atomically.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalOutcomesCompleteUnfinishedBudgetAtomically(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -224,6 +256,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Deadline admission expires instead of publishing readiness.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void deadlineAdmissionExpiresInsteadOfPublishingReadiness(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -243,6 +281,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Immutable mode changes commitment and cannot pair with outer command.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void immutableModeChangesCommitmentAndCannotPairWithOuterCommand(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -260,6 +304,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Ordinary signing never uses bounded checkpoints.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ordinarySigningNeverUsesBoundedCheckpoints(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -274,6 +324,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Malformed mode phase combinations and unknown codes are rejected.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedModePhaseCombinationsAndUnknownCodesAreRejected(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -297,6 +353,12 @@ final class FilesystemBoundedObservationStoreTest {
         }
     }
 
+    /**
+     * Unknown checkpoint durability fences facade and recovery resolves both crash boundaries.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownCheckpointDurabilityFencesFacadeAndRecoveryResolvesBothCrashBoundaries(@TempDir Path root)
             throws Exception {

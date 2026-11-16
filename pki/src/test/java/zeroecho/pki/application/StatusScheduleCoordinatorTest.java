@@ -52,7 +52,17 @@ import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 
+/**
+ * Contract and regression tests for status schedule coordinator.
+ */
 class StatusScheduleCoordinatorTest {
+    /**
+     * Local session signs once per due occurrence with configured cadence across restart.
+     *
+     * @param instant timestamp text selected for the boundary case
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"2026-10-05T12:00:00Z", "2026-10-05T12:00:00.750Z"})
     void localSessionSignsOncePerDueOccurrenceWithConfiguredCadenceAcrossRestart(String instant, @TempDir Path root) throws Exception {
         Instant now = Instant.parse(instant);

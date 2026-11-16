@@ -95,6 +95,9 @@ import zeroecho.pki.api.status.FullCrlRequest;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
+/**
+ * Contract and regression tests for PKI signing commands.
+ */
 final class PkiSigningCommandsTest {
     private static final PkiId CA = new PkiId("ca:subject");
     private static final PkiId PARENT = new PkiId("ca:parent");
@@ -114,6 +117,9 @@ final class PkiSigningCommandsTest {
                     IssuanceExecutionEvidence.Authentication.DIRECT_MTLS,
                     IssuanceExecutionEvidence.AuthorizationPath.APPROVAL, "1".repeat(64), CA.value(), "profile"));
 
+    /**
+     * Maps every command without acceptance and passes exact caller evidence and cancellation.
+     */
     @Test
     void mapsEveryCommandWithoutAcceptanceAndPassesExactCallerEvidenceAndCancellation() {
         Validity validity = new Validity(NOW, NOW.plusSeconds(60));
@@ -194,6 +200,9 @@ final class PkiSigningCommandsTest {
                 }), CaKind.INTERMEDIATE, Optional.empty());
     }
 
+    /**
+     * Rejects missing keys invalid issuer status and absent requests before preparation.
+     */
     @Test
     void rejectsMissingKeysInvalidIssuerStatusAndAbsentRequestsBeforePreparation() {
         assertThrows(IllegalArgumentException.class, () -> new PkiSigningOperation.CreateIntermediate(
@@ -221,6 +230,11 @@ final class PkiSigningCommandsTest {
                 CA, REQUEST, "profile"), ACCESS, Optional.empty(), CancellationSignal.NONE));
     }
 
+    /**
+     * Projects exact ordered safe credential and status metadata and rejects incomplete state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void projectsExactOrderedSafeCredentialAndStatusMetadataAndRejectsIncompleteState() throws Exception {
         PkiId statusId = new PkiId("status:exact");
@@ -252,6 +266,9 @@ final class PkiSigningCommandsTest {
         }
     }
 
+    /**
+     * Validation uses only pure service methods and rejects unsupported operations.
+     */
     @Test
     void validationUsesOnlyPureServiceMethodsAndRejectsUnsupportedOperations() {
         List<String> calls = new ArrayList<>();

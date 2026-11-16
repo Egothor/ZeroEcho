@@ -51,12 +51,26 @@ import java.util.Objects;
 
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Opt-in eligibility-ordered due-selection diagnostic over a production-recovered ledger. */
+/**
+ * Opt-in eligibility-ordered due-selection diagnostic over a production-recovered ledger.
+ */
 @SuppressWarnings({ "PMD.CommentRequired", "PMD.SystemPrintln", "PMD.UseObjectForClearerAPI" })
 public final class SigningDueSelectionBenchmark {
+    /**
+     * Stable schema identifier emitted in this benchmark's JSON reports.
+     */
     static final String SCHEMA = "zeroecho-signing-due-selection-v1";
+    /**
+     * Closed due-selection bounds accepted by the diagnostic: 1, 64, 1024, and 4096.
+     */
     static final List<Integer> SELECTION_AXIS = List.of(1, 64, 1_024, 4_096);
+    /**
+     * Report label indicating every fixture identity is eligible at the selected cutoff.
+     */
     static final String CUTOFF_CLASSIFICATION = "ALL_ELIGIBLE_AT_CUTOFF";
+    /**
+     * Report label distinguishing static complexity reasoning from runtime acceptance evidence.
+     */
     static final String ALGORITHMIC_EVIDENCE = "STATIC_COMPLEXITY_ONLY";
     private static final Instant CREATED_AT = Instant.parse("2026-08-30T00:00:00Z");
     private static final Instant CUTOFF = CREATED_AT.plus(Duration.ofDays(1));
@@ -65,7 +79,12 @@ public final class SigningDueSelectionBenchmark {
         // entry point
     }
 
-    /** Populates, production-recovers, reopens, and measures one diagnostic. */
+    /**
+     * Populates, production-recovers, reopens, and measures one diagnostic.
+     *
+     * @param arguments closed --name=value options selecting the benchmark scenario and report paths
+     * @throws Exception if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static void main(String[] arguments) throws Exception {
         Configuration configuration = Configuration.parse(arguments);
         Result result = run(configuration);
@@ -80,6 +99,14 @@ public final class SigningDueSelectionBenchmark {
         System.out.println(json);
     }
 
+    /**
+     * Builds and recovers a fresh production ledger, then times exact bounded due selections.
+     *
+     * @param configuration validated benchmark scenario, limits, paths, and output metadata
+     * @return measured result and production evidence; this method does not write the report
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     * @throws NullPointerException if {@code configuration} is null
+     */
     /* default */ static Result run(Configuration configuration) throws IOException {
         Objects.requireNonNull(configuration, "configuration");
         prepareFreshWorkRoot(configuration.workRoot());
@@ -154,18 +181,47 @@ public final class SigningDueSelectionBenchmark {
         return elapsed;
     }
 
+    /**
+     * Requires bounded due selection to return exactly the configured number of identities.
+     *
+     * @param expected required due-selection result count
+     * @param actual observed due-selection result count
+     * @throws BenchmarkException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     /* default */ static void verifyReturnedCount(int expected, int actual) throws BenchmarkException {
         if (actual != expected) {
             throw new BenchmarkException("DUE_SELECTION_WRONG_COUNT");
         }
     }
 
+    /**
+     * Explicit scenario configuration retained with the benchmark report.
+     *
+     * @param activePopulation active signing-work population recovered into the due index
+     * @param selectionBound maximum due identities requested by each measured selection
+     * @param subsequentInProcessSamples number of samples collected after the first in-process selection
+     * @param environmentEvidenceSha256 external environment-evidence commitment retained with the report
+     * @param output JSON report destination outside the benchmark work image
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     */
     /* default */ record Configuration(int activePopulation, int selectionBound,
             int subsequentInProcessSamples, String environmentEvidenceSha256,
             Path output, Path workRoot) {
         private static final int MAXIMUM_ACTIVE_POPULATION = 100_000;
         private static final int MAXIMUM_SUBSEQUENT_SAMPLES = 4_096;
 
+        /**
+         * Validates scenario bounds and normalizes the benchmark input/output paths.
+         *
+         * @param activePopulation active signing-work population recovered into the due index
+         * @param selectionBound maximum due identities requested by each measured selection
+         * @param subsequentInProcessSamples number of samples collected after the first in-process selection
+         * @param environmentEvidenceSha256 external environment-evidence commitment retained with the report
+         * @param output JSON report destination outside the benchmark work image
+         * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+         * @throws ContractException if populations, topology, identities, timing bounds, or path relationships violate this scenario
+         * @throws NullPointerException if any of {@code output}, {@code workRoot} is null
+         */
         Configuration {
             if (activePopulation <= 0 || activePopulation > MAXIMUM_ACTIVE_POPULATION
                     || subsequentInProcessSamples <= 0
@@ -186,6 +242,13 @@ public final class SigningDueSelectionBenchmark {
             workRoot = Objects.requireNonNull(workRoot, "workRoot").toAbsolutePath().normalize();
         }
 
+        /**
+         * Parses the closed benchmark option set and enforces the scenario's bounded configuration.
+         *
+         * @param arguments closed --name=value benchmark options; duplicate or unknown options are rejected
+         * @return validated normalized configuration
+         * @throws ContractException if option syntax, names, numeric values, or scenario bounds are invalid
+         */
         /* default */ static Configuration parse(String[] arguments) {
             Map<String, String> values = parseArguments(arguments);
             try {
@@ -202,6 +265,11 @@ public final class SigningDueSelectionBenchmark {
             }
         }
 
+        /**
+         * Computes the SHA-256 commitment of the canonical measurement-shaping configuration.
+         *
+         * @return lowercase hexadecimal configuration fingerprint; report/work paths are not measurement axes
+         */
         /* default */ String fingerprint() {
             String canonical = "schema=" + SCHEMA
                     + "|activePopulation=" + activePopulation
@@ -241,8 +309,22 @@ public final class SigningDueSelectionBenchmark {
         }
     }
 
+    /**
+     * Measured timing and validated evidence returned by this benchmark run.
+     *
+     * @param firstInProcessNanos duration of the first selection in this process, in nanoseconds
+     * @param subsequentInProcess summary of the later in-process samples
+     */
     /* default */ record Result(long firstInProcessNanos,
             SubsequentInProcessSummary subsequentInProcess) {
+        /**
+         * Retains the benchmark evidence after checking its required components.
+         *
+         * @param firstInProcessNanos duration of the first selection in this process, in nanoseconds
+         * @param subsequentInProcess summary of the later in-process samples
+         * @throws IllegalArgumentException if the first sample duration is negative
+         * @throws NullPointerException if {@code subsequentInProcess} is null
+         */
         Result {
             if (firstInProcessNanos < 0L) {
                 throw new IllegalArgumentException("first in-process sample must not be negative");
@@ -250,6 +332,13 @@ public final class SigningDueSelectionBenchmark {
             Objects.requireNonNull(subsequentInProcess, "subsequentInProcess");
         }
 
+        /**
+         * Serializes the measured result and its exact scenario/evidence coordinates as JSON.
+         *
+         * @param configuration validated benchmark scenario, limits, paths, and output metadata
+         * @return complete JSON report without an acceptance verdict
+         * @throws NullPointerException if {@code configuration} is null
+         */
         /* default */ String toJson(Configuration configuration) {
             Objects.requireNonNull(configuration, "configuration");
             StringBuilder json = new StringBuilder(1024);
@@ -324,8 +413,27 @@ public final class SigningDueSelectionBenchmark {
         }
     }
 
+    /**
+     * Nearest-rank timing summary of selections after the first in-process sample.
+     *
+     * @param count positive sample count represented by the percentile summary
+     * @param p50Nanos nearest-rank median duration, in nanoseconds
+     * @param p95Nanos nearest-rank 95th-percentile duration, in nanoseconds
+     * @param p99Nanos nearest-rank 99th-percentile duration, in nanoseconds
+     * @param maxNanos maximum observed duration, in nanoseconds
+     */
     /* default */ record SubsequentInProcessSummary(int count, long p50Nanos, long p95Nanos,
             long p99Nanos, long maxNanos) {
+        /**
+         * Requires a positive sample count and nonnegative ordered percentiles.
+         *
+         * @param count positive sample count represented by the percentile summary
+         * @param p50Nanos nearest-rank median duration, in nanoseconds
+         * @param p95Nanos nearest-rank 95th-percentile duration, in nanoseconds
+         * @param p99Nanos nearest-rank 99th-percentile duration, in nanoseconds
+         * @param maxNanos maximum observed duration, in nanoseconds
+         * @throws IllegalArgumentException if sample count or percentile ordering is invalid
+         */
         SubsequentInProcessSummary {
             if (count <= 0 || p50Nanos < 0L || p95Nanos < p50Nanos
                     || p99Nanos < p95Nanos || maxNanos < p99Nanos) {
@@ -334,6 +442,14 @@ public final class SigningDueSelectionBenchmark {
             }
         }
 
+        /**
+         * Copies and sorts durations to compute nearest-rank percentile and maximum observations.
+         *
+         * @param samples nonempty input durations, in nanoseconds; copied before sorting
+         * @return summary retaining no reference to the supplied sample array
+         * @throws NullPointerException if samples is null
+         * @throws IllegalArgumentException if samples is empty or the resulting summary has invalid durations
+         */
         /* default */ static SubsequentInProcessSummary from(long[] samples) {
             Objects.requireNonNull(samples, "samples");
             if (samples.length == 0) {
@@ -352,6 +468,9 @@ public final class SigningDueSelectionBenchmark {
         }
     }
 
+    /**
+     * Stable configuration-rejection exception for the benchmark command.
+     */
     /* default */ static final class ContractException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
@@ -366,11 +485,19 @@ public final class SigningDueSelectionBenchmark {
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         /* default */ String reasonCode() {
             return reasonCode;
         }
     }
 
+    /**
+     * Stable fail-closed exception for benchmark execution or evidence mismatches.
+     */
     /* default */ static final class BenchmarkException extends IOException {
         private static final long serialVersionUID = 1L;
         private final String reasonCode;
@@ -385,6 +512,11 @@ public final class SigningDueSelectionBenchmark {
             this.reasonCode = reasonCode;
         }
 
+        /**
+         * Returns the stable classification retained by this benchmark failure.
+         *
+         * @return caller-selected reason code without exception-graph rendering
+         */
         /* default */ String reasonCode() {
             return reasonCode;
         }

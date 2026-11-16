@@ -75,8 +75,9 @@ import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 
-/** Strict anonymous OCSP protocol adapter on the public listener only. */
-@SuppressWarnings("PMD")
+/**
+ * Strict anonymous OCSP protocol adapter on the public listener only.
+ */
 final class OcspHttpHandler implements HttpHandler {
     private static final String MEDIA_REQUEST = "application/ocsp-request";
     private static final String MEDIA_RESPONSE = "application/ocsp-response";
@@ -95,6 +96,18 @@ final class OcspHttpHandler implements HttpHandler {
     private final OcspRequesterService requesters;
     private final NonceReplayGuard nonceReplay = new NonceReplayGuard();
 
+    /**
+     * Composes the OCSP responder HTTP boundary from borrowed realm and execution services.
+     *
+     * @param configuration listener limits and exposure policy
+     * @param realm lifecycle-owned realm context
+     * @param authenticator transport identity authenticator
+     * @param runtime lifecycle-owned admission and operation execution owner
+     * @param clock deadline and audit time source
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     * @throws NullPointerException if a collaborator is null
+     */
     OcspHttpHandler(PkiServerConfiguration.PublicListener configuration, ServerRealmContext realm,
             AdministrativeAuthenticator authenticator, ServerRuntime runtime, Clock clock,
             RequestIds requestIds, BooleanSupplier ready) {
@@ -105,6 +118,9 @@ final class OcspHttpHandler implements HttpHandler {
         this.requesters = new OcspRequesterService(realm, clock);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request"; boolean admitted = false; boolean sdkExchange=false;
         OcspResponderService.Responder auditedResponder = null;
@@ -418,6 +434,12 @@ final class OcspHttpHandler implements HttpHandler {
         exchange.getResponseHeaders().set("Content-Type", MEDIA_RESPONSE); exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(200, body.length); try (OutputStream output = exchange.getResponseBody()) { output.write(body); }
     }
+    /**
+     * Encodes an OCSPResponse carrying only its protocol response-status value.
+     *
+     * @param status OCSP response-status enumeration value; caller validates its protocol range
+     * @return newly allocated five-byte DER response without responseBytes
+     */
     /* default */ static byte[] protocolFailureBody(int status) {
         // OCSPResponse ::= SEQUENCE { responseStatus ENUMERATED } with responseBytes absent.
         return new byte[] { 0x30, 0x03, 0x0A, 0x01, (byte) status };
@@ -426,6 +448,13 @@ final class OcspHttpHandler implements HttpHandler {
         exchange.getResponseHeaders().set("Cache-Control", "no-store"); exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.sendResponseHeaders(status, -1);
     }
+    /**
+     * Maps responder signing overload to HTTP admission guidance.
+     *
+     * @param failure classified signing execution failure
+     * @return 429 for overload, otherwise 503
+     * @throws NullPointerException if failure is null
+     */
     static int signingFailureStatus(zeroecho.pki.api.SigningExecutionException failure) {
         return failure.classification() == zeroecho.pki.api.SigningExecutionException.Classification.OVERLOADED
                 ? 429 : 503;

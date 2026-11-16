@@ -59,6 +59,14 @@ public record RevocationTransition(long revision, RevocationState state, Instant
 
     /**
      * Validates structural transition fields.
+     * @param revision positive contiguous revision
+     * @param state resulting state
+     * @param time authoritative transition time
+     * @param permanentReason permanent reason only for permanent state
+     * @param attributes safe administrative metadata
+     * @throws IllegalArgumentException if revision is not positive or a required state, time, reason container
+     *     or attribute map is null
+     * @throws NullPointerException if an attribute value is null during defensive snapshotting
      */
     public RevocationTransition {
         if (revision <= 0L || state == null || time == null || permanentReason == null || attributes == null) {
@@ -67,6 +75,13 @@ public record RevocationTransition(long revision, RevocationState state, Instant
         attributes = snapshotAttributes(attributes);
     }
 
+    /**
+     * Takes an immutable snapshot of all metadata entries and byte-valued attributes.
+     *
+     * @param source non-null attribute set whose identifiers and values are read synchronously
+     * @return immutable attribute set with independently owned lists and byte arrays
+     * @throws NullPointerException if the source or a contained attribute value is null
+     */
     // Defensive snapshotting necessarily allocates immutable entries while walking
     // the caller-owned attribute collection.
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
@@ -91,11 +106,15 @@ public record RevocationTransition(long revision, RevocationState state, Instant
         return value;
     }
 
-    /** One immutable attribute entry owned by a transition or command. */
+    /**
+     * One immutable attribute entry owned by a transition or command.
+     */
     private record SnapshotEntry(AttributeId id, List<AttributeValue> values) {
     }
 
-    /** Immutable defensive implementation for revocation metadata ownership. */
+    /**
+     * Immutable defensive implementation for revocation metadata ownership.
+     */
     private static final class SnapshotAttributeSet implements AttributeSet {
         private final List<SnapshotEntry> entries;
 
@@ -103,6 +122,9 @@ public record RevocationTransition(long revision, RevocationState state, Instant
             this.entries = entries;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Set<AttributeId> ids() {
             Set<AttributeId> ids = new LinkedHashSet<>();
@@ -112,6 +134,9 @@ public record RevocationTransition(long revision, RevocationState state, Instant
             return Set.copyOf(ids);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AttributeValue> get(AttributeId id) {
             List<AttributeValue> values = getAll(id);
@@ -120,6 +145,9 @@ public record RevocationTransition(long revision, RevocationState state, Instant
 
         // Byte values are copied per accessor invocation so callers cannot mutate
         // transition-owned storage.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
         @Override
         public List<AttributeValue> getAll(AttributeId id) {

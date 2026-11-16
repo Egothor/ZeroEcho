@@ -34,10 +34,20 @@
 
 package zeroecho.pki.api.signing;
 
-/** Finite durable signing-acceptance disposition. */
+/**
+ * Finite durable signing-acceptance disposition.
+ */
 public enum SigningAcceptanceDisposition {
-    /** New durable intent was committed. */ ACCEPTED,
-    /** The exact acceptance or matching semantic issuance already existed; the result names its receipt. */ ATTACHED_EXISTING,
-    /** The identifier or candidate conflicts with retained input. */ CONFLICT,
-    /** Durable active-work capacity rejected the new intent. */ CAPACITY_REJECTED
+    /**
+     * New durable intent was committed.
+     */ ACCEPTED,
+    /**
+     * The exact acceptance or matching semantic issuance already existed; the result names its receipt.
+     */ ATTACHED_EXISTING,
+    /**
+     * The identifier or candidate conflicts with retained input.
+     */ CONFLICT,
+    /**
+     * Durable active-work capacity rejected the new intent.
+     */ CAPACITY_REJECTED
 }

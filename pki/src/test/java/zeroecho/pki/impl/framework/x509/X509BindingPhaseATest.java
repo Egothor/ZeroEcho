@@ -104,11 +104,17 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
  */
 public final class X509BindingPhaseATest {
 
+    /**
+     * Registers the cryptographic providers required by the test cases.
+     */
     @BeforeAll
     static void registerProviders() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Zero echo private assignments are exact and locked.
+     */
     @Test
     void zeroEchoPrivateAssignmentsAreExactAndLocked() {
         System.out.println("zeroEchoPrivateAssignmentsAreExactAndLocked");
@@ -124,6 +130,11 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Production sphincs private binding signs and verifies.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void productionSphincsPrivateBindingSignsAndVerifies() throws Exception {
         System.out.println("productionSphincsPrivateBindingSignsAndVerifies");
@@ -203,6 +214,11 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Deployer provider binding signs and verifies end to end.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void deployerProviderBindingSignsAndVerifiesEndToEnd() throws Exception {
         System.out.println("deployerProviderBindingSignsAndVerifiesEndToEnd");
@@ -240,6 +256,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Bootstrap matrix includes ml dsa and slh dsa bindings.
+     */
     @Test
     void bootstrapMatrixIncludesMlDsaAndSlhDsaBindings() {
         System.out.println("bootstrapMatrixIncludesMlDsaAndSlhDsaBindings");
@@ -279,6 +298,11 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Ml dsa65 binding signs and verifies end to end.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mlDsa65BindingSignsAndVerifiesEndToEnd() throws Exception {
         System.out.println("mlDsa65BindingSignsAndVerifiesEndToEnd");
@@ -321,6 +345,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Bootstrap matrix is exact and symmetric.
+     */
     @Test
     void bootstrapMatrixIsExactAndSymmetric() {
         System.out.println("bootstrapMatrixIsExactAndSymmetric");
@@ -354,6 +381,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Parameterized RSA pss round trips and rejects wrong parameters.
+     */
     @Test
     void parameterizedRsaPssRoundTripsAndRejectsWrongParameters() {
         System.out.println("parameterizedRsaPssRoundTripsAndRejectsWrongParameters");
@@ -378,6 +408,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * ECDSA signature and curve resolve contextually.
+     */
     @Test
     void ecdsaSignatureAndCurveResolveContextually() {
         System.out.println("ecdsaSignatureAndCurveResolveContextually");
@@ -397,6 +430,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Defaults and catalog conflicts are immutable.
+     */
     @Test
     void defaultsAndCatalogConflictsAreImmutable() {
         System.out.println("defaultsAndCatalogConflictsAreImmutable");
@@ -414,6 +450,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * BC boundary preserves exact parameters and rejects sha1.
+     */
     @Test
     void bcBoundaryPreservesExactParametersAndRejectsSha1() {
         System.out.println("bcBoundaryPreservesExactParametersAndRejectsSha1");
@@ -432,6 +471,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Universal snapshot composes extensions and rejects cross snapshot use.
+     */
     @Test
     void universalSnapshotComposesExtensionsAndRejectsCrossSnapshotUse() {
         System.out.println("universalSnapshotComposesExtensionsAndRejectsCrossSnapshotUse");
@@ -521,6 +563,9 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * Reconstructed plan cannot recover authority provenance.
+     */
     @Test
     void reconstructedPlanCannotRecoverAuthorityProvenance() {
         System.out.println("reconstructedPlanCannotRecoverAuthorityProvenance");
@@ -546,6 +591,11 @@ public final class X509BindingPhaseATest {
         System.out.println("...ok");
     }
 
+    /**
+     * BC executor rejects signature and SPKI substitution before execution.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bcExecutorRejectsSignatureAndSpkiSubstitutionBeforeExecution() throws Exception {
         System.out.println("bcExecutorRejectsSignatureAndSpkiSubstitutionBeforeExecution");

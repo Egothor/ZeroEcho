@@ -73,9 +73,17 @@ import zeroecho.core.spi.ContextAware;
 import zeroecho.core.util.RandomSupport;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
+/**
+ * Contract and regression tests for AES random support.
+ */
 class AesRandomSupportTest {
     private static final SecretKey KEY = new SecretKeySpec(new byte[16], "AES");
 
+    /**
+     * All factories use shared random source.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void allFactoriesUseSharedRandomSource() throws Exception {
         System.out.print("AesRandomSupport/allFactoriesUseSharedRandomSource...");
@@ -89,6 +97,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Null fallback uses shared random source.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void nullFallbackUsesSharedRandomSource() throws Exception {
         System.out.print("AesRandomSupport/nullFallbackUsesSharedRandomSource...");
@@ -99,6 +112,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Key generation uses established random source path.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void keyGenerationUsesEstablishedRandomSourcePath() throws Exception {
         System.out.print("AesRandomSupport/keyGenerationUsesEstablishedRandomSourcePath...");
@@ -113,6 +131,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Controlled random produces fresh IV for each direct context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void controlledRandomProducesFreshIvForEachDirectContext() throws Exception {
         System.out.print("AesRandomSupport/controlledRandomProducesFreshIvForEachDirectContext...");
@@ -133,6 +156,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Encryption ignores preseeded IV and context is single use.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encryptionIgnoresPreseededIvAndContextIsSingleUse() throws Exception {
         System.out.print("AesRandomSupport/encryptionIgnoresPreseededIvAndContextIsSingleUse...");
@@ -155,6 +183,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Stream failure consumes encryption context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void streamFailureConsumesEncryptionContext() throws Exception {
         System.out.print("AesRandomSupport/streamFailureConsumesEncryptionContext...");
@@ -180,6 +213,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Concurrent encryption claim has exactly one winner.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentEncryptionClaimHasExactlyOneWinner() throws Exception {
         System.out.print("AesRandomSupport/concurrentEncryptionClaimHasExactlyOneWinner...");
@@ -224,6 +262,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Public builder exposes only decryption IV configuration.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void publicBuilderExposesOnlyDecryptionIvConfiguration() throws Exception {
         System.out.print("AesRandomSupport/publicBuilderExposesOnlyDecryptionIvConfiguration...");
@@ -240,6 +283,11 @@ class AesRandomSupportTest {
         System.out.println("ok");
     }
 
+    /**
+     * Concurrent factory construction uses established shared source.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentFactoryConstructionUsesEstablishedSharedSource() throws Exception {
         System.out.print("AesRandomSupport/concurrentFactoryConstructionUsesEstablishedSharedSource...");

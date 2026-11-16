@@ -44,11 +44,19 @@ import java.util.random.RandomGenerator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for tail stripping input stream.
+ */
 public class TailStrippingInputStreamTest {
 
     private static final int TAIL_LEN = 64;
     private static final int IO_BUF = 4096;
 
+    /**
+     * Checks tail stripping when input is shorter than the retained tail.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Short stream (<64 bytes) → body=0, tail=all")
     void testShortStream() throws Exception {
@@ -73,6 +81,11 @@ public class TailStrippingInputStreamTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks tail stripping across a large streamed payload.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     @DisplayName("Large stream (>64 KiB) → body=input[0..n-tailLen), tail=last tailLen")
     void testLargeStream() throws Exception {

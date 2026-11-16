@@ -39,8 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for proof of possession reason.
+ */
 final class ProofOfPossessionReasonTest {
 
+    /**
+     * Every reason maps to exactly one status.
+     */
     @Test
     void everyReasonMapsToExactlyOneStatus() {
         for (ProofOfPossessionReason reason : ProofOfPossessionReason.values()) {
@@ -48,6 +54,9 @@ final class ProofOfPossessionReasonTest {
         }
     }
 
+    /**
+     * Reason status contract is stable.
+     */
     @Test
     void reasonStatusContractIsStable() {
         assertEquals(ProofOfPossessionStatus.VERIFIED, ProofOfPossessionReason.VERIFIED.status());
@@ -62,6 +71,9 @@ final class ProofOfPossessionReasonTest {
         assertEquals(ProofOfPossessionStatus.FAILED, ProofOfPossessionReason.INTERNAL_FAILURE.status());
     }
 
+    /**
+     * Result derives status from reason and carries optional details.
+     */
     @Test
     void resultDerivesStatusFromReasonAndCarriesOptionalDetails() {
         ProofOfPossessionResult noDetails = ProofOfPossessionResult.of(ProofOfPossessionReason.VERIFIED);

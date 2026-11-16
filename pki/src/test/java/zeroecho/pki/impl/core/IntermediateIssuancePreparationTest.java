@@ -101,7 +101,13 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for intermediate issuance preparation.
+ */
 final class IntermediateIssuancePreparationTest {
+    /**
+     * Trusted principal uses DER order and retains existing string overload policy.
+     */
     @Test void trustedPrincipalUsesDerOrderAndRetainsExistingStringOverloadPolicy() {
         CertificateProfileDefinition profile = RootCreationFixture.definition("subject-policy", CertificateProfileKind.INTERMEDIATE_CA,
                 Duration.ofDays(30), X509AlgorithmBindingPolicy.standardOnly());
@@ -113,6 +119,12 @@ final class IntermediateIssuancePreparationTest {
                 new X500Principal("O=Changed,C=CZ,CN=Existing Intermediate"), profile));
     }
 
+    /**
+     * Freezes explicit profile authoritative principal and requested validity without acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void freezesExplicitProfileAuthoritativePrincipalAndRequestedValidityWithoutAcceptance(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root, IntermediateCreationFixture.CLOCK)) {
             IntermediateIssuanceFixture fixture = new IntermediateIssuanceFixture();
@@ -149,6 +161,12 @@ final class IntermediateIssuancePreparationTest {
         }
     }
 
+    /**
+     * Rejects stale key profile kind inactive subject and attributes before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsStaleKeyProfileKindInactiveSubjectAndAttributesBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root, IntermediateCreationFixture.CLOCK)) {
             IntermediateIssuanceFixture fixture = new IntermediateIssuanceFixture();
@@ -186,6 +204,12 @@ final class IntermediateIssuancePreparationTest {
         }
     }
 
+    /**
+     * Cancellation after staging retires the single unowned candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationAfterStagingRetiresTheSingleUnownedCandidate(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root, IntermediateCreationFixture.CLOCK)) {
             IntermediateIssuanceFixture fixture = new IntermediateIssuanceFixture();
@@ -221,6 +245,12 @@ final class IntermediateIssuancePreparationTest {
         }
     }
 
+    /**
+     * Lifecycle uses active profile beyond old expiry and allows same key rotation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lifecycleUsesActiveProfileBeyondOldExpiryAndAllowsSameKeyRotation(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root, IntermediateCreationFixture.CLOCK)) {
             IntermediateIssuanceFixture fixture = new IntermediateIssuanceFixture();
@@ -271,6 +301,12 @@ final class IntermediateIssuancePreparationTest {
         }
     }
 
+    /**
+     * Lifecycle rejects stale key attributes and inactive authority before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lifecycleRejectsStaleKeyAttributesAndInactiveAuthorityBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root, IntermediateCreationFixture.CLOCK)) {
             IntermediateIssuanceFixture fixture = new IntermediateIssuanceFixture();
@@ -310,6 +346,13 @@ final class IntermediateIssuancePreparationTest {
         return new CaRolloverCommand.Intermediate(ca.caId(), IntermediateCreationFixture.CA, key, Optional.empty(), new SimpleAttributeSet());
     }
 
+    /**
+     * Prepared issuance or rotation resumes internal verification after reopen.
+     *
+     * @param rotation whether the tested operation uses credential/key rotation
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void preparedIssuanceOrRotationResumesInternalVerificationAfterReopen(boolean rotation, @TempDir Path root) throws Exception {

@@ -64,6 +64,7 @@ public final class ContentSlice implements RepeatableContent {
      * @param length non-negative slice length
      * @throws IllegalArgumentException if a range is negative or exceeds a known
      *                                  source length
+     * @throws NullPointerException if {@code source} is null
      */
     public ContentSlice(RepeatableContent source, long offset, long length) {
         this.source = Objects.requireNonNull(source, "source");
@@ -80,6 +81,9 @@ public final class ContentSlice implements RepeatableContent {
         this.contentId = source.contentId() + "#slice:" + offset + ':' + length;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public InputStream openStream() throws IOException {
         InputStream input = source.openStream();
@@ -92,16 +96,25 @@ public final class ContentSlice implements RepeatableContent {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OptionalLong length() {
         return OptionalLong.of(length);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String contentId() {
         return contentId;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         // Source ownership remains with the creator.
@@ -121,7 +134,9 @@ public final class ContentSlice implements RepeatableContent {
         }
     }
 
-    /** Exact-length stream view that fails when its underlying source truncates. */
+    /**
+     * Exact-length stream view that fails when its underlying source truncates.
+     */
     private static final class LimitedInputStream extends FilterInputStream {
         private long remaining;
 

@@ -50,7 +50,18 @@ import zeroecho.pki.api.KeyRef;
 public record IssuerKeyBinding(KeyRef keyRef, AlgorithmIdentity publicKeyAlgorithm,
         AlgorithmIdentity signatureAlgorithm, EncodedObject signatureAlgorithmIdentifier,
         String subjectSpkiSha256) {
-    /** Creates a complete immutable public signing-key binding. */
+    /**
+     * Creates a complete immutable public signing-key binding.
+     * @param keyRef stable managed key reference; never private key bytes
+     * @param publicKeyAlgorithm exact subject public-key identity
+     * @param signatureAlgorithm exact outgoing signature identity
+     * @param signatureAlgorithmIdentifier canonical DER outgoing AlgorithmIdentifier
+     * @param subjectSpkiSha256 lowercase SHA-256 of canonical subject SPKI
+     * @throws NullPointerException if keyRef, publicKeyAlgorithm, signatureAlgorithm,
+     *     signatureAlgorithmIdentifier is null
+     * @throws IllegalArgumentException if algorithm kinds, DER encoding or its 4096-byte bound are invalid,
+     *     AlgorithmIdentifier is noncanonical, or the subject digest is invalid
+     */
     public IssuerKeyBinding {
         Objects.requireNonNull(keyRef, "keyRef");
         Objects.requireNonNull(publicKeyAlgorithm, "publicKeyAlgorithm");
@@ -70,6 +81,9 @@ public record IssuerKeyBinding(KeyRef keyRef, AlgorithmIdentity publicKeyAlgorit
         IssuerCryptographicBinding.requireDigest(subjectSpkiSha256, "subjectSpkiSha256");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof IssuerKeyBinding value && keyRef.equals(value.keyRef)
@@ -78,6 +92,9 @@ public record IssuerKeyBinding(KeyRef keyRef, AlgorithmIdentity publicKeyAlgorit
                 && subjectSpkiSha256.equals(value.subjectSpkiSha256);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return Objects.hash(keyRef, publicKeyAlgorithm, signatureAlgorithm,

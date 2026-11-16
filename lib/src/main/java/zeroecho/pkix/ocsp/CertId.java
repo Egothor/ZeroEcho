@@ -51,7 +51,15 @@ import zeroecho.pkix.AlgorithmIdentifier;
 public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, byte[] issuerKeyHash,
         BigInteger serialNumber) {
 
-    /** Canonicalizing constructor. */
+    /**
+     * Retains validated components and defensively copies mutable inputs.
+     *
+     * @param hashAlgorithm the digest algorithm used for the name and key hashes
+     * @param issuerNameHash the digest of the issuer distinguished name
+     * @param issuerKeyHash the digest of the issuer public key
+     * @param serialNumber the certificate serial number
+     * @throws NullPointerException if any of {@code hashAlgorithm}, {@code issuerNameHash}, {@code issuerKeyHash}, {@code serialNumber} is null
+     */
     public CertId {
         Objects.requireNonNull(hashAlgorithm, "hashAlgorithm");
         Objects.requireNonNull(issuerNameHash, "issuerNameHash");
@@ -81,6 +89,12 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
         return issuerKeyHash.clone();
     }
 
+    /**
+     * Compares the hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial by value.
+     *
+     * @param other object to compare, or null
+     * @return true for a compatible value with equal hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial; false otherwise
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof CertId that && hashAlgorithm.equals(that.hashAlgorithm)
@@ -89,12 +103,22 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
                 && Arrays.equals(issuerKeyHash, that.issuerKeyHash);
     }
 
+    /**
+     * Hashes the hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial using the same components as equality.
+     *
+     * @return value-based hash code consistent with equals
+     */
     @Override
     public int hashCode() {
         return Objects.hash(hashAlgorithm, Arrays.hashCode(issuerNameHash), Arrays.hashCode(issuerKeyHash),
                 serialNumber);
     }
 
+    /**
+     * Returns a diagnostic representation containing the certificate serial and hash-algorithm OID, omitting issuer hash bytes.
+     *
+     * @return certificate serial and hash-algorithm OID, omitting issuer hash bytes
+     */
     @Override
     public String toString() {
         return "CertId[serialNumber=" + serialNumber + ", hashAlgorithm=" + hashAlgorithm.oid() + ']';

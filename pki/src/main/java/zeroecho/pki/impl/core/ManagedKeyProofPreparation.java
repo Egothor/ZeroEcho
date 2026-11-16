@@ -109,6 +109,7 @@ public final class ManagedKeyProofPreparation {
      * @param random secure random source for a fresh 32-byte challenge nonce
      * @param pureEdDsaMaximum inclusive raw pure-EdDSA message limit in bytes
      * @throws IllegalArgumentException if algorithm or bounds are invalid
+     * @throws NullPointerException if store, provider, signingAuthority, verificationAuthority, verifier, random, signatureAlgorithm is null
      */
     public ManagedKeyProofPreparation(PkiStore store, SigningProvider provider,
             X509AuthoritySnapshot signingAuthority, X509AuthoritySnapshot verificationAuthority,
@@ -143,7 +144,10 @@ public final class ManagedKeyProofPreparation {
      * @param cancellation cooperative pre-adoption cancellation
      * @return frozen request and its caller-owned staged candidate
      * @throws IOException if public-key DER, staging or cancellation fails
-     * @throws RuntimeException if configuration, planning or bounds are invalid
+     * @throws RuntimeException if access, request, submission, ttl or cancellation is null;
+     *         ttl is nonpositive or produces an unrepresentable deadline; submission
+     *         is noncanonical or violates namespace, horizon or permitted-skew constraints;
+     *         or configuration, proof planning or finite message bounds are invalid
      */
     // The apparently unused result deliberately validates overflow or representability before any side effect.
     @SuppressWarnings({ "PMD.UselessPureMethodCall" })
@@ -171,12 +175,26 @@ public final class ManagedKeyProofPreparation {
         return stage(access, request, exact, ttl, cancellation, challenge, template);
     }
 
+    /**
+     * Creates a preparer sharing collaborators but selecting the supplied signature identity.
+     *
+     * @param algorithm canonical permitted signature identity
+     * @return new preparer configured for that signature
+     */
     /* default */ ManagedKeyProofPreparation withSignature(String algorithm) {
         return new ManagedKeyProofPreparation(store, provider, signingAuthority, verificationAuthority, verifier,
                 algorithm, random, pureEdDsaMaximum);
     }
 
-    /** Resolves the exact subject SPKI once and authorizes the shared SIGN/VERIFY binding. */
+    /**
+     * Resolves the exact subject SPKI once and authorizes the shared SIGN/VERIFY binding.
+     * @param request managed-key proof request; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return method-local public-key and authorized binding metadata with no staged content
+     * @throws IOException if key export, DER validation, or cancellation fails
+     * @throws NullPointerException if request, cancellation, source.resolvePublicKeyInfo is null
+     * @throws IllegalArgumentException if the verification profile or provider preparation capability is unavailable, or the managed public key is not bounded DER
+     */
     /* default */ ProofPlan plan(ManagedKeyProofRequest request, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
@@ -207,7 +225,11 @@ public final class ManagedKeyProofPreparation {
         return new ProofPlan(new EncodedObject(Encoding.DER, spki), metadata);
     }
 
-    /** Allocates a distinct internal proof step in the parent's namespace and creation epoch. */
+    /**
+     * Allocates a distinct internal proof step in the parent's namespace and creation epoch.
+     * @param parent parent submission identity supplying the namespace and creation epoch
+     * @return fresh internal submission identity distinct from the parent
+     */
     /* default */ SigningSubmissionId newStep(SigningSubmissionId parent) {
         SigningSubmissionId step;
         do { step = SigningSubmissionId.create(parent.namespace(), parent.createdAt(), random); }
@@ -215,7 +237,18 @@ public final class ManagedKeyProofPreparation {
         return step;
     }
 
-    /** Freezes a bounded challenge after the caller has frozen any parent CA intent. */
+    /**
+     * Freezes a bounded challenge after the caller has frozen any parent CA intent.
+     * @param plan resolved public-key and binding metadata; must not be null
+     * @param step allocated internal submission identity; must not be null
+     * @param deadline frozen challenge expiry instant
+     * @param context optional frozen parent CA context; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return bounded encoded challenge and its validated decoded command
+     * @throws IOException if cancellation or challenge processing fails
+     * @throws NullPointerException if plan, step, cancellation is null
+     * @throws IllegalArgumentException if a responder candidate uses a CA-proof context or its pure EdDSA challenge exceeds the configured message bound
+     */
     /* default */ FrozenChallenge challenge(ProofPlan plan, SigningSubmissionId step, java.time.Instant deadline,
             Optional<ManagedKeyProofChallenge.CaContext> context, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(plan, "plan");
@@ -247,12 +280,27 @@ public final class ManagedKeyProofPreparation {
         return new FrozenChallenge(new EncodedObject(Encoding.BINARY, challenge), command);
     }
 
-    /** Method-local immutable public-key and binding metadata; owns no staged content. */
+    /**
+     * Method-local immutable public-key and binding metadata; owns no staged content.
+     * @param publicKeyInfo exact bounded DER SubjectPublicKeyInfo
+     * @param metadata immutable ordered binding metadata, copied on construction
+     */
     /* default */ record ProofPlan(EncodedObject publicKeyInfo, List<String> metadata) {
+        /**
+         * Retains the exported public key and an immutable copy of binding metadata.
+         *
+         * @param publicKeyInfo exact exported public key; must not be null
+         * @param metadata ordered metadata copied without null entries
+         * @throws NullPointerException if the public key, metadata, or a metadata entry is null
+         */
         ProofPlan { Objects.requireNonNull(publicKeyInfo, "publicKeyInfo"); metadata = List.copyOf(metadata); }
     }
 
-    /** Method-local immutable challenge and its exact decoded metadata. */
+    /**
+     * Method-local immutable challenge and its exact decoded metadata.
+     * @param content exact encoded challenge bytes
+     * @param command decoded command validated against both authority snapshots
+     */
     /* default */ record FrozenChallenge(EncodedObject content, DomainCommandEncoding.Decoded command) { }
 
     private byte[] algorithm(byte[] spki) {

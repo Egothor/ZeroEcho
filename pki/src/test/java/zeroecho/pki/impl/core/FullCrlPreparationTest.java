@@ -118,6 +118,9 @@ import zeroecho.pki.impl.framework.x509.X509BindingRuleProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.StagedContentStore;
 
+/**
+ * Contract and regression tests for full CRL preparation.
+ */
 class FullCrlPreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00Z");
     private static final Instant BEFORE = NOW.minusSeconds(60);
@@ -131,6 +134,11 @@ class FullCrlPreparationTest {
     private static KeyPair key;
     private static byte[] certificate;
 
+    /**
+     * Builds the real issuer certificate material shared by the CRL preparation cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void certificate() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -138,6 +146,9 @@ class FullCrlPreparationTest {
         certificate = certificate(true, KeyUsage.keyCertSign | KeyUsage.cRLSign);
     }
 
+    /**
+     * Request rejects missing and nonpositive values.
+     */
     @Test void requestRejectsMissingAndNonpositiveValues() {
         assertThrows(NullPointerException.class, () -> new FullCrlRequest(null, Duration.ofDays(1)));
         assertThrows(NullPointerException.class, () -> new FullCrlRequest(GENERATION, null));
@@ -147,6 +158,11 @@ class FullCrlPreparationTest {
                 Duration.ofSeconds(Long.MAX_VALUE)).validity());
     }
 
+    /**
+     * Active and retired historical generations freeze exact inputs without writes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void activeAndRetiredHistoricalGenerationsFreezeExactInputsWithoutWrites() throws Exception {
         for (CaState caState : List.of(CaState.ACTIVE, CaState.RETIRED)) {
             for (IssuerGenerationState state : List.of(IssuerGenerationState.ACTIVE, IssuerGenerationState.RETIRED)) {
@@ -186,6 +202,11 @@ class FullCrlPreparationTest {
         }
     }
 
+    /**
+     * Compromised and disabled ca or generation are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void compromisedAndDisabledCaOrGenerationAreRejected() throws Exception {
         for (CaState state : List.of(CaState.COMPROMISED, CaState.DISABLED)) {
             Fixture fixture = new Fixture();
@@ -199,6 +220,11 @@ class FullCrlPreparationTest {
         }
     }
 
+    /**
+     * Duration is checked after whole second normalization and against issuer not after.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void durationIsCheckedAfterWholeSecondNormalizationAndAgainstIssuerNotAfter() throws Exception {
         Fixture fixture = new Fixture();
         FullCrlPreparation preparation = fixture.preparer(Clock.fixed(NOW.plusNanos(900_000_000), ZoneOffset.UTC),
@@ -220,6 +246,11 @@ class FullCrlPreparationTest {
                 .prepare(request(Duration.ofSeconds(1)), CancellationSignal.NONE));
     }
 
+    /**
+     * Frozen profile binding is used without consulting active profile.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void frozenProfileBindingIsUsedWithoutConsultingActiveProfile() throws Exception {
         Fixture fixture = new Fixture();
         fixture.installProfile(privatePolicy());
@@ -230,6 +261,11 @@ class FullCrlPreparationTest {
         assertEquals(1, prepared.profile().profileVersion());
     }
 
+    /**
+     * Current runtime policy executor and key compatibility restrict frozen profile.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void currentRuntimePolicyExecutorAndKeyCompatibilityRestrictFrozenProfile() throws Exception {
         Fixture fixture = new Fixture();
         fixture.installProfile(privatePolicy());
@@ -246,6 +282,11 @@ class FullCrlPreparationTest {
                 runtime(true, true), registry(), "SHA256withRSA"));
     }
 
+    /**
+     * Hybrid preparation freezes both roles without signing and rejects wrong subject evidence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void hybridPreparationFreezesBothRolesWithoutSigningAndRejectsWrongSubjectEvidence() throws Exception {
         Fixture fixture = new Fixture();
         fixture.installHybrid(privatePolicy());
@@ -265,6 +306,11 @@ class FullCrlPreparationTest {
         assertThrows(IOException.class, fixture::prepare, "A hybrid issuer cannot borrow another alternative subject key");
     }
 
+    /**
+     * Corrupt latest base lineage cannot be skipped for an older candidate.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void corruptLatestBaseLineageCannotBeSkippedForAnOlderCandidate() throws Exception {
         for (int fault = 0; fault < 4; fault++) {
             Fixture fixture = new Fixture(); fixture.installHybrid(X509AlgorithmBindingPolicy.standardOnly());
@@ -303,6 +349,11 @@ class FullCrlPreparationTest {
         }
     }
 
+    /**
+     * Missing and mismatched point lookups fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingAndMismatchedPointLookupsFailClosed() throws Exception {
         for (String missing : List.of("getIssuerGeneration", "getCa", "getCredential", "getProfileVersion")) {
             Fixture fixture = new Fixture();
@@ -322,6 +373,11 @@ class FullCrlPreparationTest {
         assertRejected(fixture, "ISSUER_BINDING_INCONSISTENT");
     }
 
+    /**
+     * Generation profile and binding commitments cannot drift.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void generationProfileAndBindingCommitmentsCannotDrift() throws Exception {
         for (boolean policy : new boolean[] {false, true}) {
             Fixture fixture = new Fixture();
@@ -340,6 +396,11 @@ class FullCrlPreparationTest {
         assertRejected(fixture, "PROFILE_COMMITMENT_MISMATCH");
     }
 
+    /**
+     * Certificate must be ca with CRL sign and match its metadata and content commitment.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void certificateMustBeCaWithCrlSignAndMatchItsMetadataAndContentCommitment() throws Exception {
         for (byte[] invalid : List.of(certificate(false, KeyUsage.cRLSign), certificate(true, KeyUsage.keyCertSign))) {
             Fixture fixture = new Fixture();
@@ -357,6 +418,11 @@ class FullCrlPreparationTest {
         assertRejected(fixture, "CREDENTIAL_UNUSABLE");
     }
 
+    /**
+     * Cancellation before preparation performs no store read.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationBeforePreparationPerformsNoStoreRead() throws Exception {
         Fixture fixture = new Fixture();
         assertThrows(IOException.class, () -> fixture.preparer(fixed(), true, true, SIGNATURE)
@@ -364,6 +430,9 @@ class FullCrlPreparationTest {
         assertEquals(0, fixture.reads.get());
     }
 
+    /**
+     * Frozen preparation and tbs carriers contain only provider neutral resource free components.
+     */
     @Test void frozenPreparationAndTbsCarriersContainOnlyProviderNeutralResourceFreeComponents() {
         Set<Class<?>> allowed = Set.of(CaRecord.class, IssuerGeneration.class, PkiId.class, CertificateProfileRef.class,
                 DurableContentReference.class, CrlScope.class, X509AlgorithmBinding.class, X509AlgorithmIdentifier.class,

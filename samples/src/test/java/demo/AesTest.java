@@ -62,11 +62,20 @@ import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 
+/**
+ * Executable AES streaming examples at core and fluent SDK levels.
+ */
 @Tag("sample")
 class AesTest {
     private static final Logger LOG = Logger.getLogger(AesTest.class.getName());
     private final ZeroEchoSession zeroEchoSession = new ZeroEchoSession();
 
+    /**
+     * Generates an AES-256 key through the SDK key builder.
+     *
+     * @return newly generated AES secret key
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     SecretKey generateAesKey() throws GeneralSecurityException {
         SecretKey key = zeroEchoSession.keyBuilders().symmetric().generate("AES", AesKeyGenSpec.aes256());
         LOG.log(Level.INFO, "AES256 key generated");
@@ -74,6 +83,13 @@ class AesTest {
         return key;
     }
 
+    /**
+     * Demonstrates AES-GCM streaming encryption through the core API with context-held IV and AAD.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesEncryptCoreLevelAPI() throws GeneralSecurityException, IOException {
         // Sample message to encrypt
@@ -114,6 +130,13 @@ class AesTest {
                 Strings.toShortHexString(encrypted) });
     }
 
+    /**
+     * Demonstrates AES-GCM streaming encryption through the SDK data-content API.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesEncryptSdkLevelAPI() throws GeneralSecurityException, IOException {
         // Sample message to encrypt
@@ -158,6 +181,13 @@ class AesTest {
                 Strings.toShortHexString(encrypted) });
     }
 
+    /**
+     * Demonstrates fluent SDK construction of an AES-GCM encrypted content stream.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesEncryptSmarterSdkLevelAPI() throws GeneralSecurityException, IOException {
         // Sample message to encrypt
@@ -197,6 +227,13 @@ class AesTest {
                 Strings.toShortHexString(encrypted));
     }
 
+    /**
+     * Checks a fluent SDK AES-GCM encryption and decryption round trip.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesRoundSmarterSdkLevelAPI() throws GeneralSecurityException, IOException {
         // Sample message to encrypt

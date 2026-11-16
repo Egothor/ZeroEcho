@@ -81,6 +81,9 @@ import zeroecho.core.tag.TagEngine;
  */
 class CryptoAlgorithmsAuditWrapTest {
 
+    /**
+     * Wrap for audit digest context returns proxy.
+     */
     @Test
     void wrapForAuditDigestContextReturnsProxy() {
         System.out.println("wrapForAuditDigestContextReturnsProxy");
@@ -94,6 +97,9 @@ class CryptoAlgorithmsAuditWrapTest {
         System.out.println("wrapForAuditDigestContextReturnsProxy...ok");
     }
 
+    /**
+     * Wrap for audit agreement context returns proxy.
+     */
     @Test
     void wrapForAuditAgreementContextReturnsProxy() {
         System.out.println("wrapForAuditAgreementContextReturnsProxy");
@@ -108,6 +114,11 @@ class CryptoAlgorithmsAuditWrapTest {
         System.out.println("wrapForAuditAgreementContextReturnsProxy...ok");
     }
 
+    /**
+     * Wrap for audit digest context close delegates to wrapped context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void wrapForAuditDigestContextCloseDelegatesToWrappedContext() throws Exception {
         System.out.println("wrapForAuditDigestContextCloseDelegatesToWrappedContext");
@@ -122,6 +133,11 @@ class CryptoAlgorithmsAuditWrapTest {
         System.out.println("wrapForAuditDigestContextCloseDelegatesToWrappedContext...ok");
     }
 
+    /**
+     * Checks audit wrapping across the supported cryptographic context families.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void wrapAllFamilies() throws Exception {
         System.out.println("wrapAllFamilies");
@@ -175,6 +191,11 @@ class CryptoAlgorithmsAuditWrapTest {
         System.out.println("wrapAllFamilies...ok");
     }
 
+    /**
+     * Checks audit-wrapper failure handling and repeated wrapping of the same context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void wrapFailureAndIdempotency() throws Exception {
         System.out.println("wrapFailureAndIdempotency");

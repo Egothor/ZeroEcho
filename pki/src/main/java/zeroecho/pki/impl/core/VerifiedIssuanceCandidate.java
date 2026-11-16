@@ -72,6 +72,17 @@ public final class VerifiedIssuanceCandidate {
     private final Optional<Validity> validityOverride;
     private final boolean csrTransport;
 
+    /**
+     * Snapshots a cryptographically verified enrollment request and its bound issuance command.
+     *
+     * @param request verified parsed enrollment request carrying canonical CSR or CRMF transport evidence
+     * @param fingerprint verified request identity; must not be null
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param proofKind established proof-of-possession result; must not be null
+     * @param command validated end-entity issuance command; must not be null
+     * @throws NullPointerException if a required value is null
+     * @throws IllegalArgumentException if the enrollment transport attributes are not canonical
+     */
     /* default */ VerifiedIssuanceCandidate(ParsedCertificationRequest request, PkiId fingerprint,
             EncodedObject exactPublicKey, ProofOfPossessionStatus proofKind, IssueEndEntityCommand command) {
         this(request, fingerprint, exactPublicKey, proofKind, command, true);
@@ -97,6 +108,11 @@ public final class VerifiedIssuanceCandidate {
      * The inherited proof status is {@link ProofOfPossessionStatus#VERIFIED}: the
      * subject public key is unchanged from the predecessor and was proven at
      * original issuance.
+     * @param request request reconstructed from an issued predecessor certificate
+     * @param fingerprint reconstructed request identity; must not be null
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param command validated lifecycle issuance command; must not be null
+     * @return candidate retaining original issuance proof status without CSR transport evidence
      */
     /* default */ static VerifiedIssuanceCandidate reconstructed(ParsedCertificationRequest request, PkiId fingerprint,
             EncodedObject exactPublicKey, IssueEndEntityCommand command) {
@@ -167,6 +183,14 @@ public final class VerifiedIssuanceCandidate {
         return validityOverride;
     }
 
+    /**
+     * Copies a parsed enrollment request with its canonical CSR or CRMF evidence.
+     *
+     * @param source verified request to snapshot; must not be null
+     * @return request snapshot with independent encoded-key and transport-evidence storage
+     * @throws NullPointerException if source is null
+     * @throws IllegalArgumentException if transport evidence is missing or noncanonical
+     */
     /* default */ static ParsedCertificationRequest snapshot(ParsedCertificationRequest source) {
         return snapshot(source, true);
     }
@@ -201,6 +225,13 @@ public final class VerifiedIssuanceCandidate {
                 List.of(new AttributeValue.BytesValue(bytesValue.value().clone())))));
     }
 
+    /**
+     * Copies an attribute set into an immutable snapshot without retaining mutable entry lists.
+     *
+     * @param source attribute set to snapshot; must not be null
+     * @return immutable attribute set preserving all attribute values
+     * @throws NullPointerException if source is null
+     */
     /* default */ static AttributeSet snapshotAttributes(AttributeSet source) {
         List<SimpleAttributeSet.Entry> entries = new ArrayList<>();
         for (AttributeId id : source.ids()) {

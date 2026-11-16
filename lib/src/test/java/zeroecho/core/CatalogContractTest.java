@@ -77,9 +77,18 @@ import zeroecho.core.spi.SymmetricKeyGenerator;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for catalog contract.
+ */
 public class CatalogContractTest {
     private static ZeroEchoSession session;
 
+    /**
+     * Resolves the first configured logging level along a logger's parent chain.
+     *
+     * @param lg logger whose effective level is requested
+     * @return configured inherited level, or INFO when no ancestor supplies one
+     */
     static Level effectiveLevel(Logger lg) {
         for (Logger x = lg; x != null; x = x.getParent()) {
             if (x.getLevel() != null) {
@@ -89,6 +98,11 @@ public class CatalogContractTest {
         return null;
     }
 
+    /**
+     * Prints the selected logger's effective level for fixture diagnostics.
+     *
+     * @param name logger name to inspect
+     */
     static void dump(String name) {
         Logger lg = Logger.getLogger(name);
         System.out.println("[" + name + "] level=" + lg.getLevel() + " effective=" + effectiveLevel(lg) + " useParent="
@@ -98,6 +112,9 @@ public class CatalogContractTest {
         }
     }
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     public static void setupProvider() {
         BouncyCastleActivator.init();
@@ -157,6 +174,11 @@ public class CatalogContractTest {
 
     // ---------- Tests ----------
 
+    /**
+     * Checks that the discovered algorithm catalog exposes usable capabilities.
+     *
+     * @throws TransformerException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void catalogSane() throws TransformerException {
         logBegin();
@@ -167,6 +189,11 @@ public class CatalogContractTest {
         logEnd();
     }
 
+    /**
+     * Exercises generic key generation and operation round trips from catalog metadata.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void genericRoundTrips() throws Exception {
         logBegin();

@@ -171,6 +171,8 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
      * @return a stream that yields ciphertext (encrypt) or plaintext (decrypt)
      * @throws IOException on I/O or provider errors; includes IV length mismatches
      *                     and missing IV for decrypt
+     * @throws NullPointerException if {@code upstream} is null
+     * @throws ProviderFailureException if AES stream initialization fails
      */
     @Override
     public InputStream attach(InputStream upstream) throws IOException {
@@ -215,6 +217,9 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         /* no-op; stream finalizes itself */
@@ -310,12 +315,16 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
         }
     }
 
-    /** Single-use encryption lifecycle states. */
+    /**
+     * Single-use encryption lifecycle states.
+     */
     private enum OperationState {
         NEW, ENCRYPTING, COMPLETED, FAILED
     }
 
-    /** Marks the owning encryption context terminal as its stream is consumed. */
+    /**
+     * Marks the owning encryption context terminal as its stream is consumed.
+     */
     private final class LifecycleInputStream extends FilterInputStream {
         private boolean endOfInput;
 

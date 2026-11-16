@@ -43,7 +43,9 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
-/** Single-threaded, self-rescheduling audit-projection owner for one realm. */
+/**
+ * Single-threaded, self-rescheduling audit-projection owner for one realm.
+ */
 @SuppressWarnings({ "PMD.DoNotUseThreads", "PMD.AvoidUsingVolatile", "PMD.CommentDefaultAccessModifier" })
 final class AuditProjectionWorker implements AutoCloseable {
     private final AuditTransport audit;
@@ -59,6 +61,15 @@ final class AuditProjectionWorker implements AutoCloseable {
     private volatile AutoCloseable realmWakeRegistration;
     private final AtomicBoolean started = new AtomicBoolean();
 
+    /**
+     * Creates an unstarted owner for the realm's revocation and success-evidence projections.
+     *
+     * @param realm realm-owned projection, audit and wake services
+     * @param configuration per-pass record/sink bounds and scheduling intervals
+     * @param forcedShutdown maximum worker-join duration during forced shutdown
+     * @param clock retry eligibility time source
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ AuditProjectionWorker(ServerRealmContext realm,
             PkiServerConfiguration.AuditProjection configuration, Duration forcedShutdown, Clock clock) {
         this(Objects.requireNonNull(realm, "realm")::auditTransport,
@@ -66,12 +77,33 @@ final class AuditProjectionWorker implements AutoCloseable {
                 realm.reconciliationWakeSignal(), configuration, forcedShutdown, clock);
     }
 
+    /**
+     * Creates an unstarted revocation-only worker with an independent wake signal.
+     *
+     * @param audit safe aggregate-event recorder
+     * @param auditProjection synchronous revocation projection boundary
+     * @param configuration per-pass bounds and scheduling intervals
+     * @param forcedShutdown maximum worker-join duration
+     * @param clock retry eligibility time source
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ AuditProjectionWorker(AuditTransport audit, AuditProjection auditProjection,
             PkiServerConfiguration.AuditProjection configuration, Duration forcedShutdown, Clock clock) {
         this(audit, auditProjection, (records, sinkCalls, cancellation) -> EvidenceHint.idle(),
                 new RealmReconciliationWakeSignal(), configuration, forcedShutdown, clock);
     }
 
+    /**
+     * Creates an unstarted revocation-only worker sharing the realm wake signal.
+     *
+     * @param audit safe aggregate-event recorder
+     * @param auditProjection synchronous revocation projection boundary
+     * @param realmWake advisory reconciliation wake registration owner
+     * @param configuration per-pass bounds and scheduling intervals
+     * @param forcedShutdown maximum worker-join duration
+     * @param clock retry eligibility time source
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ AuditProjectionWorker(AuditTransport audit, AuditProjection auditProjection,
             RealmReconciliationWakeSignal realmWake, PkiServerConfiguration.AuditProjection configuration,
             Duration forcedShutdown, Clock clock) {
@@ -79,6 +111,18 @@ final class AuditProjectionWorker implements AutoCloseable {
                 realmWake, configuration, forcedShutdown, clock);
     }
 
+    /**
+     * Creates an unstarted single-thread owner for bounded audit and evidence projection passes.
+     *
+     * @param audit safe aggregate-event recorder
+     * @param auditProjection synchronous revocation projection boundary
+     * @param evidenceProjection synchronous registered success-evidence projection boundary
+     * @param realmWake advisory reconciliation wake registration owner
+     * @param configuration per-pass bounds and scheduling intervals
+     * @param forcedShutdown maximum worker-join duration
+     * @param clock retry eligibility time source
+     * @throws NullPointerException if a collaborator is null
+     */
     /* default */ AuditProjectionWorker(AuditTransport audit, AuditProjection auditProjection,
             EvidenceProjection evidenceProjection, RealmReconciliationWakeSignal realmWake,
             PkiServerConfiguration.AuditProjection configuration, Duration forcedShutdown, Clock clock) {
@@ -93,6 +137,11 @@ final class AuditProjectionWorker implements AutoCloseable {
         this.workerThread.setDaemon(true);
     }
 
+    /**
+     * Registers advisory realm wakeups and starts the daemon worker exactly once.
+     *
+     * @throws IllegalStateException if already started or shutdown has been requested
+     */
     @SuppressWarnings({ "PMD.CloseResource", "PMD.AvoidCatchingGenericException" })
     /* default */ void start() {
         if (cancelled.get() || !started.compareAndSet(false, true)) {
@@ -202,6 +251,13 @@ final class AuditProjectionWorker implements AutoCloseable {
         return hint;
     }
 
+    /**
+     * Chooses a bounded delay from completed-pass hints and coalesced wake requests.
+     *
+     * @param hints whether immediate work or a retry instant is known
+     * @param coalescedWake whether a wake arrived during the pass
+     * @return nonnegative delay no greater than the configured idle interval
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // A faulty clock degrades scheduling to the idle interval.
     /* default */ Duration nextDelay(PassHints hints, boolean coalescedWake) {
         if (hints.immediate() || coalescedWake) {
@@ -221,6 +277,13 @@ final class AuditProjectionWorker implements AutoCloseable {
         }
     }
 
+    /**
+     * Classifies whether a revocation projection can make another immediate bounded pass.
+     *
+     * @param result completed projection-pass observation
+     * @return whether the pass was neither blocked nor at the captured feed end
+     * @throws NullPointerException if result is null
+     */
     /* default */ static boolean auditImmediate(RevocationAuditProjector.PassResult result) {
         RevocationAuditProjector.PassResult exact = Objects.requireNonNull(result, "result");
         return !exact.blocked() && !exact.endReached();
@@ -235,6 +298,15 @@ final class AuditProjectionWorker implements AutoCloseable {
         }
     }
 
+    /**
+     * Requests cancellation and removes its advisory realm wake registration before waiting for the configured forced-shutdown bound.
+     *
+     * <p>Interrupted waiters have their interrupt status restored and receive an I/O
+     * failure. A timed-out worker remains owned so an external caller can retry closure.</p>
+     *
+     * @throws java.io.IOException if the waiting caller is interrupted
+     * @throws IllegalStateException if the worker remains alive after the configured bound
+     */
     @Override
     public void close() throws IOException {
         stopScheduling();
@@ -245,6 +317,9 @@ final class AuditProjectionWorker implements AutoCloseable {
         }
     }
 
+    /**
+     * Idempotently stops new scheduling, removes the wake registration and interrupts/unparks the worker.
+     */
     /* default */ void stopScheduling() {
         if (cancelled.compareAndSet(false, true)) {
             closeRegistration(realmWakeRegistration);
@@ -264,6 +339,12 @@ final class AuditProjectionWorker implements AutoCloseable {
         }
     }
 
+    /**
+     * Waits at most the configured forced-shutdown duration for a stopped worker.
+     *
+     * @throws InterruptedException if the waiting thread is interrupted
+     * @throws IllegalStateException if scheduling is still active or the worker does not stop within the bound
+     */
     /* default */ void awaitStopped() throws InterruptedException {
         if (!cancelled.get()) {
             throw new IllegalStateException("Audit projection worker is still accepting work");
@@ -275,49 +356,102 @@ final class AuditProjectionWorker implements AutoCloseable {
         }
     }
 
-    /** Safe aggregate projection audit boundary. */
+    /**
+     * Safe aggregate projection audit boundary.
+     */
     @FunctionalInterface
     /* default */
     interface AuditTransport {
-        /** Records one aggregate event without record or provider details. */
+        /**
+         * Records one aggregate event without per-record or provider details.
+         *
+         * @param eventType stable aggregate event category
+         * @param principal safe principal label
+         * @param details bounded safe aggregate counts and classification fields
+         */
         void record(String eventType, String principal, Map<String, String> details);
     }
 
-    /** Synchronous thread-confined authoritative-revocation audit projection boundary. */
+    /**
+     * Synchronous thread-confined authoritative-revocation audit projection boundary.
+     */
     @FunctionalInterface
     /* default */
     interface AuditProjection {
-        /** Projects one independently bounded pass on the worker thread. */
+        /**
+         * Projects one independently bounded revocation-audit pass on the owner thread.
+         *
+         * @param maximumRecords maximum transitions examined
+         * @param maximumSinkCalls maximum audit-sink delivery calls
+         * @param cancellation shutdown/cancellation observation signal
+         * @return counts and scheduling hints from the bounded pass
+         * @throws IOException if source observation or durable cursor persistence fails
+         */
         RevocationAuditProjector.PassResult project(int maximumRecords, int maximumSinkCalls,
                 zeroecho.core.io.CancellationSignal cancellation) throws IOException;
     }
 
-    /** Synchronous thread-confined boundary for the generic per-family success-evidence projections. */
+    /**
+     * Synchronous thread-confined boundary for the generic per-family success-evidence projections.
+     */
     @FunctionalInterface
     /* default */
     interface EvidenceProjection {
-        /** Runs one bounded pass over every registered evidence projector on the worker thread. */
+        /**
+         * Runs a bounded pass over every registered success-evidence projector.
+         *
+         * @param maximumRecords maximum records examined per projector
+         * @param maximumSinkCalls maximum audit-sink calls per projector
+         * @param cancellation shutdown/cancellation observation signal
+         * @return aggregate immediate-work and earliest-retry scheduling hints
+         */
         EvidenceHint run(int maximumRecords, int maximumSinkCalls,
                 zeroecho.core.io.CancellationSignal cancellation);
     }
 
-    /** Evidence-projection scheduling classification. */
+    /**
+     * Work-conserving scheduling observation from a completed projection pass.
+     *
+     * @param immediate whether another pass can run immediately
+     * @param nextEligible earliest known retry instant, or empty when no retry is pending
+     */
     /* default */ record EvidenceHint(boolean immediate, Optional<Instant> nextEligible) {
+        /**
+         * Requires an explicit retry-eligibility container.
+         *
+         * @param immediate whether another pass can run immediately
+         * @param nextEligible earliest retry instant, or empty
+         * @throws NullPointerException if the optional container is null
+         */
         /* default */ EvidenceHint {
             nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         }
         private static EvidenceHint idle() { return new EvidenceHint(false, Optional.empty()); }
     }
 
-    /** Work-conserving scheduling hints from one audit and evidence pass. */
+    /**
+     * Work-conserving scheduling observation from a completed projection pass.
+     *
+     * @param immediate whether another pass can run immediately
+     * @param nextEligible earliest known retry instant, or empty when no retry is pending
+     */
     /* default */ record PassHints(boolean immediate, Optional<Instant> nextEligible) {
+        /**
+         * Requires an explicit retry-eligibility container.
+         *
+         * @param immediate whether another pass can run immediately
+         * @param nextEligible earliest retry instant, or empty
+         * @throws NullPointerException if the optional container is null
+         */
         PassHints {
             nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         }
         private static PassHints idle() { return new PassHints(false, Optional.empty()); }
     }
 
-    /** Audit phase scheduling classification. */
+    /**
+     * Audit phase scheduling classification.
+     */
     private record AuditHint(boolean immediate, Optional<Instant> nextEligible) {
         private AuditHint { nextEligible = Objects.requireNonNull(nextEligible, "nextEligible"); }
     }

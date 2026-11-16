@@ -60,10 +60,21 @@ import zeroecho.pki.api.backup.BackupSource;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 
+/**
+ * Checks domain backup preparation and exact owner-bound upload, download and restore transfer lifecycles.
+ */
 class BackupTransferServiceTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
     private static final Instant NOW = Instant.parse("2026-10-06T12:00:00Z");
 
+    /**
+     * Checks export keeps byte/workspace reservations pinned through verification and source closure even when artifact lifetime elapses.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void exportPinsExpiredReservationThroughVerificationAndSourceClose() throws Exception {
         java.util.concurrent.atomic.AtomicReference<Instant> instant = new java.util.concurrent.atomic.AtomicReference<>(NOW);
         Clock clock = new Clock() {
@@ -107,6 +118,12 @@ class BackupTransferServiceTest {
         }
     }
 
+    /**
+     * Checks only cold-start authoritative observation can reject an uncertain restore that never reached domain dispatch.
+     *
+     * @param priorCase retained predecessor-restore observation selected by the scenario
+     * @throws Exception if fixture setup, restore observation or durable reconciliation fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"none", "prior", "unrelated"})
     void crashBeforeDomainDispatchIsRejectedOnlyOnColdServiceOpen(String priorCase) throws Exception {
@@ -170,6 +187,11 @@ class BackupTransferServiceTest {
                 Clock.fixed(now, ZoneOffset.UTC), new SecureRandom()), () -> { });
     }
 
+    /**
+     * Exercises export/import verification and staged restore, then checks retained workflow status survives archive expiry and cold activation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void exportUploadVerifyRestoreAndExpiredStatusSurviveColdActivation() throws Exception {
         String workflow;
         Path root = directory.resolve("store");

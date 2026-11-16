@@ -46,8 +46,15 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.testkit.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Large immutable status exports remain streaming, integrity checked and provider owned. */
+/**
+ * Large immutable status exports remain streaming, integrity checked and provider owned.
+ */
 class StatusExportsTest {
+    /**
+     * Streaming PEM handles chunk edges repeated EOF cancellation and lease closure.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void streamingPemHandlesChunkEdgesRepeatedEofCancellationAndLeaseClosure() throws Exception {
         for(int size:new int[]{1,47,48,49,49152,49153,98304}) {
             byte[] bytes=new byte[size];new java.util.Random(17).nextBytes(bytes);
@@ -67,6 +74,12 @@ class StatusExportsTest {
             assertThrows(java.io.IOException.class,cancelled::openStream);
         }
     }
+    /**
+     * Exports large CRL and generic native without certificate buffer limit.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exportsLargeCrlAndGenericNativeWithoutCertificateBufferLimit(@TempDir Path directory) throws Exception {
         var keys = java.security.KeyPairGenerator.getInstance("RSA"); keys.initialize(2048); var pair = keys.generateKeyPair();
         var now = java.time.Instant.parse("2026-01-01T00:00:00Z");

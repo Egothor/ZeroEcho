@@ -49,9 +49,20 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for backup sink.
+ */
 class BackupSinkTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Repeats input and transfers delete ownership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void repeatsInputAndTransfersDeleteOwnership() throws Exception {
         byte[] data = new byte[] { 1, 2, 3, 4 };
         BackupSource source;
@@ -71,6 +82,11 @@ class BackupSinkTest {
         assertEmpty();
     }
 
+    /**
+     * Refuses excess before writing and cannot complete failed sink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void refusesExcessBeforeWritingAndCannotCompleteFailedSink() throws Exception {
         BackupLimits limits = new BackupLimits(4, 4, 4, 2, 8, 4, 1, 4, 4);
         try (BackupSink sink = BackupSink.create(directory, new PkiId("test"), limits)) {
@@ -81,6 +97,11 @@ class BackupSinkTest {
         assertEmpty();
     }
 
+    /**
+     * Aborts partial input and rejects non atomic publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void abortsPartialInputAndRejectsNonAtomicPublication() throws Exception {
         try (BackupSink sink = new FileBackupSink(directory, new PkiId("test"), BackupLimits.defaults(),
                 new FileBackupSink.Operations() {
@@ -94,6 +115,11 @@ class BackupSinkTest {
         assertEmpty();
     }
 
+    /**
+     * Reports cleanup failure and allows retry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void reportsCleanupFailureAndAllowsRetry() throws Exception {
         boolean[] fail = { true };
         BackupSink sink = new FileBackupSink(directory, new PkiId("test"), BackupLimits.defaults(),
@@ -110,6 +136,11 @@ class BackupSinkTest {
         assertEmpty();
     }
 
+    /**
+     * Publication force failure leaves no consumable artifact.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void publicationForceFailureLeavesNoConsumableArtifact() throws Exception {
         try (BackupSink sink = new FileBackupSink(directory, new PkiId("test"), BackupLimits.defaults(),
                 new FileBackupSink.Operations() {
@@ -127,6 +158,11 @@ class BackupSinkTest {
         try (java.util.stream.Stream<Path> paths = Files.list(directory)) { assertTrue(paths.findAny().isEmpty()); }
     }
 
+    /**
+     * Partial output failure cannot publish.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void partialOutputFailureCannotPublish() throws Exception {
         try (BackupSink sink = new FileBackupSink(directory, new PkiId("partial"), BackupLimits.defaults(),
                 new FileBackupSink.Operations() {

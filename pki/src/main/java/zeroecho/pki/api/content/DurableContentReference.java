@@ -107,11 +107,17 @@ public interface DurableContentReference {
      * Durable ownership classification.
      */
     enum Lifecycle {
-        /** Content retained while a durable operation is pending. */
+        /**
+         * Content retained while a durable operation is pending.
+         */
         OPERATION,
-        /** Content owned by an immutable persisted PKI object. */
+        /**
+         * Content owned by an immutable persisted PKI object.
+         */
         PERSISTED,
-        /** Content eligible for release after its immediate operation. */
+        /**
+         * Content eligible for release after its immediate operation.
+         */
         TEMPORARY
     }
 }

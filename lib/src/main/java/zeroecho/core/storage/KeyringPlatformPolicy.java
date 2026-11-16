@@ -83,6 +83,9 @@ import zeroecho.core.storage.KeyringException.Code;
  */
 interface KeyringPlatformPolicy {
 
+    /**
+     * Platform filesystem-security policy selected once for the current operating system.
+     */
     KeyringPlatformPolicy INSTANCE = resolve();
 
     /**
@@ -142,11 +145,15 @@ interface KeyringPlatformPolicy {
     void forceDirectory(Path parent) throws IOException;
 
     /**
+     * Returns create-time attributes for a new owner-only keyring file.
+     *
      * @return create-time attributes for a new owner-only keyring file
      */
     FileAttribute<?>[] fileCreateAttributes();
 
     /**
+     * Returns create-time attributes for a new owner-only keyring directory.
+     *
      * @return create-time attributes for a new owner-only keyring directory
      */
     FileAttribute<?>[] directoryCreateAttributes();
@@ -164,9 +171,14 @@ interface KeyringPlatformPolicy {
     }
 }
 
-/** POSIX keyring policy — identical to the keyring's original inlined behaviour. */
+/**
+ * POSIX keyring policy — identical to the keyring's original inlined behaviour.
+ */
 final class PosixKeyringPolicy implements KeyringPlatformPolicy {
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public Path securePath(final Path requested, final boolean createParent) throws IOException {
@@ -201,6 +213,9 @@ final class PosixKeyringPolicy implements KeyringPlatformPolicy {
     }
 
     // The public keyring boundary deliberately exposes only its redacted stable error code.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     @Override
     public void validateExistingFile(final Path file, final UserPrincipal expectedOwner) throws IOException {
@@ -223,6 +238,9 @@ final class PosixKeyringPolicy implements KeyringPlatformPolicy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateOwnerOnly(final Path path, final boolean directory) throws IOException {
         PosixFileAttributes attributes = Files.readAttributes(path, PosixFileAttributes.class,
@@ -234,11 +252,17 @@ final class PosixKeyringPolicy implements KeyringPlatformPolicy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void restrictToOwner(final Path path, final boolean directory) {
         // No-op: the create-time POSIX permission bits already enforce owner-only.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceDirectory(final Path parent) throws IOException {
         try (java.nio.channels.FileChannel directory = java.nio.channels.FileChannel.open(parent,
@@ -247,22 +271,33 @@ final class PosixKeyringPolicy implements KeyringPlatformPolicy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] fileCreateAttributes() {
         return new FileAttribute<?>[] { KeyringStore.FILE_ATTRIBUTE };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] directoryCreateAttributes() {
         return new FileAttribute<?>[] { KeyringStore.DIRECTORY_ATTRIBUTE };
     }
 }
 
-/** Windows (NTFS/ACL) keyring policy. */
+/**
+ * Windows (NTFS/ACL) keyring policy.
+ */
 final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
 
     private static final FileAttribute<?>[] NO_ATTRIBUTES = new FileAttribute<?>[0];
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")
     public Path securePath(final Path requested, final boolean createParent) throws IOException {
@@ -301,6 +336,9 @@ final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
         return absolute;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateExistingFile(final Path file, final UserPrincipal expectedOwner) throws IOException {
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file)) {
@@ -316,6 +354,9 @@ final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
         // create a hard link to the keyring inside an owner-only directory.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateOwnerOnly(final Path path, final boolean directory) throws IOException {
         AclFileAttributeView view = Files.getFileAttributeView(path, AclFileAttributeView.class,
@@ -340,6 +381,9 @@ final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void restrictToOwner(final Path path, final boolean directory) throws IOException {
         AclFileAttributeView view = Files.getFileAttributeView(path, AclFileAttributeView.class,
@@ -359,16 +403,25 @@ final class WindowsKeyringPolicy implements KeyringPlatformPolicy {
         view.setAcl(List.of(builder.build()));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceDirectory(final Path parent) {
         // Correct no-op: durability is carried by the write-through atomic publish.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] fileCreateAttributes() {
         return NO_ATTRIBUTES;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] directoryCreateAttributes() {
         return NO_ATTRIBUTES;

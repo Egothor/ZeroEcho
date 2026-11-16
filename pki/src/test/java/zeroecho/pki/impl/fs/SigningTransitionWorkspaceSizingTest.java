@@ -39,8 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing transition workspace sizing.
+ */
 final class SigningTransitionWorkspaceSizingTest {
 
+    /**
+     * Derives avl height from minimum population boundary.
+     */
     @Test
     void derivesAvlHeightFromMinimumPopulationBoundary() {
         assertEquals(28, SigningTransitionWorkspaceSizing.maximumAvlHeight(832_039));
@@ -50,6 +56,9 @@ final class SigningTransitionWorkspaceSizingTest {
                 () -> SigningTransitionWorkspaceSizing.maximumAvlHeight(0));
     }
 
+    /**
+     * Enumerates accepted and post invocation semantic mutation bounds.
+     */
     @Test
     void enumeratesAcceptedAndPostInvocationSemanticMutationBounds() {
         assertEquals(4, SigningTransitionWorkspaceSizing.Transition.CREATE_INTENT
@@ -81,6 +90,9 @@ final class SigningTransitionWorkspaceSizingTest {
         }
     }
 
+    /**
+     * Derives default floor from lifecycle admission bound.
+     */
     @Test
     void derivesDefaultFloorFromLifecycleAdmissionBound() {
         SigningActiveWal.Configuration configuration = SigningActiveWal.Configuration.defaults();
@@ -104,6 +116,9 @@ final class SigningTransitionWorkspaceSizingTest {
         assertEquals(4_030_464L, derived.workspaceFloorBytes());
     }
 
+    /**
+     * Ordinary work cannot consume protected accepted signing floor.
+     */
     @Test
     void ordinaryWorkCannotConsumeProtectedAcceptedSigningFloor() {
         for (SigningTransitionWorkspaceSizing.OrdinaryOperation operation
@@ -129,6 +144,9 @@ final class SigningTransitionWorkspaceSizingTest {
         assertEquals(323_200L, purge.maximumBytes());
     }
 
+    /**
+     * Rejects concurrency beyond shared lifecycle gate capacity.
+     */
     @Test
     void rejectsConcurrencyBeyondSharedLifecycleGateCapacity() {
         assertThrows(IllegalArgumentException.class,

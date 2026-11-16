@@ -71,6 +71,7 @@ public final class SigningTransitionRecorder {
      * @param store authoritative signing store to sample
      * @param submissionId exact submission identifier
      * @return the first retained observation for the identifier
+     * @throws NullPointerException if any of {@code store}, {@code submissionId} is null
      */
     public Observation sample(SignWorkflowStore store, PkiId submissionId) {
         SignWorkflowStore exactStore = Objects.requireNonNull(store, "store");
@@ -100,6 +101,7 @@ public final class SigningTransitionRecorder {
      *
      * @param submissionId exact submission identifier
      * @return retained observation, or empty when the identifier was never sampled
+     * @throws NullPointerException if {@code submissionId} is null
      */
     public Optional<Observation> firstObservation(PkiId submissionId) {
         return Optional.ofNullable(firstObservations.get(
@@ -114,7 +116,12 @@ public final class SigningTransitionRecorder {
      * @param state first observed durable state, or empty for absence
      */
     public record Observation(Optional<SignWorkflowStore.State> state) {
-        /** Validates the immutable observation. */
+        /**
+         * Validates the immutable observation.
+         *
+         * @param state first observed durable signing state, or empty when no intent was retained
+         * @throws NullPointerException if the state optional is null
+         */
         public Observation {
             state = Objects.requireNonNull(state, "state");
         }

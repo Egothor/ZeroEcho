@@ -39,10 +39,31 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.server.acme.AcmeState;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 
-/** Compiled against the pre-change server artifact for binary compatibility validation. */
+/**
+ * Compiled against the pre-change server artifact for binary compatibility validation.
+ */
 public final class LegacyProvider implements AcmeChallengeProvider {
+    /**
+     * Returns the stable fixture provider identity used for ServiceLoader selection.
+     *
+     * @return fixed nonblank fixture provider identifier
+     */
     public String id() { return "legacy-challenge"; }
+    /**
+     * Returns the sole challenge kind supported by this compatibility fixture.
+     *
+     * @return immutable singleton set containing DNS-01
+     */
     public Set<AcmeState.ChallengeType> challengeTypes() { return Set.of(AcmeState.ChallengeType.DNS_01); }
+    /**
+     * Asserts exact fixture challenge transport and returns a deterministic successful validation.
+     *
+     * @param context exact immutable challenge context under compatibility test
+     * @param configuration fixture provider configuration
+     * @param cancellation uncancelled fixture signal
+     * @return successful validation retaining the context evaluation/deadline instants
+     * @throws AssertionError if the challenge context, configuration, or cancellation binding differs
+     */
     public Result validate(Context context, ProviderConfig configuration, CancellationSignal cancellation) {
         Context copied = new Context(context.directoryId(), context.authorizationId(), context.identifier(),
                 context.challengeType(), context.token(), context.expectedKeyAuthorization(), context.attempt(),

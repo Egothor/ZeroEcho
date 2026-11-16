@@ -90,12 +90,20 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for end entity lifecycle signing preparation.
+ */
 final class EndEntityLifecycleSigningPreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00Z");
     private static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "lifecycle-actor"),
             new Purpose("LIFECYCLE"), Optional.empty(), Optional.empty());
     private static byte[] csr;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         EndEntityLifecyclePreparationTest.keys();
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -103,6 +111,12 @@ final class EndEntityLifecycleSigningPreparationTest {
         csr = EndEntityLifecyclePreparationTest.csr(generator.generateKeyPair());
     }
 
+    /**
+     * All lifecycle preparations freeze bindings and share single staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void allLifecyclePreparationsFreezeBindingsAndShareSingleStaging(@TempDir Path root) throws Exception {
         for (String operation : List.of("RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY")) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(operation))) {
@@ -165,6 +179,12 @@ final class EndEntityLifecycleSigningPreparationTest {
         }
     }
 
+    /**
+     * Conflicting supplied access coordinates reject before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void conflictingSuppliedAccessCoordinatesRejectBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root)) {
             Credential leaf = leaf(store);
@@ -185,6 +205,12 @@ final class EndEntityLifecycleSigningPreparationTest {
         }
     }
 
+    /**
+     * Lifecycle evidence binds before staging and survives acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lifecycleEvidenceBindsBeforeStagingAndSurvivesAcceptance(@TempDir Path root) throws Exception {
         for (String operation : List.of("RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY")) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(operation))) {
@@ -230,6 +256,12 @@ final class EndEntityLifecycleSigningPreparationTest {
         }
     }
 
+    /**
+     * Cancellation and adoption failure clean every lifecycle candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationAndAdoptionFailureCleanEveryLifecycleCandidate(@TempDir Path root) throws Exception {
         for (String operation : List.of("RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY")) {
             try (FilesystemPkiStore store = EndEntityLifecyclePreparationTest.fixture(root.resolve(operation))) {

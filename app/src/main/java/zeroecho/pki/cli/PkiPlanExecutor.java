@@ -49,15 +49,35 @@ import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Sequential shared executor used by direct commands and batch plans. */
+/**
+ * Sequential shared executor used by direct commands and batch plans.
+ */
 final class PkiPlanExecutor {
 
     private final PkiOperationRegistry registry;
 
+    /**
+     * Creates an executor using the given typed operation registry.
+     *
+     * @param registry registry borrowed for all steps; must not be null
+     * @throws NullPointerException if registry is null
+     */
     /* default */ PkiPlanExecutor(PkiOperationRegistry registry) {
         this.registry = Objects.requireNonNull(registry, "registry");
     }
 
+    /**
+     * Executes the plan in order, resolving references only from successful earlier steps.
+     *
+     * <p>Applies the plan failure policy and cooperative cancellation without submitting
+     * skipped steps. Individual binding, input, and execution failures become step outcomes.</p>
+     *
+     * @param plan validated plan with its relative-input base directory; must not be null
+     * @param transport execution transport borrowed for this call; must not be null
+     * @param cancellation cooperative cancellation signal; must not be null
+     * @return ordered result for every step, including failures and skipped operations
+     * @throws NullPointerException if a required collaborator is null when used
+     */
     /* default */ PkiPlanExecution execute(PkiPlan plan, PkiOperationTransport transport,
             CancellationSignal cancellation) {
         List<PkiPlanExecution.StepResult> results = new ArrayList<>(plan.steps().size());

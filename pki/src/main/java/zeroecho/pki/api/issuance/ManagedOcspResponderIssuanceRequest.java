@@ -43,41 +43,94 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.request.SubjectRdn;
 
 /**
- * Frozen request to provision a dedicated managed OCSP responder certificate.
- * It grants no key generation, signing, profile or issuer authority. Caller intent
- * identifiers are not provisioning uniqueness keys; actual public SPKIs determine the slot.
- * @param authorityId logical authority @param primaryKeyRef existing managed primary subject key
- * @param alternativeKeyRef existing managed alternative subject key @param subject ordered subject RDNs
- * @param validity absolute requested validity @param intent exact issuer/profile/path selection
- * @param expectedPredecessorCredentialId explicit same-slot renewal predecessor, absent initially
+ * Captures the requested certificate for an existing pair of managed OCSP responder keys.
+ *
+ * <p>The request contains key references, not private key material. Creating it neither
+ * generates keys nor grants signing, profile or issuer authority. Provisioning resolves
+ * the actual public keys to determine the uniqueness slot; an intent identifier is not
+ * a substitute for that public-key identity.
+ *
+ * <p>The subject list is copied on construction and exposed as an unmodifiable list.
+ * Issuer, profile, path and key eligibility are checked by the issuance workflow,
+ * separately from the structural validation performed by this record.
+ *
+ * @param authorityId logical issuer authority; must not be {@code null}
+ * @param primaryKeyRef existing managed primary subject key; must not be {@code null}
+ * @param alternativeKeyRef existing managed alternative subject key, distinct from the
+ *        primary reference; must not be {@code null}
+ * @param subject ordered subject RDNs, containing between 1 and 32 non-null entries
+ * @param validity absolute requested validity; must not be {@code null}
+ * @param intent exact issuer, profile and path selection; must not be {@code null}
+ * @param expectedPredecessorCredentialId same-slot renewal predecessor, or an empty
+ *        optional for initial provisioning; the optional must not be {@code null}
  */
 public record ManagedOcspResponderIssuanceRequest(PkiId authorityId, KeyRef primaryKeyRef, KeyRef alternativeKeyRef,
         List<SubjectRdn> subject, Validity validity, IssuanceIntent intent, Optional<PkiId> expectedPredecessorCredentialId) {
-    /** Validates bounded immutable inputs without resolving keys or admitting an operation. */
+    /**
+     * Validates request structure and takes an immutable snapshot of the subject list.
+     *
+     * <p>No managed key is resolved and no operation is admitted. Each key reference is
+     * limited to 1,048,576 UTF-8 bytes; authority and predecessor identifiers use the
+     * bounded issuance-identifier contract.
+     *
+     * @throws NullPointerException if a required component or subject entry is null
+     * @throws IllegalArgumentException if an identifier is invalid, the key references
+     *         are equal or oversized, or the subject count is outside 1 through 32
+     * @param authorityId logical issuer authority; must not be {@code null}
+     * @param primaryKeyRef existing managed primary subject key; must not be {@code null}
+     * @param alternativeKeyRef existing managed alternative subject key, distinct from the primary reference; must not be {@code null}
+     * @param subject ordered subject RDNs, containing between 1 and 32 non-null entries
+     * @param validity absolute requested validity; must not be {@code null}
+     * @param intent exact issuer, profile and path selection; must not be {@code null}
+     * @param expectedPredecessorCredentialId same-slot renewal predecessor, or an empty optional for initial provisioning; the optional must not be {@code null}
+     */
     public ManagedOcspResponderIssuanceRequest {
         Objects.requireNonNull(authorityId, "authorityId");
         CorrelatedEndEntityIssuanceRequest.requireBoundedIdentifier(authorityId.value());
-        Objects.requireNonNull(primaryKeyRef, "primaryKeyRef"); Objects.requireNonNull(alternativeKeyRef, "alternativeKeyRef");
+        Objects.requireNonNull(primaryKeyRef, "primaryKeyRef");
+        Objects.requireNonNull(alternativeKeyRef, "alternativeKeyRef");
         for (KeyRef key : List.of(primaryKeyRef, alternativeKeyRef)) {
-            if (key.value().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1_048_576) throw new IllegalArgumentException("Managed key reference exceeds bound");
+            if (key.value().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1_048_576) {
+                throw new IllegalArgumentException("Managed key reference exceeds bound");
+            }
         }
-        if (primaryKeyRef.equals(alternativeKeyRef)) throw new IllegalArgumentException("Responder roles require distinct keys");
+        if (primaryKeyRef.equals(alternativeKeyRef)) {
+            throw new IllegalArgumentException("Responder roles require distinct keys");
+        }
         subject = List.copyOf(subject);
-        if (subject.isEmpty() || subject.size() > 32) throw new IllegalArgumentException("Responder subject exceeds bound");
-        Objects.requireNonNull(validity, "validity"); Objects.requireNonNull(intent, "intent");
+        if (subject.isEmpty() || subject.size() > 32) {
+            throw new IllegalArgumentException("Responder subject exceeds bound");
+        }
+        Objects.requireNonNull(validity, "validity");
+        Objects.requireNonNull(intent, "intent");
         expectedPredecessorCredentialId = Objects.requireNonNull(expectedPredecessorCredentialId, "expectedPredecessorCredentialId");
         expectedPredecessorCredentialId.ifPresent(id -> CorrelatedEndEntityIssuanceRequest.requireBoundedIdentifier(id.value()));
     }
     /**
-     * Preserves initial provisioning without an explicit renewal predecessor.
-     * @param authorityId logical authority @param primaryKeyRef existing primary key
-     * @param alternativeKeyRef existing alternative key @param subject ordered RDNs
-     * @param validity absolute validity @param intent exact immutable selection
+     * Creates an initial-provisioning request without a renewal predecessor.
+     *
+     * @param authorityId logical issuer authority; must not be {@code null}
+     * @param primaryKeyRef existing managed primary subject key; must not be {@code null}
+     * @param alternativeKeyRef distinct existing managed alternative subject key;
+     *        must not be {@code null}
+     * @param subject ordered subject RDNs, containing between 1 and 32 non-null entries
+     * @param validity absolute requested validity; must not be {@code null}
+     * @param intent exact issuer, profile and path selection; must not be {@code null}
+     * @throws NullPointerException if a required component or subject entry is null
+     * @throws IllegalArgumentException if an identifier, key reference or subject count
+     *         violates the canonical constructor's bounds
      */
     public ManagedOcspResponderIssuanceRequest(PkiId authorityId, KeyRef primaryKeyRef, KeyRef alternativeKeyRef,
             List<SubjectRdn> subject, Validity validity, IssuanceIntent intent) {
         this(authorityId, primaryKeyRef, alternativeKeyRef, subject, validity, intent, Optional.empty());
     }
-    /** @return redacted diagnostic without key or subject coordinates */
-    @Override public String toString() { return "ManagedOcspResponderIssuanceRequest[redacted]"; }
+    /**
+     * Returns a diagnostic label without exposing key, issuer or subject coordinates.
+     *
+     * @return the fixed redacted request label
+     */
+    @Override
+    public String toString() {
+        return "ManagedOcspResponderIssuanceRequest[redacted]";
+    }
 }

@@ -55,8 +55,14 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
 
+/**
+ * Contract and regression tests for ECDSA large data.
+ */
 public class EcdsaLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // No special provider needed for JDK 21+ SunEC.
@@ -200,16 +206,31 @@ public class EcdsaLargeDataTest {
         logEnd();
     }
 
+    /**
+     * ECDSA p256 streaming sign verify and cross-check with JCA.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ecdsa_p256_streaming_sign_verify_and_crosscheck_with_jca() throws Exception {
         runCase(EcdsaCurveSpec.P256, 48 * 1024 + 123);
     }
 
+    /**
+     * ECDSA p384 streaming sign verify and cross-check with JCA.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ecdsa_p384_streaming_sign_verify_and_crosscheck_with_jca() throws Exception {
         runCase(EcdsaCurveSpec.P384, 48 * 1024 + 127);
     }
 
+    /**
+     * ECDSA p521 streaming sign verify and cross-check with JCA.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ecdsa_p521_streaming_sign_verify_and_crosscheck_with_jca() throws Exception {
         runCase(EcdsaCurveSpec.P512, 48 * 1024 + 131);

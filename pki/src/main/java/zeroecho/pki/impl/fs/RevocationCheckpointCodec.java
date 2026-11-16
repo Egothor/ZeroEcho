@@ -64,12 +64,26 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Strict streaming codec for one immutable current-state checkpoint. */
+/**
+ * Strict streaming codec for one immutable current-state checkpoint.
+ */
 final class RevocationCheckpointCodec {
 
+    /**
+     * Fixed encoded header length in bytes.
+     */
     /* default */ static final int HEADER_BYTES = 128;
+    /**
+     * Fixed encoded integrity trailer length in bytes.
+     */
     /* default */ static final int TRAILER_BYTES = 48;
+    /**
+     * Encoded digest length in bytes.
+     */
     /* default */ static final int DIGEST_BYTES = 32;
+    /**
+     * Inclusive maximum encoded component length in bytes.
+     */
     /* default */ static final int MAX_COMPONENT_BYTES =
             RevocationTransitionFrameCodec.MAX_COMPONENT_BYTES;
 
@@ -90,24 +104,57 @@ final class RevocationCheckpointCodec {
             "ZeroEcho revocation checkpoint record v1".getBytes(StandardCharsets.US_ASCII);
     private static final HexFormat HEX = HexFormat.of();
 
+    /**
+     * Starts a checkpoint encoder by positioning and truncating the borrowed channel and writing its header. The caller retains responsibility for forcing and closing the channel.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param header validated checkpoint header and declared entry count
+     * @return new encoder borrowing the channel
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or header is null
+     * @throws IllegalArgumentException if header coordinates or genesis framing are invalid
+     */
     /* default */ Encoder encoder(FileChannel channel, HeaderData header) throws IOException {
         return new Encoder(channel, header);
     }
 
+    /**
+     * Authenticates checkpoint framing, records and trailer and returns the validated file identity. The borrowed channel remains open.
+     *
+     * @param channel borrowed channel, which remains open
+     * @return authenticated header, generation identity and trailer boundary
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ ValidatedFile validate(FileChannel channel) throws IOException {
         return DecoderOperations.validate(channel);
     }
 
+    /**
+     * Decodes and authenticates one bounded record before the supplied trailer boundary, using a fresh decoder.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param recordOffset byte offset of the next record
+     * @param trailerOffset exclusive record-region boundary
+     * @return decoded entry and offset immediately following it
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ DecodedRecord readRecord(
             FileChannel channel, long recordOffset, long trailerOffset) throws IOException {
         return new SequentialDecoder().read(channel, recordOffset, trailerOffset);
     }
 
+    /**
+     * Creates an independent decoder whose scratch storage can be reused for sequential record reads.
+     *
+     * @return new independent reusable decoder
+     */
     /* default */ SequentialDecoder sequentialDecoder() {
         return new SequentialDecoder();
     }
 
-    /** Structural validation is isolated to keep the codec facade cohesive. */
+    /**
+     * Structural validation is isolated to keep the codec facade cohesive.
+     */
     private static final class DecoderOperations {
         private static ValidatedFile validate(FileChannel channel) throws IOException {
             Objects.requireNonNull(channel, "channel");
@@ -259,10 +306,21 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Reuses one bounded transfer buffer across a sequential record pass. */
+    /**
+     * Reuses one bounded transfer buffer across a sequential record pass.
+     */
     /* default */ static final class SequentialDecoder {
         private final ByteBuffer input = ByteBuffer.allocate(TRANSFER_BYTES);
 
+        /**
+         * Decodes and authenticates one record within the supplied trailer boundary using this decoder's reusable scratch storage.
+         *
+         * @param channel borrowed channel, which remains open
+         * @param recordOffset byte offset of the next record
+         * @param trailerOffset exclusive record-region boundary
+         * @return decoded authenticated entry and next byte offset
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         /* default */ DecodedRecord read(
                 FileChannel channel, long recordOffset, long trailerOffset) throws IOException {
             return DecoderOperations.decodeRecord(channel, recordOffset, trailerOffset, input);
@@ -388,6 +446,14 @@ final class RevocationCheckpointCodec {
         return true;
     }
 
+    /**
+     * Encodes text as strict UTF-8, rejecting malformed Unicode and components exceeding the technical byte bound.
+     *
+     * @param value value to encode
+     * @return new strict UTF-8 byte encoding
+     * @throws IllegalArgumentException if the text is malformed Unicode or exceeds the component byte limit
+     * @throws NullPointerException if value is null
+     */
     /* default */ static byte[] strictUtf8(String value) {
         Objects.requireNonNull(value, "value");
         try {
@@ -417,6 +483,13 @@ final class RevocationCheckpointCodec {
         }
     }
 
+    /**
+     * Compares two byte arrays lexicographically with each byte interpreted as an unsigned value.
+     *
+     * @param first first value or inclusive sequence coordinate
+     * @param second second value to compare
+     * @return a negative value, zero or a positive value according to unsigned lexicographic order
+     */
     /* default */ static int compareUnsigned(byte[] first, byte[] second) {
         int common = Math.min(first.length, second.length);
         for (int index = 0; index < common; index++) {
@@ -436,7 +509,9 @@ final class RevocationCheckpointCodec {
         return new IOException(message, cause);
     }
 
-    /** Streaming encoder retaining only one current-state entry. */
+    /**
+     * Streaming encoder retaining only one current-state entry.
+     */
     /* default */ static final class Encoder {
         private final FileChannel channel;
         private final HeaderData header;
@@ -452,6 +527,14 @@ final class RevocationCheckpointCodec {
             writeCommitted(encodeHeader(header));
         }
 
+        /**
+         * Appends one authenticated current-state record and advances the encoded entry count. The caller must supply entries in the intended checkpoint order.
+         *
+         * @param entry next current-state or index entry
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         * @throws IllegalStateException if this encoder has already finished
+         * @throws IllegalArgumentException if the entry or its encoded components violate checkpoint framing bounds
+         */
         /* default */ void write(CurrentStateEntry entry) throws IOException {
             if (finished) {
                 throw new IllegalStateException("Checkpoint encoder is finished");
@@ -477,6 +560,13 @@ final class RevocationCheckpointCodec {
             }
         }
 
+        /**
+         * Writes the trailer after checking the declared entry count and completes this encoder. The channel is neither forced nor closed.
+         *
+         * @return lowercase SHA-256 generation identity
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         * @throws IllegalStateException if this encoder has already finished
+         */
         /* default */ String finish() throws IOException {
             if (finished) {
                 throw new IllegalStateException("Checkpoint encoder is finished");
@@ -500,7 +590,15 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Authenticated checkpoint identity and covered authoritative log position. */
+    /**
+     * Authenticated checkpoint identity and covered authoritative log position.
+     * @param storeId exact authoritative metadata store identity
+     * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+     * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+     * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
+     * @param globalCommitment global revocation commitment at the captured boundary
+     * @param entryCount number of encoded checkpoint entries
+     */
     /* default */ record HeaderData(
             MetadataStoreId storeId,
             long coveredRevision,
@@ -508,6 +606,17 @@ final class RevocationCheckpointCodec {
             long coveredBoundary,
             RevocationTransitionFrameCodec.Commitment globalCommitment,
             long entryCount) {
+        /**
+         * Creates the authenticated checkpoint identity and covered authoritative log position.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param coveredRevision last authoritative revocation revision covered by this checkpoint
+         * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
+         * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
+         * @param globalCommitment global revocation commitment at the captured boundary
+         * @param entryCount number of encoded checkpoint entries
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         */
         HeaderData {
             Objects.requireNonNull(storeId, "storeId");
             Objects.requireNonNull(finalRecordStart, "finalRecordStart");
@@ -515,7 +624,16 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** One finite latest state and its authoritative frame locator. */
+    /**
+     * One finite latest state and its authoritative frame locator.
+     * @param credentialId exact credential identity
+     * @param globalRevision authoritative global revocation revision
+     * @param credentialRevision credential-local revocation revision
+     * @param transitionCommitment integrity commitment of the retained transition
+     * @param transition immutable revocation transition retained for the credential
+     * @param frameStart inclusive byte offset of the authoritative frame
+     * @param frameEnd exclusive byte offset immediately after the authoritative frame
+     */
     /* default */ record CurrentStateEntry(
             PkiId credentialId,
             long globalRevision,
@@ -524,6 +642,19 @@ final class RevocationCheckpointCodec {
             RevocationTransition transition,
             long frameStart,
             long frameEnd) {
+        /**
+         * Creates one finite latest state and its authoritative frame locator.
+         *
+         * @param credentialId exact credential identity
+         * @param globalRevision authoritative global revocation revision
+         * @param credentialRevision credential-local revocation revision
+         * @param transitionCommitment integrity commitment of the retained transition
+         * @param transition immutable revocation transition retained for the credential
+         * @param frameStart inclusive byte offset of the authoritative frame
+         * @param frameEnd exclusive byte offset immediately after the authoritative frame
+         * @throws NullPointerException if {@code credentialId} is null; or if {@code transitionCommitment} is null; or if {@code transition} is null
+         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || credentialRevision <= 0L || transition.revision() != credentialRevision || frameStart < RevocationTransitionFrameCodec.PREAMBLE_BYTES || frameEnd <= frameStart)}
+         */
         CurrentStateEntry {
             Objects.requireNonNull(credentialId, "credentialId");
             Objects.requireNonNull(transitionCommitment, "transitionCommitment");
@@ -537,16 +668,40 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Fully validated checkpoint framing used by immutable readers. */
+    /**
+     * Fully validated checkpoint framing used by immutable readers.
+     * @param header validated checkpoint coverage header
+     * @param generationId exact generation identity
+     * @param trailerOffset zero-based byte offset of the checkpoint integrity trailer
+     */
     /* default */ record ValidatedFile(HeaderData header, String generationId, long trailerOffset) {
+        /**
+         * Creates the fully validated checkpoint framing used by immutable readers.
+         *
+         * @param header validated checkpoint coverage header
+         * @param generationId exact generation identity
+         * @param trailerOffset zero-based byte offset of the checkpoint integrity trailer
+         * @throws NullPointerException if {@code header} is null; or if {@code generationId} is null
+         */
         ValidatedFile {
             Objects.requireNonNull(header, "header");
             Objects.requireNonNull(generationId, "generationId");
         }
     }
 
-    /** One decoded record plus the next sequential offset. */
+    /**
+     * One decoded record plus the next sequential offset.
+     * @param entry decoded immutable current-state entry
+     * @param nextOffset zero-based byte offset of the next sequential record
+     */
     /* default */ record DecodedRecord(CurrentStateEntry entry, long nextOffset) {
+        /**
+         * Creates one decoded record plus the next sequential offset.
+         *
+         * @param entry decoded immutable current-state entry
+         * @param nextOffset zero-based byte offset of the next sequential record
+         * @throws NullPointerException if {@code entry} is null
+         */
         DecodedRecord {
             Objects.requireNonNull(entry, "entry");
         }
@@ -558,7 +713,9 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Canonical per-entry plan, bounded by one current state. */
+    /**
+     * Canonical per-entry plan, bounded by one current state.
+     */
     private record EntryPlan(long length, List<PlannedAttribute> attributes) {
         private static EntryPlan create(CurrentStateEntry entry) throws IOException {
             Objects.requireNonNull(entry, "entry");
@@ -667,7 +824,9 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Writes primitive fields to the channel and both incremental commitments. */
+    /**
+     * Writes primitive fields to the channel and both incremental commitments.
+     */
     private static final class FieldWriter {
         private final FileChannel channel;
         private final DigestOutputStream whole;
@@ -720,7 +879,9 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Bounded positional reader for one authenticated record payload. */
+    /**
+     * Bounded positional reader for one authenticated record payload.
+     */
     private static final class RecordReader {
         private final FileChannel channel;
         private final DigestOutputStream digest;
@@ -933,7 +1094,9 @@ final class RevocationCheckpointCodec {
         return ValueCodes.decodeReason(code);
     }
 
-    /** Stable numeric codes are isolated from the surrounding framing logic. */
+    /**
+     * Stable numeric codes are isolated from the surrounding framing logic.
+     */
     private static final class ValueCodes {
         private static int encodeState(RevocationState state) {
             return switch (state) {
@@ -990,10 +1153,14 @@ final class RevocationCheckpointCodec {
         }
     }
 
-    /** Encodes one fixed-width primitive into a reusable buffer. */
+    /**
+     * Encodes one fixed-width primitive into a reusable buffer.
+     */
     @FunctionalInterface
     private interface PrimitiveEncoder {
-        /** Writes one primitive value. */
+        /**
+         * Writes one primitive value.
+         */
         void encode(ByteBuffer buffer);
     }
 }

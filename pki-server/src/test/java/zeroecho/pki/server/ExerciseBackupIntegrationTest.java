@@ -75,6 +75,13 @@ import zeroecho.pki.server.http.TestTlsProvider;
  */
 @EnabledIfEnvironmentVariable(named="ZEROECHO_EXERCISE_INTEGRATION", matches="true")
 class ExerciseBackupIntegrationTest {
+    /**
+     * Runs the external backup qualification client and requires an actual cold server reopen after transfer and restore.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void operatorScriptTransfersAndColdRestoresActualBackup(@TempDir Path directory) throws Exception {
         Path repository=Path.of("").toAbsolutePath();

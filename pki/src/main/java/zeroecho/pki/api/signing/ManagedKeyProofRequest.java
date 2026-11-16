@@ -68,6 +68,10 @@ public sealed interface ManagedKeyProofRequest {
          * Validates the bounded coordinates without resolving them.
          * @throws NullPointerException if an argument is null
          * @throws IllegalArgumentException if text is blank, oversized or contains an unpaired surrogate
+         * @param issuerAuthorityId logical authority authorizing the subject-key proof
+         * @param subjectAuthorityId target authority when already identified, otherwise empty
+         * @param profileId selected logical CA profile
+         * @param keyRef managed subject key whose possession is to be proved
          */
         public CaSubject {
             ManagedKeyProofInputs.identifier(issuerAuthorityId);
@@ -77,8 +81,15 @@ public sealed interface ManagedKeyProofRequest {
             ManagedKeyProofInputs.text(Objects.requireNonNull(keyRef, "keyRef").value(), 1_048_576);
         }
 
-        /** Returns a diagnostic representation without privileged coordinates. */
-        @Override public String toString() { return "ManagedKeyProofRequest.CaSubject[redacted]"; }
+        /**
+         * Returns a diagnostic label without disclosing authority, profile or key coordinates.
+         *
+         * @return the fixed redacted CA-subject request label
+         */
+        @Override
+        public String toString() {
+            return "ManagedKeyProofRequest.CaSubject[redacted]";
+        }
     }
 
     /**
@@ -92,7 +103,10 @@ public sealed interface ManagedKeyProofRequest {
         /**
          * Validates the bounded coordinates without resolving them.
          * @throws NullPointerException if an argument is null
-         * @throws IllegalArgumentException if text is oversized or contains an unpaired surrogate
+         * @throws IllegalArgumentException if text is blank, oversized or contains an unpaired surrogate
+         * @param authorityId logical authority served by the responder
+         * @param responderCredentialId exact responder credential
+         * @param keyRef managed responder key whose possession is to be proved
          */
         public OcspResponder {
             ManagedKeyProofInputs.identifier(authorityId);
@@ -100,24 +114,55 @@ public sealed interface ManagedKeyProofRequest {
             ManagedKeyProofInputs.text(Objects.requireNonNull(keyRef, "keyRef").value(), 1_048_576);
         }
 
-        /** Returns a diagnostic representation without privileged coordinates. */
-        @Override public String toString() { return "ManagedKeyProofRequest.OcspResponder[redacted]"; }
+        /**
+         * Returns a diagnostic label without disclosing authority, credential or key coordinates.
+         *
+         * @return the fixed redacted responder request label
+         */
+        @Override
+        public String toString() {
+            return "ManagedKeyProofRequest.OcspResponder[redacted]";
+        }
     }
     /**
-     * Internal typed proof of a frozen managed responder subject key before issuance.
-     * @param authorityId authorizing issuer authority @param profileRef exact responder profile
-     * @param keyRef managed subject key @param target parent/final-TBS proof context
+     * Identifies a managed responder subject-key proof before its certificate exists.
+     *
+     * <p>The target binds the parent operation, final certificate candidate and subject
+     * role. It is not an existing responder credential and does not grant signing authority.
+     *
+     * @param authorityId logical issuer authority authorizing the proof; must not be {@code null}
+     * @param profileRef exact retained responder profile; must not be {@code null}
+     * @param keyRef existing managed subject key; must not be {@code null}
+     * @param target frozen parent and final-TBS proof context; must not be {@code null}
      */
     record OcspResponderCandidate(PkiId authorityId, zeroecho.pki.api.profile.CertificateProfileRef profileRef,
             KeyRef keyRef, ManagedOcspResponderProofTarget target) implements ManagedKeyProofRequest {
-        /** Validates finite coordinates without admitting or signing the candidate. */
+        /**
+         * Validates bounded proof coordinates without resolving or signing the candidate.
+         *
+         * @throws NullPointerException if a component is null
+         * @throws IllegalArgumentException if the authority identifier or key reference
+         *         is blank, exceeds its UTF-8 byte bound or contains an unpaired surrogate
+         * @param authorityId logical issuer authority authorizing the proof; must not be {@code null}
+         * @param profileRef exact retained responder profile; must not be {@code null}
+         * @param keyRef existing managed subject key; must not be {@code null}
+         * @param target frozen parent and final-TBS proof context; must not be {@code null}
+         */
         public OcspResponderCandidate {
-            ManagedKeyProofInputs.identifier(authorityId); Objects.requireNonNull(profileRef, "profileRef");
+            ManagedKeyProofInputs.identifier(authorityId);
+            Objects.requireNonNull(profileRef, "profileRef");
             ManagedKeyProofInputs.text(Objects.requireNonNull(keyRef, "keyRef").value(), 1_048_576);
             Objects.requireNonNull(target, "target");
         }
-        /** @return redacted diagnostic */
-        @Override public String toString() { return "ManagedKeyProofRequest.OcspResponderCandidate[redacted]"; }
+        /**
+         * Returns a diagnostic label without disclosing the candidate's proof coordinates.
+         *
+         * @return the fixed redacted responder-candidate request label
+         */
+        @Override
+        public String toString() {
+            return "ManagedKeyProofRequest.OcspResponderCandidate[redacted]";
+        }
     }
 
 }

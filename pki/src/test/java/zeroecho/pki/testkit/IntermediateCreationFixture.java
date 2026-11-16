@@ -99,32 +99,97 @@ import zeroecho.pkix.BasicConstraints;
 import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.Pkix;
 
-/** Real parent credential and internal proof fixture; execution remains test-controlled. */
+/**
+ * Real parent credential and internal proof fixture; execution remains test-controlled.
+ */
 public final class IntermediateCreationFixture {
+    /**
+     * Fixed reference instant shared by the fixture and its expected evidence.
+     */
     public static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
+    /**
+     * Fixed authoritative clock used to make fixture timestamps deterministic.
+     */
     public static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    /**
+     * Lifetime assigned to prepared fixture signing submissions.
+     */
     public static final Duration TTL = Duration.ofMinutes(1);
+    /**
+     * Canonical signature identity used by this fixture.
+     */
     public static final String ALGORITHM = BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm();
+    /**
+     * Logical authority identity used by the fixture.
+     */
     public static final PkiId CA = new PkiId("parent-authority");
+    /**
+     * Logical reference of the parent authority signing key.
+     */
     public static final KeyRef PARENT_KEY = new KeyRef("parent-key");
+    /**
+     * Logical reference of the prospective child authority key.
+     */
     public static final KeyRef CHILD_KEY = new KeyRef("child-key");
+    /**
+     * Logical reference of the replacement child authority key.
+     */
     public static final KeyRef ROTATED_KEY = new KeyRef("rotated-child-key");
+    /**
+     * Authenticated actor and purpose attached to fixture signing requests.
+     */
     public static final AccessContext ACCESS = new AccessContext(new Principal("TEST", "actor"), new Purpose("CREATE"),
             Optional.empty(), Optional.empty());
+    /**
+     * Real parent authority key pair retained by the fixture.
+     */
     public final KeyPair parentKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+    /**
+     * Child authority key pair used by issuance and proof cases.
+     */
     public final KeyPair childKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+    /**
+     * Replacement primary root key pair used by rotation cases.
+     */
     public final KeyPair rotatedKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
     private final Map<KeyRef, EncodedObject> issuerPublicKeys = new java.util.HashMap<>();
+    /**
+     * Signing/public-key provider fixture with observable calls and injectable failures.
+     */
     public final Provider provider = new Provider();
+    /**
+     * Composed X.509 signing executors bound to the fixture provider.
+     */
     public final X509AuthoritySnapshot signing = PkiTestRuntime.signingAuthority(provider);
+    /**
+     * Independent Bouncy Castle X.509 signature verifier.
+     */
     public final BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+    /**
+     * Composed verification-only X.509 authority snapshot.
+     */
     public final X509AuthoritySnapshot verification = X509AuthoritySnapshot.compose(List.of(), List.of(verifier),
             List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID, Direction.VERIFY, verifier)),
             (suite, direction) -> direction == Direction.VERIFY);
+    /**
+     * Immutable registry of the standard X.509 algorithm bindings.
+     */
     public final ImmutableX509AlgorithmBindingRegistry bindings = ImmutableX509AlgorithmBindingRegistry.create(StandardX509Bindings.descriptors());
 
+    /**
+     * Creates real parent, child, and replacement keys for intermediate authority tests.
+     *
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public IntermediateCreationFixture() throws Exception { }
 
+    /**
+     * Installs real issuer credentials, generations, paths, and profiles required by the fixture.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param pathLength maximum permitted subordinate CA depth of the fixture parent
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public void initialize(PkiStore store, int pathLength) throws Exception {
         for (BuiltInCertificateProfileTemplate template : BuiltInCertificateProfileCatalog.load(getClass().getClassLoader())) {
             CertificateProfileDefinition definition = template.definition();
@@ -155,28 +220,67 @@ public final class IntermediateCreationFixture {
                 List.of(generation), generation, path.pathId()));
     }
 
+    /**
+     * Creates a fresh submission identity bound to the fixture store namespace and provider.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return new signing submission identity at the fixed fixture instant
+     */
     public SigningSubmissionId submission(PkiStore store) {
         return SigningSubmissionId.create(store.signingNamespace() + "." + provider.id(), NOW, new SecureRandom());
     }
+    /**
+     * Composes the fixture authority-signing preparer with its exact key/profile executors.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return signing preparer borrowing the fixture store and authoritative clock
+     */
     public IntermediateSigningPreparation preparer(PkiStore store) {
         return new IntermediateSigningPreparation(store, CLOCK, provider, signing, bindings, ALGORITHM,
                 ManagedKeyProofCommand.MAX_CHALLENGE_BYTES, proofPreparation(store));
     }
+    /**
+     * Composes managed-key proof preparation using the fixture signing and verification executors.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @return fixture proof preparer borrowing the supplied store
+     */
     public ManagedKeyProofPreparation proofPreparation(PkiStore store) {
         return new ManagedKeyProofPreparation(store, provider, signing, verification, verifier,
                 ALGORITHM, new SecureRandom(), ManagedKeyProofCommand.MAX_CHALLENGE_BYTES);
     }
+    /**
+     * Creates the fixture command with the selected authority, key, and profile bindings.
+     *
+     * @param subject distinguished-name subject of the created fixture credential
+     * @return typed command ready for the test preparation or acceptance path
+     */
     public IntermediateCreateCommand command(String subject) {
         return new IntermediateCreateCommand(new FormatId("x509"), CA, new SubjectRef(subject), "intermediate-ca",
                 CHILD_KEY, new SimpleAttributeSet());
     }
 
-    /** Adds a real parent-to-anchor chain for an internally proved child. */
+    /**
+     * Adds a real parent-to-anchor chain for an internally proved child.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param pathLength maximum subordinate CA depth advertised by the real parent certificate
+     * @param selfIssued whether the intermediate parent repeats the root subject name
+     * @return child-authority command bound to the newly installed real parent chain
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     public IntermediateCreateCommand intermediateParent(PkiStore store, int pathLength, boolean selfIssued) throws Exception {
         return intermediateParent(store, pathLength, selfIssued ? "CN=Parent" : "CN=Middle", false);
     }
 
-    /** Adds a pre-remediation authority whose metadata uses the BC display order. */
+    /**
+     * Adds a pre-remediation authority whose metadata uses the BC display order.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param pathLength maximum subordinate CA depth advertised by the real parent certificate
+     * @return child-authority command retaining the legacy parent-profile scenario
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     public IntermediateCreateCommand legacyIntermediateParent(PkiStore store, int pathLength) throws Exception {
         return intermediateParent(store, pathLength, "CN=Legacy Middle,C=CZ", true);
     }
@@ -213,6 +317,12 @@ public final class IntermediateCreationFixture {
         return new IntermediateCreateCommand(new FormatId("x509"), middle, new SubjectRef("CN=Grandchild"), "intermediate-ca",
                 CHILD_KEY, new SimpleAttributeSet());
     }
+    /**
+     * Accepts the prepared fixture operation into its durable signing workflow.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param request prepared domain signing request whose exact binding is accepted
+     */
     public void accept(PkiStore store, DomainSigningRequest request) {
         DomainContinuationTemplate template = request.domainTemplate();
         SignWorkflowStore.AcceptanceResult accepted = store.acceptSign(new SignWorkflowStore.AcceptanceCommand(request.operationId(), store.signingNamespace() + "." + provider.id(),
@@ -223,7 +333,13 @@ public final class IntermediateCreationFixture {
                         SignWorkflowStore.Mode.NORMAL, request.proofStep()));
         if (accepted != SignWorkflowStore.AcceptanceResult.ACCEPTED) { throw new AssertionError("Expected one new acceptance: " + accepted); }
     }
-    /** Retains the real proof signature for verification, without a child workflow. */
+    /**
+     * Retains the real proof signature for verification, without a child workflow.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param operation durable signing operation whose proof or certificate step is advanced
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     public void checkpointProof(PkiStore store, PkiId operation) throws Exception {
         SignWorkflowStore.Workflow workflow = store.getSignWorkflow(operation).orElseThrow();
         SignWorkflowStore.CaSubjectProofStep proof = workflow.envelope().proofStep().orElseThrow();
@@ -232,7 +348,13 @@ public final class IntermediateCreationFixture {
                 SigningProvider.ObservationState.SUCCEEDED, SigningProvider.DetailCode.SIGNED, Optional.of(store.signingNow())),
                 Optional.of(signature(PkiTestRuntime.readContent(store, proof.challenge()), proof.subjectKeyRef()))).orElseThrow();
     }
-    /** Completes proof verification and final certificate signing, leaving publication to the caller. */
+    /**
+     * Completes proof verification and final certificate signing, leaving publication to the caller.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @param operation durable signing operation whose proof or certificate step is advanced
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     public void signCertificate(PkiStore store, PkiId operation) throws Exception {
         SignWorkflowStore.Workflow workflow = store.getSignWorkflow(operation).orElseThrow();
         if (workflow.stage() == SignWorkflowStore.Stage.CA_PROOF) { checkpointProof(store, operation); }
@@ -249,27 +371,75 @@ public final class IntermediateCreationFixture {
             throw new AssertionError("Test certificate completion was not committed");
         }
     }
+    /**
+     * Completes the selected fixture signing workflow using its real provider signature.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param operation retained signing operation or typed command being exercised
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public void finish(PkiStore store, PkiId operation) throws Exception {
         signCertificate(store, operation);
         new SigningOuterTerminalDriver(store, verification, verifier, ManagedKeyProofCommand.MAX_CHALLENGE_BYTES)
                 .advance(store.getSignWorkflow(operation).orElseThrow());
     }
+    /**
+     * Signs the supplied bytes with the fixture key selected by its logical reference.
+     *
+     * @param input correlated issuance input whose exact semantic identity is retained
+     * @param key fixture signing key pair or logical key reference selected for the operation
+     * @return independently owned encoded signature
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public EncodedObject signature(byte[] input, KeyRef key) throws Exception {
         Signature engine = Signature.getInstance("Ed25519");
         engine.initSign((key.equals(PARENT_KEY) ? parentKey : key.equals(ROTATED_KEY) ? rotatedKey : childKey).getPrivate());
         engine.update(input);
         return new EncodedObject(Encoding.BINARY, engine.sign());
     }
+    /**
+     * Computes the lowercase hexadecimal SHA-256 commitment of the supplied bytes.
+     *
+     * @param bytes content bytes to hash or sign; borrowed without modification
+     * @return 64-character SHA-256 commitment
+     */
     public static String hash(byte[] bytes) { return SigningProvider.ContentCommitment.sha256(bytes).sha256(); }
 
+    /**
+     * Real signing provider fixture with public-key lookups and dispatch counters.
+     */
     public final class Provider implements SigningProvider, PublicKeyInfoSource {
+        /**
+         * Number of signing-provider dispatches observed by the fixture.
+         */
         public int dispatches;
+        /**
+         * Number of public-key-information lookups observed by the fixture.
+         */
         public int lookups;
+        /**
+         * Number of issuer-key-information lookups observed by the fixture.
+         */
         public int issuerLookups;
+        /**
+         * {@inheritDoc}
+         */
         @Override public String id() { return "intermediate-test"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public ConfigurationCommitment configurationCommitment() { return new ConfigurationCommitment(new byte[32]); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Set<String> supportedAlgorithms() { return Set.of(ALGORITHM); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public SigningInputCapabilities inputCapabilities() { return new SigningInputCapabilities(4_000_000, Map.of()); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public EncodedObject resolvePublicKeyInfo(KeyRef key) {
             if (PARENT_KEY.equals(key)) {
                 issuerLookups++;
@@ -280,14 +450,26 @@ public final class IntermediateCreationFixture {
             if (!key.equals(CHILD_KEY) && !key.equals(ROTATED_KEY)) { throw new AssertionError("Only a proven subject key may be exported"); }
             return new EncodedObject(Encoding.DER, (key.equals(ROTATED_KEY) ? rotatedKey : childKey).getPublic().getEncoded());
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation dispatch(SignRequest request, CallControl control) {
             dispatches++;
             throw new AssertionError("Preparation must not dispatch");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation reconcile(PkiId operation, CallControl control) { throw new AssertionError("No reconcile"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation cancel(PkiId operation, long fence, CancellationReason reason, CallControl control) {
             throw new AssertionError("No provider cancellation");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { }
     }
 }

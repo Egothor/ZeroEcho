@@ -61,8 +61,16 @@ import zeroecho.pki.api.signing.SemanticSigningState;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
-/** Real managed-key issuance proves canonical replay, changed-target rejection and restart-safe renewal. */
+/**
+ * Real managed-key issuance proves canonical replay, changed-target rejection and restart-safe renewal.
+ */
 final class ManagedOcspResponderIssuanceTest {
+    /**
+     * Managed responder retains one canonical issuance and explicit renewal across restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void managedResponderRetainsOneCanonicalIssuanceAndExplicitRenewalAcrossRestart(@TempDir Path root) throws Exception {
         var mode = new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE.canonicalForm(),
                 HybridIssuanceFixture.key("alt").value());

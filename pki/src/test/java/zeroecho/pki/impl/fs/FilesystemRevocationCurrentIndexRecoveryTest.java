@@ -56,6 +56,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for filesystem revocation current index recovery.
+ */
 final class FilesystemRevocationCurrentIndexRecoveryTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -66,9 +69,17 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
     private static final FilesystemRevocationCurrentIndex.Configuration INDEX_CONFIGURATION =
             new FilesystemRevocationCurrentIndex.Configuration(4L, 3, 4);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Scalar target tracks exact authoritative prefix.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void scalarTargetTracksExactAuthoritativePrefix() throws Exception {
         System.out.print("scalarTargetTracksExactAuthoritativePrefix ");
@@ -87,6 +98,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checkpoint seeds index and only suffix is replayed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void checkpointSeedsIndexAndOnlySuffixIsReplayed() throws Exception {
         System.out.print("checkpointSeedsIndexAndOnlySuffixIsReplayed ");
@@ -163,6 +179,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Genesis target replays no later authoritative record.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void genesisTargetReplaysNoLaterAuthoritativeRecord() throws Exception {
         System.out.print("genesisTargetReplaysNoLaterAuthoritativeRecord ");
@@ -193,6 +214,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Clear state survives checkpoint seed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void clearStateSurvivesCheckpointSeed() throws Exception {
         System.out.print("clearStateSurvivesCheckpointSeed ");
@@ -215,6 +241,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Append after target capture is excluded until normal open.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void appendAfterTargetCaptureIsExcludedUntilNormalOpen() throws Exception {
         System.out.print("appendAfterTargetCaptureIsExcludedUntilNormalOpen ");
@@ -239,6 +270,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Failed recovery preserves published index.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failedRecoveryPreservesPublishedIndex() throws Exception {
         System.out.print("failedRecoveryPreservesPublishedIndex ");
@@ -268,6 +304,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Valid current index is preferred without checkpoint reads.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validCurrentIndexIsPreferredWithoutCheckpointReads() throws Exception {
         System.out.print("validCurrentIndexIsPreferredWithoutCheckpointReads ");
@@ -301,6 +342,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Corrupt current index falls back to validated checkpoint.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptCurrentIndexFallsBackToValidatedCheckpoint() throws Exception {
         System.out.print("corruptCurrentIndexFallsBackToValidatedCheckpoint ");
@@ -335,6 +381,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Foreign and future targets fail without changing authority.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void foreignAndFutureTargetsFailWithoutChangingAuthority() throws Exception {
         System.out.print("foreignAndFutureTargetsFailWithoutChangingAuthority ");
@@ -364,6 +415,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Write force and move failures leave no published partial index.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void writeForceAndMoveFailuresLeaveNoPublishedPartialIndex() throws Exception {
         System.out.print("writeForceAndMoveFailuresLeaveNoPublishedPartialIndex ");
@@ -396,6 +452,11 @@ final class FilesystemRevocationCurrentIndexRecoveryTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Recovery sources have no population map or collection.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoverySourcesHaveNoPopulationMapOrCollection() throws Exception {
         System.out.print("recoverySourcesHaveNoPopulationMapOrCollection ");

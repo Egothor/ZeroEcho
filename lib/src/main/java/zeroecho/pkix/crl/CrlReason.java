@@ -38,25 +38,45 @@ package zeroecho.pkix.crl;
  * enumerated code.
  */
 public enum CrlReason {
-    /** unspecified (0). */
+    /**
+     * unspecified (0).
+     */
     UNSPECIFIED(0),
-    /** keyCompromise (1). */
+    /**
+     * keyCompromise (1).
+     */
     KEY_COMPROMISE(1),
-    /** cACompromise (2). */
+    /**
+     * cACompromise (2).
+     */
     CA_COMPROMISE(2),
-    /** affiliationChanged (3). */
+    /**
+     * affiliationChanged (3).
+     */
     AFFILIATION_CHANGED(3),
-    /** superseded (4). */
+    /**
+     * superseded (4).
+     */
     SUPERSEDED(4),
-    /** cessationOfOperation (5). */
+    /**
+     * cessationOfOperation (5).
+     */
     CESSATION_OF_OPERATION(5),
-    /** certificateHold (6). */
+    /**
+     * certificateHold (6).
+     */
     CERTIFICATE_HOLD(6),
-    /** removeFromCRL (8). */
+    /**
+     * removeFromCRL (8).
+     */
     REMOVE_FROM_CRL(8),
-    /** privilegeWithdrawn (9). */
+    /**
+     * privilegeWithdrawn (9).
+     */
     PRIVILEGE_WITHDRAWN(9),
-    /** aACompromise (10). */
+    /**
+     * aACompromise (10).
+     */
     AA_COMPROMISE(10);
 
     private final int code;

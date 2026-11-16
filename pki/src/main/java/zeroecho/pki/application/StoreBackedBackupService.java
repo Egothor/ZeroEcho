@@ -63,27 +63,35 @@ final class StoreBackedBackupService implements BackupService {
         this.store = Objects.requireNonNull(store, "store");
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source)
             throws java.io.IOException {
         return store.stageRestore(source);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.RestoreStatus stageRestore(zeroecho.pki.api.backup.BackupSource source,
             zeroecho.pki.api.PkiId restoreId) throws java.io.IOException {
         return store.stageRestore(source, restoreId);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.util.Optional<zeroecho.pki.api.backup.RestoreStatus> latestRestoreStatus() throws java.io.IOException {
         return store.latestRestoreStatus();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void discardUnpublishedRestore(zeroecho.pki.api.PkiId restoreId,
             java.util.Optional<zeroecho.pki.api.PkiId> previousRestoreId,
@@ -91,7 +99,9 @@ final class StoreBackedBackupService implements BackupService {
         store.discardUnpublishedRestore(restoreId, previousRestoreId, manifestSha256);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.util.Optional<zeroecho.pki.api.backup.RestoreIdentity> latestRestoreIdentity()
             throws java.io.IOException {
@@ -109,19 +119,25 @@ final class StoreBackedBackupService implements BackupService {
         return store.createBackup(request);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.BackupSource createBackupSource(BackupRequest request) throws java.io.IOException {
         return store.createBackupSource(request);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public BackupVerificationReport verifyBackupSource(zeroecho.pki.api.backup.BackupSource source) {
         return store.verifyBackupSource(source);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.backup.BackupPreparation prepareBackup(zeroecho.pki.api.backup.BackupSource source)
             throws java.io.IOException {
@@ -135,6 +151,7 @@ final class StoreBackedBackupService implements BackupService {
      * @param request restore request
      * @return never returns normally
      * @throws UnsupportedOperationException always, because this legacy entry point is unavailable
+     * @throws NullPointerException if request is null
      */
     @Override
     public RestoreReport restoreBackup(RestoreRequest request) {

@@ -45,10 +45,14 @@ package zeroecho.pki.server.cmp;
  */
 public final class CmpProtocolException extends Exception {
 
-    /** Serialization identity for this exception type. */
+    /**
+     * Serialization identity for this exception type.
+     */
     private static final long serialVersionUID = 1L;
 
-    /** HTTP response status selected by the protocol adapter. */
+    /**
+     * HTTP response status selected by the protocol adapter.
+     */
     private final int httpStatus;
 
     /**
@@ -56,6 +60,7 @@ public final class CmpProtocolException extends Exception {
      *
      * @param httpStatus HTTP status code (4xx or 5xx)
      * @param message    human-readable error description
+     * @throws IllegalArgumentException if the supplied HTTP status is outside the 400 through 599 range
      */
     public CmpProtocolException(int httpStatus, String message) {
         super(message);

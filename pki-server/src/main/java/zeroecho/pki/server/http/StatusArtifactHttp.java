@@ -44,10 +44,31 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.ServerRealmContext;
 
-/** Exact stored status-object metadata and bounded streaming downloads under independent full-content authority. */
+/**
+ * Exact stored status-object metadata and bounded streaming downloads under independent full-content authority.
+ */
 final class StatusArtifactHttp {
     private final ServerRealmContext realm;
+    /**
+     * Binds status-artifact transport projection to one borrowed realm context.
+     *
+     * @param realm realm-owned authorization and repository services
+     * @throws NullPointerException if realm is null
+     */
     StatusArtifactHttp(ServerRealmContext realm){this.realm=java.util.Objects.requireNonNull(realm,"realm");}
+    /**
+     * Projects authorized status metadata or streams an exact retained representation.
+     *
+     * <p>Downloads are written directly to the exchange and verified against the retained
+     * length and SHA-256. Metadata and failure responses are returned for the caller to send.</p>
+     *
+     * @param exchange active HTTP exchange with the raw status-artifact route
+     * @param principal authenticated principal identity
+     * @param trace transport correlation identity used for response headers and audit
+     * @param cancellation exact transport cancellation signal
+     * @return response to send, or null when a download was already streamed
+     * @throws IOException if repository access, streaming or integrity verification fails
+     */
     HttpResponses.Response respond(HttpExchange exchange,String principal,String trace,CancellationSignal cancellation)throws IOException {
         try {
             String[] path=exchange.getRequestURI().getRawPath().split("/",-1);

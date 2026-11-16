@@ -47,7 +47,9 @@ import java.util.Set;
 import java.util.UUID;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 
-/** Streams one pinned logical revision directly into a fresh checkpoint ledger. */
+/**
+ * Streams one pinned logical revision directly into a fresh checkpoint ledger.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExhaustiveSwitchHasDefault" })
 final class SigningLedgerSnapshotExporter {
     private static final long CHECKPOINT_IDENTITY = 1L;
@@ -57,6 +59,14 @@ final class SigningLedgerSnapshotExporter {
         // utility class
     }
 
+    /**
+     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested namespaces. This form renumbers retained entries into a compact reconstructed ledger. The method acquires and closes its own pinned snapshot.
+     *
+     * @param engine borrowed source signing-ledger engine
+     * @param targetRoot fresh target store root
+     * @param excludedNamespaces namespaces omitted from the reconstructed ledger
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static void export(SigningLedgerStoreEngine engine, Path targetRoot,
             Set<String> excludedNamespaces) throws IOException {
         try (SigningMvccIndex.Snapshot snapshot = engine.snapshot()) {
@@ -64,13 +74,29 @@ final class SigningLedgerSnapshotExporter {
         }
     }
 
-    /** Borrows the caller's exact pinned revision without closing it. */
+    /**
+     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested namespaces. This form renumbers retained entries into a compact reconstructed ledger.
+     *
+     * @param engine borrowed source signing-ledger engine
+     * @param snapshot borrowed pinned snapshot; its lifetime remains with the caller
+     * @param targetRoot fresh target store root
+     * @param excludedNamespaces namespaces omitted from the reconstructed ledger
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static void export(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot, Path targetRoot,
             Set<String> excludedNamespaces) throws IOException {
         export(engine, snapshot, targetRoot, excludedNamespaces, Long.MAX_VALUE, false);
     }
 
-    /** Preserves authoritative record and transaction-result revisions for backup recovery. */
+    /**
+     * Exports the supplied pinned snapshot as backup metadata while preserving authoritative revisions and enforcing the checkpoint byte bound.
+     *
+     * @param engine borrowed source signing-ledger engine
+     * @param snapshot borrowed pinned snapshot; its lifetime remains with the caller
+     * @param targetRoot fresh target store root
+     * @param maximumCheckpointBytes inclusive encoded checkpoint byte bound
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static void exportBackup(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot,
             Path targetRoot, long maximumCheckpointBytes) throws IOException {
         export(engine, snapshot, targetRoot, Set.of(), maximumCheckpointBytes, true);

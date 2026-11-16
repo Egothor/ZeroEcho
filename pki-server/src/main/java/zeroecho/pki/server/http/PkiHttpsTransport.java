@@ -58,7 +58,6 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
  * <p>The public server lifecycle uses this type only as an internal module boundary;
  * request handlers, queues, permits and provider discovery remain package-private.</p>
  */
-@SuppressWarnings("PMD")
 public final class PkiHttpsTransport implements AutoCloseable {
     private final HttpsServer listener;
     private final ServerRuntime runtime;
@@ -79,6 +78,9 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * @param loader explicitly scoped TLS-provider loader
      * @param ready readiness predicate owned by the server lifecycle
      * @return started bounded transport
+     * @throws NullPointerException if any of {@code configuration}, {@code realm}, {@code authenticator},
+     *         {@code ready} is null
+     * @throws IllegalStateException if TLS or HTTPS listener initialization fails
      */
     public static PkiHttpsTransport start(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, Clock clock, SecureRandom random, ClassLoader loader,
@@ -115,6 +117,7 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * @param configuration validated server configuration
      * @param loader explicitly scoped provider loader
      * @return initialized JSSE context without exposing private-key material
+     * @throws NullPointerException if {@code configuration} is null
      */
     public static SSLContext resolveTls(PkiServerConfiguration configuration, ClassLoader loader) {
         Objects.requireNonNull(configuration, "configuration");
@@ -132,6 +135,8 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * @param tls initialized TLS context
      * @param ready readiness predicate
      * @return started bounded transport
+     * @throws NullPointerException if any of {@code configuration}, {@code tls} is null
+     * @throws IllegalStateException if TLS or HTTPS listener initialization fails
      */
     public static PkiHttpsTransport startResolved(PkiServerConfiguration configuration,
             ServerRealmContext realm, PkiServerAuthenticator authenticator, Clock clock, SecureRandom random,
@@ -187,7 +192,9 @@ public final class PkiHttpsTransport implements AutoCloseable {
         return ServerRuntime.isWorkerThread();
     }
 
-    /** Prevents new operation admission without closing in-flight work. */
+    /**
+     * Prevents new operation admission without closing in-flight work.
+     */
     public void quiesce() {
         runtime.quiesce();
     }
@@ -197,11 +204,15 @@ public final class PkiHttpsTransport implements AutoCloseable {
      *
      * @param task finite server close action
      * @return unstarted JVM shutdown hook
+     * @throws NullPointerException if {@code task} is null
      */
     public Thread shutdownHook(Runnable task) {
         return ServerRuntime.shutdownHook(Objects.requireNonNull(task, "task"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         shutdown(Duration.ZERO);
@@ -212,6 +223,7 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * then closes all bounded executors.
      *
      * @param graceful finite listener drain period
+     * @throws NullPointerException if {@code graceful} is null
      */
     public void shutdown(Duration graceful) {
         runtime.quiesce();

@@ -107,6 +107,11 @@ public final class LmsPublicKeySpec implements AlgorithmKeySpec {
         return new LmsPublicKeySpec(Base64.getDecoder().decode(b64));
     }
 
+    /**
+     * Returns the specification label and encoded-key length without disclosing key bytes.
+     *
+     * @return diagnostic type label and retained encoding length in bytes
+     */
     @Override
     public String toString() {
         return "LmsPublicKeySpec[len=" + x509.length + "]";

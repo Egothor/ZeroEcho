@@ -79,9 +79,20 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkValue;
 
+/**
+ * Cryptographic contract coverage for generated-client proofs and approved enrollment frames.
+ */
 final class CertificateScenarioCryptoTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks generated-client algorithm and certificate-chain evidence against variant substitution and tampering.
+     * @param variant certificate scenario variant supplied by the parameterized test source
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"p384", "rsa4096", "mldsa87", "hybrid"})
     void generatedClientProvesExactAlgorithmsAndRealChainAndRejectsWrongVariantAndTampering(String variant) throws Exception {
         Path client = directory.resolve("keys");
@@ -150,6 +161,11 @@ final class CertificateScenarioCryptoTest {
         }
     }
 
+    /**
+     * Checks signing admission for current approved frames and verification of retained dual proofs.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signsOnlyMatchingCurrentApprovedFramesAndRetainsVerifiableDualProofs() throws Exception {
         Path client = directory.resolve("keys"); CertificateScenarioCrypto.main(new String[] {"generate", "hybrid", client.toString()});
         long now = Instant.now().getEpochSecond();
@@ -179,6 +195,11 @@ final class CertificateScenarioCryptoTest {
         assertThrows(IllegalArgumentException.class, () -> CertificateScenarioCrypto.main(command));
     }
 
+    /**
+     * Checks closed administrative authentication context and canonical operation identity in descriptions.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void authContextMatchesClosedAdministrativeF6AndDescribeUsesCanonicalIdentity() throws Exception {
         zeroecho.sdk.util.BouncyCastleActivator.init();
         var pair = pair("p384");

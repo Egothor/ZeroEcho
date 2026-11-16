@@ -49,23 +49,39 @@ import java.util.function.LongSupplier;
  */
 public interface DashboardLiveSource {
 
-    /** {@return unexpired approvals currently in PENDING state across all CAs} */
+    /**
+     * {@return unexpired approvals currently in PENDING state across all CAs}
+     */
     long approvalPendingTotal();
 
-    /** {@return sum of consecutive failure counts across all active audit projection workers} */
+    /**
+     * {@return sum of consecutive failure counts across all active audit projection workers}
+     */
     long auditProjectionFailureTotal();
 
-    /** {@return JVM heap currently used in bytes} */
+    /**
+     * {@return JVM heap currently used in bytes}
+     */
     long jvmHeapUsedBytes();
 
-    /** {@return monotonic total admin API requests counted since server start} */
+    /**
+     * {@return monotonic total admin API requests counted since server start}
+     */
     long adminRequestsTotal();
 
-    /** Availability of one independently collected measurement. */
+    /**
+     * Availability of one independently collected measurement.
+     */
     enum State {
-        /** A real measurement, including zero. */ AVAILABLE,
-        /** No source is configured for this measurement. */ UNAVAILABLE,
-        /** The configured source could not collect this measurement. */ FAILED
+        /**
+         * A real measurement, including zero.
+         */ AVAILABLE,
+        /**
+         * No source is configured for this measurement.
+         */ UNAVAILABLE,
+        /**
+         * The configured source could not collect this measurement.
+         */ FAILED
     }
 
     /**
@@ -75,7 +91,14 @@ public interface DashboardLiveSource {
      * @param reason stable safe reason code, empty when available
      */
     record Metric(State state, OptionalLong value, String reason) {
-        /** Validates the value and disclosure invariants. */
+        /**
+         * Validates the value and disclosure invariants.
+         * @param state collection state
+         * @param value nonnegative value, present exactly when available
+         * @param reason stable safe reason code, empty when available
+         * @throws NullPointerException if state, value, reason is null
+         * @throws IllegalArgumentException if availability disagrees with value/reason presence, the value is negative or reason is not a bounded safe code
+         */
         public Metric {
             Objects.requireNonNull(state, "state"); Objects.requireNonNull(value, "value"); Objects.requireNonNull(reason, "reason");
             if (state == State.AVAILABLE != value.isPresent() || value.isPresent() && value.orElseThrow() < 0
@@ -116,6 +139,7 @@ public interface DashboardLiveSource {
      * Safely collects one nonnegative metric while preserving cancellation.
      * @param supplier configured source
      * @return measured value or a safe collection-failed state
+     * @throws CancellationException if the supplier reports cancellation or collection fails while this thread is interrupted
      */
     static Metric collect(LongSupplier supplier) {
         try { return Metric.available(supplier.getAsLong()); }
@@ -126,12 +150,29 @@ public interface DashboardLiveSource {
         }
     }
 
-    /** Unavailable source; legacy getters still return {@code 0}. */
+    /**
+     * Unavailable source; legacy getters still return {@code 0}.
+     */
     DashboardLiveSource NONE = new DashboardLiveSource() {
+        /**
+         * {@inheritDoc}
+         */
         @Override public long approvalPendingTotal() { return 0L; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long auditProjectionFailureTotal() { return 0L; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long jvmHeapUsedBytes() { return 0L; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public long adminRequestsTotal() { return 0L; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Map<String, Metric> snapshot() {
             Map<String, Metric> result = new LinkedHashMap<>();
             for (String name : new String[]{"approvalPendingTotal", "auditProjectionFailureTotal", "jvmHeapUsedBytes",

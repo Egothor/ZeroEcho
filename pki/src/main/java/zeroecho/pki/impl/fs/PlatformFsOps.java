@@ -124,11 +124,15 @@ interface PlatformFsOps {
     void restrictToOwner(Path directory) throws IOException;
 
     /**
+     * Returns the stable non-sensitive platform strategy identifier.
+     *
      * @return a stable platform identifier for diagnostics (never sensitive)
      */
     String platformId();
 
     /**
+     * Reports whether the platform meets the required durability and owner-only protection contract.
+     *
      * @return {@code true} when this platform provides the enterprise-grade
      *         durability and owner-only protection guarantees the store
      *         requires

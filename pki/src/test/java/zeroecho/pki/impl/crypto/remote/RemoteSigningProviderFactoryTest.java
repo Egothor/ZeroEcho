@@ -67,15 +67,23 @@ import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 import zeroecho.pki.testkit.ReferenceRemoteSigner;
 
-/** Provider-level wiring: ServiceLoader discovery, configuration, allocation, and capability declaration. */
+/**
+ * Provider-level wiring: ServiceLoader discovery, configuration, allocation, and capability declaration.
+ */
 public final class RemoteSigningProviderFactoryTest {
 
+    /**
+     * Has stable provider identity.
+     */
     @Test
     public void hasStableProviderIdentity() {
         System.out.println("hasStableProviderIdentity");
         assertEquals("zeroecho-remote", new RemoteSigningProviderFactory().id());
     }
 
+    /**
+     * Requires endpoint and declares capability.
+     */
     @Test
     public void requiresEndpointAndDeclaresCapability() {
         System.out.println("requiresEndpointAndDeclaresCapability");
@@ -86,6 +94,11 @@ public final class RemoteSigningProviderFactoryTest {
                 provider.capabilities().get(0).implementationId());
     }
 
+    /**
+     * Allocates from config with none dependencies and signs.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void allocatesFromConfigWithNoneDependenciesAndSigns() throws Exception {
         System.out.println("allocatesFromConfigWithNoneDependenciesAndSigns");
@@ -116,6 +129,9 @@ public final class RemoteSigningProviderFactoryTest {
         }
     }
 
+    /**
+     * Malformed endpoint does not expose parser input in throwable graph.
+     */
     @Test
     public void malformedEndpointDoesNotExposeParserInputInThrowableGraph() {
         String sentinel = "SENTINEL_REMOTE_ENDPOINT_SECRET";

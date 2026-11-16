@@ -83,6 +83,9 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 
+/**
+ * Contract and regression tests for filesystem credential confirmation.
+ */
 class FilesystemCredentialConfirmationTest {
     private static final Instant NOW = Instant.EPOCH.plusSeconds(30L);
     private static final Clock CLOCK = Clock.fixed(Instant.EPOCH.plusSeconds(60L), ZoneOffset.UTC);
@@ -96,6 +99,11 @@ class FilesystemCredentialConfirmationTest {
     @TempDir
     private java.nio.file.Path temporary;
 
+    /**
+     * Initializes idempotently rejects conflict and confirms with terminal retry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void initializesIdempotentlyRejectsConflictAndConfirmsWithTerminalRetry() throws Exception {
         try (FilesystemPkiStore store = open("lifecycle")) {
@@ -128,6 +136,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Pages by review time and unsigned UTF-8 identity with cutoff bound exclusive cursor.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pagesByReviewTimeAndUnsignedUtf8IdentityWithCutoffBoundExclusiveCursor() throws Exception {
         try (FilesystemPkiStore store = open("paging")) {
@@ -156,6 +169,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Isolates authority and optional profile and binds cursor to exact query scope and store.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void isolatesAuthorityAndOptionalProfileAndBindsCursorToExactQueryScopeAndStore() throws Exception {
         PkiId otherAuthority = new PkiId("other-confirmation-authority");
@@ -201,6 +219,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Rejects expired and any revocation history at initialization and confirmation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsExpiredAndAnyRevocationHistoryAtInitializationAndConfirmation() throws Exception {
         try (FilesystemPkiStore store = open("eligibility")) {
@@ -231,6 +254,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Serializes initialization against revocation without post history admission.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void serializesInitializationAgainstRevocationWithoutPostHistoryAdmission() throws Exception {
         try (FilesystemPkiStore store = open("race")) {
@@ -262,6 +290,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Serializes completion against revocation without post history completion.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void serializesCompletionAgainstRevocationWithoutPostHistoryCompletion() throws Exception {
         try (FilesystemPkiStore store = open("completion-race")) {
@@ -299,6 +332,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Revokes only pending non public confirmation strictly after review boundary.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void revokesOnlyPendingNonPublicConfirmationStrictlyAfterReviewBoundary() throws Exception {
         try (FilesystemPkiStore store = open("overdue-boundaries")) {
@@ -354,6 +392,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Serializes confirmation against overdue revocation with exactly one winner.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void serializesConfirmationAgainstOverdueRevocationWithExactlyOneWinner() throws Exception {
         try (FilesystemPkiStore store = open("overdue-race")) {
@@ -388,6 +431,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Restart repairs cleanup interrupted after authoritative revocation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartRepairsCleanupInterruptedAfterAuthoritativeRevocation() throws Exception {
         java.nio.file.Path root = temporary.resolve("overdue-cleanup-recovery");
@@ -423,6 +471,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Bounded list repair continues across deleted anchors and converges after reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedListRepairContinuesAcrossDeletedAnchorsAndConvergesAfterReopen()
             throws Exception {
@@ -469,6 +522,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * List repair respects cutoff and leaves non permanent history untouched.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void listRepairRespectsCutoffAndLeavesNonPermanentHistoryUntouched() throws Exception {
         try (FilesystemPkiStore store = open("list-repair-cutoff")) {
@@ -504,6 +562,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Direct repair cohort continues after exact revision conflict and unknown fails safe.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void directRepairCohortContinuesAfterExactRevisionConflictAndUnknownFailsSafe()
             throws Exception {
@@ -550,6 +613,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Reopens and rebuilds corrupt derived review without changing authority.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopensAndRebuildsCorruptDerivedReviewWithoutChangingAuthority() throws Exception {
         java.nio.file.Path root = temporary.resolve("rebuild");
@@ -568,6 +636,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Rejects invalid early review key before future payload can end page.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsInvalidEarlyReviewKeyBeforeFuturePayloadCanEndPage() throws Exception {
         try (FilesystemPkiStore store = open("early-invalid-review")) {
@@ -585,6 +658,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Rejects terminal lifecycle stored under another credential authority key.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsTerminalLifecycleStoredUnderAnotherCredentialAuthorityKey() throws Exception {
         try (FilesystemPkiStore store = open("terminal-identity")) {
@@ -604,6 +682,11 @@ class FilesystemCredentialConfirmationTest {
         }
     }
 
+    /**
+     * Rebuilds multiple bounded mixed batches and is idempotent across reopens.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rebuildsMultipleBoundedMixedBatchesAndIsIdempotentAcrossReopens() throws Exception {
         java.nio.file.Path root = temporary.resolve("multi-batch-rebuild");
@@ -658,6 +741,11 @@ class FilesystemCredentialConfirmationTest {
         assertCanonicalRebuild(root, pending);
     }
 
+    /**
+     * Accepts initialization and confirmation at exact credential not after.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptsInitializationAndConfirmationAtExactCredentialNotAfter() throws Exception {
         try (FilesystemPkiStore store = open("not-after-boundary")) {

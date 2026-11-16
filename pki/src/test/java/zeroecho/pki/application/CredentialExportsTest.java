@@ -53,15 +53,52 @@ import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.IntermediateIssuanceFixture;
 
-/** Provider-owned certificate representations preserve native bytes and expose PEM only for X.509. */
+/**
+ * Provider-owned certificate representations preserve native bytes and expose PEM only for X.509.
+ */
 class CredentialExportsTest {
+    /**
+     * Exports bounded integrity checked native and framework owned PEM.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exportsBoundedIntegrityCheckedNativeAndFrameworkOwnedPem(@TempDir Path root) throws Exception { exercise(root); }
+    /**
+     * Requires a fixture invariant without relying on enabled JVM assertions.
+     *
+     * @param condition condition that must hold for the fixture assertion to succeed
+     * @param message diagnostic attached to a failed fixture assertion
+     * @throws AssertionError if the required condition is false
+     */
     static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
-    interface Action { void run() throws Exception; }
+    /**
+     * Checked test operation used to assert input rejection without mutation.
+     */
+    interface Action {
+        /**
+         * Executes the checked test action supplied by an input-validation case.
+         *
+         * @throws Exception if fixture construction, execution, or cleanup fails
+         */
+        void run() throws Exception; }
+    /**
+     * Requires the supplied invalid-input action to throw a runtime exception.
+     *
+     * @param action checked operation that must reject the supplied invalid input
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     * @throws AssertionError if the action returns normally instead of rejecting input
+     */
     static void rejected(Action action) throws Exception {
         try { action.run(); throw new AssertionError("Unsupported export accepted"); }
         catch (IOException | RuntimeException expected) { }
     }
+    /**
+     * Runs the complete actual-store scenario and its persisted-state assertions in the supplied root.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void exercise(Path root) throws Exception {
         try (var store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             var fixture = new IntermediateIssuanceFixture(); fixture.initialize(store);
@@ -167,5 +204,11 @@ class CredentialExportsTest {
         return new DefaultPkiRepository(observed, () -> { }, List.of(framework));
     }
 
+    /**
+     * Runs the standalone fixture scenario using a newly created temporary directory.
+     *
+     * @param args unused console arguments; the fixture creates its own temporary root
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static void main(String[] args) throws Exception { exercise(Files.createTempDirectory("zeroecho-credential-exports-")); }
 }

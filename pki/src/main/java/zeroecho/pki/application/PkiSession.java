@@ -310,6 +310,7 @@ public interface PkiSession extends AutoCloseable {
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed for the publication audit projector
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide this capability
      */
     default zeroecho.pki.spi.store.AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Publication evidence feed is not supported by this session");

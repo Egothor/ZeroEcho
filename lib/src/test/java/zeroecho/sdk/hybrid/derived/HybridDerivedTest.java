@@ -67,6 +67,11 @@ import zeroecho.sdk.hybrid.kex.HybridKexExporter;
  */
 public class HybridDerivedTest {
 
+    /**
+     * AES GCM apply to round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aes_gcm_applyTo_roundtrip() throws Exception {
         System.out.println("aes_gcm_applyTo_roundtrip()");
@@ -101,6 +106,11 @@ public class HybridDerivedTest {
         System.out.println("aes_gcm_applyTo_roundtrip...ok");
     }
 
+    /**
+     * AES GCM apply to negative label mismatch.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aes_gcm_applyTo_negative_label_mismatch() throws Exception {
         System.out.println("aes_gcm_applyTo_negative_label_mismatch()");
@@ -130,6 +140,11 @@ public class HybridDerivedTest {
         System.out.println("aes_gcm_applyTo_negative_label_mismatch...ok");
     }
 
+    /**
+     * ChaCha AEAD apply to round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void chacha_aead_applyTo_roundtrip() throws Exception {
         System.out.println("chacha_aead_applyTo_roundtrip()");
@@ -165,6 +180,11 @@ public class HybridDerivedTest {
         System.out.println("chacha_aead_applyTo_roundtrip...ok");
     }
 
+    /**
+     * HMAC apply to default and override.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hmac_applyTo_default_and_override() throws Exception {
         System.out.println("hmac_applyTo_default_and_override()");

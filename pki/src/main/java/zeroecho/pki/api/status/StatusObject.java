@@ -69,6 +69,14 @@ public record StatusObject(PkiId statusObjectId, FormatId formatId, PkiId issuer
      *
      * @throws IllegalArgumentException if mandatory inputs are null or optional
      *                                  container is null
+     * @param statusObjectId stable identifier of the status object
+     * @param formatId framework format id
+     * @param issuerCaId issuer CA entity id
+     * @param type status object type
+     * @param thisUpdate time of issuance/publication baseline
+     * @param nextUpdate optional next update timestamp
+     * @param content immutable store-owned encoded content reference
+     * @param attributes universal attributes describing the object (must not contain secrets)
      */
     public StatusObject {
         if (statusObjectId == null) {

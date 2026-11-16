@@ -60,15 +60,26 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
+/**
+ * Contract and regression tests for metadata mutation payload codec.
+ */
 final class MetadataMutationPayloadCodecTest {
     private static final String TOKEN = "00000000000000000000000000000001";
     private static final int COMMON_BYTES = 8;
     private static final int CREATE_SCALAR_BYTES = Long.BYTES;
     private final AtomicInteger fixtureNumber = new AtomicInteger();
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Create replace and delete descriptors round trip without reading values.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void createReplaceAndDeleteDescriptorsRoundTripWithoutReadingValues() throws IOException {
         System.out.print("createReplaceAndDeleteDescriptorsRoundTripWithoutReadingValues ");
@@ -99,6 +110,11 @@ final class MetadataMutationPayloadCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Identity boundaries and strict descriptor schemas fail closed.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void identityBoundariesAndStrictDescriptorSchemasFailClosed() throws IOException {
         System.out.print("identityBoundariesAndStrictDescriptorSchemasFailClosed ");
@@ -128,6 +144,11 @@ final class MetadataMutationPayloadCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Composite streaming detaches no caller authority and checks exact length.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void compositeStreamingDetachesNoCallerAuthorityAndChecksExactLength() throws IOException {
         System.out.print("compositeStreamingDetachesNoCallerAuthorityAndChecksExactLength ");
@@ -164,6 +185,11 @@ final class MetadataMutationPayloadCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cancellation is observed before open and between bounded reads.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationIsObservedBeforeOpenAndBetweenBoundedReads() throws IOException {
         System.out.print("cancellationIsObservedBeforeOpenAndBetweenBoundedReads ");
@@ -183,6 +209,11 @@ final class MetadataMutationPayloadCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Zero progress from caller content fails once and closes the stream.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void zeroProgressFromCallerContentFailsOnceAndClosesTheStream() throws IOException {
         System.out.print("zeroProgressFromCallerContentFailsOnceAndClosesTheStream ");
@@ -207,6 +238,11 @@ final class MetadataMutationPayloadCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Bounded decode rejects zero progress and invalid regions without closing channel.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedDecodeRejectsZeroProgressAndInvalidRegionsWithoutClosingChannel() throws IOException {
         System.out.print("boundedDecodeRejectsZeroProgressAndInvalidRegionsWithoutClosingChannel ");

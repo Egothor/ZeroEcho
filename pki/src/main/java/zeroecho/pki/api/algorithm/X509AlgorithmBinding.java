@@ -63,77 +63,153 @@ public record X509AlgorithmBinding(String bindingId, AlgorithmIdentity algorithm
         SignatureEncoding signatureEncoding, Interoperability interoperability, Optional<String> providerId,
         String semanticCommitment) {
 
-    /** X.509 locations whose representations are independently authorized. */
+    /**
+     * X.509 locations whose representations are independently authorized.
+     */
     public enum Role {
-        /** SubjectPublicKeyInfo algorithm and public-key BIT STRING. */
+        /**
+         * SubjectPublicKeyInfo algorithm and public-key BIT STRING.
+         */
         SUBJECT_PUBLIC_KEY,
-        /** PKCS#10 self-signature or CRMF signing-key proof signature. */
+        /**
+         * PKCS#10 self-signature or CRMF signing-key proof signature.
+         */
         CSR_SIGNATURE,
-        /** Certificate signature. */
+        /**
+         * Certificate signature.
+         */
         CERTIFICATE_SIGNATURE,
-        /** Certificate-revocation-list signature. */
+        /**
+         * Certificate-revocation-list signature.
+         */
         CRL_SIGNATURE,
-        /** Signed OCSP request signature. */
+        /**
+         * Signed OCSP request signature.
+         */
         OCSP_REQUEST_SIGNATURE
     }
 
-    /** Authority that owns the OID assignment. */
+    /**
+     * Authority that owns the OID assignment.
+     */
     public enum Origin {
-        /** Published standards assignment. */
+        /**
+         * Published standards assignment.
+         */
         STANDARD,
-        /** Frozen ZeroEcho assignment under the Egothor PEN. */
+        /**
+         * Frozen ZeroEcho assignment under the Egothor PEN.
+         */
         ZEROECHO_PRIVATE,
-        /** Explicitly enabled deployment-owned assignment. */
+        /**
+         * Explicitly enabled deployment-owned assignment.
+         */
         DEPLOYER_PRIVATE
     }
 
-    /** Canonical AlgorithmIdentifier parameter representation. */
+    /**
+     * Canonical AlgorithmIdentifier parameter representation.
+     */
     public enum ParameterRule {
-        /** Parameters must be absent. */
+        /**
+         * Parameters must be absent.
+         */
         ABSENT,
-        /** Parameters must be canonical DER NULL. */
+        /**
+         * Parameters must be canonical DER NULL.
+         */
         DER_NULL,
-        /** Parameters are a binding-owned canonical DER structure. */
+        /**
+         * Parameters are a binding-owned canonical DER structure.
+         */
         STRUCTURED_DER
     }
 
-    /** Subject-public-key BIT STRING representation. */
+    /**
+     * Subject-public-key BIT STRING representation.
+     */
     public enum PublicKeyEncoding {
-        /** This binding is not an SPKI binding. */
+        /**
+         * This binding is not an SPKI binding.
+         */
         NOT_APPLICABLE,
-        /** Standard RSA PKCS#1 public-key DER. */
+        /**
+         * Standard RSA PKCS#1 public-key DER.
+         */
         RSA_PKCS1_DER,
-        /** SEC1 elliptic-curve point. */
+        /**
+         * SEC1 elliptic-curve point.
+         */
         EC_POINT,
-        /** Algorithm-defined raw public-key bytes. */
+        /**
+         * Algorithm-defined raw public-key bytes.
+         */
         RAW,
-        /** Canonical native SPKI DER nested as the BIT STRING payload. */
+        /**
+         * Canonical native SPKI DER nested as the BIT STRING payload.
+         */
         NESTED_SPKI_DER
     }
 
-    /** Signature BIT STRING representation. */
+    /**
+     * Signature BIT STRING representation.
+     */
     public enum SignatureEncoding {
-        /** This binding is not a signature binding. */
+        /**
+         * This binding is not a signature binding.
+         */
         NOT_APPLICABLE,
-        /** Algorithm-defined opaque signature bytes. */
+        /**
+         * Algorithm-defined opaque signature bytes.
+         */
         OPAQUE,
-        /** Canonical DER sequence of positive ECDSA integers. */
+        /**
+         * Canonical DER sequence of positive ECDSA integers.
+         */
         ECDSA_DER
     }
 
-    /** Relying-party interoperability expectation. */
+    /**
+     * Relying-party interoperability expectation.
+     */
     public enum Interoperability {
-        /** Published standards ecosystems. */
+        /**
+         * Published standards ecosystems.
+         */
         STANDARD_INTEROPERABLE,
-        /** Relying parties with matching ZeroEcho bindings. */
+        /**
+         * Relying parties with matching ZeroEcho bindings.
+         */
         ZEROECHO_ECOSYSTEM,
-        /** One explicitly configured deployment ecosystem. */
+        /**
+         * One explicitly configured deployment ecosystem.
+         */
         DEPLOYER_ECOSYSTEM,
-        /** Experimental representation without general interoperability. */
+        /**
+         * Experimental representation without general interoperability.
+         */
         EXPERIMENTAL
     }
 
-    /** Validates and snapshots one descriptor. */
+    /**
+     * Validates and snapshots one descriptor.
+     * @param bindingId stable semantic binding identifier
+     * @param algorithmIdentity exact provider-independent cryptographic identity
+     * @param role exact X.509 use role
+     * @param oid complete dotted-decimal object identifier
+     * @param origin namespace ownership
+     * @param encodingVersion positive immutable encoding-contract version
+     * @param parameterRule canonical AlgorithmIdentifier parameter rule
+     * @param publicKeyEncoding public-key BIT STRING contract
+     * @param signatureEncoding signature BIT STRING contract
+     * @param interoperability finite interoperability classification
+     * @param providerId contributing provider for deployer bindings
+     * @param semanticCommitment deterministic commitment to the complete contract
+     * @throws NullPointerException if algorithmIdentity, role, origin, parameterRule, publicKeyEncoding,
+     *     signatureEncoding, interoperability, providerId is null
+     * @throws IllegalArgumentException if a text identity is null or blank, encodingVersion is not positive,
+     *     deployer origin and provider presence disagree, or role and key/signature encodings disagree
+     */
     public X509AlgorithmBinding {
         bindingId = requireText(bindingId, "bindingId");
         Objects.requireNonNull(algorithmIdentity, "algorithmIdentity");

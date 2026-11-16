@@ -66,29 +66,51 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 public record PublicationExecutionEvidence(String sourceType, String sourceId, String targetType, String targetId,
         long attemptNumber, Optional<String> responseEvidence, Optional<String> failure, Outcome outcome) {
 
-    /** Terminal publication outcomes. */
+    /**
+     * Terminal publication outcomes.
+     */
     public enum Outcome {
-        /** Publication completed successfully. */
+        /**
+         * Publication completed successfully.
+         */
         SUCCEEDED,
-        /** Publication ended in a non-retryable failure. */
+        /**
+         * Publication ended in a non-retryable failure.
+         */
         TERMINAL_FAILURE
     }
 
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId SOURCE_TYPE = id("source-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId SOURCE_ID = id("source-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId TARGET_TYPE = id("target-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId TARGET_ID = id("target-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ATTEMPT_NUMBER = id("attempt-number");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId RESPONSE_EVIDENCE = id("response-evidence");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId FAILURE = id("failure");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OUTCOME = id("outcome");
 
     private static final String EVIDENCE_PREFIX = "urn:zeroecho:pki:publication-evidence:";
@@ -96,7 +118,19 @@ public record PublicationExecutionEvidence(String sourceType, String sourceId, S
     private static final Set<AttributeId> EVIDENCE_V1 = Set.of(SOURCE_TYPE, SOURCE_ID, TARGET_TYPE, TARGET_ID,
             ATTEMPT_NUMBER, RESPONSE_EVIDENCE, FAILURE, OUTCOME);
 
-    /** Validates the closed evidence model. */
+    /**
+     * Validates the closed evidence model.
+     * @param sourceType authoritative source-object type
+     * @param sourceId authoritative source-object identity
+     * @param targetType configured destination type
+     * @param targetId configured destination identity
+     * @param attemptNumber terminal attempt number
+     * @param responseEvidence publisher outcome-evidence classification, when present
+     * @param failure safe failure classification, present exactly for a terminal failure
+     * @param outcome terminal outcome
+     * @throws IllegalArgumentException if attemptNumber is negative or failure presence disagrees with the terminal-failure outcome
+     * @throws NullPointerException if responseEvidence, failure, outcome is null
+     */
     public PublicationExecutionEvidence {
         requireBounded(sourceType, "source type");
         requireBounded(sourceId, "source ID");
@@ -162,6 +196,7 @@ public record PublicationExecutionEvidence(String sourceType, String sourceId, S
      * @param attributes attributes to inspect
      * @return empty only when no version-one evidence attribute is present
      * @throws IllegalArgumentException if evidence is unknown, partial, duplicated, or mistyped
+     * @throws NullPointerException if attributes is null
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // untrusted evidence values must not escape through causes
     public static Optional<PublicationExecutionEvidence> decode(AttributeSet attributes) {

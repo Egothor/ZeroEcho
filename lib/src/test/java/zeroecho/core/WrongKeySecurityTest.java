@@ -47,8 +47,14 @@ import zeroecho.core.audit.AuditMode;
 import zeroecho.core.err.UnsupportedSpecException;
 import zeroecho.sdk.ZeroEchoSession;
 
+/**
+ * Contract and regression tests for wrong key security.
+ */
 class WrongKeySecurityTest {
 
+    /**
+     * Checks wrong-key behavior across the selected cryptographic algorithms.
+     */
     @Test
     void wrongKeyMatrix() {
         System.out.println("wrongKeyMatrix");

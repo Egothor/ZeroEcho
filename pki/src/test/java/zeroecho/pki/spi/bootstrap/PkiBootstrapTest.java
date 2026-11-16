@@ -113,6 +113,9 @@ public final class PkiBootstrapTest {
 
     private Properties savedProperties;
 
+    /**
+     * Saves JVM properties and clears PKI provider-selection properties for an isolated bootstrap case.
+     */
     @BeforeEach
     public void beforeEach() {
         System.out.println("beforeEach");
@@ -134,6 +137,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Restores the JVM property snapshot saved before the bootstrap test case.
+     */
     @AfterEach
     public void afterEach() {
         System.out.println("afterEach");
@@ -141,6 +147,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open store fs uses temp root.
+     */
     @Test
     public void openStore_fs_usesTempRoot() {
         System.out.println("openStore_fs_usesTempRoot");
@@ -160,6 +169,11 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Configured store receives exact runtime clock and default uses system utc.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void configuredStoreReceivesExactRuntimeClockAndDefaultUsesSystemUtc() throws Exception {
         ProviderConfig explicitConfig = new ProviderConfig("fs",
@@ -180,6 +194,9 @@ public final class PkiBootstrapTest {
         }
     }
 
+    /**
+     * Signing runtime clock is explicit and legacy factories keep system utc.
+     */
     @Test void signingRuntimeClockIsExplicitAndLegacyFactoriesKeepSystemUtc() {
         Clock fixed = Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC);
         KeyringUnlockProvider provider = () -> password();
@@ -198,6 +215,9 @@ public final class PkiBootstrapTest {
         return (Clock) field.get(store);
     }
 
+    /**
+     * Open audit default is stdout.
+     */
     @Test
     public void openAudit_defaultIsStdout() {
         System.out.println("openAudit_defaultIsStdout");
@@ -215,6 +235,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open audit file uses temp root.
+     */
     @Test
     public void openAudit_file_usesTempRoot() {
         System.out.println("openAudit_file_usesTempRoot");
@@ -233,6 +256,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open audit memory accepts size.
+     */
     @Test
     public void openAudit_memory_acceptsSize() {
         System.out.println("openAudit_memory_acceptsSize");
@@ -251,6 +277,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open audit memory rejects invalid size.
+     */
     @Test
     public void openAudit_memory_rejectsInvalidSize() {
         System.out.println("openAudit_memory_rejectsInvalidSize");
@@ -266,6 +295,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open credential framework explicit X.509 BC provider.
+     */
     @Test
     public void openCredentialFramework_explicitX509BcProvider() {
         System.out.println("openCredentialFramework_explicitX509BcProvider");
@@ -283,6 +315,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open credential framework X.509 BC by default.
+     */
     @Test
     public void openCredentialFramework_x509Bc_byDefault() {
         System.out.println("openCredentialFramework_x509Bc_byDefault");
@@ -298,6 +333,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open credential framework X.509 BC ignores unknown key.
+     */
     @Test
     public void openCredentialFramework_x509Bc_ignoresUnknownKey() {
         System.out.println("openCredentialFramework_x509Bc_ignoresUnknownKey");
@@ -315,6 +353,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open async file uses temp log path.
+     */
     @Test
     public void openAsync_file_usesTempLogPath() {
         System.out.println("openAsync_file_usesTempLogPath");
@@ -333,6 +374,11 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open signing provider zero echo lib uses configured keyring path.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void openSigningProvider_zeroEchoLib_usesConfiguredKeyringPath() throws Exception {
         System.out.println("openSigningProvider_zeroEchoLib_usesConfiguredKeyringPath");
@@ -388,6 +434,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open signing provider zero echo lib requires explicit unlock provider.
+     */
     @Test
     public void openSigningProvider_zeroEchoLib_requiresExplicitUnlockProvider() {
         System.out.println("openSigningProvider_zeroEchoLib_requiresExplicitUnlockProvider");
@@ -405,6 +454,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Configured signing composition captures only allocating factory capabilities.
+     */
     @Test
     public void configuredSigningCompositionCapturesOnlyAllocatingFactoryCapabilities() {
         Path keyringPath = tempDir.resolve("selected-factory").resolve("keyring.zek");
@@ -425,6 +477,9 @@ public final class PkiBootstrapTest {
         }
     }
 
+    /**
+     * Open signing provider zero echo lib sanitizes unlock provider failure.
+     */
     @Test
     public void openSigningProvider_zeroEchoLib_sanitizesUnlockProviderFailure() {
         System.out.println("openSigningProvider_zeroEchoLib_sanitizesUnlockProviderFailure");
@@ -468,6 +523,11 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open signing provider zero echo lib wrong password fails uniformly.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void openSigningProvider_zeroEchoLib_wrongPasswordFailsUniformly() throws Exception {
         System.out.println("openSigningProvider_zeroEchoLib_wrongPasswordFailsUniformly");
@@ -498,6 +558,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Signing provider bootstrap API requires runtime dependencies.
+     */
     @Test
     public void signingProviderBootstrapApi_requiresRuntimeDependencies() {
         System.out.println("signingProviderBootstrapApi_requiresRuntimeDependencies");
@@ -521,6 +584,9 @@ public final class PkiBootstrapTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Signing provider runtime dependency preserves public spi boundary.
+     */
     @Test
     public void signingProviderRuntimeDependency_preservesPublicSpiBoundary() {
         KeyringUnlockProvider unlockProvider = () -> password();
@@ -534,6 +600,9 @@ public final class PkiBootstrapTest {
                 .anyMatch(signature -> signature.contains("zeroecho.pki.impl.")));
     }
 
+    /**
+     * Provider validation rejects backend id mismatch.
+     */
     @Test
     public void providerValidation_rejectsBackendIdMismatch() {
         System.out.println("providerValidation_rejectsBackendIdMismatch");

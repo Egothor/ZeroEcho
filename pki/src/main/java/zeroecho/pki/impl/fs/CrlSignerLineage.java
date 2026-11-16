@@ -38,9 +38,29 @@ import java.util.Objects;
 import java.util.Optional;
 import zeroecho.pki.api.PkiId;
 
-/** Immutable hybrid-only completed-membership evidence; no private material or mutable head inference. */
+/**
+ * Immutable hybrid-only completed-membership evidence; no private material or mutable head inference.
+ * @param version lineage evidence format version; must be 1
+ * @param issuerId exact issuer generation identity
+ * @param predecessorSelectedIssuerId previously selected issuer generation, or empty for the first lineage member
+ * @param lineageId stable hybrid signer lineage identity
+ * @param signerTupleCommitment canonical commitment to the exact hybrid signer role tuple
+ * @param issuerBindingCommitment canonical commitment to the immutable issuer cryptographic binding
+ */
 record CrlSignerLineage(int version, PkiId issuerId, Optional<PkiId> predecessorSelectedIssuerId,
         PkiId lineageId, String signerTupleCommitment, String issuerBindingCommitment) {
+    /**
+     * Creates an immutable hybrid-only completed-membership evidence; no private material or mutable head inference.
+     *
+     * @param version lineage evidence format version; must be 1
+     * @param issuerId exact issuer generation identity
+     * @param predecessorSelectedIssuerId previously selected issuer generation, or empty for the first lineage member
+     * @param lineageId stable hybrid signer lineage identity
+     * @param signerTupleCommitment canonical commitment to the exact hybrid signer role tuple
+     * @param issuerBindingCommitment canonical commitment to the immutable issuer cryptographic binding
+     * @throws NullPointerException if {@code predecessorSelectedIssuerId} is null
+     * @throws IllegalArgumentException if {@code (version != 1 || predecessorSelectedIssuerId.filter(issuerId::equals).isPresent() || !digest(signerTupleCommitment) || !digest(issuerBindingCommitment))}
+     */
     CrlSignerLineage {
         Objects.requireNonNull(predecessorSelectedIssuerId, "predecessorSelectedIssuerId");
         id(issuerId); id(lineageId); predecessorSelectedIssuerId.ifPresent(CrlSignerLineage::id);

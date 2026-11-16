@@ -59,6 +59,11 @@ public record AttributeMeta(String description, List<String> notes, List<String>
      *
      * @throws IllegalArgumentException if inputs are invalid or collections/maps
      *                                  are null
+     * @param description normative description of meaning and usage
+     * @param notes additional guidance and security considerations
+     * @param examples example values (must not contain secrets)
+     * @param tags classification tags (e.g., "identity", "x509", "san")
+     * @param extra additional annotations for future extensions (non-sensitive)
      */
     public AttributeMeta {
         if (description == null || description.isBlank()) {

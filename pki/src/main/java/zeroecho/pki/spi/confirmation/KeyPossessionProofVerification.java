@@ -33,10 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.spi.confirmation;
 
-/** Closed result of one stateless key-possession proof verification. */
+/**
+ * Closed result of one stateless key-possession proof verification.
+ */
 public enum KeyPossessionProofVerification {
-    /** The proof cryptographically verifies for the authoritative context. */
+    /**
+     * The proof cryptographically verifies for the authoritative context.
+     */
     VERIFIED,
-    /** The proof is well-formed but does not verify for the authoritative context. */
+    /**
+     * The proof is well-formed but does not verify for the authoritative context.
+     */
     REJECTED
 }

@@ -73,11 +73,22 @@ import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.application.PkiSigningOperation;
 
+/**
+ * Integration coverage for real local keyring signing through the public CLI dispatcher.
+ */
 class PkiLocalSigningCliTest {
     private static final String ENVIRONMENT = "ZEROECHO_LOCAL_SIGNING_TEST_UNLOCK";
     private static final String PASSWORD = "local-signing-fixture-unlock";
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Exercises the public CLI dispatcher through a real keyring-backed CA lifecycle and CRL plan.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void publicDispatcherCompletesRealKeyringCaLifecycleAndCrlPlan() throws Exception {
         Path configuration = fixture();
@@ -162,6 +173,11 @@ class PkiLocalSigningCliTest {
         assertEquals(missingId, text(firstStep(missing), "operationId"));
     }
 
+    /**
+     * Checks that reopening and inspecting an accepted operation leaves completion under explicit caller control.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void publicInspectionLeavesAcceptedWorkPendingUntilExplicitCompletionAfterReopen() throws Exception {
         Path configuration = fixture();
@@ -189,6 +205,11 @@ class PkiLocalSigningCliTest {
         }
     }
 
+    /**
+     * Checks safe unlock-failure classification without exposing secrets or falling back to console input.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void publicUnlockFailuresAreSafeResourceFailuresWithoutConsoleFallback() throws Exception {
         Path configuration = fixture();

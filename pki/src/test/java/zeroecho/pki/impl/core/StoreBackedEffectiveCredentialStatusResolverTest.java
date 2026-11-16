@@ -76,12 +76,18 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.fs.FilesystemStagedContentStore;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for store backed effective credential status resolver.
+ */
 final class StoreBackedEffectiveCredentialStatusResolverTest {
     private static final Instant NOW = Instant.parse("2026-06-01T12:00:00Z");
 
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Resolves inventory validity and current revocation precedence.
+     */
     @Test
     void resolvesInventoryValidityAndCurrentRevocationPrecedence() {
         Credential usable = credential("usable", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
@@ -109,6 +115,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
                 EffectiveCredentialStatus.PERMANENTLY_REVOKED);
     }
 
+    /**
+     * Embedded revoked is permanent floor across hold and unhold records.
+     */
     @Test
     void embeddedRevokedIsPermanentFloorAcrossHoldAndUnholdRecords() {
         Credential revoked = credential("floor", CredentialStatus.REVOKED, NOW.minusSeconds(60), NOW.plusSeconds(60));
@@ -119,6 +128,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
                 EffectiveCredentialStatus.PERMANENTLY_REVOKED);
     }
 
+    /**
+     * Future and mismatched records fail closed.
+     */
     @Test
     void futureAndMismatchedRecordsFailClosed() {
         Credential credential = credential("invalid", CredentialStatus.ISSUED, NOW.minusSeconds(60),
@@ -130,6 +142,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         assertResolutionFailure(credential, Optional.of(mismatch));
     }
 
+    /**
+     * Lookup failure is redacted and require usable uses stable code.
+     */
     @Test
     void lookupFailureIsRedactedAndRequireUsableUsesStableCode() {
         Credential credential = credential("failure", CredentialStatus.ISSUED, NOW.minusSeconds(60),
@@ -153,6 +168,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         assertEquals("Credential trust rejected: code=CREDENTIAL_NOT_USABLE", rejected.getMessage());
     }
 
+    /**
+     * One evaluation captures clock once and looks up each credential once.
+     */
     @Test
     void oneEvaluationCapturesClockOnceAndLooksUpEachCredentialOnce() {
         CountingClock clock = new CountingClock(NOW);
@@ -170,6 +188,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         assertEquals(2, lookups.get());
     }
 
+    /**
+     * Trust audit omits format and sensitive metadata.
+     */
     @Test
     void trustAuditOmitsFormatAndSensitiveMetadata() {
         String sentinel = "DO_NOT_AUDIT_FORMAT_SENTINEL";

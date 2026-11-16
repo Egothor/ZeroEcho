@@ -40,16 +40,39 @@ import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.server.ServerOperationGateway;
 import zeroecho.pki.server.acme.AcmeService;
 
-/** Package-internal boundary that preserves the exact transport cancellation signal. */
+/**
+ * Package-internal boundary that preserves the exact transport cancellation signal.
+ */
 final class TransportCancellationGateway {
     private TransportCancellationGateway() { }
 
+    /**
+     * Executes administrative admission with the exact transport cancellation signal.
+     *
+     * @param gateway realm-owned authorized operation gateway
+     * @param request administrative request and trusted transport identity
+     * @param cancellation exact transport cancellation signal
+     * @return gateway execution, denial or approval-required outcome
+     * @throws NullPointerException if any argument is null
+     */
     /* default */ static ServerOperationGateway.Outcome executeAdmin(ServerOperationGateway gateway,
             ServerOperationGateway.Request request, CancellationSignal cancellation) {
         return Objects.requireNonNull(gateway, "gateway").execute(Objects.requireNonNull(request, "request"),
                 Objects.requireNonNull(cancellation, "cancellation"));
     }
 
+    /**
+     * Finalizes the retained ACME order with the exact transport cancellation signal.
+     *
+     * @param service realm-owned ACME service
+     * @param accountId authenticated account identity
+     * @param accountCommitment exact observed account commitment
+     * @param orderId retained order identity
+     * @param csrDer supplied certificate-signing request DER
+     * @param cancellation exact transport cancellation signal
+     * @return authoritative order state after finalization admission
+     * @throws NullPointerException if the service, CSR or cancellation signal is null
+     */
     /* default */ static zeroecho.pki.server.acme.AcmeState.Order finalizeAcme(AcmeService service, String accountId,
             String accountCommitment,
             String orderId, byte[] csrDer, CancellationSignal cancellation) {
@@ -57,11 +80,29 @@ final class TransportCancellationGateway {
                 Objects.requireNonNull(csrDer, "csrDer"), Objects.requireNonNull(cancellation, "cancellation"));
     }
 
+    /**
+     * Generates a native OCSP response with the exact transport cancellation signal.
+     *
+     * @param service realm-owned OCSP response service
+     * @param command validated native OCSP query and responder selection
+     * @param cancellation exact transport cancellation signal
+     * @return native OCSP response
+     * @throws NullPointerException if any argument is null
+     */
     /* default */ static OcspResponseService.Response respondOcsp(OcspResponseService service,
             OcspResponseService.Command command, CancellationSignal cancellation) {
         return Objects.requireNonNull(service, "service").respond(Objects.requireNonNull(command, "command"),
                 Objects.requireNonNull(cancellation, "cancellation"));
     }
+    /**
+     * Generates hybrid-SDK OCSP evidence with the exact transport cancellation signal.
+     *
+     * @param service realm-owned OCSP response service
+     * @param command native OCSP query with SDK evidence binding
+     * @param cancellation exact transport cancellation signal
+     * @return complete SDK OCSP evidence
+     * @throws NullPointerException if any argument is null
+     */
     /* default */ static zeroecho.pki.api.hybrid.sdk.SdkOcspEvidence respondSdkOcsp(OcspResponseService service,
             OcspResponseService.SdkCommand command,CancellationSignal cancellation) {
         return Objects.requireNonNull(service,"service").respondSdk(Objects.requireNonNull(command,"command"),

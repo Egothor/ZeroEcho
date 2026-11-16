@@ -41,7 +41,13 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for json log formatter.
+ */
 class JsonLogFormatterTest {
+    /**
+     * Every control character and json delimiter has canonical escaping.
+     */
     @Test
     void everyControlCharacterAndJsonDelimiterHasCanonicalEscaping() {
         StringBuilder controls = new StringBuilder();

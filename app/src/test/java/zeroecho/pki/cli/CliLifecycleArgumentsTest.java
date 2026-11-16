@@ -5,8 +5,13 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Local CLI parsing preserves distinct role overrides and strictly rejects forged head fields. */
+/**
+ * Local CLI parsing preserves distinct role overrides and strictly rejects forged head fields.
+ */
 class CliLifecycleArgumentsTest {
+    /**
+     * Checks lifecycle role overrides and rejects malformed command inputs.
+     */
     @Test void parsesRoleOverridesAndRejectsInvalidInputs() {
         var parsed=CliLifecycleArguments.selection(Map.of("newAlternativeKeyRef",new PkiOperationValue.Text("managed:alt")));
         assertTrue(parsed.primary().isEmpty());assertEquals("managed:alt",parsed.alternative().orElseThrow().keyRef().orElseThrow().value());

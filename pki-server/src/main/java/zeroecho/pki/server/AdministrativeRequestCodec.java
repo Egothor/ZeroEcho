@@ -44,10 +44,23 @@ import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Strict private codec: ordinary records stay version one; SDK references require version two. */
+/**
+ * Strict private codec: ordinary records stay version one; SDK references require version two.
+ */
 final class AdministrativeRequestCodec {
+    /**
+     * Maximum retained administrative-request JSON payload size, in bytes.
+     */
     static final int MAXIMUM_BYTES = 524288;
     private AdministrativeRequestCodec() { }
+    /**
+     * Encodes a private administrative request with version selected by its SDK-proof presence.
+     *
+     * @param value validated retained administrative request
+     * @return namespace-bound protocol record with the exact payload commitment
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if the encoded payload exceeds 524,288 bytes
+     */
     static ServerControlStore.ProtocolRecord encode(AdministrativeRequest value) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
         fields.put("version", number(value.sdkProof().isPresent() ? 2 : 1)); fields.put("requestId", text(value.requestId())); fields.put("revision", number(value.revision()));
@@ -66,6 +79,15 @@ final class AdministrativeRequestCodec {
         return new ServerControlStore.ProtocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST, value.requestId(),
                 ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(encoded)), encoded);
     }
+    /**
+     * Decodes a retained request and verifies namespace, payload commitment and closed versioned fields.
+     *
+     * @param record private retained administrative-request protocol record
+     * @return validated administrative lifecycle snapshot
+     * @throws IllegalArgumentException if namespace, commitment, framing, fields or lifecycle coordinates are
+     *         invalid
+     * @throws NullPointerException if a required record or nested field is absent
+     */
     static AdministrativeRequest decode(ServerControlStore.ProtocolRecord record) {
         if (!record.namespace().equals(ServerControlStore.ADMINISTRATIVE_REQUEST)
                 || !record.commitment().equals(ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(record.payload())))) throw new IllegalArgumentException("Request record commitment differs");

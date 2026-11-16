@@ -50,18 +50,36 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
-/** Cohesive production fold and artifact catalog construction for recovered ledger state. */
+/**
+ * Cohesive production fold and artifact catalog construction for recovered ledger state.
+ */
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
         "PMD.CyclomaticComplexity" })
 final class SigningLedgerRecoveredState {
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.transaction-outcome}; persisted identities depend on this value.
+     */
     /* default */ static final String OUTCOME_NAMESPACE = "io.zeroecho.pki.transaction-outcome";
+    /**
+     * Exact metadata namespace {@code io.zeroecho.pki.ledger-state}; persisted identities depend on this value.
+     */
     /* default */ static final String LEDGER_STATE_NAMESPACE = "io.zeroecho.pki.ledger-state";
+    /**
+     * Metadata identity retaining the authoritative signing-time watermark.
+     */
     /* default */ static final MetadataKey WATERMARK_KEY =
             new MetadataKey(LEDGER_STATE_NAMESPACE, "signing-time-watermark");
 
     private SigningLedgerRecoveredState() {
     }
 
+    /**
+     * Builds an artifact catalogue from the exact checkpoint, sealed-WAL, and active-WAL manifest entries.
+     *
+     * @param manifest validated authoritative generation manifest; must not be null
+     * @return new catalogue containing the manifest's physical generation ownership
+     * @throws NullPointerException if manifest is null
+     */
     /* default */ static SigningArtifactCatalog catalog(
             SigningManifestCodec.Manifest manifest) {
         SigningArtifactCatalog result = new SigningArtifactCatalog();
@@ -78,20 +96,50 @@ final class SigningLedgerRecoveredState {
         return result;
     }
 
+    /**
+     * Builds the internal transaction-outcome key using the canonical 32-hex UUID encoding.
+     *
+     * @param token transaction UUID; must not be null
+     * @return outcome namespace key for that transaction token
+     * @throws NullPointerException if token is null
+     */
     /* default */ static MetadataKey outcomeKey(UUID token) {
         return new MetadataKey(OUTCOME_NAMESPACE, hex(token));
     }
 
+    /**
+     * Binds a canonical transaction UUID token to its authoritative metadata store identity.
+     *
+     * @param storeId authoritative metadata store identity; must not be null
+     * @param token transaction UUID; must not be null
+     * @return immutable store-bound transaction identity
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static MetadataTransactionId transactionId(MetadataStoreId storeId, UUID token) {
         return new MetadataTransactionId(storeId, hex(token));
     }
 
+    /**
+     * Creates an unresolved transaction outcome carrying storage-failure uncertainty.
+     *
+     * @param id issued transaction identity; must not be null
+     * @return UNKNOWN result without a revision and with STORAGE_FAILURE classification
+     * @throws NullPointerException if id is null
+     */
     /* default */ static MetadataCommitResult unknown(MetadataTransactionId id) {
         return new MetadataCommitResult(id, MetadataCommitResult.Outcome.UNKNOWN,
                 OptionalLong.empty(),
                 Optional.of(MetadataCommitResult.FailureCategory.STORAGE_FAILURE));
     }
 
+    /**
+     * Creates a known noncommitted transaction outcome with a stable rejection category.
+     *
+     * @param id issued transaction identity; must not be null
+     * @param category known failure classification; must not be null
+     * @return NOT_COMMITTED result without a revision
+     * @throws NullPointerException if id or category is null
+     */
     /* default */ static MetadataCommitResult notCommitted(MetadataTransactionId id,
             MetadataCommitResult.FailureCategory category) {
         return new MetadataCommitResult(id, MetadataCommitResult.Outcome.NOT_COMMITTED,
@@ -103,27 +151,53 @@ final class SigningLedgerRecoveredState {
                 token.getMostSignificantBits(), token.getLeastSignificantBits());
     }
 
-    /** Transactional recovery sink that publishes one immutable folded candidate. */
+    /**
+     * Transactional recovery sink that publishes one immutable folded candidate.
+     */
     /* default */ static final class RecoveryFold implements SigningLedgerRecovery.RecoverySink {
         private final MetadataStoreId storeId;
         private final int maximumRecords;
         private State preparedState;
         private State state;
 
+        /**
+         * Creates an isolated recovery fold that publishes state only after validated replay completes.
+         *
+         * @param root ledger artifact directory; must not be null
+         * @param storeId authoritative metadata store identity; must not be null
+         * @throws NullPointerException if root or storeId is null
+         */
         /* default */ RecoveryFold(Path root, MetadataStoreId storeId) {
             this(root, storeId, Integer.MAX_VALUE);
         }
 
+        /**
+         * Creates an isolated recovery fold that publishes state only after validated replay completes.
+         *
+         * @param root ledger artifact directory; must not be null
+         * @param storeId authoritative metadata store identity; must not be null
+         * @param maximumRecords upper bound on folded current metadata records
+         * @throws NullPointerException if root or storeId is null
+         */
         /* default */ RecoveryFold(Path root, MetadataStoreId storeId, int maximumRecords) {
             Objects.requireNonNull(root, "root");
             this.storeId = Objects.requireNonNull(storeId, "storeId");
             this.maximumRecords = maximumRecords;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Session begin(SigningManifestCodec.Manifest manifest) {
             return new FoldSession(manifest, storeId, this);
         }
 
+        /**
+         * Returns the immutable state already published by completed recovery.
+         *
+         * @return published folded recovery state
+         * @throws IllegalStateException if recovery has not published its candidate
+         */
         /* default */ State state() {
             if (state == null) {
                 throw new IllegalStateException("metadata recovery was not published");
@@ -131,6 +205,12 @@ final class SigningLedgerRecoveredState {
             return state;
         }
 
+        /**
+         * Returns the validated folded candidate before or after its explicit publication step.
+         *
+         * @return prepared immutable recovery state
+         * @throws IllegalStateException if recovery has not prepared a candidate
+         */
         /* default */ State preparedState() {
             if (preparedState == null) {
                 throw new IllegalStateException("metadata recovery was not prepared");
@@ -139,7 +219,9 @@ final class SigningLedgerRecoveredState {
         }
     }
 
-    /** Isolated mutable replay state published only after complete validation. */
+    /**
+     * Isolated mutable replay state published only after complete validation.
+     */
     private static final class FoldSession implements SigningLedgerRecovery.RecoverySink.Session {
         private final SigningManifestCodec.Manifest manifest;
         private final MetadataStoreId storeId;
@@ -162,6 +244,9 @@ final class SigningLedgerRecoveredState {
             this.owner = owner;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void acceptCheckpoint(SigningCheckpointCodec.Header header,
                 SigningCheckpointCodec.EntryDescriptor entry, SigningWalFrameCodec.Frame frame)
                 throws IOException {
@@ -196,6 +281,9 @@ final class SigningLedgerRecoveredState {
             checkRestoreBudget();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void acceptCheckpointBoundary(SigningCheckpointCodec.Header header)
                 throws IOException {
             SigningManifestCodec.Checkpoint descriptor = manifest.checkpoint().orElseThrow(
@@ -215,6 +303,9 @@ final class SigningLedgerRecoveredState {
             checkpointBoundaryAccepted = true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void acceptWalGroup(List<SigningWalFrameCodec.ScannedFrame> values,
                 long committedRevision) throws IOException {
             if (manifest.checkpoint().isPresent() && !checkpointBoundaryAccepted) {
@@ -428,6 +519,9 @@ final class SigningLedgerRecoveredState {
             return manifest.activeWal().identity();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public SigningLedgerRecovery.RecoverySink.Prepared prepare() throws IOException {
             if (manifest.checkpoint().isPresent() != checkpointBoundaryAccepted) {
                 throw new IOException("Metadata checkpoint boundary is missing");
@@ -448,6 +542,9 @@ final class SigningLedgerRecoveredState {
             };
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (!prepared) {
                 records.clear();
@@ -520,6 +617,15 @@ final class SigningLedgerRecoveredState {
     private record RadixRange(int from, int to, int depth) {
     }
 
+    /**
+     * Recovered committed metadata, outcomes and authoritative signing-time watermark.
+     *
+     * @param revision authoritative metadata revision
+     * @param sequence exact persisted record sequence
+     * @param records recovered current-state descriptors carrying exact metadata identities
+     * @param outcomes retained terminal outcomes keyed by exact transaction identity
+     * @param watermark authoritative signing-time watermark
+     */
     /* default */ record State(long revision, long sequence,
             List<SigningMvccIndex.RecoveredRecord> records,
             Map<UUID, MetadataCommitResult> outcomes, long watermark) {

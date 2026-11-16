@@ -67,12 +67,20 @@ import zeroecho.pki.api.audit.AuditIntegrityReport;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 
-/** Tamper-evidence and verification coverage for the durable audit log chain. */
+/**
+ * Tamper-evidence and verification coverage for the durable audit log chain.
+ */
 public final class FileAuditSinkIntegrityTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     public Path tempDir;
 
+    /**
+     * Verifies intact chain and reports head.
+     */
     @Test
     public void verifiesIntactChainAndReportsHead() {
         System.out.println("verifiesIntactChainAndReportsHead");
@@ -93,6 +101,11 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...head-seq=" + report.head().sequence());
     }
 
+    /**
+     * Detects record content mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void detectsRecordContentMutation() throws Exception {
         System.out.println("detectsRecordContentMutation");
@@ -114,6 +127,11 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...status=" + report.status() + " at=" + report.firstBrokenSequence());
     }
 
+    /**
+     * Detects record deletion as sequence gap.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void detectsRecordDeletionAsSequenceGap() throws Exception {
         System.out.println("detectsRecordDeletionAsSequenceGap");
@@ -134,6 +152,11 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...status=" + report.status());
     }
 
+    /**
+     * Detects tail truncation only against trusted head.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     public void detectsTailTruncationOnlyAgainstTrustedHead() throws Exception {
         System.out.println("detectsTailTruncationOnlyAgainstTrustedHead");
@@ -159,6 +182,9 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...status=" + report.status());
     }
 
+    /**
+     * Anchored prefix tolerates growth but detects rewrite and truncation.
+     */
     @Test
     public void anchoredPrefixToleratesGrowthButDetectsRewriteAndTruncation() {
         System.out.println("anchoredPrefixToleratesGrowthButDetectsRewriteAndTruncation");
@@ -192,6 +218,9 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Recovers head across reopen and continues one chain.
+     */
     @Test
     public void recoversHeadAcrossReopenAndContinuesOneChain() {
         System.out.println("recoversHeadAcrossReopenAndContinuesOneChain");
@@ -213,6 +242,9 @@ public final class FileAuditSinkIntegrityTest {
         System.out.println("...continued-head-seq=" + report.head().sequence());
     }
 
+    /**
+     * Integrity report is payload free.
+     */
     @Test
     public void integrityReportIsPayloadFree() {
         System.out.println("integrityReportIsPayloadFree");

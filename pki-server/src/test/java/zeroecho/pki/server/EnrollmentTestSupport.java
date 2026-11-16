@@ -47,14 +47,22 @@ import zeroecho.pki.server.enrollment.EnrollmentProfile;
 import zeroecho.pki.server.enrollment.EnrollmentProfileService;
 import zeroecho.pki.server.enrollment.EnrollmentProfileState;
 
-/** Real durable policy/endpoint fixture shared by protocol service tests. */
+/**
+ * Real durable policy/endpoint fixture shared by protocol service tests.
+ */
 public final class EnrollmentTestSupport implements AutoCloseable {
-    /** Returns explicit small transaction budgets for tests without protocol credentials. */
+    /**
+     * Returns explicit small transaction budgets for tests without protocol credentials.
+     * @return decoded explicit version-one enrollment budgets with no protocol credential sets
+     */
     public static zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration runtimeConfiguration() {
         return zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.decode(runtimeJson().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
-    /** Returns the strict companion used by in-process and packaged ACME tests. */
+    /**
+     * Returns the strict companion used by in-process and packaged ACME tests.
+     * @return version-one runtime JSON with finite transaction, request-byte, pending, and dispatch budgets
+     */
     public static String runtimeJson() {
         return """
                 {"version":1,"budgets":{"maximumTransactions":1000,"maximumPending":100,
@@ -67,7 +75,15 @@ public final class EnrollmentTestSupport implements AutoCloseable {
     private final EnrollmentEndpointRegistry endpoints;
     private final ServerRealmContext realm;
 
-    /** Creates a dedicated registry containing explicit fixture policy bindings. */
+    /**
+     * Creates a dedicated registry containing explicit fixture policy bindings.
+     * @param directory isolated root for the durable fixture store
+     * @param certificateProfiles certificate profile names to bind to active enrollment policies
+     * @throws IOException if the durable fixture store cannot be opened
+     * @throws IllegalArgumentException if a profile-derived policy identity or encoding is invalid
+     * @throws IllegalStateException if a profile-derived policy already exists or persistence fails
+     * @throws NullPointerException if directory or certificateProfiles is null
+     */
     public EnrollmentTestSupport(Path directory, List<String> certificateProfiles) throws IOException {
         opened = ServerTestSupport.open(directory);
         EnrollmentProfileService profiles = new EnrollmentProfileService(opened.store());
@@ -81,13 +97,22 @@ public final class EnrollmentTestSupport implements AutoCloseable {
         when(realm.enrollmentProfiles()).thenReturn(profiles);
     }
 
-    /** Returns the realm facade backed by the actual durable registry. */
+    /**
+     * Returns the realm facade backed by the actual durable registry.
+     * @return borrowed mocked realm exposing the real durable profile and endpoint registries
+     */
     public ServerRealmContext realm() { return realm; }
 
-    /** Returns the durable endpoint registry. */
+    /**
+     * Returns the durable endpoint registry.
+     * @return borrowed durable endpoint registry; the fixture owns its backing store
+     */
     public EnrollmentEndpointRegistry endpoints() { return endpoints; }
 
-    /** Closes the fixture's durable authority. */
+    /**
+     * Closes the fixture's durable authority.
+     * @throws IOException if closing the fixture-owned durable store fails
+     */
     @Override
     public void close() throws IOException { opened.close(); }
 }

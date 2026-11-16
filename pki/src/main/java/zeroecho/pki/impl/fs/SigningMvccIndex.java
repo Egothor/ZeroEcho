@@ -81,9 +81,15 @@ import zeroecho.pki.spi.store.MetadataKey;
         "PMD.NcssCount", "PMD.NPathComplexity", "PMD.TooManyMethods",
         "PMD.UseTryWithResources" })
 final class SigningMvccIndex implements AutoCloseable {
+    /**
+     * Maximum indexed key count for the four-gibibyte sizing profile.
+     */
     /* default */ static final int FOUR_GIB_MAXIMUM_KEYS = 1_000_000;
     private static final int MAX_MUTATIONS_PER_REVISION = SigningWalFrameCodec.MAX_BATCH_FRAMES;
     private static final long CURRENT_ENTRY_FIXED_BYTES = 320L;
+    /**
+     * Accounted resident bytes for one ordered index node.
+     */
     /* default */ static final long ORDERED_NODE_BYTES = 64L;
     private static final long SNAPSHOT_FIXED_BYTES = 160L;
     private static final long SNAPSHOT_GENERATION_BYTES = 32L;
@@ -120,6 +126,16 @@ final class SigningMvccIndex implements AutoCloseable {
     private long lastSnapshotRevision = -1L;
     private long lastSnapshotWatermark;
 
+    /**
+     * Creates a bounded MVCC index with distinct resident and transient workspace accounting.
+     *
+     * @param configuration validated bounded index configuration; must not be null
+     * @param generations borrowed physical-generation ownership registry; must not be null
+     * @param capacity resident steady-state capacity budget; must not be null
+     * @param transientCapacity distinct transient compaction workspace budget; must not be null
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if the capacity budgets are the same object
+     */
     /* default */ SigningMvccIndex(Configuration configuration,
             SigningGenerationRegistry generations, SigningIndexCapacityBudget capacity,
             SigningIndexCapacityBudget transientCapacity) {
@@ -140,6 +156,12 @@ final class SigningMvccIndex implements AutoCloseable {
         snapshotHeap = new SnapshotState[configuration.maximumSnapshots];
     }
 
+    /**
+     * Observes the current authoritative revision under the index read lock.
+     *
+     * @return current published metadata revision
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ long currentRevision() {
         readLock.lock();
         try {
@@ -150,6 +172,12 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes the last committed frame sequence under the index read lock.
+     *
+     * @return last published frame sequence
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ long lastSequence() {
         readLock.lock();
         try {
@@ -160,12 +188,21 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Returns the resident current-entry estimate used by actual key admission. */
+    /**
+     * Returns the resident current-entry estimate used by actual key admission.
+     * @param key exact logical metadata key; must not be null
+     * @return tracked resident current-entry estimate in bytes
+     * @throws NullPointerException if key is null
+     */
     /* default */ static long residentEntryBytes(MetadataKey key) {
         return CanonicalKey.of(Objects.requireNonNull(key, "key")).estimatedResidentBytes();
     }
 
-    /** Returns the actual candidate cardinality used by the next metadata preparation. */
+    /**
+     * Returns the actual candidate cardinality used by the next metadata preparation.
+     * @return candidate key count of the last prepared publication, or the current published count
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ int preparedKeyCount() {
         writeLock.lock();
         try {
@@ -175,7 +212,13 @@ final class SigningMvccIndex implements AutoCloseable {
         } finally { writeLock.unlock(); }
     }
 
-    /** Expected {@code O(1)} current point lookup. */
+    /**
+     * Expected {@code O(1)} current point lookup.
+     * @param key exact logical metadata key; must not be null
+     * @return record pointer, or empty when that key is absent
+     * @throws NullPointerException if key is null
+     * @throws IllegalStateException if the index or snapshot is closed
+     */
     /* default */ Optional<SnapshotRecord> lookup(MetadataKey key) {
         Objects.requireNonNull(key, "key");
         readLock.lock();
@@ -189,7 +232,13 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Expected {@code O(log M)} lookup against the latest prepared publication. */
+    /**
+     * Expected {@code O(log M)} lookup against the latest prepared publication.
+     * @param key exact logical metadata key; must not be null
+     * @return record in the latest prepared root, or empty when absent
+     * @throws NullPointerException if key is null
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ Optional<SnapshotRecord> lookupPrepared(MetadataKey key) {
         Objects.requireNonNull(key, "metadata key");
         writeLock.lock();
@@ -204,7 +253,17 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Selects at most the first current record in one range in {@code O(log M)} time. */
+    /**
+     * Selects at most the first current record in one range in {@code O(log M)} time.
+     * @param namespace metadata namespace used for canonical key ordering; must not be null
+     * @param lowerInclusive inclusive lower key bound; must not be null
+     * @param upperExclusive exclusive upper key bound, optional when represented by an Optional container
+     * @return owned capacity-reserved selection with exact generation pins; caller must close it
+     * @throws NullPointerException if a required bound or optional container is null
+     * @throws IllegalArgumentException if namespace or range bounds are invalid
+     * @throws IllegalStateException if the index is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if selection capacity cannot be reserved
+     */
     /* default */ SigningCurrentSelection selectCurrentFirst(String namespace,
             String lowerInclusive, Optional<String> upperExclusive) {
         MetadataKey lower = currentRangeLower(namespace, lowerInclusive, upperExclusive);
@@ -224,6 +283,14 @@ final class SigningMvccIndex implements AutoCloseable {
     /**
      * Captures every current record in one range after one AVL lower-bound seek.
      * Pointer storage is capacity-reserved before each bounded growth step.
+     * @param namespace metadata namespace used for canonical key ordering; must not be null
+     * @param lowerInclusive inclusive lower key bound; must not be null
+     * @param upperExclusive exclusive upper key bound, optional when represented by an Optional container
+     * @return owned capacity-reserved selection with exact generation pins; caller must close it
+     * @throws NullPointerException if a required bound or optional container is null
+     * @throws IllegalArgumentException if namespace or range bounds are invalid
+     * @throws IllegalStateException if the index is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if selection capacity cannot be reserved
      */
     /* default */ SigningCurrentSelection selectCurrentRange(String namespace,
             String lowerInclusive, Optional<String> upperExclusive) {
@@ -249,13 +316,30 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Applies one bounded committed revision atomically. */
+    /**
+     * Applies one bounded committed revision atomically.
+     * @param revision positive target authoritative metadata revision
+     * @param mutations ordered bounded mutation descriptors; no null entries
+     * @throws NullPointerException if mutations or an entry is null
+     * @throws IllegalArgumentException if revision, sequence, or mutation bounds are invalid
+     * @throws IllegalStateException if the index is closed or publication order is inconsistent
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if bounded publication workspace is unavailable
+     */
     /* default */ void apply(long revision, List<Mutation> mutations) {
         long sequence = mutations.isEmpty() ? lastSequence : mutations.getLast().sequence();
         applyInternal(revision, sequence, mutations, false);
     }
 
-    /** Applies one ledger frame; every mutation in the frame shares its sequence and revision. */
+    /**
+     * Applies one ledger frame; every mutation in the frame shares its sequence and revision.
+     * @param revision positive target authoritative metadata revision
+     * @param sequence nonnegative committed frame sequence
+     * @param mutations ordered bounded mutation descriptors; no null entries
+     * @throws NullPointerException if mutations or an entry is null
+     * @throws IllegalArgumentException if revision, sequence, or mutation bounds are invalid
+     * @throws IllegalStateException if the index is closed or publication order is inconsistent
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if bounded publication workspace is unavailable
+     */
     /* default */ void apply(long revision, long sequence, List<Mutation> mutations) {
         applyInternal(revision, sequence, mutations, true);
     }
@@ -269,7 +353,14 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Applies one already validated WAL group with one reference-map copy. */
+    /**
+     * Applies one already validated WAL group with one reference-map copy.
+     * @param frames bounded nonempty group of already validated committed frames
+     * @throws NullPointerException if frames or an entry is null
+     * @throws IllegalArgumentException if group size, revision, sequence, or mutation ordering is invalid
+     * @throws IllegalStateException if the index is closed or a prepared publication is active
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if detached workspace cannot be reserved
+     */
     /* default */ void applyDetachedGroup(List<CommittedFrame> frames) {
         List<CommittedFrame> detachedFrames = List.copyOf(
                 Objects.requireNonNull(frames, "frames"));
@@ -412,6 +503,12 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes how many accepted WAL groups were applied to this detached index.
+     *
+     * @return detached committed-group application count
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ long detachedGroupApplications() {
         readLock.lock();
         try {
@@ -422,6 +519,12 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Observes reference-map copies performed while applying detached groups.
+     *
+     * @return generation reference-map copy count
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ long detachedReferenceMapCopies() {
         readLock.lock();
         try {
@@ -432,6 +535,13 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Measures the resident current-root workspace using tracked canonical key and entry counts.
+     *
+     * @return current steady-state reservation estimate in bytes
+     * @throws IllegalStateException if the index is closed
+     * @throws ArithmeticException if tracked byte arithmetic overflows
+     */
     /* default */ long steadyReservedBytes() {
         readLock.lock();
         try {
@@ -443,7 +553,11 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Reports whether any short prepared publication still owns index state. */
+    /**
+     * Reports whether any short prepared publication still owns index state.
+     * @return true if at least one prepared publication retains candidate state
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ boolean hasPreparedApplies() {
         readLock.lock();
         try {
@@ -454,7 +568,12 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Arms one engine-internal wake after the last external snapshot closes. */
+    /**
+     * Arms one engine-internal wake after the last external snapshot closes.
+     * @param signal callback run outside index locks after the last snapshot closes; must not be null
+     * @throws NullPointerException if signal is null
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ void signalWhenSnapshotsClose(Runnable signal) {
         Objects.requireNonNull(signal, "signal");
         boolean signalNow = false;
@@ -474,6 +593,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Clears the pending last-snapshot-close callback under the index write lock.
+     */
     /* default */ void clearSnapshotCloseSignal() {
         writeLock.lock();
         try {
@@ -486,6 +608,14 @@ final class SigningMvccIndex implements AutoCloseable {
     /**
      * Prebuilds one ordered publication and owns every fallible capacity and
      * generation reservation until it is published or closed.
+     * @param revision positive target authoritative metadata revision
+     * @param sequence nonnegative committed frame sequence
+     * @param mutations ordered bounded mutation descriptors; no null entries
+     * @return owned prepared application; publish in order or close to roll back
+     * @throws NullPointerException if mutations, an entry, or admissionClass is null
+     * @throws IllegalArgumentException if revision, sequence, or mutation bounds are invalid
+     * @throws IllegalStateException if the index is closed or preparation order differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if publication workspace cannot be reserved
      */
     /* default */ PreparedApply prepare(long revision, long sequence,
             List<Mutation> mutations) {
@@ -493,6 +623,19 @@ final class SigningMvccIndex implements AutoCloseable {
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Prebuilds an ordered publication while retaining all fallible capacity and generation reservations.
+     *
+     * @param revision positive target authoritative metadata revision
+     * @param sequence nonnegative committed frame sequence
+     * @param mutations ordered bounded mutation descriptors; no null entries
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned prepared application; publish in order or close to roll back
+     * @throws NullPointerException if mutations, an entry, or admissionClass is null
+     * @throws IllegalArgumentException if revision, sequence, or mutation bounds are invalid
+     * @throws IllegalStateException if the index is closed or preparation order differs
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if publication workspace cannot be reserved
+     */
     /* default */ PreparedApply prepare(long revision, long sequence,
             List<Mutation> mutations,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -569,7 +712,12 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Captures one immutable ordered root and pins all generations it references. */
+    /**
+     * Captures one immutable ordered root and pins all generations it references.
+     * @return owned immutable MVCC revision and generation pins; caller must close it
+     * @throws IllegalStateException if the index is closed or snapshot count is exhausted
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if snapshot workspace cannot be reserved
+     */
     /* default */ Snapshot snapshot() {
         writeLock.lock();
         try {
@@ -617,6 +765,12 @@ final class SigningMvccIndex implements AutoCloseable {
     /**
      * Builds a physically relocated MVCC-only candidate from one immutable
      * snapshot without changing the live root or any non-MVCC owner.
+     * @param snapshot open snapshot owned by this index; borrowed without closing it
+     * @return owned relocation workspace claim to consume or close
+     * @throws NullPointerException if snapshot is null
+     * @throws IllegalArgumentException if snapshot belongs to another index
+     * @throws IllegalStateException if the snapshot is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if transient workspace is unavailable
      */
     /* default */ RelocationCapacity prepareRelocationCapacity(Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
@@ -637,6 +791,19 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Builds a detached physical relocation candidate without changing the live logical root.
+     *
+     * @param snapshot open snapshot owned by this index; borrowed without closing it
+     * @param generationId nonnegative destination physical-generation identity
+     * @param firstFrameOffset first destination frame offset in bytes, at or beyond the checkpoint header
+     * @param acceptedBoundary exact accepted-prefix descriptor agreeing with the snapshot revision and sequence
+     * @param capacityClaim owned relocation workspace claim for this index and snapshot
+     * @return owned detached candidate retaining relocation workspace and generation references
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if ownership, physical bounds, or the accepted endpoint differs
+     * @throws IllegalStateException if the snapshot or capacity claim is no longer usable
+     */
     /* default */ SigningMvccRelocationCandidate buildRelocationCandidate(Snapshot snapshot,
             long generationId, long firstFrameOffset,
             CommittedPrefixDescriptor acceptedBoundary, RelocationCapacity capacityClaim) {
@@ -743,7 +910,18 @@ final class SigningMvccIndex implements AutoCloseable {
         currentKeys = relocated.currentKeys;
     }
 
-    /** Prevalidates an allocation-free root swap against one exact live endpoint. */
+    /**
+     * Prevalidates an allocation-free root swap against one exact live endpoint.
+     * @param candidate detached relocation candidate owned by this index
+     * @param expectedLiveRevision exact live revision required before cutover
+     * @param expectedLiveSequence exact live committed sequence required before cutover
+     * @param expectedLiveCommitment 32-byte commitment of the required live endpoint
+     * @return owned prevalidated root-swap token; publish or close it to release reservations
+     * @throws NullPointerException if candidate or endpoint commitment is null
+     * @throws IllegalStateException if candidate ownership, endpoint, or publication state differs
+     * @throws RelocationDeferredException if live snapshots prevent cutover
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if cutover workspace is unavailable
+     */
     /* default */ SigningMvccRelocationCandidate.PreparedRootSwap prepareRelocationSwap(
             SigningMvccRelocationCandidate candidate,
             long expectedLiveRevision, long expectedLiveSequence,
@@ -785,6 +963,13 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Publishes a prevalidated detached root and transfers its ownership into the live index.
+     *
+     * @param prepared active exact root-swap token for this index
+     * @throws IllegalStateException if the token, live endpoint, or publication order differs
+     * @throws RelocationDeferredException if snapshots or retained nodes prevent cutover
+     */
     /* default */ void publishRelocationSwap(
             SigningMvccRelocationCandidate.PreparedRootSwap prepared) {
         SigningMvccRelocationCandidate candidate = prepared.candidate();
@@ -841,6 +1026,13 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Releases displaced-root generation references and, when required, its resident reservation.
+     *
+     * @param references generation reference counts transferred from the displaced root
+     * @param reservedBytes resident reservation of the displaced root, in bytes
+     * @param releaseReservation whether the old resident reservation must also be released
+     */
     /* default */ void releaseDisplacedRoot(Map<Long, Integer> references,
             long reservedBytes, boolean releaseReservation) {
         generations.releaseCurrentCounts(SigningGenerationRegistry.Owner.MVCC, references);
@@ -852,6 +1044,12 @@ final class SigningMvccIndex implements AutoCloseable {
     /**
      * Relocates one physical pointer only when the logical record is still the
      * exact snapshot value. Logical revision and sequence remain unchanged.
+     * @param expected exact snapshot record whose current identity must still match
+     * @param replacement new physical pointer preserving logical sequence and record kind
+     * @return true if the still-current record was relocated
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalArgumentException if replacement changes logical record identity
+     * @throws IllegalStateException if the index is closed
      */
     /* default */ boolean relocateIfCurrent(SnapshotRecord expected, RecordPointer replacement) {
         Objects.requireNonNull(expected, "expected");
@@ -869,7 +1067,17 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Relocates a complete snapshot in canonical order without reversing lock order. */
+    /**
+     * Relocates a complete snapshot in canonical order without reversing lock order.
+     * @param snapshot open snapshot owned by this index; borrowed without closing it
+     * @param generationId nonnegative destination physical-generation identity
+     * @param firstFrameOffset first destination frame offset in bytes, at or beyond the checkpoint header
+     * @return exclusive byte offset after the relocated checkpoint records
+     * @throws NullPointerException if snapshot is null
+     * @throws IllegalArgumentException if snapshot ownership or destination bounds are invalid
+     * @throws IllegalStateException if the index or snapshot is closed
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if relocation workspace is unavailable
+     */
     /* default */ long relocateSnapshot(Snapshot snapshot, long generationId,
             long firstFrameOffset) {
         Objects.requireNonNull(snapshot, "snapshot");
@@ -998,6 +1206,13 @@ final class SigningMvccIndex implements AutoCloseable {
     /**
      * Installs one validated, strictly sorted checkpoint baseline in {@code O(M)}
      * node construction and expected {@code O(M)} hash insertion.
+     * @param revision positive target authoritative metadata revision
+     * @param committedSequence nonnegative sequence of the checkpoint endpoint
+     * @param records strictly sorted validated records implementing RandomAccess
+     * @throws NullPointerException if records is null
+     * @throws IllegalArgumentException if checkpoint ordering, endpoint, or indexed access is invalid
+     * @throws IllegalStateException if the index is closed or is not an empty recovery target
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if checkpoint workspace is unavailable
      */
     /* default */ void recover(long revision, long committedSequence,
             List<RecoveredRecord> records) {
@@ -1049,7 +1264,11 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Detaches one candidate-only current root after all catch-up work is complete. */
+    /**
+     * Detaches one candidate-only current root after all catch-up work is complete.
+     * @return owned detached root state; caller must close it or transfer its ownership
+     * @throws IllegalStateException if closed or any prepared apply, snapshot, or retained node prevents detachment
+     */
     /* default */ RelocationRootState detachRelocationRoot() {
         writeLock.lock();
         try {
@@ -1075,6 +1294,13 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures scalar MVCC counters and tracked resident/snapshot reservations under the read lock.
+     *
+     * @return immutable index statistics with workspace sizes in bytes
+     * @throws IllegalStateException if the index is closed
+     * @throws ArithmeticException if tracked workspace arithmetic overflows
+     */
     /* default */ Statistics statistics() {
         readLock.lock();
         try {
@@ -1094,6 +1320,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         writeLock.lock();
@@ -1778,8 +2007,25 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Explicit key, snapshot and obsolete-version retention bounds for the multiversion index.
+     *
+     * @param maximumKeys inclusive maximum number of current metadata identities
+     * @param maximumSnapshots maximum number of simultaneously pinned index snapshots
+     * @param maximumSnapshotRevisionSpan maximum revision distance retained for snapshots
+     * @param maxRetainedObsoleteVersions maximum obsolete versions retained for live snapshot readers
+     */
     /* default */ record Configuration(int maximumKeys, int maximumSnapshots,
             long maximumSnapshotRevisionSpan, long maxRetainedObsoleteVersions) {
+        /**
+         * Creates a {@code Configuration} value from the supplied component coordinates.
+         *
+         * @param maximumKeys inclusive maximum number of current metadata identities
+         * @param maximumSnapshots maximum number of simultaneously pinned index snapshots
+         * @param maximumSnapshotRevisionSpan maximum revision distance retained for snapshots
+         * @param maxRetainedObsoleteVersions maximum obsolete versions retained for live snapshot readers
+         * @throws IllegalArgumentException if {@code (maximumKeys <= 0 || maximumKeys > FOUR_GIB_MAXIMUM_KEYS || maximumSnapshots <= 0 || maximumSnapshotRevisionSpan <= 0L || maxRetainedObsoleteVersions != 0L)}
+         */
         Configuration {
             if (maximumKeys <= 0 || maximumKeys > FOUR_GIB_MAXIMUM_KEYS
                     || maximumSnapshots <= 0 || maximumSnapshotRevisionSpan <= 0L
@@ -1789,8 +2035,28 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Immutable generation and frame identity with its retained physical locator slot.
+     *
+     * @param generationId exact generation identity
+     * @param sequence exact persisted record sequence
+     * @param revision authoritative metadata revision
+     * @param recordType closed persisted record discriminator
+     * @param pointerSlot retained physical frame locator slot
+     */
     /* default */ record RecordPointer(long generationId, long sequence, long revision,
             SigningWalFrameCodec.RecordType recordType, SigningRecordPointerSlot pointerSlot) {
+        /**
+         * Creates a {@code RecordPointer} value from the supplied component coordinates.
+         *
+         * @param generationId exact generation identity
+         * @param sequence exact persisted record sequence
+         * @param revision authoritative metadata revision
+         * @param recordType closed persisted record discriminator
+         * @param pointerSlot retained physical frame locator slot
+         * @throws NullPointerException if {@code recordType} is null; or if {@code pointerSlot} is null
+         * @throws IllegalArgumentException if {@code (generationId < 0L || sequence < 0L || revision <= 0L)}
+         */
         RecordPointer {
             Objects.requireNonNull(recordType, "recordType");
             Objects.requireNonNull(pointerSlot, "pointerSlot");
@@ -1799,28 +2065,79 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Creates a resolved physical record pointer preserving its logical sequence and revision.
+         *
+         * @param generationId nonnegative destination physical-generation identity
+         * @param frameOffset zero-based physical frame offset in bytes
+         * @param frameLength complete physical frame length in bytes
+         * @param sequence nonnegative committed frame sequence
+         * @param recordType persisted WAL record kind; must not be null
+         * @throws NullPointerException if recordType is null
+         * @throws IllegalArgumentException if physical or logical pointer bounds are invalid
+         * @throws ArithmeticException if deriving the next revision from sequence overflows
+         */
         /* default */ RecordPointer(long generationId, long frameOffset, int frameLength,
                 long sequence, SigningWalFrameCodec.RecordType recordType) {
             this(generationId, frameOffset, frameLength, sequence,
                     Math.incrementExact(sequence), recordType);
         }
 
+        /**
+         * Creates a resolved physical record pointer preserving its logical sequence and revision.
+         *
+         * @param generationId nonnegative destination physical-generation identity
+         * @param frameOffset zero-based physical frame offset in bytes
+         * @param frameLength complete physical frame length in bytes
+         * @param sequence nonnegative committed frame sequence
+         * @param revision positive target authoritative metadata revision
+         * @param recordType persisted WAL record kind; must not be null
+         * @throws NullPointerException if recordType is null
+         * @throws IllegalArgumentException if physical or logical pointer bounds are invalid
+         * @throws ArithmeticException if deriving the next revision from sequence overflows
+         */
         /* default */ RecordPointer(long generationId, long frameOffset, int frameLength,
                 long sequence, long revision, SigningWalFrameCodec.RecordType recordType) {
             this(generationId, sequence, revision, recordType,
                     SigningRecordPointerSlot.resolved(frameOffset, frameLength));
         }
 
+        /**
+         * Returns the physical frame offset from its retained locator slot.
+         *
+         * @return zero-based byte offset from the retained physical locator slot
+         */
         /* default */ long frameOffset() {
             return pointerSlot.offset();
         }
 
+        /**
+         * Returns the complete encoded frame length in bytes from the retained locator slot.
+         *
+         * @return complete encoded frame length in bytes from the retained locator slot
+         */
         /* default */ int frameLength() {
             return pointerSlot.length();
         }
     }
 
+    /**
+     * One exact-key pointer mutation supplied to committed state application.
+     *
+     * @param key exact logical metadata identity
+     * @param pointer physical record pointer, or null for a delete mutation
+     * @param sequence exact persisted record sequence
+     */
     /* default */ record Mutation(MetadataKey key, RecordPointer pointer, long sequence) {
+        /**
+         * Creates a {@code Mutation} value from the supplied component coordinates.
+         *
+         * @param key exact logical metadata identity
+         * @param pointer exact retained physical record pointer
+         * @param sequence exact persisted record sequence
+         * @throws NullPointerException if {@code key} is null
+         * @throws IllegalArgumentException if {@code (sequence < 0L)}
+         */
         Mutation {
             Objects.requireNonNull(key, "key");
             if (sequence < 0L) {
@@ -1828,19 +2145,50 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Builds an upsert mutation using the pointer's existing committed sequence.
+         *
+         * @param key exact logical metadata key; must not be null
+         * @param pointer exact physical record pointer; must not be null
+         * @return mutation retaining the exact supplied logical key and pointer
+         * @throws NullPointerException if key or pointer is null
+         */
         /* default */ static Mutation upsert(MetadataKey key, RecordPointer pointer) {
             RecordPointer checked = Objects.requireNonNull(pointer, "pointer");
             return new Mutation(key, checked, checked.sequence);
         }
 
+        /**
+         * Builds a tombstone mutation without a physical value pointer.
+         *
+         * @param key exact logical metadata key; must not be null
+         * @param sequence nonnegative committed frame sequence
+         * @return delete mutation at the supplied sequence
+         * @throws NullPointerException if key is null
+         * @throws IllegalArgumentException if sequence is negative
+         */
         /* default */ static Mutation delete(MetadataKey key, long sequence) {
             return new Mutation(key, null, sequence);
         }
     }
 
-    /** One validated committed frame supplied to a detached group application. */
+    /**
+     * One validated committed frame supplied to a detached group application.
+     * @param revision authoritative metadata revision
+     * @param sequence exact persisted record sequence
+     * @param mutations ordered immutable mutation descriptors
+     */
     /* default */ record CommittedFrame(long revision, long sequence,
             List<Mutation> mutations) {
+        /**
+         * Creates a {@code CommittedFrame} value from the supplied component coordinates.
+         *
+         * @param revision authoritative metadata revision
+         * @param sequence exact persisted record sequence
+         * @param mutations ordered immutable mutation descriptors
+         * @throws NullPointerException if {@code mutations} is null
+         * @throws IllegalArgumentException if {@code (revision <= 0L || sequence < 0L || mutations.size() > MAX_MUTATIONS_PER_REVISION)}
+         */
         CommittedFrame {
             mutations = List.copyOf(Objects.requireNonNull(mutations, "mutations"));
             if (revision <= 0L || sequence < 0L
@@ -1850,7 +2198,23 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Metadata identity and physical pointer captured at an immutable snapshot revision.
+     *
+     * @param key exact logical metadata identity
+     * @param pointer exact retained physical record pointer
+     * @param revision authoritative metadata revision
+     */
     /* default */ record SnapshotRecord(MetadataKey key, RecordPointer pointer, long revision) {
+        /**
+         * Creates a {@code SnapshotRecord} value from the supplied component coordinates.
+         *
+         * @param key exact logical metadata identity
+         * @param pointer exact retained physical record pointer
+         * @param revision authoritative metadata revision
+         * @throws NullPointerException if {@code key} is null; or if {@code pointer} is null
+         * @throws IllegalArgumentException if {@code (revision <= 0L)}
+         */
         SnapshotRecord {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(pointer, "pointer");
@@ -1860,7 +2224,23 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Validated current metadata identity and physical pointer reconstructed during recovery.
+     *
+     * @param key exact logical metadata identity
+     * @param pointer exact retained physical record pointer
+     * @param revision authoritative metadata revision
+     */
     /* default */ record RecoveredRecord(MetadataKey key, RecordPointer pointer, long revision) {
+        /**
+         * Creates a {@code RecoveredRecord} value from the supplied component coordinates.
+         *
+         * @param key exact logical metadata identity
+         * @param pointer exact retained physical record pointer
+         * @param revision authoritative metadata revision
+         * @throws NullPointerException if {@code key} is null; or if {@code pointer} is null
+         * @throws IllegalArgumentException if {@code (revision <= 0L)}
+         */
         RecoveredRecord {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(pointer, "pointer");
@@ -1870,7 +2250,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Opaque detached root owned by one relocation swap token. */
+    /**
+     * Opaque detached root owned by one relocation swap token.
+     */
     /* default */ static final class RelocationRootState implements AutoCloseable {
         private final SigningMvccIndex detachedOwner;
         private final Map<MetadataKey, PrimarySlot> primary;
@@ -1904,10 +2286,20 @@ final class SigningMvccIndex implements AutoCloseable {
             this.currentKeys = currentKeys;
         }
 
+        /**
+         * Returns the authoritative revision of the detached relocation root.
+         *
+         * @return authoritative revision of the detached relocation root
+         */
         /* default */ long revision() {
             return revision;
         }
 
+        /**
+         * Returns the last committed sequence represented by the detached relocation root.
+         *
+         * @return last committed sequence represented by the detached relocation root
+         */
         /* default */ long lastSequence() {
             return lastSequence;
         }
@@ -1923,6 +2315,11 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Transitions detached-root ownership from local custody to prepared cutover custody.
+         *
+         * @throws IllegalStateException if the root is not locally owned
+         */
         /* default */ void prepareTransfer() {
             if (ownership != RootOwnership.LOCAL) {
                 throw new IllegalStateException("signing relocation root is not local");
@@ -1935,6 +2332,9 @@ final class SigningMvccIndex implements AutoCloseable {
             ownership = RootOwnership.LIVE;
         }
 
+        /**
+         * Releases prepared detached-root ownership and its resources if still held.
+         */
         /* default */ void rollbackPrepared() {
             if (ownership == RootOwnership.PREPARED) {
                 ownership = RootOwnership.CLOSED;
@@ -1942,6 +2342,9 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (ownership == RootOwnership.LOCAL) {
@@ -1958,7 +2361,9 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
-        /** Root stages guarded first by candidate preparation, then by its swap token. */
+        /**
+         * Root stages guarded first by candidate preparation, then by its swap token.
+         */
         private enum RootOwnership {
             LOCAL,
             PREPARED,
@@ -1967,7 +2372,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Pre-side-effect transient reservation for one exact snapshot candidate. */
+    /**
+     * Pre-side-effect transient reservation for one exact snapshot candidate.
+     */
     /* default */ static final class RelocationCapacity implements AutoCloseable {
         private final SigningMvccIndex owner;
         private final SnapshotState state;
@@ -1998,6 +2405,9 @@ final class SigningMvccIndex implements AutoCloseable {
             reservation.transfer();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (active.compareAndSet(true, false)) {
@@ -2006,7 +2416,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Controlled cutover deferral caused by an external live snapshot. */
+    /**
+     * Controlled cutover deferral caused by an external live snapshot.
+     */
     /* default */ static final class RelocationDeferredException extends IllegalStateException {
         private static final long serialVersionUID = 1L;
 
@@ -2061,10 +2473,20 @@ final class SigningMvccIndex implements AutoCloseable {
             this.admissionClass = admissionClass;
         }
 
+        /**
+         * Returns the target authoritative revision of this prepared application.
+         *
+         * @return target authoritative revision of this prepared application
+         */
         /* default */ long revision() {
             return revision;
         }
 
+        /**
+         * Publishes the first prepared application and transfers its reserved index ownership.
+         *
+         * @throws IllegalStateException if the index is closed, this token is inactive, or publication order differs
+         */
         /* default */ void publish() {
             writeLock.lock();
             try {
@@ -2101,6 +2523,14 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Rolls back this unpublished application and every later queued preparation in reverse order.
+         *
+         * <p>Releases their hidden slots, generation references, and resident/node reservations.
+         * An already published or rolled-back token is a no-op; earlier preparations remain queued.</p>
+         *
+         * @throws IllegalStateException if this active token is absent from the prepared publication queue
+         */
         @Override
         public void close() {
             writeLock.lock();
@@ -2135,7 +2565,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Immutable snapshot handle with close-versus-read exclusion. */
+    /**
+     * Immutable snapshot handle with close-versus-read exclusion.
+     */
     /* default */ static final class Snapshot implements AutoCloseable {
         private final SigningMvccIndex owner;
         private final SnapshotState state;
@@ -2145,6 +2577,12 @@ final class SigningMvccIndex implements AutoCloseable {
             this.state = state;
         }
 
+        /**
+         * Returns the frozen authoritative revision of this open snapshot.
+         *
+         * @return snapshot metadata revision
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ long revision() {
             state.readAccess.lock();
             try {
@@ -2155,6 +2593,12 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the frozen committed frame sequence of this open snapshot.
+         *
+         * @return snapshot committed sequence
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ long committedSequence() {
             state.readAccess.lock();
             try {
@@ -2165,6 +2609,12 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the exact number of records in this open snapshot.
+         *
+         * @return snapshot record count
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ int size() {
             state.readAccess.lock();
             try {
@@ -2175,6 +2625,12 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the recorded checkpoint data boundary for this open snapshot.
+         *
+         * @return checkpoint data byte offset
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ long checkpointDataOffset() {
             state.readAccess.lock();
             try {
@@ -2185,6 +2641,14 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the exact record for a logical key in the current index or retained snapshot.
+         *
+         * @param key exact logical metadata key; must not be null
+         * @return record pointer, or empty when that key is absent
+         * @throws NullPointerException if key is null
+         * @throws IllegalStateException if the index or snapshot is closed
+         */
         /* default */ Optional<SnapshotRecord> lookup(MetadataKey key) {
             state.readAccess.lock();
             try {
@@ -2196,6 +2660,17 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Selects a bounded canonical record range from this frozen snapshot.
+         *
+         * @param lowerInclusive inclusive lower key bound; must not be null
+         * @param upperExclusive exclusive upper key bound, optional when represented by an Optional container
+         * @param maximumResults positive upper bound on returned records
+         * @return ordered record list within the half-open key range
+         * @throws NullPointerException if a bound is null
+         * @throws IllegalArgumentException if bounds are reversed or result limit is invalid
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ List<SnapshotRecord> range(MetadataKey lowerInclusive,
                 MetadataKey upperExclusive, int maximumResults) {
             state.readAccess.lock();
@@ -2213,6 +2688,17 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * Selects a bounded canonical page of keys with the given namespace and ASCII prefix.
+         *
+         * @param namespace metadata namespace used for canonical key ordering; must not be null
+         * @param prefix ASCII key prefix, possibly empty; must not be null
+         * @param maximumResults positive upper bound on returned records
+         * @return ordered matching snapshot records
+         * @throws NullPointerException if a required argument is null
+         * @throws IllegalArgumentException if namespace, prefix, or result limit is invalid
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ List<SnapshotRecord> prefix(String namespace, String prefix,
                 int maximumResults) {
             state.readAccess.lock();
@@ -2229,7 +2715,15 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
-        /** Returns a bounded canonical page beginning at one inclusive key. */
+        /**
+         * Returns a bounded canonical page beginning at one inclusive key.
+         * @param lowerInclusive inclusive lower key bound; must not be null
+         * @param maximumResults positive upper bound on returned records
+         * @return ordered bounded records beginning with the inclusive lower key
+         * @throws NullPointerException if lowerInclusive is null
+         * @throws IllegalArgumentException if maximumResults is invalid
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ List<SnapshotRecord> rangeFrom(MetadataKey lowerInclusive,
                 int maximumResults) {
             state.readAccess.lock();
@@ -2243,7 +2737,13 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
-        /** Returns the greatest key in one namespace in {@code O(log M)} time. */
+        /**
+         * Returns the greatest key in one namespace in {@code O(log M)} time.
+         * @param namespace metadata namespace used for canonical key ordering; must not be null
+         * @return greatest key in that namespace, or empty if the namespace has no records
+         * @throws NullPointerException if namespace is null
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ Optional<MetadataKey> greatest(String namespace) {
             state.readAccess.lock();
             try {
@@ -2268,7 +2768,13 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
-        /** Visits records in canonical order with {@code O(log M)} traversal state. */
+        /**
+         * Visits records in canonical order with {@code O(log M)} traversal state.
+         * @param visitor borrowed callback invoked for every canonical snapshot record
+         * @throws IOException if the visitor fails
+         * @throws NullPointerException if visitor is null
+         * @throws IllegalStateException if the snapshot is closed
+         */
         /* default */ void visit(RecordVisitor visitor) throws IOException {
             Objects.requireNonNull(visitor, "visitor");
             state.readAccess.lock();
@@ -2290,6 +2796,9 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             owner.release(state);
@@ -2302,27 +2811,56 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Bounded checked visitor used by package-owned checkpoint maintenance. */
+    /**
+     * Bounded checked visitor used by package-owned checkpoint maintenance.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface RecordVisitor {
-        /** Accepts one canonical-order immutable snapshot record. */
+        /**
+         * Accepts one canonical-order immutable snapshot record.
+         * @param record one immutable key/revision/physical-pointer snapshot record
+         * @throws IOException if the visitor cannot process the record
+         */
         void accept(SnapshotRecord record) throws IOException;
     }
 
-    /* default */ @SuppressWarnings("PMD.LongVariable")
+    /* default */ /**
+     * Constant-size multiversion index population, allocation and reservation counters.
+     *
+     * @param revision authoritative metadata revision
+     * @param lastSequence last validated sequence in the scanned prefix
+     * @param currentKeys number of current metadata identities
+     * @param liveSnapshots number of live pinned snapshots
+     * @param canonicalKeyBytes accounted bytes occupied by canonical metadata keys
+     * @param orderedNodeAllocations number of persistent ordered-index node allocations
+     * @param retainedOrderedNodeUpperBound conservative upper bound on retained ordered-index nodes
+     * @param estimatedResidentBytes estimated resident index memory in bytes
+     * @param reservedBytes current accounted reservation in bytes
+     * @param sharedReservedBytes current bytes reserved from the shared capacity budget
+     * @param retainedObsoleteVersions number of obsolete versions retained for snapshot readers
+     * @param fullMapCopies number of full-map copies performed by the index
+     */
+    @SuppressWarnings("PMD.LongVariable")
     record Statistics(long revision, long lastSequence, int currentKeys,
             int liveSnapshots, long canonicalKeyBytes, long orderedNodeAllocations,
             long retainedOrderedNodeUpperBound, long estimatedResidentBytes,
             long reservedBytes, long sharedReservedBytes,
             long retainedObsoleteVersions, long fullMapCopies) {
 
+        /**
+         * Returns the number of current metadata identities retained by the index.
+         *
+         * @return number of current metadata identities retained by the index
+         */
         /* default */ int retainedKeys() {
             return currentKeys;
         }
     }
 
-    /** One current identity representation shared by hash and ordered nodes. */
+    /**
+     * One current identity representation shared by hash and ordered nodes.
+     */
     private static final class CurrentEntry {
         private final CanonicalKey key;
         private final SnapshotRecord record;
@@ -2340,7 +2878,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Canonical admission-time ASCII bytes used by allocation-free AVL comparisons. */
+    /**
+     * Canonical admission-time ASCII bytes used by allocation-free AVL comparisons.
+     */
     private static final class CanonicalKey implements Comparable<CanonicalKey> {
         private final MetadataKey metadataKey;
         private final byte[] namespaceBytes;
@@ -2374,6 +2914,9 @@ final class SigningMvccIndex implements AutoCloseable {
             return checkpointIndexBytes;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int compareTo(CanonicalKey other) {
             int namespace = Arrays.compareUnsigned(namespaceBytes, other.namespaceBytes);
@@ -2381,7 +2924,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Immutable persistent AVL node. */
+    /**
+     * Immutable persistent AVL node.
+     */
     private static final class OrderedNode {
         private final CurrentEntry entry;
         private final OrderedNode left;
@@ -2396,7 +2941,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Owner-tracked root, pins, lifecycle lock, and budget reservation. */
+    /**
+     * Owner-tracked root, pins, lifecycle lock, and budget reservation.
+     */
     private static final class SnapshotState {
         private final long revision;
         private final long committedSequence;
@@ -2434,12 +2981,16 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Counts exactly constructed AVL nodes. */
+    /**
+     * Counts exactly constructed AVL nodes.
+     */
     private static final class AllocationCounter {
         private long count;
     }
 
-    /** One-pass cursor constructing relocated entries directly from the snapshot root. */
+    /**
+     * One-pass cursor constructing relocated entries directly from the snapshot root.
+     */
     private static final class RelocatedBuildCursor {
         private final OrderedIterator entries;
         private final long generationId;
@@ -2472,7 +3023,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Fully materialized detached root covered by one preowned reservation. */
+    /**
+     * Fully materialized detached root covered by one preowned reservation.
+     */
     private record RelocatedBuild(Map<MetadataKey, PrimarySlot> primary,
             Map<Long, Integer> generationReferences, OrderedNode root,
             long revision, long lastSequence, long canonicalKeyBytes,
@@ -2484,7 +3037,9 @@ final class SigningMvccIndex implements AutoCloseable {
             SnapshotRecord replacement, CurrentEntry replacementEntry, long sequence) {
     }
 
-    /** Current hash slot that can be allocated before its durable publication. */
+    /**
+     * Current hash slot that can be allocated before its durable publication.
+     */
     private static final class PrimarySlot {
         private CurrentEntry published;
         private int pending;
@@ -2494,7 +3049,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Canonical merge that conditionally relocates exact boundary-snapshot values. */
+    /**
+     * Canonical merge that conditionally relocates exact boundary-snapshot values.
+     */
     private static final class RelocatingIterator implements Iterator<CurrentEntry> {
         private final OrderedIterator current;
         private final OrderedIterator snapshot;
@@ -2512,11 +3069,17 @@ final class SigningMvccIndex implements AutoCloseable {
             snapshotEntry = snapshot.hasNext() ? snapshot.next() : null;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean hasNext() {
             return current.hasNext();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CurrentEntry next() {
             CurrentEntry value = current.next();
@@ -2565,7 +3128,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Allocation-bounded in-order iterator over one immutable AVL root. */
+    /**
+     * Allocation-bounded in-order iterator over one immutable AVL root.
+     */
     private static final class OrderedIterator implements Iterator<CurrentEntry> {
         private final Deque<OrderedNode> stack = new ArrayDeque<>();
 
@@ -2573,8 +3138,14 @@ final class SigningMvccIndex implements AutoCloseable {
             pushLeft(root);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean hasNext() { return !stack.isEmpty(); }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CurrentEntry next() {
             OrderedNode node = stack.pop();
@@ -2591,7 +3162,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** In-order iterator positioned by one AVL lower-bound traversal. */
+    /**
+     * In-order iterator positioned by one AVL lower-bound traversal.
+     */
     private static final class LowerBoundIterator implements Iterator<CurrentEntry> {
         private final Deque<OrderedNode> stack = new ArrayDeque<>();
 
@@ -2607,8 +3180,14 @@ final class SigningMvccIndex implements AutoCloseable {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean hasNext() { return !stack.isEmpty(); }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public CurrentEntry next() {
             OrderedNode node = stack.pop();
@@ -2621,7 +3200,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Zero-copy generation-id view over update plans with new pointers. */
+    /**
+     * Zero-copy generation-id view over update plans with new pointers.
+     */
     private static final class GenerationIds extends AbstractCollection<Long> {
         private final List<UpdatePlan> plans;
 
@@ -2630,12 +3211,18 @@ final class SigningMvccIndex implements AutoCloseable {
             this.plans = plans;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Iterator<Long> iterator() {
             return plans.stream().filter(plan -> plan.replacement != null)
                     .map(plan -> plan.replacement.pointer.generationId).iterator();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int size() {
             int count = 0;
@@ -2648,7 +3235,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Zero-copy generation-id view over replaced or deleted pointers. */
+    /**
+     * Zero-copy generation-id view over replaced or deleted pointers.
+     */
     private static final class PreviousGenerationIds extends AbstractCollection<Long> {
         private final List<UpdatePlan> plans;
 
@@ -2657,12 +3246,18 @@ final class SigningMvccIndex implements AutoCloseable {
             this.plans = plans;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Iterator<Long> iterator() {
             return plans.stream().filter(plan -> plan.existing != null)
                     .map(plan -> plan.existing.record.pointer.generationId).iterator();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int size() {
             int count = 0;
@@ -2675,7 +3270,9 @@ final class SigningMvccIndex implements AutoCloseable {
         }
     }
 
-    /** Zero-copy generation-id view over checkpoint input. */
+    /**
+     * Zero-copy generation-id view over checkpoint input.
+     */
     private static final class RecoveryGenerationIds extends AbstractCollection<Long> {
         private final List<RecoveredRecord> records;
 
@@ -2684,11 +3281,17 @@ final class SigningMvccIndex implements AutoCloseable {
             this.records = records;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Iterator<Long> iterator() {
             return records.stream().map(record -> record.pointer.generationId).iterator();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int size() {
             return records.size();

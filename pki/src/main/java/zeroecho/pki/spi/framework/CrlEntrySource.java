@@ -96,6 +96,9 @@ public interface CrlEntrySource extends AutoCloseable {
          */
         long ordinal();
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         void close() throws IOException;
     }

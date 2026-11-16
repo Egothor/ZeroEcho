@@ -41,12 +41,17 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.server.*;
 
-/** Regression coverage for optional grant conditions and complete ACME registration scope. */
+/**
+ * Regression coverage for optional grant conditions and complete ACME registration scope.
+ */
 class HttpOptionalGrantAndAcmeScopeTest {
     private static final OperationSecurityDescriptors DESCRIPTORS=new OperationSecurityDescriptors();
     private static final RealmId REALM=new RealmId("codec-regression");
     private static final String GRANT="\"grantId\":\"owned-grant\",\"principalId\":\"owned-user\",\"effect\":\"ALLOW\",\"action\":\"REALM_READ\",\"resourceType\":\"REALM\",\"relationship\":\"ANY\",\"dataView\":\"METADATA_REDACTED\"";
 
+    /**
+     * Checks that omitted and explicitly empty grant conditions both decode to an empty immutable condition set.
+     */
     @Test void omittedAndExplicitEmptyConditionsHaveIdenticalEmptyMeaning() {
         for(String suffix:new String[]{"",",\"conditions\":[]"}) {
             var decoded=decode("security.grant.create","{\"version\":1,\"arguments\":{"+GRANT+suffix+"}}");
@@ -56,6 +61,9 @@ class HttpOptionalGrantAndAcmeScopeTest {
         }
     }
 
+    /**
+     * Rejects null/scalar/unknown/duplicate condition forms and accepts one explicit reason-required condition.
+     */
     @Test void presentConditionsRemainStrictAndUnique() {
         for(String invalid:new String[]{"null","true","\"REASON_REQUIRED\"","[\"UNKNOWN\"]","[\"REASON_REQUIRED\",\"REASON_REQUIRED\"]"}) {
             assertThrows(IllegalArgumentException.class,()->decode("security.grant.create","{\"version\":1,\"arguments\":{"+GRANT+",\"conditions\":"+invalid+"}}"));
@@ -65,6 +73,9 @@ class HttpOptionalGrantAndAcmeScopeTest {
         assertEquals(Set.of(Permission.Condition.REASON_REQUIRED),grant.conditions());
     }
 
+    /**
+     * Checks preservation of directory authority/profile scope and rejection when only the outer authority is changed.
+     */
     @Test void acmeRegistrationCarriesAuthorityAndProfileAndRejectsWrongAuthority() {
         String json="{\"version\":1,\"authorityId\":\"owned-ca\",\"arguments\":{\"alias\":\"owned-directory\",\"authorityId\":\"owned-ca\",\"profileId\":\"server-tls\",\"enrollmentProfileId\":\"owned-enrollment\",\"dnsNamespaces\":[\"example.invalid\"],\"maximumValidityMillis\":3600000,\"publicKeyAlgorithms\":[\"ECDSA\"],\"x509BindingPolicies\":[\"STANDARD_ONLY\"],\"challengeTypes\":[\"DNS_01\"],\"challengeProviderIds\":[\"owned-dns\"],\"eabRequired\":false}}";
         var decoded=decode("acme.directory.register",json);

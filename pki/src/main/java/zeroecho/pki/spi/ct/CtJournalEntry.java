@@ -81,10 +81,14 @@ public record CtJournalEntry(
         byte[] leafHash,
         byte[] entryHash) {
 
-    /** Required length in bytes for all hash fields. */
+    /**
+     * Required length in bytes for all hash fields.
+     */
     public static final int HASH_BYTES = 32;
 
-    /** Maximum UTF-8 byte length of the authority identifier. */
+    /**
+     * Maximum UTF-8 byte length of the authority identifier.
+     */
     public static final int MAX_AUTHORITY_ID_BYTES = 128;
 
     /**
@@ -95,6 +99,14 @@ public record CtJournalEntry(
      *                                  if any hash array does not have exactly 32 bytes,
      *                                  if {@code certFingerprint} does not have exactly 32 bytes,
      *                                  or if {@code authorityId} is blank
+     * @param sequenceNumber monotonically increasing sequence position, 1-based
+     * @param timestamp signing completion time
+     * @param certFingerprint SHA-256 of the DER-encoded issued certificate (32 bytes)
+     * @param serialNumber X.509 serial number of the issued certificate
+     * @param authorityId issuing CA authority identifier
+     * @param previousHash {@code entryHash} of the previous entry; all-zeros for the first entry (32 bytes)
+     * @param leafHash SHA-256 of (sequenceNumber || epochSeconds || certFingerprint) (32 bytes)
+     * @param entryHash SHA-256 of (previousHash || leafHash) (32 bytes)
      */
     public CtJournalEntry {
         Objects.requireNonNull(timestamp, "timestamp");
@@ -228,6 +240,9 @@ public record CtJournalEntry(
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(final Object obj) {
         if (this == obj) {
@@ -246,6 +261,9 @@ public record CtJournalEntry(
                 && Arrays.equals(entryHash, other.entryHash);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         int result = Long.hashCode(sequenceNumber);
@@ -259,6 +277,9 @@ public record CtJournalEntry(
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CtJournalEntry[seq=" + sequenceNumber + ",authorityId=" + authorityId + "]";

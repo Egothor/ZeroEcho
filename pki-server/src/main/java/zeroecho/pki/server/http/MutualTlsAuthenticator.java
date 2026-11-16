@@ -66,7 +66,6 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
  * canonical single-certificate encoding, mapping uniqueness, and the enabled
  * state of the persisted principal.</p>
  */
-@SuppressWarnings("PMD")
 public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
     private final List<ClientCertificateMapping> mappings;
     private final Function<String, SecurityPrincipal> principalResolver;
@@ -78,6 +77,7 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
      * @param mappings exact cryptographic mappings
      * @param principalResolver persisted principal resolver
      * @param clock injected validity clock
+     * @throws NullPointerException if any of {@code mappings}, {@code principalResolver}, {@code clock} is null
      */
     public MutualTlsAuthenticator(List<ClientCertificateMapping> mappings,
             Function<String, SecurityPrincipal> principalResolver, Clock clock) {
@@ -86,6 +86,9 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiServerAuthenticationResult authenticate(PkiServerAuthenticationContext context) {
         Objects.requireNonNull(context, "context");

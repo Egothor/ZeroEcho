@@ -45,12 +45,19 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * CLI remote-mode tests for selection, validation, resource ownership, and receipt rendering.
+ */
 class PkiCliRemoteTest {
 
     private static final PkiCli.SessionOpener FORBIDDEN_OPENER = configuration -> {
         throw new AssertionError("Remote mode must not open a local session");
     };
 
+    /**
+     * Rejects binary archive operations before opening the JSON-only remote exchange.
+     * @param operation binary archive operation name supplied by the parameterized test source
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"backup.stream.upload", "backup.stream.download"})
     void binaryArchiveOperationsFailBeforeOpeningJsonTransport(String operation) {
@@ -63,6 +70,9 @@ class PkiCliRemoteTest {
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("BACKUP_BINARY_ROUTE_USE_WEB_CONSOLE_OR_HTTP"));
     }
 
+    /**
+     * Selects remote mode from URL and client material and checks the resulting submitted envelope.
+     */
     @Test
     void remoteModeIsSelectedByUrlAndClientMaterialAndPostsEnvelope() {
         System.out.println("remoteModeIsSelectedByUrlAndClientMaterialAndPostsEnvelope");
@@ -89,6 +99,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects a remote URL when no client authentication material is supplied.
+     */
     @Test
     void urlWithoutClientMaterialIsInvalidInvocation() {
         System.out.println("urlWithoutClientMaterialIsInvalidInvocation");
@@ -102,6 +115,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects remote client material without a remote URL.
+     */
     @Test
     void clientMaterialWithoutUrlIsInvalidInvocation() {
         System.out.println("clientMaterialWithoutUrlIsInvalidInvocation");
@@ -115,6 +131,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Returns the retained pending receipt immediately when remote observation is disabled.
+     */
     @Test
     void remotePendingExitsForResumeWhenWaitIsZero() {
         System.out.println("remotePendingExitsForResumeWhenWaitIsZero");
@@ -134,6 +153,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Exercises a remote control-family operation using its structured generic argument object.
+     */
     @Test
     void remoteModeReachesControlFamilyOperationWithGenericArguments() {
         System.out.println("remoteModeReachesControlFamilyOperationWithGenericArguments");
@@ -157,6 +179,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that CLI help explains remote connection options and mode selection.
+     */
     @Test
     void helpDocumentsRemoteModeAndSelectionRule() {
         System.out.println("helpDocumentsRemoteModeAndSelectionRule");
@@ -170,6 +195,9 @@ class PkiCliRemoteTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks local session selection when no remote URL is supplied.
+     */
     @Test
     void localModeStillOpensSessionWhenNoUrlSupplied() {
         System.out.println("localModeStillOpensSessionWhenNoUrlSupplied");
@@ -189,6 +217,9 @@ class PkiCliRemoteTest {
         System.out.println("...opened=" + opened[0] + " ok");
     }
 
+    /**
+     * Rejects conflicting, repeated, incomplete, and unsupported options before acquiring session or transport resources.
+     */
     @Test
     void rejectsConflictingDuplicateIncompleteAndDeferredOptionsBeforeOpeningAnything() {
         String[][] cases = {
@@ -212,6 +243,9 @@ class PkiCliRemoteTest {
         }
     }
 
+    /**
+     * Rejects malformed remote operation names before opening an HTTP exchange.
+     */
     @Test
     void malformedRemoteOperationNamesFailBeforeExchange() {
         for (String operation : List.of("abc", "a.", "profile.list--all", "profile.-list", "a".repeat(129) + ".b")) {
@@ -221,6 +255,9 @@ class PkiCliRemoteTest {
         }
     }
 
+    /**
+     * Preserves hyphenated operation names and literal values that resemble CLI options.
+     */
     @Test
     void hyphenatedRemoteOperationsAndOptionLookingValuesRemainIntact() {
         FakeExchange[] captured = new FakeExchange[1];
@@ -240,6 +277,9 @@ class PkiCliRemoteTest {
         assertEquals("/admin/v1/operations/profile.list-all", captured[0].requests.get(0).path());
     }
 
+    /**
+     * Checks that explicit inspection performs a GET and retains an unresolved signing receipt.
+     */
     @Test
     void explicitInspectionUsesOnlyGetAndRetainsPendingReceipt() {
         FakeExchange[] exchange = new FakeExchange[1];
@@ -260,6 +300,9 @@ class PkiCliRemoteTest {
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"sign-1\""));
     }
 
+    /**
+     * Preserves structured remote arguments through CLI parsing without opening a local session.
+     */
     @Test
     void structuredArgumentsRoundTripThroughCliWithoutOpeningLocalSession() {
         FakeExchange[] exchange = new FakeExchange[1];
@@ -276,6 +319,9 @@ class PkiCliRemoteTest {
         assertTrue(body.contains("\"targetArguments\":{\"names\":[\"one\",\"two\"],\"limit\":2,\"active\":true}"));
     }
 
+    /**
+     * Rejects a known operation's missing required field before acquiring a remote exchange.
+     */
     @Test
     void missingKnownRequiredFieldIsInvalidBeforeOpeningRemoteExchange() {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -290,7 +336,9 @@ class PkiCliRemoteTest {
         return new PkiHttpExchange.Response(200, Optional.empty(), json.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Scripted exchange returned by the test remote-exchange factory. */
+    /**
+     * Scripted exchange returned by the test remote-exchange factory.
+     */
     private static final class FakeExchange implements PkiHttpExchange {
         private final Responder responder;
         private final List<Request> requests = new ArrayList<>();
@@ -306,7 +354,9 @@ class PkiCliRemoteTest {
         }
     }
 
-    /** Response supplier that may raise an {@link IOException}. */
+    /**
+     * Response supplier that may raise an {@link IOException}.
+     */
     @FunctionalInterface
     private interface Responder {
         PkiHttpExchange.Response respond(PkiHttpExchange.Request request) throws IOException;

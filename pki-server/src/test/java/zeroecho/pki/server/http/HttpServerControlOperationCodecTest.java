@@ -52,11 +52,16 @@ import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.application.PkiOperation;
 
-/** Strict HTTPS decoding coverage for the closed server-control operation family. */
+/**
+ * Strict HTTPS decoding coverage for the closed server-control operation family.
+ */
 class HttpServerControlOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
+    /**
+     * Checks explicit SDK profile selection for enrollment-profile writes and the absent selector for ordinary profiles.
+     */
     @Test void enrollmentProfileSdkSelectorIsAnExplicitClosedPublicArgument() {
         String ordinary = "{\"version\":1,\"arguments\":{\"id\":\"sdk-profile\",\"displayName\":\"SDK profile\",\"certificateProfileId\":\"client\"}}";
         String enabled = ordinary.replace("\"certificateProfileId\":\"client\"", "\"certificateProfileId\":\"client\",\"sdkProfile\":\"zeroecho-hybrid-sdk-v1\"");
@@ -73,6 +78,9 @@ class HttpServerControlOperationCodecTest {
         }
     }
 
+    /**
+     * Checks approve/reject choice mapping, enrollment-request resource type and mandatory expected-commitment fields.
+     */
     @Test void enrollmentDecisionsRequireExactReviewedCommitmentAndClosedArguments() {
         for (String name : java.util.List.of("enrollment.request.approve", "enrollment.request.reject")) {
             String json = "{\"version\":1,\"arguments\":{\"id\":\"enrollment:fixture\",\"expectedCommitment\":\""
@@ -91,6 +99,9 @@ class HttpServerControlOperationCodecTest {
                 decode("enrollment.request.list", "{\"version\":1,\"arguments\":{\"offset\":0,\"limit\":10}}").operation()).operation());
     }
 
+    /**
+     * Checks the streaming-required legacy size limit before archive decoding and preserves ordinary invalid-input wrapping for nested approval.
+     */
     @Test void legacyArchiveLimitIsCheckedBeforeDecodingAndForNestedApproval() {
         String payload = "A".repeat(4 * ((zeroecho.pki.api.backup.BackupLimits.defaults().legacyBytes() + 2) / 3) + 4);
         String arguments = "{\"backupId\":\"fixture\",\"payload\":\"" + payload + "\"}";
@@ -107,6 +118,9 @@ class HttpServerControlOperationCodecTest {
         assertEquals(IllegalArgumentException.class, otherLimit.getClass());
     }
 
+    /**
+     * Checks realm-wide configuration/capability selectors with distinct permission actions and strict pagination/scope rejection.
+     */
     @Test
     void selectionControlQueriesUseBoundedRealmInputAndExactPermissionDescriptors() {
         HttpOperationCodec.Decoded configuration = decode(ServerControlOperation.ConfigurationChoices.NAME,
@@ -133,6 +147,9 @@ class HttpServerControlOperationCodecTest {
                 "{\"version\":1,\"arguments\":{\"limit\":1,\"providerOptions\":{}}}"));
     }
 
+    /**
+     * Checks principal-registration JSON becomes the closed control-operation variant with the exact requested identity.
+     */
     @Test
     void decodesPrincipalRegistrationIntoClosedControlType() {
         System.out.println("decodesPrincipalRegistrationIntoClosedControlType");
@@ -148,6 +165,9 @@ class HttpServerControlOperationCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks strict principal inspection rejects an unknown argument during decoding rather than deferring it to authorization.
+     */
     @Test
     void rejectsUnknownControlArgumentBeforeGatewayInvocation() {
         System.out.println("rejectsUnknownControlArgumentBeforeGatewayInvocation");
@@ -159,6 +179,9 @@ class HttpServerControlOperationCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks capability issuance accepts public object coordinates while keeping binary bearer material server-generated.
+     */
     @Test
     void capabilityIssuanceDecodesWithoutBinaryOrTokenInput() {
         System.out.println("capabilityIssuanceDecodesWithoutBinaryOrTokenInput");
@@ -173,6 +196,9 @@ class HttpServerControlOperationCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks explicit credential/owner enrollment selection while rejecting caller-selected disclosure policy fields.
+     */
     @Test
     void decodesExplicitCredentialPublicationEnrollmentWithoutPolicyInputs() {
         String json = "{\"version\":1,\"arguments\":{\"credentialId\":\"credential-a\","
@@ -198,6 +224,9 @@ class HttpServerControlOperationCodecTest {
                         + "\"credentialId\":\"credential-a\"}}"));
     }
 
+    /**
+     * Checks directory registration preserves public coordinates and rejects client-supplied confirmation/disclosure policy commitments.
+     */
     @Test
     void decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy() {
         System.out.println("decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy");
@@ -226,6 +255,9 @@ class HttpServerControlOperationCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a pending-confirmation query preserves authority/profile filtering with no preselected credential object.
+     */
     @Test
     void decodesBoundedAuthorityScopedPendingConfirmationQuery() {
         String json = "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
@@ -258,6 +290,9 @@ class HttpServerControlOperationCodecTest {
                 json.replace("\"limit\":100", "\"afterExclusive\":\"bad!\",\"limit\":100")));
     }
 
+    /**
+     * Checks challenge issuance binds the credential and outer authority under certificate-publication permission without a caller profile.
+     */
     @Test
     void decodesChallengeIssuanceWithOnlyCredentialAndMandatoryOuterAuthority() {
         String json = "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
@@ -289,6 +324,9 @@ class HttpServerControlOperationCodecTest {
                         "\"credentialId\":\"credential-a\",\"nonce\":\"forbidden\"")));
     }
 
+    /**
+     * Checks maximum-size canonical unpadded base64url proof completion and rejection of unsupported encodings or bounds.
+     */
     @Test
     void decodesOnlyCanonicalBoundedProofCompletionResponse() {
         byte[] maximum = new byte[zeroecho.pki.spi.confirmation.KeyPossessionProofResponse.MAXIMUM_BYTES];
@@ -322,6 +360,9 @@ class HttpServerControlOperationCodecTest {
                         "\"response\":\"AQ\",\"nonce\":\"forbidden\"")));
     }
 
+    /**
+     * Checks nested CA state approval arguments use the object schema and reject additional unrecognized target fields.
+     */
     @Test
     void decodesApprovalObjectWithPreviouslyOmittedCaState() {
         String json = """
@@ -339,6 +380,9 @@ class HttpServerControlOperationCodecTest {
                         .filter(field -> field.name().equals("targetArguments")).findFirst().orElseThrow().type());
     }
 
+    /**
+     * Checks nested OCSP requester policy remains an object while authority scope stays explicit in the decoded resource.
+     */
     @Test
     void decodesOcspRequesterPolicyObjectWithoutFlatteningAuthorityScope() {
         String json = """

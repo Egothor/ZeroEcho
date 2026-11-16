@@ -60,7 +60,9 @@ import zeroecho.pkix.ocsp.CertStatus;
 import zeroecho.pkix.ocsp.OcspResponse;
 import zeroecho.pkix.ocsp.ResponderId;
 
-/** BouncyCastle-backed parsed {@link OcspResponse}. */
+/**
+ * BouncyCastle-backed parsed {@link OcspResponse}.
+ */
 final class BcOcspResponse implements OcspResponse {
 
     private final boolean successful;
@@ -69,6 +71,13 @@ final class BcOcspResponse implements OcspResponse {
     private final ResponderId responderId;
     private final List<SingleResponse> responses = new ArrayList<>();
 
+    /**
+     * Parses a OCSP response without establishing signature validity or trust.
+     *
+     * @param der complete encoded OCSP response; must not be null
+     * @throws IllegalArgumentException if the encoding cannot be parsed
+     * @throws NullPointerException if the encoding is null
+     */
     /* default */ BcOcspResponse(byte[] der) {
         try {
             OCSPResp outer = new OCSPResp(der);
@@ -137,26 +146,41 @@ final class BcOcspResponse implements OcspResponse {
         return CrlReason.UNSPECIFIED;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isSuccessful() {
         return successful;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Instant producedAt() {
         return producedAt;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ResponderId responderId() {
         return responderId;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<SingleResponse> responses() {
         return List.copyOf(responses);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verifySignature(PublicKey responderKey) {
         if (!successful || basic == null) {
@@ -169,6 +193,9 @@ final class BcOcspResponse implements OcspResponse {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<byte[]> nonce() {
         if (basic == null) {
@@ -183,6 +210,9 @@ final class BcOcspResponse implements OcspResponse {
                 extension.getParsedValue()).getOctets());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<java.security.cert.X509Certificate> certificates() {
         if (basic == null) {
@@ -202,6 +232,9 @@ final class BcOcspResponse implements OcspResponse {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pkix.AlgorithmIdentifier signatureAlgorithm() {
         if (basic == null) {

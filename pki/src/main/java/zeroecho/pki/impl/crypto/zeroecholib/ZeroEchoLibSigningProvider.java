@@ -112,6 +112,21 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
     private String boundNamespace;
     private boolean closed;
 
+    /**
+     * Configures a lazy keyring signing provider with the default cleanup observer.
+     *
+     * @param id nonblank provider identity
+     * @param keyringPath configured keyring path; opened lazily
+     * @param standaloneScope non-null standalone scope coordinate
+     * @param clock clock used for durable operation timestamps
+     * @param operationHorizon positive operation retention horizon
+     * @param keyRefPrefix exact key-reference prefix
+     * @param requireComponentSuffix whether references must select a key component
+     * @param unlockProvider configured credential provider for lazy keyring unlocking
+     * @param commitment base provider configuration commitment
+     * @throws NullPointerException if the standalone scope or required commitment input is null
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     */
     /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             KeyringUnlockProvider unlockProvider, ConfigurationCommitment commitment) {
@@ -119,6 +134,21 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 unlockProvider, (category, cleared) -> { }, new ZeroEchoSession(), commitment);
     }
 
+    /**
+     * Configures a provider around an already opened keyring and derives its configuration commitment.
+     *
+     * @param id nonblank provider identity
+     * @param keyringPath configured keyring path; opened lazily
+     * @param standaloneScope non-null standalone scope coordinate
+     * @param clock clock used for durable operation timestamps
+     * @param operationHorizon positive operation retention horizon
+     * @param keyRefPrefix exact key-reference prefix
+     * @param requireComponentSuffix whether references must select a key component
+     * @param unlockProvider configured credential provider for lazy keyring unlocking
+     * @param keyring already opened keyring retained by this provider
+     * @throws NullPointerException if the standalone scope or required commitment input is null
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     */
     /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             KeyringUnlockProvider unlockProvider, KeyringStore keyring) {
@@ -128,6 +158,22 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         keyringOrNull = Objects.requireNonNull(keyring, "keyring must not be null");
     }
 
+    /**
+     * Configures a lazy keyring signing provider with an explicit clearing observer.
+     *
+     * @param id nonblank provider identity
+     * @param keyringPath configured keyring path; opened lazily
+     * @param standaloneScope non-null standalone scope coordinate
+     * @param clock clock used for durable operation timestamps
+     * @param operationHorizon positive operation retention horizon
+     * @param keyRefPrefix exact key-reference prefix
+     * @param requireComponentSuffix whether references must select a key component
+     * @param unlockProvider configured credential provider for lazy keyring unlocking
+     * @param cleanupObserver observer called with category and owned bytes after clearing
+     * @param commitment base provider configuration commitment
+     * @throws NullPointerException if the standalone scope or required commitment input is null
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     */
     @SuppressWarnings("PMD.ExcessiveParameterList")
     /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
@@ -160,21 +206,33 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 Objects.requireNonNull(commitment, "commitment must not be null"), supportedAlgorithms());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return id;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ConfigurationCommitment configurationCommitment() {
         return configurationCommitment;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.spi.crypto.SigningInputCapabilities inputCapabilities() {
         return new zeroecho.pki.spi.crypto.SigningInputCapabilities(Long.MAX_VALUE, java.util.Map.of());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedAlgorithms() {
         Set<String> supported = new java.util.LinkedHashSet<>(session.available());
@@ -182,6 +240,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         return Collections.unmodifiableSet(supported);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateSigningDomain(String namespace, Duration horizon, Duration permittedSkew) {
         String expectedSuffix = "." + id;
@@ -200,6 +261,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation dispatch(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
@@ -270,6 +334,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation reconcile(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
@@ -278,6 +345,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 DetailCode.LOCAL_RESTART_UNRECOVERABLE, Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OperationObservation cancel(PkiId operationId, long fencingToken, CancellationReason reason,
             CallControl control) {
@@ -297,6 +367,7 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
      * Duplicate logical aliases may be visited and must be deduplicated by a collecting caller.
      * @param visitor consumer of canonical non-secret key references
      * @throws IllegalStateException when the keyring is unavailable
+     * @throws NullPointerException if {@code visitor} is null
      */
     // The provider owns the borrowed keyring; closing it during enumeration would invalidate subsequent signing.
     // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
@@ -317,6 +388,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
         Objects.requireNonNull(keyRef, "keyRef");
@@ -333,6 +407,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] sign(KeyRef keyRef, String algorithmId, byte[] content)
             throws IOException, GeneralSecurityException {
@@ -376,6 +453,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     @SuppressWarnings("PMD.CloseResource")
     public void close() {
@@ -445,6 +525,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         return password;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Result generate(String reservationId, Parameters parameters) {
         String alias = generationAlias(reservationId);
@@ -487,6 +570,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<Result> observe(String reservationId, Parameters parameters) {
         String alias = generationAlias(reservationId);
@@ -595,7 +681,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
 
     private record KeyRefParts(String privateAlias) { }
 
-    /** Owns one encoded signature until its bytes are transferred. */
+    /**
+     * Owns one encoded signature until its bytes are transferred.
+     */
     private final class OwnedEncodedSignature implements AutoCloseable {
         private final Encoding encoding;
         private byte[] bytes;
@@ -616,6 +704,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             return bytes == candidate;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             clearOwned("sign-encoded", bytes);
@@ -623,7 +714,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
-    /** Verifies the exact content commitment while cryptography consumes it. */
+    /**
+     * Verifies the exact content commitment while cryptography consumes it.
+     */
     private static final class CommittedContent implements RepeatableContent {
         private final RepeatableContent delegate;
         private final ContentCommitment commitment;
@@ -634,6 +727,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             this.commitment = Objects.requireNonNull(commitment, "commitment");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public InputStream openStream() throws IOException {
             if (!opened.compareAndSet(false, true)) {
@@ -646,23 +742,34 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public OptionalLong length() {
             return OptionalLong.of(commitment.length());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String contentId() {
             return "commitment:" + commitment.version();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             // Caller retains the durable content handle.
         }
     }
 
-    /** Streaming commitment verifier around the borrowed payload stream. */
+    /**
+     * Streaming commitment verifier around the borrowed payload stream.
+     */
     @SuppressWarnings({ "PMD.AvoidMessageDigestField", "PMD.PreserveStackTrace" })
     private static final class CommitmentInputStream extends FilterInputStream {
         private final ContentCommitment commitment;
@@ -680,6 +787,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             int value = readDelegate();
@@ -693,6 +803,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             return value;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] bytes, int offset, int length) throws IOException {
             int read = readDelegate(bytes, offset, length);
@@ -750,7 +863,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
-    /** Safe internal classification for candidate-content integrity failures. */
+    /**
+     * Safe internal classification for candidate-content integrity failures.
+     */
     private static final class ContentIntegrityException extends IOException {
         private static final long serialVersionUID = 1L;
 
@@ -763,7 +878,9 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         }
     }
 
-    /** Safe internal validation failure carrying only a finite detail code. */
+    /**
+     * Safe internal validation failure carrying only a finite detail code.
+     */
     private static final class InvalidRequestException extends Exception {
         private static final long serialVersionUID = 1L;
         private final DetailCode detailCode;

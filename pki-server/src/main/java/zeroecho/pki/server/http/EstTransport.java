@@ -87,6 +87,8 @@ public final class EstTransport implements AutoCloseable {
      * @param ready         readiness predicate checked by request handlers
      * @return started EST listener lifecycle owner
      * @throws IllegalStateException if the listener cannot be initialized
+     * @throws NullPointerException if any of {@code configuration}, {@code realm}, {@code random}, {@code
+     *         loader}, {@code ready} is null
      */
     public static EstTransport start(PkiServerConfiguration.EstListener configuration,
             ServerRealmContext realm, SecureRandom random, ClassLoader loader,
@@ -139,7 +141,9 @@ public final class EstTransport implements AutoCloseable {
         return service;
     }
 
-    /** Rejects new protocol work. */
+    /**
+     * Rejects new protocol work.
+     */
     public void quiesce() {
         protocolRuntime.quiesce();
     }
@@ -155,6 +159,9 @@ public final class EstTransport implements AutoCloseable {
         protocolRuntime.close();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         shutdown(Duration.ZERO);

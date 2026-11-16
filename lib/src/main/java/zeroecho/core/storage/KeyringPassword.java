@@ -130,6 +130,8 @@ public final class KeyringPassword implements Destroyable, AutoCloseable {
 
     /**
      * Destroys the password.
+     *
+     * @throws IllegalStateException if password destruction unexpectedly fails
      */
     @Override
     @SuppressWarnings("PMD.PreserveStackTrace")

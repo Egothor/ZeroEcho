@@ -57,7 +57,19 @@ public record ScepPkiMessage(
         byte[] senderNonce,
         byte[] innerContent,
         X509Certificate requesterCert) {
-    /** Validates and defensively copies bounded request content. */
+    /**
+     * Validates and defensively copies bounded request content.
+     *
+     * @param messageType SCEP message type integer (e.g., 19=PKCSReq, 20=GetCertInitial)
+     * @param transactionId SCEP transaction identifier string
+     * @param senderNonce senderNonce octet string (exactly 16 bytes)
+     * @param innerContent decrypted inner content bytes (PKCS#10 CSR DER for PKCSReq,
+     *                       IssuerAndSubject DER for GetCertInitial)
+     * @param requesterCert the signing certificate carried in the outer CMS SignedData
+     *                       (the requester's self-signed certificate)
+     * @throws NullPointerException if transaction ID, nonce, inner content, or requester certificate is null
+     * @throws IllegalArgumentException if the SCEP message type, transaction ID, nonce, or plaintext content violates the request bounds
+     */
     public ScepPkiMessage {
         java.util.Objects.requireNonNull(transactionId, "transactionId");
         java.util.Objects.requireNonNull(requesterCert, "requesterCert");
@@ -76,6 +88,10 @@ public record ScepPkiMessage(
      * @return independently owned request
      */
     @Override public byte[] innerContent() { return innerContent.clone(); }
-    /** @return redacted description without plaintext or requester data */
+    /**
+     * Returns redacted description without plaintext or requester data.
+     *
+     * @return redacted description without plaintext or requester data
+     */
     @Override public String toString() { return "ScepPkiMessage[messageType=" + messageType + "]"; }
 }

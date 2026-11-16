@@ -75,6 +75,7 @@ public final class PublisherSecretResolver {
      *
      * @param store immutable map of secret identifier to secret value (may be
      *              empty)
+     * @throws NullPointerException if {@code store} is null, or a copied input collection contains a null entry
      */
     public PublisherSecretResolver(Map<String, String> store) {
         this.store = Map.copyOf(store);

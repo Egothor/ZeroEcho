@@ -46,39 +46,105 @@ import java.nio.file.StandardOpenOption;
  * Narrow package-local boundary for atomic keyring persistence operations.
  */
 interface KeyringFileOperations {
+    /**
+     * Production implementation using NIO atomic moves and platform security attributes.
+     */
     KeyringFileOperations NIO = new NioKeyringFileOperations();
 
-    /** Supplies the platform retry policy; tests may inject a deterministic pause. */
+    /**
+     * Returns the retry policy used after transient access denial during atomic moves.
+     *
+     * @return platform policy, or the deterministic policy supplied by a test implementation
+     */
     default KeyringAtomicMoveRetryPolicy atomicMoveRetryPolicy() {
         return KeyringAtomicMoveRetryPolicy.PLATFORM;
     }
 
-    /** Atomic persistence destination. */
+    /**
+     * Atomic persistence destination.
+     */
     enum Target {
-        MAIN_IMAGE, NONCE_RESERVATION, STATEFUL_AUTHORITY
+        /**
+         * Encrypted primary keyring image.
+         */
+        MAIN_IMAGE,
+        /**
+         * Authenticated nonce high-water sidecar.
+         */
+        NONCE_RESERVATION,
+        /**
+         * Authenticated local stateful-signing authority image.
+         */
+        STATEFUL_AUTHORITY
     }
 
-    /** Creates one owner-only temporary file beside its destination. */
+    /**
+     * Creates one owner-only temporary file beside its destination.
+     *
+     * @param target logical persistence destination used for fault injection and routing
+     * @param parent secured destination directory
+     * @param prefix temporary file-name prefix
+     * @param suffix temporary file-name suffix, or null for the platform default
+     * @return path of the newly created empty file
+     * @throws IOException if secure temporary-file creation fails
+     */
     Path createTemporary(Target target, Path parent, String prefix, String suffix) throws IOException;
 
-    /** Writes the complete encrypted image to its temporary file. */
+    /**
+     * Writes the complete encrypted image and durably flushes it before returning.
+     *
+     * @param target logical persistence destination
+     * @param temporary temporary file created for this transaction
+     * @param image complete image bytes; borrowed without modification
+     * @throws IOException if opening, writing, or flushing the file fails
+     */
     void writeTemporary(Target target, Path temporary, byte[] image) throws IOException;
 
-    /** Forces temporary-file contents to durable storage. */
+    /**
+     * Completes the temporary-file durability barrier before atomic replacement.
+     *
+     * @param target logical persistence destination
+     * @param temporary temporary image file
+     * @throws IOException if the implementation cannot complete its durability barrier
+     */
     void forceTemporary(Target target, Path temporary) throws IOException;
 
-    /** Atomically replaces the destination with the temporary file. */
+    /**
+     * Atomically replaces the destination with the prepared temporary file.
+     *
+     * @param target logical persistence destination
+     * @param temporary prepared source file; consumed by a successful move
+     * @param destination authoritative destination path
+     * @throws IOException if the atomic replacement cannot be completed
+     */
     void atomicReplace(Target target, Path temporary, Path destination) throws IOException;
 
-    /** Forces the destination directory after atomic replacement. */
+    /**
+     * Forces the destination directory after publication where the platform supports it.
+     *
+     * @param target logical persistence destination
+     * @param parent directory containing the published image
+     * @throws IOException if the required directory durability operation fails
+     */
     void forceDirectory(Target target, Path parent) throws IOException;
 
-    /** Deletes a temporary file that did not become authoritative. */
+    /**
+     * Deletes an uncommitted temporary file if it still exists.
+     *
+     * @param target logical persistence destination
+     * @param temporary temporary image path
+     * @throws IOException if cleanup cannot delete the temporary file
+     */
     void deleteTemporary(Target target, Path temporary) throws IOException;
 }
 
-/** Production NIO implementation of the atomic persistence boundary. */
+/**
+ * Production NIO implementation of the atomic persistence boundary.
+ */
 final class NioKeyringFileOperations implements KeyringFileOperations {
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Path createTemporary(Target target, Path parent, String prefix, String suffix) throws IOException {
         // Owner-only protection comes from the create-time attributes on POSIX and
@@ -87,6 +153,9 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
                 KeyringPlatformPolicy.INSTANCE.fileCreateAttributes());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void writeTemporary(Target target, Path temporary, byte[] image) throws IOException {
         try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
@@ -100,21 +169,33 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceTemporary(Target target, Path temporary) throws IOException {
         // Data was already forced at the end of writeTemporary; this is a no-op.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void atomicReplace(Target target, Path temporary, Path destination) throws IOException {
         Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceDirectory(Target target, Path parent) throws IOException {
         KeyringPlatformPolicy.INSTANCE.forceDirectory(parent);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void deleteTemporary(Target target, Path temporary) throws IOException {
         Files.deleteIfExists(temporary);

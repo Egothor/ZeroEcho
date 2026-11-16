@@ -49,7 +49,9 @@ import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Closed public transport projection for dedicated managed responder provisioning. */
+/**
+ * Closed public transport projection for dedicated managed responder provisioning.
+ */
 public final class OcspProvisioningProjection {
     private OcspProvisioningProjection() { }
     /**

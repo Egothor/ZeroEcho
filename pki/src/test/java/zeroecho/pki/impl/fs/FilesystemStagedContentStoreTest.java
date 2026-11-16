@@ -65,10 +65,19 @@ import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 
+/**
+ * Contract and regression tests for filesystem staged content store.
+ */
 final class FilesystemStagedContentStoreTest {
     private static final String STORE_ID = "0123456789abcdef0123456789abcdef";
     private static final String FOREIGN_STORE_ID = "fedcba9876543210fedcba9876543210";
 
+    /**
+     * One open sink gate is shared across candidate lifecycles and released by terminal paths.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oneOpenSinkGateIsSharedAcrossCandidateLifecyclesAndReleasedByTerminalPaths(
             @TempDir Path directory) throws Exception {
@@ -95,6 +104,12 @@ final class FilesystemStagedContentStoreTest {
         }
     }
 
+    /**
+     * Production content stream reads exactly once and validates at EOF.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void productionContentStreamReadsExactlyOnceAndValidatesAtEof(@TempDir Path directory) throws Exception {
         AtomicInteger opens = new AtomicInteger();
@@ -133,6 +148,12 @@ final class FilesystemStagedContentStoreTest {
         assertEquals(payload.length * 2L, bytesRead.get());
     }
 
+    /**
+     * Strict seal crash matrix never exposes partial candidate.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void strictSealCrashMatrixNeverExposesPartialCandidate(@TempDir Path directory) throws Exception {
         for (FilesystemStagedContentStore.SealFaultPoint point
@@ -180,6 +201,12 @@ final class FilesystemStagedContentStoreTest {
         }
     }
 
+    /**
+     * Temporary index classifies commit force failure and cleans pre move failure.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure(@TempDir Path directory) throws Exception {
         System.out.println("temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure");
@@ -218,6 +245,12 @@ final class FilesystemStagedContentStoreTest {
         }
     }
 
+    /**
+     * Owner record rejects content identity substitution.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ownerRecordRejectsContentIdentitySubstitution(@TempDir Path directory) throws Exception {
         System.out.println("ownerRecordRejectsContentIdentitySubstitution");
@@ -238,6 +271,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("ownerRecordRejectsContentIdentitySubstitution...ok");
     }
 
+    /**
+     * Recovery retains only durably referenced completed content.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryRetainsOnlyDurablyReferencedCompletedContent(@TempDir Path directory) throws Exception {
         System.out.println("recoveryRetainsOnlyDurablyReferencedCompletedContent");
@@ -261,6 +300,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("recoveryRetainsOnlyDurablyReferencedCompletedContent...ok");
     }
 
+    /**
+     * Transactional signing owner prevents general retirement.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void transactionalSigningOwnerPreventsGeneralRetirement(@TempDir Path directory) throws Exception {
         System.out.println("transactionalSigningOwnerPreventsGeneralRetirement");
@@ -280,6 +325,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("transactionalSigningOwnerPreventsGeneralRetirement...ok");
     }
 
+    /**
+     * Shared signing publication reservations are reference counted.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sharedSigningPublicationReservationsAreReferenceCounted(@TempDir Path directory) throws Exception {
         System.out.println("sharedSigningPublicationReservationsAreReferenceCounted");
@@ -304,6 +355,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("sharedSigningPublicationReservationsAreReferenceCounted...ok");
     }
 
+    /**
+     * Rejects traversal foreign metadata and symlink content.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void rejectsTraversalForeignMetadataAndSymlinkContent(@TempDir Path directory) throws Exception {
@@ -330,6 +387,9 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("rejectsTraversalForeignMetadataAndSymlinkContent...ok");
     }
 
+    /**
+     * Owner index keys are fixed deterministic and domain complete.
+     */
     @Test
     void ownerIndexKeysAreFixedDeterministicAndDomainComplete() {
         System.out.println("ownerIndexKeysAreFixedDeterministicAndDomainComplete");
@@ -351,6 +411,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("ownerIndexKeysAreFixedDeterministicAndDomainComplete...ok");
     }
 
+    /**
+     * Long owner index survives lookup and rejects substitution.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void longOwnerIndexSurvivesLookupAndRejectsSubstitution(@TempDir Path directory) throws Exception {
         System.out.println("longOwnerIndexSurvivesLookupAndRejectsSubstitution");
@@ -375,6 +441,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("longOwnerIndexSurvivesLookupAndRejectsSubstitution...ok");
     }
 
+    /**
+     * Owner index concurrent retain has one physical record.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ownerIndexConcurrentRetainHasOnePhysicalRecord(@TempDir Path directory) throws Exception {
         System.out.println("ownerIndexConcurrentRetainHasOnePhysicalRecord");
@@ -398,6 +470,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("ownerIndexConcurrentRetainHasOnePhysicalRecord...ok");
     }
 
+    /**
+     * Pre change raw owner filename is not accepted.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preChangeRawOwnerFilenameIsNotAccepted(@TempDir Path directory) throws Exception {
         System.out.println("preChangeRawOwnerFilenameIsNotAccepted");
@@ -412,6 +490,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("preChangeRawOwnerFilenameIsNotAccepted...ok");
     }
 
+    /**
+     * Owner index validates complete committed namespace.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void ownerIndexValidatesCompleteCommittedNamespace(@TempDir Path directory) throws Exception {
@@ -455,6 +539,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("ownerIndexValidatesCompleteCommittedNamespace...ok");
     }
 
+    /**
+     * Owner index rejects malformed and substituted records.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ownerIndexRejectsMalformedAndSubstitutedRecords(@TempDir Path directory) throws Exception {
         System.out.println("ownerIndexRejectsMalformedAndSubstitutedRecords");
@@ -490,6 +580,12 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("ownerIndexRejectsMalformedAndSubstitutedRecords...ok");
     }
 
+    /**
+     * Owner index concurrent different owners and remove are serializable.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ownerIndexConcurrentDifferentOwnersAndRemoveAreSerializable(@TempDir Path directory) throws Exception {
         System.out.println("ownerIndexConcurrentDifferentOwnersAndRemoveAreSerializable");

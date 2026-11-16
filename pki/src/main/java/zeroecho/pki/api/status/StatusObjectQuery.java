@@ -54,6 +54,10 @@ public record StatusObjectQuery(PkiId issuerCaId, Optional<StatusObjectType> typ
      *
      * @throws IllegalArgumentException if mandatory inputs are invalid or optional
      *                                  containers are null
+     * @param issuerCaId issuer CA entity id
+     * @param type optional type filter
+     * @param createdAfter optional lower bound for creation time
+     * @param createdBefore optional upper bound for creation time
      */
     public StatusObjectQuery {
         if (issuerCaId == null) {

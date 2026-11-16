@@ -56,6 +56,13 @@ final class XWingPublicKey implements PublicKey {
 
     private final byte[] encoded;
 
+    /**
+     * Copies the fixed-length raw X-Wing public-key encoding.
+     *
+     * @param encoded raw public-key bytes; must not be null
+     * @throws NullPointerException if the encoding is null
+     * @throws IllegalArgumentException if the encoding length is invalid
+     */
     /* default */ XWingPublicKey(byte[] encoded) {
         java.util.Objects.requireNonNull(encoded, "encoded");
         if (encoded.length != XWingPublicKeySpec.RAW_LENGTH) {
@@ -64,21 +71,35 @@ final class XWingPublicKey implements PublicKey {
         this.encoded = encoded.clone();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String getAlgorithm() {
         return "X-Wing";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String getFormat() {
         return "RAW";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] getEncoded() {
         return encoded.clone();
     }
 
+    /**
+     * Returns the raw public key without exposing this key's internal storage.
+     *
+     * @return a new array containing the complete raw public-key encoding
+     */
     /* default */ byte[] rawEncoded() {
         return encoded.clone();
     }

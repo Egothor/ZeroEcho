@@ -71,6 +71,9 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 public class TagTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path tmp;
 
@@ -78,11 +81,17 @@ public class TagTest {
     private PrintStream savedErr;
     private java.io.InputStream savedIn;
 
+    /**
+     * Initializes cryptographic providers before tests that require their algorithms.
+     */
     @BeforeAll
     static void bootBouncyCastle() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Restores the original standard input, output, and error streams after each redirected CLI test.
+     */
     @AfterEach
     void restoreStd() {
         if (savedOut != null) {
@@ -119,7 +128,10 @@ public class TagTest {
         System.out.println();
     }
 
-    /** Ed25519 signature round-trip using files. */
+    /**
+     * Ed25519 signature round-trip using files.
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signature_ed25519_roundTrip_files_ok() throws Exception {
         logBegin("signature_ed25519_roundTrip_files_ok");
@@ -153,6 +165,11 @@ public class TagTest {
         logEnd();
     }
 
+    /**
+     * Checks signature-mismatch failure reporting and the appended verification diagnostic.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signature_verify_mismatch_throws_and_appends_text() throws Exception {
         logBegin("signature_verify_mismatch_throws_and_appends_text");
@@ -187,7 +204,10 @@ public class TagTest {
         logEnd();
     }
 
-    /** SHA-256 digest round-trip using files. */
+    /**
+     * SHA-256 digest round-trip using files.
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void digest_sha256_roundTrip_files_ok() throws Exception {
         logBegin("digest_sha256_roundTrip_files_ok");
@@ -217,6 +237,11 @@ public class TagTest {
         logEnd();
     }
 
+    /**
+     * Checks digest-mismatch failure reporting and the appended verification diagnostic.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void digest_verify_mismatch_throws_and_appends_text() throws Exception {
         logBegin("digest_verify_mismatch_throws_and_appends_text");
@@ -249,7 +274,10 @@ public class TagTest {
         logEnd();
     }
 
-    /** Digest round trip over STDIN/STDOUT. */
+    /**
+     * Digest round trip over STDIN/STDOUT.
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void digest_roundTrip_stdin_stdout_ok() throws Exception {
         logBegin("digest_roundTrip_stdin_stdout_ok");
@@ -289,7 +317,9 @@ public class TagTest {
     // Helpers
     // ---------------------------------------------------------------------
 
-    /** Generates an asymmetric keypair using the real KeyStoreManagement CLI. */
+    /**
+     * Generates an asymmetric keypair using the real KeyStoreManagement CLI.
+     */
     private static KeyAliases generateIntoKeyStore(Path ring, String algId, String baseAlias) throws Exception {
         String[] genArgs = { "--keystore", ring.toString(), "--generate", "--alg", algId, "--alias", baseAlias,
                 "--kind", "asym" };

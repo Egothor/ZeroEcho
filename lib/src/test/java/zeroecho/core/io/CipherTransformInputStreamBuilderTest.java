@@ -44,7 +44,13 @@ import javax.crypto.Cipher;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for cipher transform input stream builder.
+ */
 class CipherTransformInputStreamBuilderTest {
+    /**
+     * Validates every geometry boundary without assertions.
+     */
     @Test
     void validatesEveryGeometryBoundaryWithoutAssertions() {
         System.out.print("ChunkTransform/geometry...");
@@ -62,6 +68,9 @@ class CipherTransformInputStreamBuilderTest {
         System.out.println("ok");
     }
 
+    /**
+     * Rejects invalid transform output counts.
+     */
     @Test
     void rejectsInvalidTransformOutputCounts() {
         System.out.print("ChunkTransform/counts...");
@@ -79,6 +88,11 @@ class CipherTransformInputStreamBuilderTest {
         System.out.println("ok");
     }
 
+    /**
+     * Rejects AES independent blocks before reading upstream.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsAesIndependentBlocksBeforeReadingUpstream() throws Exception {
         System.out.print("CipherBuilder/algorithm-guard...");

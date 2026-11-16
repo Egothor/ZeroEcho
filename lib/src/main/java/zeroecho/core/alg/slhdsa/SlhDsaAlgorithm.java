@@ -112,6 +112,9 @@ public final class SlhDsaAlgorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(SlhDsaPrivateKeySpec.class, new SlhDsaPrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

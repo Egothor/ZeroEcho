@@ -119,6 +119,7 @@ public final class EncCtxRecipient implements Recipient, AutoCloseable {
      * @param cek the content-encryption key to wrap
      * @return the wrapped CEK encoded as a recipient entry
      * @throws IOException if streaming through the encryption context fails
+     * @throws IllegalStateException if the recipient has been closed
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws IOException {

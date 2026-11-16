@@ -35,13 +35,30 @@ package zeroecho.pki.server.confirmation;
 
 import java.util.Objects;
 
-/** Immutable public coordinates and input bounds of one proof-suite profile. */
+/**
+ * Immutable public coordinates and input bounds of one proof-suite profile.
+ *
+ * @param suiteId stable versioned suite identity
+ * @param configurationCommitment commitment to the complete suite configuration
+ * @param challengeBytes required challenge length, from 32 through 256 bytes inclusive
+ * @param maximumResponseBytes maximum accepted response length, from 1 through 16,384 bytes inclusive
+ */
 record ProofSuiteDescriptor(ProofSuiteId suiteId, ProofSuiteCommitment configurationCommitment,
         int challengeBytes, int maximumResponseBytes) {
 
     private static final int MAXIMUM_CHALLENGE_BYTES = 256;
     private static final int MAXIMUM_RESPONSE_BYTES = 16_384;
 
+    /**
+     * Validates required suite coordinates and supported input bounds.
+     *
+     * @param suiteId stable versioned identity; must not be null
+     * @param configurationCommitment exact configuration commitment; must not be null
+     * @param challengeBytes required challenge length, in bytes
+     * @param maximumResponseBytes maximum accepted proof-response length, in bytes
+     * @throws NullPointerException if the suite identity or commitment is null
+     * @throws IllegalArgumentException if a byte bound is outside its supported range
+     */
     ProofSuiteDescriptor {
         Objects.requireNonNull(suiteId, "suiteId");
         Objects.requireNonNull(configurationCommitment, "configurationCommitment");

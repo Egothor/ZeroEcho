@@ -49,23 +49,41 @@ import zeroecho.pki.server.EnrollmentTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Unit coverage for the SCEP endpoint registry. */
+/**
+ * Unit coverage for the SCEP endpoint registry.
+ */
 class ScepServiceTest {
     private static final String HASH = "a".repeat(64);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
     private EnrollmentTestSupport fixture;
     private ScepService service;
 
+    /**
+     * Opens an isolated enrollment realm and constructs the protocol service before each test.
+     *
+     * @throws Exception if the fixture realm cannot be created
+     */
     @BeforeEach
     void setUp() throws Exception {
         fixture = new EnrollmentTestSupport(directory, List.of("device-cert", "device-cert-v2", "profile-a", "profile-b"));
         service = new ScepService(fixture.realm());
     }
 
+    /**
+     * Closes the enrollment fixture and releases its owned realm resources after each test.
+     *
+     * @throws Exception if fixture resource cleanup fails
+     */
     @AfterEach
     void closeFixture() throws Exception { fixture.close(); }
 
+    /**
+     * Checks that registration returns an endpoint retrievable by the exact configured label.
+     */
     @Test
     void registersAndFindsEndpoint() {
         ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", "enrollment-device-cert", HASH);
@@ -75,11 +93,17 @@ class ScepServiceTest {
         assertEquals(endpoint, found.orElseThrow());
     }
 
+    /**
+     * Checks empty lookup results for an unregistered endpoint label.
+     */
     @Test
     void returnsEmptyForUnknownLabel() {
         assertTrue(service.find("unknown").isEmpty());
     }
 
+    /**
+     * Checks removal of an existing endpoint and its subsequent absence.
+     */
     @Test
     void deregistersExistingEndpoint() {
         ScepEndpoint endpoint = new ScepEndpoint("devices", "ca:issuer", "device-cert", "enrollment-device-cert", HASH);
@@ -90,11 +114,17 @@ class ScepServiceTest {
         assertTrue(service.find("devices").isEmpty());
     }
 
+    /**
+     * Checks that removing an absent endpoint returns an empty result.
+     */
     @Test
     void deregisterReturnsEmptyForAbsentLabel() {
         assertTrue(service.deregister("nonexistent").isEmpty());
     }
 
+    /**
+     * Checks replacement semantics when a new endpoint uses an existing label.
+     */
     @Test
     void registerReplacesExistingWithSameLabel() {
         String hashA = "a".repeat(64);
@@ -109,6 +139,9 @@ class ScepServiceTest {
         assertEquals(hashB, found.orElseThrow().challengePasswordHash());
     }
 
+    /**
+     * Checks that endpoint enumeration includes every registered endpoint.
+     */
     @Test
     void listReturnsAllRegisteredEndpoints() {
         ScepEndpoint a = new ScepEndpoint("endpoint-a", "ca:issuer", "profile-a", "enrollment-profile-a", "a".repeat(64));
@@ -121,21 +154,33 @@ class ScepServiceTest {
         assertTrue(listed.contains(b));
     }
 
+    /**
+     * Checks empty endpoint enumeration before registration.
+     */
     @Test
     void listIsEmptyWhenNoEndpointsRegistered() {
         assertTrue(service.list().isEmpty());
     }
 
+    /**
+     * Checks the explicit null-endpoint precondition on registration.
+     */
     @Test
     void rejectsNullEndpointOnRegister() {
         assertThrows(NullPointerException.class, () -> service.register(null));
     }
 
+    /**
+     * Checks the explicit null-label precondition on endpoint lookup.
+     */
     @Test
     void rejectsNullLabelOnFind() {
         assertThrows(NullPointerException.class, () -> service.find(null));
     }
 
+    /**
+     * Checks the explicit null-label precondition on endpoint removal.
+     */
     @Test
     void rejectsNullLabelOnDeregister() {
         assertThrows(NullPointerException.class, () -> service.deregister(null));

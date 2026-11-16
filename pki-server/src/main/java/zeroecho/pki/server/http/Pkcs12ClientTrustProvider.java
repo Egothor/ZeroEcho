@@ -48,22 +48,33 @@ import javax.net.ssl.X509TrustManager;
 import zeroecho.pki.server.spi.PkiServerClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** External PKCS#12 trust-store provider for forwarded administrative clients. */
-@SuppressWarnings("PMD")
+/**
+ * External PKCS#12 trust-store provider for forwarded administrative clients.
+ */
 public final class Pkcs12ClientTrustProvider implements PkiServerClientTrustProvider {
-    /** Stable provider identity. */
+    /**
+     * Stable provider identity.
+     */
     public static final String ID = "jsse-pkcs12-client-trust";
     private static final Set<String> KEYS = Set.of("trustStore", "trustStorePasswordEnvironment");
 
-    /** Creates the stateless PKCS#12 client-trust provider. */
+    /**
+     * Creates the stateless PKCS#12 client-trust provider.
+     */
     public Pkcs12ClientTrustProvider() {
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return ID;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509TrustManager create(ProviderConfig configuration) throws Exception {
         ProviderConfig exact = Objects.requireNonNull(configuration, "configuration");

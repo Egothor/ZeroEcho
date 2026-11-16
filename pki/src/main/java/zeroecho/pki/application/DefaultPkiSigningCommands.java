@@ -70,14 +70,25 @@ import zeroecho.pki.api.signing.SemanticSigningState;
 import zeroecho.pki.api.status.DeltaCrlRequest;
 import zeroecho.pki.api.status.FullCrlRequest;
 
-/** Session-borrowed command preparation and completed-result projection. */
+/**
+ * Session-borrowed command preparation and completed-result projection.
+ */
 final class DefaultPkiSigningCommands implements PkiSigningCommands {
     private static final AttributeSet EMPTY_ATTRIBUTES = new AttributeSet() {
+        /**
+         * {@inheritDoc}
+         */
         @Override public java.util.Set<AttributeId> ids() { return java.util.Set.of(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Optional<AttributeValue> get(AttributeId id) {
             Objects.requireNonNull(id, "id");
             return Optional.empty();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public java.util.List<AttributeValue> getAll(AttributeId id) {
             Objects.requireNonNull(id, "id");
             return java.util.List.of();
@@ -88,6 +99,15 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
     private final Optional<CertificationRequestService> requests;
     private final Runnable requireOpen;
 
+    /**
+     * Binds application command normalization to borrowed semantic and repository services.
+     *
+     * @param service semantic signing service supplying authoritative selections
+     * @param repository read-only repository used for command context
+     * @param requests optional certification request service
+     * @param requireOpen session lifecycle guard
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ DefaultPkiSigningCommands(SemanticSigningService service, PkiRepository repository,
             Optional<CertificationRequestService> requests, Runnable requireOpen) {
         this.service = Objects.requireNonNull(service, "service");
@@ -96,6 +116,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
         requireOpen.run(); Objects.requireNonNull(operation, "operation");
         if (operation instanceof PkiSigningOperation.IssueOcspResponderCertificate value) {
@@ -117,6 +140,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return operation;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiSigningOperation normalizeLifecycle(PkiSigningOperation operation) {
         requireOpen.run(); Objects.requireNonNull(operation, "operation");
         if (operation instanceof PkiSigningOperation.RolloverCaCertificate value) {
@@ -140,12 +166,18 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return operation;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation.IssueCredential operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
         return previewSdk((PkiSigningOperation) operation, access, request, frozenValidity, cancellation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
@@ -153,6 +185,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return prepareSdk((PkiSigningOperation) operation, access, request, approval, evidence, cancellation);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
@@ -168,6 +203,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             Optional<zeroecho.pki.api.Validity> frozenValidity,
@@ -184,6 +222,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
@@ -217,6 +258,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
                 operation.profileId(), Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validate(PkiSigningOperation operation, AccessContext access,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
@@ -270,6 +314,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PreparedSemanticSigningRequest prepare(PkiSigningOperation operation, AccessContext access,
             Optional<IssuanceExecutionEvidence> evidence,
@@ -358,6 +405,9 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
         return configuredRequests.encodedRequest(configuredRequests.get(id).orElseThrow()).encoded().bytes();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PkiOperationResult completedResult(SemanticSigningOperation operation) {
         requireOpen.run();

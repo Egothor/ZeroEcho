@@ -136,6 +136,9 @@ import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for end entity issuance preparation.
+ */
 final class EndEntityIssuancePreparationTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -147,6 +150,11 @@ final class EndEntityIssuancePreparationTest {
     private static KeyPair key;
     private static byte[] csr;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll
     static void keys() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -155,6 +163,9 @@ final class EndEntityIssuancePreparationTest {
         csr = csr("CN=Applicant");
     }
 
+    /**
+     * Immutable request rejects invalid and oversized input.
+     */
     @Test
     void immutableRequestRejectsInvalidAndOversizedInput() {
         byte[] input = csr.clone();
@@ -174,6 +185,12 @@ final class EndEntityIssuancePreparationTest {
                 () -> new EndEntityIssuanceRequest(CA, csr, PROFILE, null));
     }
 
+    /**
+     * Crmf proof and profile checks precede any writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crmfProofAndProfileChecksPrecedeAnyWrites(@TempDir Path root) throws Exception {
         byte[] der;
@@ -240,6 +257,12 @@ final class EndEntityIssuancePreparationTest {
         throw new AssertionError("Fixture sequence not found");
     }
 
+    /**
+     * Valid crmf proof cannot bypass frozen CSR signature binding.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validCrmfProofCannotBypassFrozenCsrSignatureBinding(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -283,6 +306,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Freezes verified policy and authoritative selection without writes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void freezesVerifiedPolicyAndAuthoritativeSelectionWithoutWrites(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -309,6 +338,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Rejects malformed proof and policy before any write.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsMalformedProofAndPolicyBeforeAnyWrite(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -340,6 +375,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Rejects unavailable profile and revoked or expired issuer.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsUnavailableProfileAndRevokedOrExpiredIssuer(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -359,6 +400,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Rejects changed binding commitment before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsChangedBindingCommitmentBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -383,6 +430,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Rejects inactive issuer and inconsistent key while retaining bound algorithm.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsInactiveIssuerAndInconsistentKeyWhileRetainingBoundAlgorithm(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -413,6 +466,12 @@ final class EndEntityIssuancePreparationTest {
                 .prepare(ACCESS, request(csr), CancellationSignal.NONE));
     }
 
+    /**
+     * Rounds only the already approved validity and preserves evaluation time.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundsOnlyTheAlreadyApprovedValidityAndPreservesEvaluationTime(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -446,6 +505,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Fractional public preparation has exact tbs and continuation times and rejects empty before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void fractionalPublicPreparationHasExactTbsAndContinuationTimesAndRejectsEmptyBeforeStaging(@TempDir Path root)
             throws Exception {
@@ -472,6 +537,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Public preparation uses only approved san and eku and discard retires candidates.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publicPreparationUsesOnlyApprovedSanAndEkuAndDiscardRetiresCandidates(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -511,6 +582,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Public preparation stages one exact leaf and transfers custody only on acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publicPreparationStagesOneExactLeafAndTransfersCustodyOnlyOnAcceptance(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -559,6 +636,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Cancellation and adoption failure retire their unowned tbs.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationAndAdoptionFailureRetireTheirUnownedTbs(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -581,10 +664,24 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Composes the fixture semantic signing service over the selected store and signing collaborators.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param provider borrowed signing provider selected for execution or capability checks
+     * @param guard callback used to observe or reject the selected preparation boundary
+     * @return semantic service borrowing the fixture store, clock, and provider
+     */
     static SemanticSigningService semantic(PkiStore store, CountingProvider provider, Runnable guard) {
         return semantic(store, provider, guard, CLOCK);
     }
 
+    /**
+     * Rejects null and mismatched issuance evidence before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsNullAndMismatchedIssuanceEvidenceBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -618,6 +715,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Correlated attachment and replay preserve winner evidence without policy lookup.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedAttachmentAndReplayPreserveWinnerEvidenceWithoutPolicyLookup(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -671,6 +774,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Correlated preparation uses frozen imported profile and persists effective intent.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPreparationUsesFrozenImportedProfileAndPersistsEffectiveIntent(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -717,6 +826,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Correlated preparation rejects absent or different frozen selection before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPreparationRejectsAbsentOrDifferentFrozenSelectionBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -741,6 +856,12 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Correlated preparation retains proof policy and cleanup gates.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPreparationRetainsProofPolicyAndCleanupGates(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = fixture(root)) {
@@ -799,6 +920,16 @@ final class EndEntityIssuancePreparationTest {
                 new EndEntitySigningPreparation(store, preparer(store, clock, algorithm)));
     }
 
+    /**
+     * Wraps staged-content preparation to count creation, capture completion, and optionally cancel.
+     *
+     * @param store borrowed test store used for fixture state, staging, and persisted assertions
+     * @param stages counter incremented when staged content creation begins
+     * @param candidate reference receiving the completed staged-content identity
+     * @param cancelled cooperative cancellation flag observed by the fixture
+     * @param cancelAfterCompletion whether completing the staged content raises the cancellation flag
+     * @return store proxy delegating to the borrowed store with preparation observation hooks
+     */
     static PkiStore observePreparation(PkiStore store, AtomicInteger stages,
             AtomicReference<DurableContentReference> candidate, AtomicBoolean cancelled, boolean cancelAfterCompletion) {
         StagedContentStore content = (StagedContentStore) Proxy.newProxyInstance(StagedContentStore.class.getClassLoader(),
@@ -831,6 +962,12 @@ final class EndEntityIssuancePreparationTest {
                 });
     }
 
+    /**
+     * Configured private and parameterized bindings pass real preparation and acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void configuredPrivateAndParameterizedBindingsPassRealPreparationAndAcceptance(@TempDir Path root) throws Exception {
         for (boolean privateBinding : new boolean[] {true, false}) {
@@ -895,20 +1032,58 @@ final class EndEntityIssuancePreparationTest {
         }
     }
 
+    /**
+     * Signing/public-key provider fixture with invocation counters and selectable key algorithm.
+     */
     static final class CountingProvider implements SigningProvider {
+        /**
+         * {@inheritDoc}
+         */
         @Override public zeroecho.pki.spi.crypto.SigningInputCapabilities inputCapabilities() {
             return new zeroecho.pki.spi.crypto.SigningInputCapabilities(Long.MAX_VALUE, java.util.Map.of());
         }
+        /**
+         * Number of provider calls observed by the fixture.
+         */
         final AtomicInteger calls = new AtomicInteger();
         private final String algorithm;
+        /**
+         * Creates a counting provider for the selected signature identity.
+         */
         CountingProvider() { this(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm()); }
+        /**
+         * Creates a counting provider for the selected signature identity.
+         *
+         * @param algorithm algorithm identifier selected by this cryptographic fixture
+         */
         CountingProvider(String algorithm) { this.algorithm = algorithm; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String id() { return "issuance-test"; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public ConfigurationCommitment configurationCommitment() { return new ConfigurationCommitment(new byte[32]); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Set<String> supportedAlgorithms() { return Set.of(algorithm); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation dispatch(SignRequest request, CallControl control) { calls.incrementAndGet(); throw new AssertionError("Unexpected dispatch"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation reconcile(PkiId id, CallControl control) { calls.incrementAndGet(); throw new AssertionError("Unexpected reconciliation"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public OperationObservation cancel(PkiId id, long fence, CancellationReason reason, CallControl control) { calls.incrementAndGet(); throw new AssertionError("Unexpected cancellation"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { }
     }
 

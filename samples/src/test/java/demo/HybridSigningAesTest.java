@@ -67,14 +67,14 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  *
  * <p>
  * This sample shows both canonical compositions:
+ * </p>
  * <ul>
  * <li>StE: Sign-then-Encrypt</li>
  * <li>EtS: Encrypt-then-Sign</li>
  * </ul>
- * </p>
  *
  * <p>
- * Hybrid signature used here (popular practical choice): Ed25519 + SPHINCS+
+ * The hybrid signature combines Ed25519 and SPHINCS+
  * with AND verification.
  * </p>
  */
@@ -83,6 +83,9 @@ class HybridSigningAesTest {
 
     private static final Logger LOG = Logger.getLogger(HybridSigningAesTest.class.getName());
 
+    /**
+     * Attempts optional cryptographic provider activation before the sample scenarios.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,
@@ -94,6 +97,13 @@ class HybridSigningAesTest {
         }
     }
 
+    /**
+     * Checks a hybrid sign-then-encrypt AES payload round trip and signature verification.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesRoundStE_withHybridSignature() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundStE_withHybridSignature - Sign then Encrypt (Hybrid signature)");
@@ -158,6 +168,13 @@ class HybridSigningAesTest {
         LOG.log(Level.INFO, "StE: roundtrip ok={0}", Boolean.valueOf(java.util.Arrays.equals(msg, decrypted)));
     }
 
+    /**
+     * Checks a hybrid encrypt-then-sign AES payload round trip and signature verification.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesRoundEtS_withHybridSignature() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundEtS_withHybridSignature - Encrypt then Sign (Hybrid signature)");

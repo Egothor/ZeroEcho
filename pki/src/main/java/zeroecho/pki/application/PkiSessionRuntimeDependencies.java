@@ -66,7 +66,15 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
         this(keyringUnlockProvider, Optional.empty(), List.of(), Optional.empty(), DashboardLiveSource.NONE);
     }
 
-    /** Validates the optional capability container. */
+    /**
+     * Validates the optional capability container.
+     * @param keyringUnlockProvider optional secure key-unlock capability
+     * @param auditSink optional precomposed lifecycle-owned audit sink
+     * @param keyPossessionProofProviders explicitly trusted key-possession proof providers
+     * @param credentialConfirmationProofPolicy optional server-controlled proof runtime policy
+     * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link DashboardLiveSource#NONE}
+     * @throws NullPointerException if keyringUnlockProvider, auditSink, keyPossessionProofProviders, credentialConfirmationProofPolicy, dashboardLiveSource is null or a supplied collection contains a null member
+     */
     public PkiSessionRuntimeDependencies {
         keyringUnlockProvider = Objects.requireNonNull(keyringUnlockProvider, "keyringUnlockProvider");
         auditSink = Objects.requireNonNull(auditSink, "auditSink");
@@ -92,6 +100,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      *
      * @param provider secure unlock capability
      * @return immutable runtime dependencies
+     * @throws NullPointerException if provider is null
      */
     public static PkiSessionRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
         return new PkiSessionRuntimeDependencies(Optional.of(Objects.requireNonNull(provider, "provider")),
@@ -107,6 +116,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      *
      * @param sink configured audit sink transferred to the session
      * @return immutable dependencies preserving any key-unlock capability
+     * @throws NullPointerException if sink is null
      */
     public PkiSessionRuntimeDependencies withAuditSink(AuditSink sink) {
         return new PkiSessionRuntimeDependencies(keyringUnlockProvider,

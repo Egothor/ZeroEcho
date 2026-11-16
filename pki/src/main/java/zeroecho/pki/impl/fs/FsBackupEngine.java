@@ -48,10 +48,26 @@ import zeroecho.pki.api.backup.BackupLimits;
 import zeroecho.pki.api.backup.BackupPreparation;
 import zeroecho.pki.api.backup.BackupSource;
 
-/** Owns bounded backup ingestion, extraction and verification before restore staging. */
+/**
+ * Owns bounded backup ingestion, extraction and verification before restore staging.
+ */
 final class FsBackupEngine {
     private FsBackupEngine() { }
 
+    /**
+     * Ingests, extracts and independently recovers a bounded backup before returning an owned restore candidate.
+     *
+     * <p>Failure cleanup attempts to remove the owned verification workspace. Successful preparation retains only the verified candidate and its identity evidence.</p>
+     *
+     * @param work existing directory in which a private verification workspace is created
+     * @param source borrowed backup source; its stream is consumed and the source remains caller-owned
+     * @param limits compressed, expanded, entry, count and manifest verification bounds
+     * @param options exact store options used for recovery of the independent checking copy
+     * @param clock authoritative clock supplied to candidate recovery
+     * @return owned verified preparation; caller closes it or transfers it through the restore lifecycle
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if source ingestion, archive integrity, inventory, recovery or durable candidate preparation fails
+     */
     /* default */ static BackupPreparation prepare(Path work, BackupSource source, BackupLimits limits,
             FsPkiStoreOptions options, Clock clock) throws IOException {
         Objects.requireNonNull(source, "source");
@@ -108,7 +124,9 @@ final class FsBackupEngine {
         }
     }
 
-    /** Owns verified temporary files until their preparation handle is closed. */
+    /**
+     * Owns verified temporary files until their preparation handle is closed.
+     */
     private static final class Prepared implements BackupPreparation {
         private final java.util.concurrent.locks.ReentrantLock lifecycle = new java.util.concurrent.locks.ReentrantLock();
         private final Path owned;
@@ -122,8 +140,17 @@ final class FsBackupEngine {
             this.id = id;
             this.digest = digest;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public PkiId backupId() { return id; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public String manifestSha256() { return digest; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Path directory() {
             lifecycle.lock();
             try {
@@ -133,6 +160,9 @@ final class FsBackupEngine {
                 lifecycle.unlock();
             }
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException {
             lifecycle.lock();
             try {

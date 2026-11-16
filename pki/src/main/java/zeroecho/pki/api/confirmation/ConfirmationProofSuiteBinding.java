@@ -48,9 +48,13 @@ import java.util.Objects;
 @SuppressWarnings("PMD.LongVariable")
 public record ConfirmationProofSuiteBinding(ConfirmationProofSuiteRef proofSuiteRef,
         int rsaMaximumModulusBits) {
-    /** Minimum supported RSA modulus ceiling, in bits. */
+    /**
+     * Minimum supported RSA modulus ceiling, in bits.
+     */
     public static final int MINIMUM_RSA_MAXIMUM_MODULUS_BITS = 2_048;
-    /** Maximum supported RSA modulus ceiling, in bits. */
+    /**
+     * Maximum supported RSA modulus ceiling, in bits.
+     */
     public static final int MAXIMUM_RSA_MAXIMUM_MODULUS_BITS = 16_384;
 
     /**
@@ -58,6 +62,8 @@ public record ConfirmationProofSuiteBinding(ConfirmationProofSuiteRef proofSuite
      *
      * @throws NullPointerException if {@code proofSuiteRef} is {@code null}
      * @throws IllegalArgumentException if the modulus-size bound is outside the supported range
+     * @param proofSuiteRef exact proof-suite identity and configuration commitment
+     * @param rsaMaximumModulusBits inclusive RSA modulus-size ceiling, in bits
      */
     public ConfirmationProofSuiteBinding {
         Objects.requireNonNull(proofSuiteRef, "proofSuiteRef");

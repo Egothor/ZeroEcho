@@ -90,11 +90,20 @@ import zeroecho.pkix.ocsp.OcspResponseBuilder;
 import zeroecho.pkix.ocsp.ResponderId;
 import zeroecho.pkix.sign.ContentSigner;
 
+/**
+ * Contract and regression tests for OCSP unsigned encoding.
+ */
 final class OcspUnsignedEncodingTest {
     private static final Instant NOW = Instant.parse("2026-09-22T12:00:00Z");
     private static final AlgorithmIdentifier ED25519 = AlgorithmIdentifier.absent("1.3.101.112");
     private static final byte[] NONCE = {1, 3, 5, 7};
 
+    /**
+     * Unsigned round trip matches legacy builder and preserves ordered chain.
+     *
+     * @param byKey whether responder identity uses a key hash rather than its distinguished name
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void unsignedRoundTripMatchesLegacyBuilderAndPreservesOrderedChain(boolean byKey) throws Exception {
@@ -134,6 +143,11 @@ final class OcspUnsignedEncodingTest {
         assertArrayEquals(fixture.root.getEncoded(), Pkix.parseOcspResponse(reversed).certificates().getFirst().getEncoded());
     }
 
+    /**
+     * Empty chain and nonce retain existing omission semantics without an aggregate cap.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void emptyChainAndNonceRetainExistingOmissionSemanticsWithoutAnAggregateCap() throws Exception {
         Fixture fixture = new Fixture();
         byte[] emptyNonce = {};
@@ -155,6 +169,11 @@ final class OcspUnsignedEncodingTest {
         assertArrayEquals(new byte[1_048_577], Pkix.parseOcspResponse(encoded).nonce().orElseThrow());
     }
 
+    /**
+     * Signed build consumes exactly the unsigned bytes and one signature.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signedBuildConsumesExactlyTheUnsignedBytesAndOneSignature() throws Exception {
         Fixture fixture = new Fixture();
         byte[] expected = fixture.builder(ResponderId.byName(fixture.name)).buildTbs();
@@ -177,6 +196,11 @@ final class OcspUnsignedEncodingTest {
         assertTrue(Pkix.parseOcspResponse(response).verifySignature(fixture.key.getPublic()));
     }
 
+    /**
+     * Rejects malformed encoding and null inputs without claiming signature verification.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void rejectsMalformedEncodingAndNullInputsWithoutClaimingSignatureVerification() throws Exception {
         Fixture fixture = new Fixture();
         byte[] tbs = fixture.builder(ResponderId.byName(fixture.name)).buildTbs();
@@ -204,6 +228,11 @@ final class OcspUnsignedEncodingTest {
                 .verifySignature(fixture.key.getPublic()));
     }
 
+    /**
+     * Signer I/O failure is reported without requesting signature.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void signerIoFailureIsReportedWithoutRequestingSignature() throws Exception {
         Fixture fixture = new Fixture();
         AtomicInteger signatures = new AtomicInteger();

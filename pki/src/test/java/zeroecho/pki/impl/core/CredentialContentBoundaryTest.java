@@ -43,8 +43,14 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.content.DurableContentReference;
 
+/**
+ * Contract and regression tests for credential content boundary.
+ */
 final class CredentialContentBoundaryTest {
 
+    /**
+     * Certificate limit precedes staging validation and materialization.
+     */
     @Test
     void certificateLimitPrecedesStagingValidationAndMaterialization() {
         System.out.println("certificateLimitPrecedesStagingValidationAndMaterialization");

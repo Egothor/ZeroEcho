@@ -44,10 +44,14 @@ package zeroecho.pki.server.est;
  */
 public final class EstProtocolException extends Exception {
 
-    /** Serialization identity for this exception type. */
+    /**
+     * Serialization identity for this exception type.
+     */
     private static final long serialVersionUID = 1L;
 
-    /** HTTP response status selected by the protocol adapter. */
+    /**
+     * HTTP response status selected by the protocol adapter.
+     */
     private final int httpStatus;
 
     /**
@@ -55,6 +59,7 @@ public final class EstProtocolException extends Exception {
      *
      * @param httpStatus HTTP status code (4xx or 5xx)
      * @param message    human-readable error description (safe to return to the client)
+     * @throws IllegalArgumentException if the supplied HTTP status is outside the 400 through 599 range
      */
     public EstProtocolException(int httpStatus, String message) {
         super(message);

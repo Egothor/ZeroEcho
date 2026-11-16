@@ -44,7 +44,12 @@ import java.util.Objects;
  * @param value canonical realm identifier
  */
 public record RealmId(String value) {
-    /** Validates the canonical realm identifier. */
+    /**
+     * Validates the canonical realm identifier.
+     * @param value canonical realm identifier
+     * @throws NullPointerException if {@code value} is null
+     * @throws IllegalArgumentException if the realm identifier violates its bounded lowercase ASCII syntax
+     */
     public RealmId {
         Objects.requireNonNull(value, "value");
         if (!value.matches("[a-z0-9][a-z0-9._-]{0,127}")) {
@@ -52,7 +57,11 @@ public record RealmId(String value) {
         }
     }
 
-    /** Returns the canonical identifier. */
+    /**
+     * Returns the canonical realm identifier.
+     *
+     * @return canonical realm identity unchanged
+     */
     @Override
     public String toString() {
         return value;

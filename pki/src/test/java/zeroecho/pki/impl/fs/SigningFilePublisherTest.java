@@ -53,11 +53,19 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+/**
+ * Contract and regression tests for signing file publisher.
+ */
 final class SigningFilePublisherTest {
 
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Immutable and manifest publication have expected replacement semantics.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void immutableAndManifestPublicationHaveExpectedReplacementSemantics() throws Exception {
         Path immutable = temporaryDirectory.resolve("segment.zew");
@@ -75,6 +83,11 @@ final class SigningFilePublisherTest {
         }
     }
 
+    /**
+     * Every pre move fault retains temp and preserves target.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void everyPreMoveFaultRetainsTempAndPreservesTarget() throws Exception {
         for (SigningFilePublisher.PublicationStage stage : new SigningFilePublisher.PublicationStage[] {
@@ -95,6 +108,11 @@ final class SigningFilePublisherTest {
         }
     }
 
+    /**
+     * Atomic move unsupported has no fallback and directory force is uncertain.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void atomicMoveUnsupportedHasNoFallbackAndDirectoryForceIsUncertain() throws Exception {
         Path unsupported = temporaryDirectory.resolve("unsupported");
@@ -118,6 +136,11 @@ final class SigningFilePublisherTest {
         assertFalse(Files.exists(force.temporary));
     }
 
+    /**
+     * Ambiguous move failure never claims rollback or deletes possible source.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ambiguousMoveFailureNeverClaimsRollbackOrDeletesPossibleSource() throws Exception {
         for (boolean replace : new boolean[] { false, true }) {
@@ -146,6 +169,11 @@ final class SigningFilePublisherTest {
         assertTrue(Files.exists(operations.temporary));
     }
 
+    /**
+     * Replaced temporary path is rejected without following symlink.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void replacedTemporaryPathIsRejectedWithoutFollowingSymlink() throws Exception {
@@ -164,6 +192,12 @@ final class SigningFilePublisherTest {
         assertTrue(Files.exists(operations.temporary, java.nio.file.LinkOption.NOFOLLOW_LINKS));
     }
 
+    /**
+     * Cleanup never deletes replacement regular file.
+     *
+     * @param missingIdentity whether the fixture intentionally omits the required identity
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest(name = "replacement survives with missing identity: {0}")
     @ValueSource(booleans = { false, true })
     void cleanupNeverDeletesReplacementRegularFile(boolean missingIdentity) throws Exception {
@@ -180,6 +214,11 @@ final class SigningFilePublisherTest {
         assertFalse(Files.exists(target));
     }
 
+    /**
+     * Failed production write retains temporary and closes channel.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failedProductionWriteRetainsTemporaryAndClosesChannel() throws Exception {
         Path target = temporaryDirectory.resolve("failed-write");
@@ -201,6 +240,11 @@ final class SigningFilePublisherTest {
         assertArrayEquals(new byte[] { 9 }, Files.readAllBytes(target));
     }
 
+    /**
+     * Production failure preserves replacement moved over open temporary.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void productionFailurePreservesReplacementMovedOverOpenTemporary() throws Exception {
         Path target = temporaryDirectory.resolve("replacement-target");
@@ -225,6 +269,11 @@ final class SigningFilePublisherTest {
         assertFalse(Files.exists(target));
     }
 
+    /**
+     * Production failure tolerates temporary removed before channel close.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void productionFailureToleratesTemporaryRemovedBeforeChannelClose() throws Exception {
         Path target = temporaryDirectory.resolve("removed-target");
@@ -244,6 +293,11 @@ final class SigningFilePublisherTest {
         }
     }
 
+    /**
+     * Production failure preserves replacement symlink and referent.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @RequiresSymlinkCreation
     void productionFailurePreservesReplacementSymlinkAndReferent() throws Exception {
@@ -266,6 +320,11 @@ final class SigningFilePublisherTest {
         assertFalse(Files.exists(target));
     }
 
+    /**
+     * Temporary channel closes after failed ownership transfer and retains path.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void temporaryChannelClosesAfterFailedOwnershipTransferAndRetainsPath() throws Exception {
         Path path = temporaryDirectory.resolve("untransferred.tmp");
@@ -279,6 +338,11 @@ final class SigningFilePublisherTest {
         assertTrue(Files.isRegularFile(path));
     }
 
+    /**
+     * Temporary channel transfers open channel to publisher.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void temporaryChannelTransfersOpenChannelToPublisher() throws Exception {
         Path path = temporaryDirectory.resolve("transferred.tmp");

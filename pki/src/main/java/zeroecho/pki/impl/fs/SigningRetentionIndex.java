@@ -42,7 +42,9 @@ import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/** Compact retention ordering over canonical identities owned by the work projection. */
+/**
+ * Compact retention ordering over canonical identities owned by the work projection.
+ */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource",
         "PMD.CommentRequired", "PMD.CompareObjectsWithEquals", "PMD.ConfusingTernary",
         "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.NPathComplexity",
@@ -59,6 +61,14 @@ final class SigningRetentionIndex implements AutoCloseable {
     private long reservedBytes;
     private boolean closed;
 
+    /**
+     * Creates a bounded terminal-retention index sharing a resident reservation budget.
+     *
+     * @param maximumRecords positive retained-record count bound within the ordered-index limit
+     * @param capacity borrowed resident workspace budget; must not be null
+     * @throws NullPointerException if capacity is null
+     * @throws IllegalArgumentException if maximumRecords is outside supported bounds
+     */
     /* default */ SigningRetentionIndex(int maximumRecords,
             SigningIndexCapacityBudget capacity) {
         if (maximumRecords <= 0
@@ -69,12 +79,35 @@ final class SigningRetentionIndex implements AutoCloseable {
         this.capacity = Objects.requireNonNull(capacity, "capacity");
     }
 
+    /**
+     * Preallocates terminal-retention insertion or replacement without exposing it before publication.
+     *
+     * @param operationId reused canonical operation identity; must not be null
+     * @param createdAt operation creation time used for retention ordering; must not be null
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if an equal logical identity is supplied as a different canonical object
+     * @throws IllegalStateException if closed, record capacity is exhausted, or another change owns the operation
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace cannot be reserved
+     */
     /* default */ PreparedChange prepareRetained(
             SigningDueWorkIndex.CanonicalOperationId operationId, Instant createdAt) {
         return prepareRetained(operationId, createdAt,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Preallocates terminal-retention insertion or replacement without exposing it before publication.
+     *
+     * @param operationId reused canonical operation identity; must not be null
+     * @param createdAt operation creation time used for retention ordering; must not be null
+     * @param admissionClass workspace admission class; must not be null
+     * @return owned prepared change; publish it or close it to roll back
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if an equal logical identity is supplied as a different canonical object
+     * @throws IllegalStateException if closed, record capacity is exhausted, or another change owns the operation
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if resident workspace cannot be reserved
+     */
     /* default */ PreparedChange prepareRetained(
             SigningDueWorkIndex.CanonicalOperationId operationId, Instant createdAt,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -125,6 +158,15 @@ final class SigningRetentionIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Prepares retention removal while preserving the published entry until commit publication.
+     *
+     * @param operationId reused canonical operation identity; must not be null
+     * @return owned prepared removal, or an inert no-op when no published entry exists
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     * @throws IllegalStateException if closed or a conflicting prepared change owns the operation
+     */
     /* default */ PreparedChange prepareRemove(
             SigningDueWorkIndex.CanonicalOperationId operationId) {
         Objects.requireNonNull(operationId, "operationId");
@@ -144,12 +186,30 @@ final class SigningRetentionIndex implements AutoCloseable {
                 false, -DESCRIPTOR_BYTES, null);
     }
 
+    /**
+     * Tests whether the exact reused canonical identity has a published retention entry.
+     *
+     * @param operationId reused canonical operation identity; must not be null
+     * @return true if that operation currently has retained terminal metadata
+     * @throws NullPointerException if operationId is null
+     * @throws IllegalArgumentException if canonical identity is not reused
+     */
     /* default */ boolean contains(SigningDueWorkIndex.CanonicalOperationId operationId) {
         OperationSlot slot = byOperation.get(Objects.requireNonNull(operationId, "operationId"));
         requireReusedIdentity(operationId, slot);
         return slot != null && slot.published != null;
     }
 
+    /**
+     * Selects bounded terminal identities in creation-time then canonical-identity order.
+     *
+     * @param cutoffInclusive inclusive creation-time cutoff; must not be null
+     * @param maximumResults positive upper bound on returned identities
+     * @return immutable ordered identity list through the cutoff
+     * @throws NullPointerException if cutoffInclusive is null
+     * @throws IllegalArgumentException if maximumResults is nonpositive
+     * @throws IllegalStateException if the retention index is closed
+     */
     /* default */ List<String> selectThrough(Instant cutoffInclusive, int maximumResults) {
         Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
         if (maximumResults <= 0) {
@@ -167,13 +227,27 @@ final class SigningRetentionIndex implements AutoCloseable {
         return List.copyOf(result);
     }
 
+    /**
+     * Returns tracked operation slots, including unpublished new insertions.
+     *
+     * @return tracked operation-slot count, including pending new insertions
+     */
     /* default */ int size() { return byOperation.size(); }
 
+    /**
+     * Returns tracked operation-slot counts and published descriptor reservations.
+     *
+     * @return immutable retention record count and reserved-byte observation
+     * @throws IllegalStateException if the index is closed
+     */
     /* default */ Statistics statistics() {
         requireOpen();
         return new Statistics(byOperation.size(), reservedBytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() {
         if (closed) return;
         closed = true;
@@ -194,12 +268,21 @@ final class SigningRetentionIndex implements AutoCloseable {
         }
     }
 
+    /**
+     * Retained terminal-record count and its accounted memory reservation.
+     *
+     * @param records tracked operation slots, including unpublished new insertions
+     * @param reservedBytes current accounted reservation in bytes
+     */
     /* default */ record Statistics(int records, long reservedBytes) {
     }
 
     private record RetentionKey(Instant createdAt,
             SigningDueWorkIndex.CanonicalOperationId operationId)
             implements Comparable<RetentionKey> {
+        /**
+         * {@inheritDoc}
+         */
         @Override public int compareTo(RetentionKey other) {
             int time = createdAt.compareTo(other.createdAt);
             return time != 0 ? time : operationId.compareTo(other.operationId);
@@ -220,7 +303,9 @@ final class SigningRetentionIndex implements AutoCloseable {
         private boolean pending;
     }
 
-    /** Rollback-capable retention replacement prepared before WAL admission. */
+    /**
+     * Rollback-capable retention replacement prepared before WAL admission.
+     */
     /* default */ final class PreparedChange implements AutoCloseable {
         private final OperationSlot operationSlot;
         private final RetentionKey previousKey;
@@ -251,6 +336,11 @@ final class SigningRetentionIndex implements AutoCloseable {
             this(null, null, null, null, null, false, 0L, null);
         }
 
+        /**
+         * Publishes the prepared retention change and transfers or releases its resident reservation.
+         *
+         * @throws IllegalStateException if the index is closed or prepared entry ownership is inconsistent
+         */
         /* default */ void publish() {
             if (!active) return;
             requireOpen();
@@ -282,6 +372,9 @@ final class SigningRetentionIndex implements AutoCloseable {
             if (reservation != null) reservation.close();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {
             if (!active) return;
             active = false;

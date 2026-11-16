@@ -38,7 +38,13 @@ import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for SDK lifecycle target.
+ */
 class SdkLifecycleTargetTest {
+    /**
+     * Lifecycle commitment distinguishes operation predecessor and requested keys.
+     */
     @Test void lifecycleCommitmentDistinguishesOperationPredecessorAndRequestedKeys() {
         var target = target("credential.renew", "old", "a");
         assertEquals(target, SdkLifecycleTarget.decode(target.value()));
@@ -47,6 +53,9 @@ class SdkLifecycleTargetTest {
         assertFalse(java.util.Arrays.equals(target.value().encode(), target("credential.renew", "old", "b").value().encode()));
     }
 
+    /**
+     * Rejects unknown missing and wrong typed extension members.
+     */
     @Test void rejectsUnknownMissingAndWrongTypedExtensionMembers() {
         var fields = new TreeMap<>(target("credential.replace", "old", "a").value().objectFields());
         fields.put("unexpected", HybridSdkValue.text("ignored"));

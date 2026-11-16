@@ -56,6 +56,9 @@ public record IssuerRef(PkiId caId, PkiId issuerId, PkiId chainPathId) {
      * Creates an issuer reference.
      *
      * @throws IllegalArgumentException if either identifier is {@code null}
+     * @param caId identifier of the CA entity acting as issuer
+     * @param issuerId canonical issuer-generation identifier
+     * @param chainPathId exact issuance chain path selected for the credential
      */
     public IssuerRef {
         if (caId == null) {

@@ -84,15 +84,25 @@ import zeroecho.core.util.Strings;
 final class SignatureStream extends AbstractPassthroughInputStream {
     private static final Logger LOG = Logger.getLogger(SignatureStream.class.getName());
 
-    /** Cached trailer in sign mode: computed once from {@link Signature#sign()}. */
+    /**
+     * Cached trailer in sign mode: computed once from {@link Signature#sign()}.
+     */
     private byte[] signature;
-    /** Underlying JCA signature engine used for streaming updates. */
+    /**
+     * Underlying JCA signature engine used for streaming updates.
+     */
     private final Signature engine;
-    /** True if this stream signs, false if it verifies. */
+    /**
+     * True if this stream signs, false if it verifies.
+     */
     private final boolean signMode;
-    /** Expected signature to verify against (verify mode only). */
+    /**
+     * Expected signature to verify against (verify mode only).
+     */
     private byte[] expectedTag;
-    /** Verification strategy controlling how results are surfaced. */
+    /**
+     * Verification strategy controlling how results are surfaced.
+     */
     private final VerificationBiPredicate<Signature> strategy;
 
     /**

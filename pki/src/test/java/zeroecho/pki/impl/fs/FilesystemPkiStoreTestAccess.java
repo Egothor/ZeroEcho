@@ -36,28 +36,60 @@ package zeroecho.pki.impl.fs;
 import java.nio.file.Path;
 import java.time.Clock;
 
-/** Narrow test access to the package-private signing-capacity constructor. */
+/**
+ * Narrow test access to the package-private signing-capacity constructor.
+ */
 public final class FilesystemPkiStoreTestAccess {
     private FilesystemPkiStoreTestAccess() { }
 
-    /** Opens a filesystem store with a deterministic small signing-work bound. */
+    /**
+     * Opens a filesystem store with a deterministic small signing-work bound.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @param maximumSigningWork maximum admitted signing work selected for this store instance
+     * @return open filesystem store owned by the caller
+     */
     public static FilesystemPkiStore open(Path root, int maximumSigningWork) {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), Clock.systemUTC(),
                 maximumSigningWork, null);
     }
 
-    /** Opens a filesystem store with deterministic time and signing-work bound. */
+    /**
+     * Opens a filesystem store with deterministic time and signing-work bound.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @param maximumSigningWork maximum admitted signing work selected for this store instance
+     * @param clock authoritative fixture clock
+     * @return open filesystem store owned by the caller
+     */
     public static FilesystemPkiStore open(Path root, int maximumSigningWork, Clock clock) {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock,
                 maximumSigningWork, null);
     }
-    /** Opens the actual store with configured public verifier callbacks and a test-only work bound. */
+    /**
+     * Opens the actual store with configured public verifier callbacks and a test-only work bound.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @param maximumSigningWork maximum admitted signing work selected for this store instance
+     * @param dependencies runtime dependencies including clock and optional evidence verifiers
+     * @param fault one-shot adoption durability fault, or null for no injected fault
+     * @return open filesystem store owned by the caller
+     */
     public static FilesystemPkiStore open(Path root, int maximumSigningWork,
             zeroecho.pki.spi.store.PkiStoreRuntimeDependencies dependencies, AdoptionForceFault fault) {
         return open(root, maximumSigningWork, dependencies, fault, 512L * 1024 * 1024);
     }
 
-    /** Opens the actual store with a test-selected resident budget. */
+    /**
+     * Opens the actual store with a test-selected resident budget.
+     *
+     * @param root isolated filesystem store root supplied by the test
+     * @param maximumSigningWork maximum admitted signing work selected for this store instance
+     * @param dependencies runtime dependencies including clock and optional evidence verifiers
+     * @param fault one-shot adoption durability fault, or null for no injected fault
+     * @param residentBytes maximum steady signing-index resident budget, in bytes
+     * @return open filesystem store owned by the caller
+     */
     public static FilesystemPkiStore open(Path root, int maximumSigningWork,
             zeroecho.pki.spi.store.PkiStoreRuntimeDependencies dependencies, AdoptionForceFault fault, long residentBytes) {
         var options = FsPkiStoreOptions.defaults().withSigningResidentIndexBudgetBytes(residentBytes);
@@ -71,26 +103,50 @@ public final class FilesystemPkiStoreTestAccess {
                 fault == null ? null : new AdoptionOperations(fault));
     }
 
-    /** Returns the original failure retained by a fenced local signing ledger. */
+    /**
+     * Returns the original failure retained by a fenced local signing ledger.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @return original retained recovery failure, or null if none was retained
+     */
     public static Throwable firstRecoveryFailure(FilesystemPkiStore store) {
         return store.firstLocalSigningRecoveryFailure();
     }
 
-    /** Quiescent real-store resident-budget observation; no production quota is changed. */
+    /**
+     * Quiescent real-store resident-budget observation; no production quota is changed.
+     *
+     * @param store borrowed fixture store used for staging and persisted-state assertions
+     * @return immutable current, high-water, and maximum resident-byte observations
+     */
     public static ResidentBudget residentBudget(FilesystemPkiStore store) {
         var observation = store.metadataStore().capacitySnapshot().steady();
         return new ResidentBudget(observation.reservedBytes(), observation.highWaterReservedBytes(), observation.maximumBytes());
     }
-    /** Actual steady ledger budget values. */
+    /**
+     * Actual steady ledger budget values.
+     *
+     * @param reserved currently reserved steady resident bytes
+     * @param highWater highest observed steady resident reservation, in bytes
+     * @param maximum configured maximum steady resident bytes
+     */
     public record ResidentBudget(long reserved, long highWater, long maximum) { }
 
-    /** One-shot loss of acknowledgement after the actual native-child adoption group is forced. */
+    /**
+     * One-shot loss of acknowledgement after the actual native-child adoption group is forced.
+     */
     public static final class AdoptionForceFault {
         private final java.util.concurrent.atomic.AtomicBoolean armed = new java.util.concurrent.atomic.AtomicBoolean();
         private final java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
-        /** Arms the next semantic adoption transaction, independently of unrelated WAL writes. */
+        /**
+         * Arms the next semantic adoption transaction, independently of unrelated WAL writes.
+         */
         public void arm() { armed.set(true); }
-        /** @return whether a real adoption force was followed by the injected IOException */
+        /**
+         * Reports whether the adoption durability fault was actually injected.
+         *
+         * @return whether a real adoption force was followed by the injected IOException
+         */
         public boolean fired() { return fired.get(); }
     }
 

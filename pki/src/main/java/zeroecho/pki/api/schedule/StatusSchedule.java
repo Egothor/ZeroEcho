@@ -76,10 +76,28 @@ public record StatusSchedule(
         Instant updatedAt,
         long revision) {
 
-    /** Minimum configurable interval. */
+    /**
+     * Minimum configurable interval.
+     */
     public static final Duration MINIMUM_INTERVAL = Duration.ofMinutes(1L);
 
-    /** Validates the schedule. */
+    /**
+     * Validates the schedule.
+     * @param caId exact authority identifier
+     * @param statusType kind of status object
+     * @param formatId encoding format for generated objects
+     * @param interval mandatory positive interval (minimum PT1M)
+     * @param graceSeconds lead time before next update, leaving at least one whole second of cadence
+     * @param enabled whether the worker should fire automatically
+     * @param publicationTarget optional automatic publication destination; empty = generate only
+     * @param createdAt wall-clock creation time
+     * @param updatedAt wall-clock last-update time
+     * @param revision optimistic-concurrency version; 0 = unsaved
+     * @throws NullPointerException if caId, statusType, formatId, interval, publicationTarget, createdAt,
+     *     updatedAt is null
+     * @throws IllegalArgumentException if authority identity contains invalid Unicode, interval is below
+     *     MINIMUM_INTERVAL, graceSeconds is negative or consumes the cadence, or revision is negative
+     */
     public StatusSchedule {
         Objects.requireNonNull(caId, "caId");
         int index = 0;

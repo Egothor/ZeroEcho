@@ -53,9 +53,17 @@ import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
+/**
+ * Contract and regression tests for KEM recipient lifecycle.
+ */
 class KemRecipientLifecycleTest {
     private static final CryptoAlgorithm ALGORITHM = new TestAlgorithm();
 
+    /**
+     * Supported KEK sizes clear sender shared secrets.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void supportedKekSizesClearSenderSharedSecrets() throws Exception {
         System.out.println("supportedKekSizesClearSenderSharedSecrets");
@@ -74,6 +82,11 @@ class KemRecipientLifecycleTest {
         System.out.println("supportedKekSizesClearSenderSharedSecrets...ok");
     }
 
+    /**
+     * Constructors and builder reject unsupported KEK before ownership transfer.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void constructorsAndBuilderRejectUnsupportedKekBeforeOwnershipTransfer() throws Exception {
         System.out.println("constructorsAndBuilderRejectUnsupportedKekBeforeOwnershipTransfer");
@@ -104,6 +117,9 @@ class KemRecipientLifecycleTest {
         System.out.println("constructorsAndBuilderRejectUnsupportedKekBeforeOwnershipTransfer...ok");
     }
 
+    /**
+     * Wrap failure clears shared secret and closes context.
+     */
     @Test
     void wrapFailureClearsSharedSecretAndClosesContext() {
         System.out.println("wrapFailureClearsSharedSecretAndClosesContext");

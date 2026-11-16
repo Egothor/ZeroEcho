@@ -104,10 +104,20 @@ import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
-/** Mutual-TLS authentication, HTTPS framing, gateway and lifecycle integration tests. */
+/**
+ * Mutual-TLS authentication, HTTPS framing, gateway and lifecycle integration tests.
+ */
 class PkiHttpsServerTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir java.nio.file.Path temporaryDirectory;
 
+    /**
+     * Checks concurrent external close callers share one teardown and close each dependency exactly once.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void overlappingExternalCloseRunsOneSuccessfulAttempt() throws Exception {
         PkiServerConfiguration configuration = closeConfiguration();
@@ -141,6 +151,11 @@ class PkiHttpsServerTest {
         verify(authenticator, times(1)).close();
     }
 
+    /**
+     * Checks concurrent callers observe the same drain failure, retain realm/authenticator ownership and permit a later successful retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void concurrentDrainFailureIsSharedAndLaterRetryClosesDependenciesOnce() throws Exception {
         PkiServerConfiguration configuration = closeConfiguration();
@@ -196,6 +211,11 @@ class PkiHttpsServerTest {
         verify(authenticator, times(1)).close();
     }
 
+    /**
+     * Checks an owned worker requests external close retry without joining an already active external drain.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void workerCloseDuringExternalDrainUnwindsWithoutJoining() throws Exception {
         PkiServerConfiguration configuration = closeConfiguration();
@@ -237,6 +257,11 @@ class PkiHttpsServerTest {
         verify(authenticator, times(1)).close();
     }
 
+    /**
+     * Checks worker-origin closure only quiesces and returns the retry-required classification before an external owner tears down resources.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void workerFirstOnlyQuiescesBeforeExternalCloseSucceeds() throws Exception {
         PkiServerConfiguration configuration = closeConfiguration();
@@ -261,6 +286,11 @@ class PkiHttpsServerTest {
         verify(authenticator, times(1)).close();
     }
 
+    /**
+     * Checks a transport timeout preserves dependent realm resources and later retry reaches terminated state.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void transportDrainTimeoutKeepsRealmOpenAndRetryClosesDependenciesOnce() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -291,6 +321,11 @@ class PkiHttpsServerTest {
         verify(authenticator, times(1)).close();
     }
 
+    /**
+     * Checks request-size minima, secure listener settings, strict JSON framing, deadline ordering and listener isolation prerequisites.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsInsecureConfigurationAndStrictJsonFraming() throws Exception {
         System.out.println("rejectsInsecureConfigurationAndStrictJsonFraming");
@@ -373,6 +408,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks documented configurations decode with distinct audiences and the expected five-minute/8,192-bit confirmation defaults.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void decodesStrictConfirmationProofPolicyAndAllDocumentedExamples() throws Exception {
         String[] examples = {
@@ -453,6 +493,11 @@ class PkiHttpsServerTest {
                 () -> new CredentialConfirmationProofPolicy(audience, Duration.ofSeconds(10L), 16_385));
     }
 
+    /**
+     * Checks certificate-commitment authentication and distinct safe ambiguity/disabled-principal rejection classifications.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void authenticatesCryptographicCommitmentAndRejectsAmbiguityAndDisabledPrincipal() throws Exception {
         System.out.println("authenticatesCryptographicCommitmentAndRejectsAmbiguityAndDisabledPrincipal");
@@ -481,6 +526,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks approval HTTP commands resolve retained authority/profile coordinates and deny unauthorized or absent targets before mutation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void approvalHttpOperationsResolveStoredProfileScopeAndPreserveAuthorization() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -557,6 +607,11 @@ class PkiHttpsServerTest {
         }
     }
 
+    /**
+     * Checks administrative metrics include rejected handler entries, retain pending-approval observations and exclude health traffic.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void dashboardCountsAdminHandlerEntriesIncludingRejectionsButExcludesHealth() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -591,6 +646,11 @@ class PkiHttpsServerTest {
         }
     }
 
+    /**
+     * Checks registered hyphenated operation routes remain usable while absent or unauthorized catalog entries return not found.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void registeredHyphenatedOperationRemainsAuthorizedAndUnknownOperationsStayHidden() throws Exception {
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
@@ -618,6 +678,11 @@ class PkiHttpsServerTest {
         }
     }
 
+    /**
+     * Exercises loopback HTTPS health, realm/catalog discovery and an authorized gateway request with correlation metadata.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void servesAuthenticatedHealthRealmDiscoveryAndGatewayOperation() throws Exception {
         System.out.println("servesAuthenticatedHealthRealmDiscoveryAndGatewayOperation");
@@ -673,6 +738,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a client without a certificate fails the TLS boundary before gateway dispatch.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsClientWithoutCertificateBeforeGatewayInvocation() throws Exception {
         System.out.println("rejectsClientWithoutCertificateBeforeGatewayInvocation");
@@ -691,6 +761,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks anonymous public metadata access, two-way route isolation and cleanup of public execution threads.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void isolatedPublicListenerAllowsAnonymousMetadataWithoutAdminRouteOverlap() throws Exception {
         System.out.println("isolatedPublicListenerAllowsAnonymousMetadataWithoutAdminRouteOverlap");
@@ -720,6 +795,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a trusted proxy may request anonymous public metadata while an untrusted TLS identity receives HTTP 401.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void trustedProxyPublicRequestMayRemainAnonymousButTransportIsAuthenticated() throws Exception {
         System.out.println("trustedProxyPublicRequestMayRemainAnonymousButTransportIsAuthenticated");
@@ -742,6 +822,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks exact retained certificate/chain bytes, HEAD length and conditional entity validation on public routes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void publicIssuerAndAliasedChainUseExactAuthoritativeRecordsAndValidators() throws Exception {
         System.out.println("publicIssuerAndAliasedChainUseExactAuthoritativeRecordsAndValidators");
@@ -809,6 +894,9 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks successful help/version exit statuses and input-refusal status for a missing configuration file.
+     */
     @Test
     void packagedEntryPointProvidesHelpAndSafeValidationFailure() {
         System.out.println("packagedEntryPointProvidesHelpAndSafeValidationFailure");
@@ -820,6 +908,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks ACME startup prerequisites, administrative/ACME route isolation and shared realm ownership.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void acmeListenerIsLifecycleOwnedAndRouteIsolated() throws Exception {
         System.out.println("acmeListenerIsLifecycleOwnedAndRouteIsolated");
@@ -859,6 +952,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks real trusted-proxy HTTPS forwarding using the explicit RFC 9440 client certificate representation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void authenticatesTrustedProxyWithRfc9440ForwardedClient() throws Exception {
         System.out.println("authenticatesTrustedProxyWithRfc9440ForwardedClient");
@@ -882,6 +980,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks direct authentication rejects forwarding headers and proxy mode rejects duplicate identity fields.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsForwardedHeadersInDirectModeAndDuplicateProxyHeaders() throws Exception {
         System.out.println("rejectsForwardedHeadersInDirectModeAndDuplicateProxyHeaders");
@@ -913,6 +1016,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks explicitly configured escaped PEM succeeds while raw/noncanonical certificate presentation is rejected.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void acceptsOnlyStrictNginxEscapedPem() throws Exception {
         System.out.println("acceptsOnlyStrictNginxEscapedPem");
@@ -937,6 +1045,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks a cryptographically recognized proxy without explicit forwarding permission cannot assert the client identity.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsProxyWithoutForwardingPermission() throws Exception {
         System.out.println("rejectsProxyWithoutForwardingPermission");
@@ -956,6 +1069,11 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks direct/proxy authentication selections reject incompatible forwarding metadata and trust prerequisites.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsContradictoryAuthenticationModeConfiguration() throws Exception {
         System.out.println("rejectsContradictoryAuthenticationModeConfiguration");

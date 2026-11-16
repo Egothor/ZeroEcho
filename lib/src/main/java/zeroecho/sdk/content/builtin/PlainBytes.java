@@ -72,6 +72,7 @@ public class PlainBytes implements PlainContent {
      * array.
      *
      * @param buffer the byte array to wrap
+     * @throws NullPointerException if {@code buffer} is null
      */
     public PlainBytes(final byte[] buffer) {
         Objects.requireNonNull(buffer, "PlainBytes cannot operate with null buffer");

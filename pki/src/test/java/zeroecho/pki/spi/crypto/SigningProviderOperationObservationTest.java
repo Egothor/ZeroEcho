@@ -49,12 +49,18 @@ import zeroecho.pki.spi.crypto.SigningProvider.DetailCode;
 import zeroecho.pki.spi.crypto.SigningProvider.ObservationState;
 import zeroecho.pki.spi.crypto.SigningProvider.OperationObservation;
 
+/**
+ * Contract and regression tests for signing provider operation observation.
+ */
 final class SigningProviderOperationObservationTest {
     private static final PkiId OPERATION_ID = new PkiId("observation-operation");
     private static final Instant UPDATED_AT = Instant.parse("2026-09-10T08:00:00Z");
     private static final Optional<EncodedObject> SIGNATURE =
             Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 1 }));
 
+    /**
+     * Accepts only coherent state and detail pairs.
+     */
     @Test
     void acceptsOnlyCoherentStateAndDetailPairs() {
         for (ObservationState state : ObservationState.values()) {
@@ -72,6 +78,9 @@ final class SigningProviderOperationObservationTest {
         }
     }
 
+    /**
+     * Signature presence must exactly match success.
+     */
     @Test
     void signaturePresenceMustExactlyMatchSuccess() {
         assertThrows(IllegalArgumentException.class, () -> new OperationObservation(OPERATION_ID,

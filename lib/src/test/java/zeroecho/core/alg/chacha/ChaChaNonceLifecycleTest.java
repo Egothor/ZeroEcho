@@ -65,6 +65,9 @@ import zeroecho.core.io.Util;
 import zeroecho.core.spi.ContextAware;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
 
+/**
+ * Contract and regression tests for cha cha nonce lifecycle.
+ */
 class ChaChaNonceLifecycleTest {
     private static final String ALGORITHM_ID = "CHACHA20-POLY1305";
     private static final SecretKey KEY = new SecretKeySpec(new byte[32], "ChaCha20");
@@ -72,6 +75,11 @@ class ChaChaNonceLifecycleTest {
             .header(new ChaCha20Poly1305HeaderCodec()).build();
     private static final ChaCha20Poly1305Spec CONTEXT_SPEC = ChaCha20Poly1305Spec.builder().header(null).build();
 
+    /**
+     * Encryption ignores preseeded nonce and context is single use.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encryptionIgnoresPreseededNonceAndContextIsSingleUse() throws Exception {
         System.out.print("ChaChaNonceLifecycle/encryptionIgnoresPreseededNonceAndContextIsSingleUse...");
@@ -93,6 +101,11 @@ class ChaChaNonceLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Stream failure consumes encryption context.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void streamFailureConsumesEncryptionContext() throws Exception {
         System.out.print("ChaChaNonceLifecycle/streamFailureConsumesEncryptionContext...");
@@ -118,6 +131,11 @@ class ChaChaNonceLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Concurrent claim has one winner while separate contexts proceed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentClaimHasOneWinnerWhileSeparateContextsProceed() throws Exception {
         System.out.print("ChaChaNonceLifecycle/concurrentClaimHasOneWinnerWhileSeparateContextsProceed...");
@@ -163,6 +181,11 @@ class ChaChaNonceLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Encoded nonce drives decryption and malformed nonce fails closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void encodedNonceDrivesDecryptionAndMalformedNonceFailsClosed() throws Exception {
         System.out.print("ChaChaNonceLifecycle/encodedNonceDrivesDecryptionAndMalformedNonceFailsClosed...");
@@ -188,6 +211,9 @@ class ChaChaNonceLifecycleTest {
         System.out.println("ok");
     }
 
+    /**
+     * Public builder exposes only decryption nonce configuration.
+     */
     @Test
     void publicBuilderExposesOnlyDecryptionNonceConfiguration() {
         System.out.print("ChaChaNonceLifecycle/publicBuilderExposesOnlyDecryptionNonceConfiguration...");

@@ -52,9 +52,17 @@ import org.junit.jupiter.api.Test;
 import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
+/**
+ * Contract and regression tests for encryptor CEK allocation.
+ */
 class EncryptorCekAllocationTest {
     private static final int KEY_BYTES = 16;
 
+    /**
+     * No decoys generate only payload CEK.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void noDecoysGenerateOnlyPayloadCek() throws Exception {
         System.out.print("EncryptorCekAllocation/noDecoysGenerateOnlyPayloadCek...");
@@ -72,6 +80,11 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * One decoy generates one lazy decoy CEK.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void oneDecoyGeneratesOneLazyDecoyCek() throws Exception {
         System.out.print("EncryptorCekAllocation/oneDecoyGeneratesOneLazyDecoyCek...");
@@ -87,6 +100,11 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * Mixed decoys generate one lazy CEK and reuse it in order.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void mixedDecoysGenerateOneLazyCekAndReuseItInOrder() throws Exception {
         System.out.print("EncryptorCekAllocation/mixedDecoysGenerateOneLazyCekAndReuseItInOrder...");
@@ -108,6 +126,9 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * Recipient limit is checked before CEK generation.
+     */
     @Test
     void recipientLimitIsCheckedBeforeCekGeneration() {
         System.out.print("EncryptorCekAllocation/recipientLimitIsCheckedBeforeCekGeneration...");
@@ -122,6 +143,9 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * Recipient failure clears genuine and decoy CEKs.
+     */
     @Test
     void recipientFailureClearsGenuineAndDecoyCeks() {
         System.out.print("EncryptorCekAllocation/recipientFailureClearsGenuineAndDecoyCeks...");
@@ -137,6 +161,11 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * Successful recipient processing destroys owned password.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void successfulRecipientProcessingDestroysOwnedPassword() throws Exception {
         System.out.print("EncryptorCekAllocation/successfulRecipientProcessingDestroysOwnedPassword...");
@@ -149,6 +178,9 @@ class EncryptorCekAllocationTest {
         System.out.println("ok");
     }
 
+    /**
+     * Failed recipient processing destroys owned password.
+     */
     @Test
     void failedRecipientProcessingDestroysOwnedPassword() {
         System.out.print("EncryptorCekAllocation/failedRecipientProcessingDestroysOwnedPassword...");

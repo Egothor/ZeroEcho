@@ -50,21 +50,42 @@ import zeroecho.pki.api.status.StatusObjectType;
  * Preparation and durable acceptance remain separate operations.</p>
  */
 public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAuthority, PkiSigningOperation.CreateIntermediate, PkiSigningOperation.IssueIntermediateCertificate, PkiSigningOperation.RolloverCaCertificate, PkiSigningOperation.RotateCaKey, PkiSigningOperation.IssueCredential, PkiSigningOperation.RenewCredential, PkiSigningOperation.ReplaceCredential, PkiSigningOperation.ReissueCredential, PkiSigningOperation.GenerateStatus, PkiSigningOperation.IssueOcspResponderCertificate {
-    /** {@return the stable historical transport and approval identity} */
+    /**
+     * Returns the stable historical transport and approval identity.
+     *
+     * @return the stable historical transport and approval identity
+     */
     String name();
 
     /**
      * Requests controlled issuance for an existing managed dedicated responder key pair.
      * This selector grants no authority; server dispatch requires a retained canonical provisioning claim.
+     *
      * @param request exact managed subject, profile, generation, path and validity selection
      */
     record IssueOcspResponderCertificate(zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request)
             implements PkiSigningOperation {
-        /** Stable provisioning operation identity. */
+        /**
+         * Stable provisioning operation identity.
+         */
         public static final String NAME = "ocsp.responder.issue-certificate";
-        /** Rejects missing input without performing key lookup or issuance. */
-        public IssueOcspResponderCertificate { Objects.requireNonNull(request, "request"); }
-        @Override public String name() { return NAME; }
+        /**
+         * Requires the managed request without resolving keys, claiming a provisioning slot or issuing a
+         * certificate.
+         *
+         * @param request exact managed subject, profile, generation, path and validity selection
+         * @throws NullPointerException if a required object is null
+         */
+        public IssueOcspResponderCertificate {
+            Objects.requireNonNull(request, "request");
+        }
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String name() {
+            return NAME;
+        }
     }
 
     /**
@@ -74,15 +95,31 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param subjectRef subject name for the new authority
      * @param profileId nonblank stable certificate-profile identifier
      * @param keyRef managed key reference used by the authority
-     * @param signatureAlgorithmId exact outgoing primary signature identity, or configured creation default
+     * @param signatureAlgorithmId exact outgoing primary signature identity; empty selects the configured
+     *     creation default
      */
     record CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
             java.util.Optional<String> signatureAlgorithmId)
             implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "ca.create";
 
-        /** Validates the closed authority-creation input. */
+        /**
+         * Checks the subject, managed key and outgoing selection without resolving a provider or signing.
+         *
+         * @param formatId encoding format for the created or imported object
+         * @param subjectRef subject name for the new authority
+         * @param profileId nonblank stable certificate-profile identifier
+         * @param keyRef managed key reference used by the authority
+         * @param signatureAlgorithmId exact outgoing primary signature identity; empty selects the configured
+         *     creation default
+         * @throws NullPointerException if a required object is null (except profile or signature-selection
+         *     inputs)
+         * @throws IllegalArgumentException if the profile identifier is null or blank, the signature selection
+         *     container is null or contains blank text
+         */
         public CreateAuthority {
             if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
                 throw new IllegalArgumentException("Invalid outgoing signature selection");
@@ -95,11 +132,23 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             }
         }
 
-        /** @param formatId format @param subjectRef CA subject @param profileId active profile @param keyRef managed primary key */
+        /**
+         * Creates the operation with an empty outgoing algorithm selector for normalization.
+         *
+         * @param formatId format
+         * @param subjectRef CA subject
+         * @param profileId active profile
+         * @param keyRef existing managed primary key
+         * @throws NullPointerException if a required object is null
+         * @throws IllegalArgumentException if the profile is null or blank
+         */
         public CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef) {
             this(formatId, subjectRef, profileId, keyRef, java.util.Optional.empty());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -113,15 +162,33 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param issuerCaId issuing certificate-authority identifier
      * @param subjectRef subject name for the new authority
      * @param profileId nonblank stable certificate-profile identifier
-     * @param signatureAlgorithmId exact outgoing primary signature identity, or legacy default
+     * @param signatureAlgorithmId exact outgoing primary signature identity; empty selects the configured
+     *     creation default
      * @param keyRef optional existing managed key; a managed key must be present
      */
     record CreateIntermediate(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
             java.util.Optional<KeyRef> keyRef, java.util.Optional<String> signatureAlgorithmId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "ca.intermediate.create";
 
-        /** Validates the closed intermediate-creation input. */
+        /**
+         * Requires an existing managed subject key and checks creation coordinates without resolving the
+         * parent.
+         *
+         * @param formatId encoding format for the created or imported object
+         * @param issuerCaId issuing certificate-authority identifier
+         * @param subjectRef subject name for the new authority
+         * @param profileId nonblank stable certificate-profile identifier
+         * @param signatureAlgorithmId exact outgoing primary signature identity; empty selects the configured
+         *     creation default
+         * @param keyRef optional existing managed key; a managed key must be present
+         * @throws NullPointerException if a required object is null (except profile or signature-selection
+         *     inputs)
+         * @throws IllegalArgumentException if the profile identifier is null or blank, the signature selection
+         *     container is null or contains blank text, or the managed subject key is absent
+         */
         public CreateIntermediate {
             if (signatureAlgorithmId == null || signatureAlgorithmId.filter(String::isBlank).isPresent()) {
                 throw new IllegalArgumentException("Invalid outgoing signature selection");
@@ -130,18 +197,33 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
             Objects.requireNonNull(subjectRef, "subjectRef");
             keyRef = Objects.requireNonNull(keyRef, "keyRef");
-            if (keyRef.isEmpty()) { throw new IllegalArgumentException("A managed subject key is required"); }
+            if (keyRef.isEmpty()) {
+                throw new IllegalArgumentException("A managed subject key is required");
+            }
             if (profileId == null || profileId.isBlank()) {
                 throw new IllegalArgumentException(profileIdRequiredMessage());
             }
         }
 
-        /** @param formatId format @param issuerCaId parent CA @param subjectRef CA subject @param profileId active profile @param keyRef managed primary key */
+        /**
+         * Creates the operation with an empty outgoing algorithm selector for normalization.
+         *
+         * @param formatId format
+         * @param issuerCaId parent CA
+         * @param subjectRef CA subject
+         * @param profileId active profile
+         * @param keyRef existing managed primary key
+         * @throws NullPointerException if a required object is null
+         * @throws IllegalArgumentException if the profile is null or blank, or the intermediate key is absent
+         */
         public CreateIntermediate(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
                 java.util.Optional<KeyRef> keyRef) {
             this(formatId, issuerCaId, subjectRef, profileId, keyRef, java.util.Optional.empty());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -160,10 +242,24 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      */
     record IssueIntermediateCertificate(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
             java.util.Optional<Validity> requestedValidity, java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "ca.intermediate.issue";
 
-        /** Validates the closed intermediate-issuance input. */
+        /**
+         * Checks issuer and subject coordinates without resolving the subject head or admitting issuance.
+         *
+         * @param formatId encoding format for the created or imported object
+         * @param issuerCaId issuing certificate-authority identifier
+         * @param subjectCaId subject intermediate-authority identifier
+         * @param profileId nonblank stable certificate-profile identifier
+         * @param requestedValidity optional requested validity constrained by the profile and issuer
+         * @param expectedHead original subject head, empty only before normalization
+         * @throws NullPointerException if a required object is null (excluding the separately checked profile
+         *     identifier)
+         * @throws IllegalArgumentException if the profile identifier is null or blank
+         */
         public IssueIntermediateCertificate {
             Objects.requireNonNull(formatId, "formatId");
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
@@ -177,14 +273,23 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
 
         /**
          * Preserves existing intermediate issuance before head normalization.
-         * @param formatId format @param issuerCaId parent @param subjectCaId subject
-         * @param profileId profile @param requestedValidity requested bounds
+         *
+         * @param formatId format
+         * @param issuerCaId parent
+         * @param subjectCaId subject
+         * @param profileId profile
+         * @param requestedValidity requested bounds
+         * @throws NullPointerException if a required identifier or optional container is null
+         * @throws IllegalArgumentException if the profile identifier is null or blank
          */
         public IssueIntermediateCertificate(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
                 java.util.Optional<Validity> requestedValidity) {
             this(formatId, issuerCaId, subjectCaId, profileId, requestedValidity, java.util.Optional.empty());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -200,10 +305,19 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      */
     record RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId,
             java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "ca.rollover";
 
-        /** Validates the rollover input. */
+        /**
+         * Checks authority and optional parent/head containers without preparing same-key rollover.
+         *
+         * @param caId exact certificate-authority identifier
+         * @param issuerCaId optional independently selected parent authority
+         * @param expectedHead original subject head, empty only before normalization
+         * @throws NullPointerException if a required object is null
+         */
         public RolloverCaCertificate {
             Objects.requireNonNull(caId, authorityIdParameter());
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
@@ -212,12 +326,18 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
 
         /**
          * Preserves same-key rollover before expected-head normalization.
-         * @param caId subject authority @param issuerCaId optional parent authority
+         *
+         * @param caId subject authority
+         * @param issuerCaId optional parent authority
+         * @throws NullPointerException if a required identifier or optional container is null
          */
         public RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId) {
             this(caId, issuerCaId, java.util.Optional.empty());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -225,7 +345,12 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
     }
 
     /**
-     * Rotates one CA key and issues a new corresponding generation, advancing the current issuance pointers.
+     * Changes selected outgoing CA roles and prepares a corresponding generation.
+     *
+     * <p>A role change may replace a managed key or select a compatible signature
+     * algorithm while retaining that role's key. Ordinary accepted rotation advances
+     * the selected generation. A fresh root-anchor candidate is completed separately
+     * from its later distribution acknowledgment and durable activation.</p>
      *
      * @param caId exact certificate-authority identifier
      * @param selection explicit outgoing role/member changes, resolved before approval
@@ -235,10 +360,21 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
     record RotateCaKey(PkiId caId, zeroecho.pki.api.ca.CaRotationSelection selection,
             java.util.Optional<PkiId> issuerCaId, java.util.Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expectedHead)
             implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "ca.rotate";
 
-        /** Validates the rotation input. */
+        /**
+         * Retains the explicit role selection and optional head fence without resolving keys or activating a
+         * candidate.
+         *
+         * @param caId exact certificate-authority identifier
+         * @param selection explicit outgoing role/member changes, resolved before approval
+         * @param issuerCaId optional independently selected parent authority
+         * @param expectedHead original selected head, absent only before normalization
+         * @throws NullPointerException if a required object is null
+         */
         public RotateCaKey {
             Objects.requireNonNull(caId, authorityIdParameter());
             Objects.requireNonNull(selection, "selection");
@@ -248,8 +384,12 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
 
         /**
          * Constructs the existing primary-key-only operation.
-         * @param caId exact authority @param newKeyRef required managed primary key
+         *
+         * @param caId exact authority
+         * @param newKeyRef required managed primary key
          * @param issuerCaId optional parent authority
+         * @throws NullPointerException if a required identifier or optional container is null
+         * @throws IllegalArgumentException if the replacement primary key is absent
          */
         public RotateCaKey(PkiId caId, java.util.Optional<KeyRef> newKeyRef, java.util.Optional<PkiId> issuerCaId) {
             this(caId, zeroecho.pki.api.ca.CaRotationSelection.primaryKey(newKeyRef.orElseThrow(
@@ -257,11 +397,21 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
                     issuerCaId, java.util.Optional.empty());
         }
 
-        /** @return explicit primary key override, empty for partial or alternative-only selection */
+        /**
+         * Returns only the explicitly selected replacement primary key.
+         *
+         * <p>Empty also covers an algorithm-only primary change; it does not mean
+         * that no rotation was requested or resolve the effective retained key.</p>
+         *
+         * @return explicit primary key override, empty when no primary key override exists
+         */
         public java.util.Optional<KeyRef> newKeyRef() {
             return selection.primary().flatMap(zeroecho.pki.api.ca.CaRotationSelection.RoleChange::keyRef);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -276,10 +426,22 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param profileId nonblank stable certificate-profile identifier
      */
     record IssueCredential(PkiId issuerCaId, PkiId requestId, String profileId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "credential.issue";
 
-        /** Validates the issuance input. */
+        /**
+         * Checks the required credential coordinates without resolving stored records, authorizing the caller
+         * or signing.
+         *
+         * @param issuerCaId issuing certificate-authority identifier
+         * @param requestId exact imported certification-request identifier
+         * @param profileId nonblank stable certificate-profile identifier
+         * @throws NullPointerException if a required object is null (excluding the separately checked profile
+         *     identifier)
+         * @throws IllegalArgumentException if the profile identifier is null or blank
+         */
         public IssueCredential {
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
             Objects.requireNonNull(requestId, "requestId");
@@ -288,6 +450,9 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -300,14 +465,25 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param credentialId exact committed credential identifier
      */
     record RenewCredential(PkiId credentialId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "credential.renew";
 
-        /** Validates the renewal input. */
+        /**
+         * Checks the required credential coordinates without resolving stored records, authorizing the caller
+         * or signing.
+         *
+         * @param credentialId exact committed credential identifier
+         * @throws NullPointerException if a required object is null
+         */
         public RenewCredential {
             Objects.requireNonNull(credentialId, "credentialId");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -322,10 +498,22 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param profileId nonblank stable certificate-profile identifier
      */
     record ReplaceCredential(PkiId existingCredentialId, PkiId requestId, String profileId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "credential.replace";
 
-        /** Validates the replacement input. */
+        /**
+         * Checks the required credential coordinates without resolving stored records, authorizing the caller
+         * or signing.
+         *
+         * @param existingCredentialId exact credential that the replacement supersedes
+         * @param requestId exact imported certification-request identifier
+         * @param profileId nonblank stable certificate-profile identifier
+         * @throws NullPointerException if a required object is null (excluding the separately checked profile
+         *     identifier)
+         * @throws IllegalArgumentException if the profile identifier is null or blank
+         */
         public ReplaceCredential {
             Objects.requireNonNull(existingCredentialId, "existingCredentialId");
             Objects.requireNonNull(requestId, "requestId");
@@ -334,6 +522,9 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -346,14 +537,25 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param credentialId exact committed credential identifier
      */
     record ReissueCredential(PkiId credentialId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "credential.reissue";
 
-        /** Validates the reissue input. */
+        /**
+         * Checks the required credential coordinates without resolving stored records, authorizing the caller
+         * or signing.
+         *
+         * @param credentialId exact committed credential identifier
+         * @throws NullPointerException if a required object is null
+         */
         public ReissueCredential {
             Objects.requireNonNull(credentialId, "credentialId");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
@@ -368,23 +570,41 @@ public sealed interface PkiSigningOperation permits PkiSigningOperation.CreateAu
      * @param formatId encoding format for the created or imported object
      */
     record GenerateStatus(PkiId issuerCaId, StatusObjectType type, FormatId formatId) implements PkiSigningOperation {
-        /** Stable operation name. */
+        /**
+         * Stable operation name.
+         */
         public static final String NAME = "status.generate";
 
-        /** Validates the generation input. */
+        /**
+         * Checks the required status coordinates without reading revocations or verifying format support.
+         *
+         * @param issuerCaId issuing certificate-authority identifier
+         * @param type kind of status object to generate
+         * @param formatId encoding format for the created or imported object
+         * @throws NullPointerException if a required object is null
+         */
         public GenerateStatus {
             Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
             Objects.requireNonNull(type, "type");
             Objects.requireNonNull(formatId, "formatId");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String name() {
             return NAME;
         }
     }
 
-    private static String profileIdRequiredMessage() { return "profileId must not be blank"; }
-    private static String authorityIdParameter() { return "caId"; }
-    private static String issuerAuthorityIdParameter() { return "issuerCaId"; }
+    private static String profileIdRequiredMessage() {
+        return "profileId must not be blank";
+    }
+    private static String authorityIdParameter() {
+        return "caId";
+    }
+    private static String issuerAuthorityIdParameter() {
+        return "issuerCaId";
+    }
 }

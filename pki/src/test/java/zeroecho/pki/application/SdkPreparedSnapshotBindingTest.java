@@ -59,8 +59,17 @@ import zeroecho.pki.spi.crypto.*;
 import zeroecho.pki.spi.store.*;
 import zeroecho.pki.testkit.*;
 
-/** Actual retained proofs cannot authorize a different snapshot selected by a later policy read. */
+/**
+ * Actual retained proofs cannot authorize a different snapshot selected by a later policy read.
+ */
 final class SdkPreparedSnapshotBindingTest {
+    /**
+     * Rejects profile change between preview and actual preparation before signing or staging.
+     *
+     * @param kind named operation or artifact variant selected for this case
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"issue", "renew", "reissue", "replace"})
     void rejectsProfileChangeBetweenPreviewAndActualPreparationBeforeSigningOrStaging(String kind, @TempDir Path path) throws Exception {
@@ -122,6 +131,12 @@ final class SdkPreparedSnapshotBindingTest {
             assertEquals(0, stages.get());
         }
     }
+    /**
+     * Enrollment target survives actual preparation and rejects policy substitution.
+     *
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void enrollmentTargetSurvivesActualPreparationAndRejectsPolicySubstitution(@TempDir Path path) throws Exception {
         var fixture = fixture(path);
         var signingCalls = new AtomicInteger();
@@ -188,6 +203,12 @@ final class SdkPreparedSnapshotBindingTest {
         }
     }
 
+    /**
+     * Lifecycle keeps both subject keys and verifies original issuer after both issuer roles rotate.
+     *
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void lifecycleKeepsBothSubjectKeysAndVerifiesOriginalIssuerAfterBothIssuerRolesRotate(@TempDir Path path) throws Exception {
         var fixture = fixture(path);
         var oldKeysUnavailable = new AtomicBoolean();
@@ -263,6 +284,12 @@ final class SdkPreparedSnapshotBindingTest {
         }
     }
 
+    /**
+     * Rejects changed renewal tuple and revoked primary reuse but allows new replacement keys.
+     *
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsChangedRenewalTupleAndRevokedPrimaryReuseButAllowsNewReplacementKeys(@TempDir Path path) throws Exception {
         var fixture = fixture(path);
         var armed = new AtomicBoolean(); var signs = new AtomicInteger();
@@ -298,6 +325,13 @@ final class SdkPreparedSnapshotBindingTest {
         }
     }
 
+    /**
+     * Rejects proof target substitution before any alternative signing.
+     *
+     * @param fault named failure injected at the selected lifecycle boundary
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"wrong-operation", "wrong-predecessor", "wrong-alternative-proof"})
     void rejectsProofTargetSubstitutionBeforeAnyAlternativeSigning(String fault, @TempDir Path path) throws Exception {
@@ -340,6 +374,13 @@ final class SdkPreparedSnapshotBindingTest {
         }
     }
 
+    /**
+     * Rejects invalid original signatures at storage or lifecycle boundary.
+     *
+     * @param fault named failure injected at the selected lifecycle boundary
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"native", "alternative"})
     void rejectsInvalidOriginalSignaturesAtStorageOrLifecycleBoundary(String fault, @TempDir Path path) throws Exception {
@@ -389,6 +430,12 @@ final class SdkPreparedSnapshotBindingTest {
         }
     }
 
+    /**
+     * Active single key profile cannot bypass hybrid predecessor dual proof requirement.
+     *
+     * @param path isolated temporary path used by this persistence case
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void activeSingleKeyProfileCannotBypassHybridPredecessorDualProofRequirement(@TempDir Path path) throws Exception {
         var fixture = fixture(path); var armed = new AtomicBoolean(); var signs = new AtomicInteger(); var stages = new AtomicInteger();
         fixture.signingDecorator = provider -> (SigningProvider) Proxy.newProxyInstance(getClass().getClassLoader(),

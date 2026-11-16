@@ -49,13 +49,18 @@ import zeroecho.pki.api.request.X509EnrollmentPayload;
  * @param profileId nonblank selected logical profile identifier
  */
 public record EndEntityReplacementRequest(PkiId existingCredentialId, X509EnrollmentPayload payload, String profileId) {
-    /** Maximum CSR size, checked before creating a defensive copy. */
+    /**
+     * Maximum CSR size, checked before creating a defensive copy.
+     */
     public static final int MAXIMUM_CSR_DER_BYTES = EndEntityIssuanceRequest.MAXIMUM_CSR_DER_BYTES;
 
     /**
      * Validates coordinates and retains the immutable payload in constant time and memory.
      * @throws IllegalArgumentException if an argument is null, the profile is blank,
      *         or the CSR is empty or exceeds the size limit
+     * @param existingCredentialId authoritative predecessor identifier
+     * @param payload exact typed request, from one byte through one MiB inclusive
+     * @param profileId nonblank selected logical profile identifier
      */
     public EndEntityReplacementRequest {
         if (existingCredentialId == null || payload == null || profileId == null || profileId.isBlank()) {
@@ -85,6 +90,8 @@ public record EndEntityReplacementRequest(PkiId existingCredentialId, X509Enroll
         return payload.der();
     }
 
-    /** {@return a redacted diagnostic representation} */
+    /**
+     * {@return a redacted diagnostic representation}
+     */
     @Override public String toString() { return "EndEntityReplacementRequest[redacted]"; }
 }

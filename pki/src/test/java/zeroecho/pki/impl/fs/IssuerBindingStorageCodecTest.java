@@ -9,7 +9,15 @@ import zeroecho.pki.api.*;
 import zeroecho.pki.api.ca.*;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 
+/**
+ * Contract and regression tests for issuer binding storage codec.
+ */
 class IssuerBindingStorageCodecTest {
+    /**
+     * Compact storage binds immutable context golden vector and ignores only lifecycle.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void compactStorageBindsImmutableContextGoldenVectorAndIgnoresOnlyLifecycle() throws Exception {
         var generation = generation("provider:test.priv", IssuerGenerationState.ACTIVE);
         var binding = binding(generation);
@@ -29,6 +37,11 @@ class IssuerBindingStorageCodecTest {
         byte[] corrupt = encoded.clone(); corrupt[corrupt.length - 1] ^= 1;
         assertThrows(IOException.class, () -> IssuerBindingStorageCodec.decode(corrupt, generation));
     }
+    /**
+     * Avoids duplicating supported megabyte key references within atomic transaction budget.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void avoidsDuplicatingSupportedMegabyteKeyReferencesWithinAtomicTransactionBudget() throws Exception {
         var generation = generation("k".repeat(1_048_576), IssuerGenerationState.ACTIVE);
         var binding = binding(generation);
@@ -38,6 +51,11 @@ class IssuerBindingStorageCodecTest {
         assertEquals(binding.commitment(), IssuerBindingStorageCodec.decode(compact, generation).commitment());
         assertThrows(IllegalArgumentException.class, () -> IssuerCryptographicBindingCodec.decode(compact));
     }
+    /**
+     * Full domain form has independent four mi b bound without increasing compact storage budget.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void fullDomainFormHasIndependentFourMiBBoundWithoutIncreasingCompactStorageBudget() throws Exception {
         var nearLegacy = generation("k".repeat(SigningWalFrameCodec.MAX_PAYLOAD_BYTES - 4096), IssuerGenerationState.ACTIVE);
         var nearBinding = binding(nearLegacy);

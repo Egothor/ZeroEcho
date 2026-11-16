@@ -55,6 +55,14 @@ final class JcaContentSigner implements ContentSigner {
     private final Signature signature;
     private final OutputStream stream;
 
+    /**
+     * Initializes a local JCA signer for a stateless private key.
+     *
+     * @param privateKey borrowed stateless signing key; must not be null
+     * @param algorithm signature identifier selecting the JCA engine; must not be null
+     * @throws NullPointerException if the key or identifier is null
+     * @throws IllegalArgumentException if stateful signing is requested or JCA initialization fails
+     */
     /* default */ JcaContentSigner(PrivateKey privateKey, AlgorithmIdentifier algorithm) {
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
         Objects.requireNonNull(privateKey, "privateKey");
@@ -68,16 +76,25 @@ final class JcaContentSigner implements ContentSigner {
         this.stream = new SignatureUpdateOutputStream(signature);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AlgorithmIdentifier algorithm() {
         return algorithm;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public OutputStream contentStream() {
         return stream;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] signature() {
         try {

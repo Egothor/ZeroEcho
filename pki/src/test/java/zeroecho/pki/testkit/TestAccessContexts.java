@@ -50,6 +50,8 @@ public final class TestAccessContexts {
 
     /**
      * Returns a dummy access context suitable for tests.
+     *
+     * @return fixed access context identifying the test actor and purpose
      */
     public static AccessContext dummy() {
         Principal p = new Principal("test", "dummy");

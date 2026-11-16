@@ -35,7 +35,9 @@ package zeroecho.pki.impl.fs;
 
 import java.util.Objects;
 
-/** Benchmark-source bridge to package-private signing-ledger diagnostics. */
+/**
+ * Benchmark-source bridge to package-private signing-ledger diagnostics.
+ */
 public final class SigningRecoveryFailureDiagnostics {
     private SigningRecoveryFailureDiagnostics() {
     }
@@ -45,6 +47,7 @@ public final class SigningRecoveryFailureDiagnostics {
      *
      * @param store benchmark-owned store, whether open or closed
      * @return first recovery failure, or {@code null} if no recovery transition occurred
+     * @throws NullPointerException if {@code store} is null
      */
     public static Throwable firstFailure(FilesystemPkiStore store) {
         return Objects.requireNonNull(store, "store").firstLocalSigningRecoveryFailure();

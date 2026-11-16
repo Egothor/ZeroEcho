@@ -56,8 +56,14 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.MacContext;
 import zeroecho.core.io.TailStrippingInputStream;
 
+/**
+ * Contract and regression tests for HMAC large data.
+ */
 public class HmacLargeDataTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // register providers if needed
@@ -109,6 +115,11 @@ public class HmacLargeDataTest {
         return mac.doFinal();
     }
 
+    /**
+     * HMAC SHA-256 streaming mac and verify with JCA cross-check.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hmac_sha256_streaming_mac_and_verify_with_jca_crosscheck() throws Exception {
         final int SIZE = 64 * 1024 + 321;

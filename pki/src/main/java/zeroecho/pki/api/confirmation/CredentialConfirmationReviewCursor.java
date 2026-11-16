@@ -44,10 +44,18 @@ import java.util.Objects;
  * @param value opaque canonical cursor value
  */
 public record CredentialConfirmationReviewCursor(String value) {
-    /** Maximum encoded cursor length. */
+    /**
+     * Maximum encoded cursor length.
+     */
     public static final int MAXIMUM_ENCODED_CHARACTERS = 1024;
 
-    /** Validates the bounded opaque representation. */
+    /**
+     * Validates the bounded opaque representation.
+     * @param value opaque canonical cursor value
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if value is empty, oversized or contains characters outside the unpadded
+     *     URL-safe alphabet
+     */
     public CredentialConfirmationReviewCursor {
         Objects.requireNonNull(value, "value");
         if (value.isEmpty() || value.length() > MAXIMUM_ENCODED_CHARACTERS

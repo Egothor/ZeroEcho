@@ -54,10 +54,13 @@ import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.PkiServerConfiguration;
 
-/** Strict bounded UTF-8 JSON framing shared by server configuration and HTTP. */
-@SuppressWarnings("PMD")
+/**
+ * Strict bounded UTF-8 JSON framing shared by server configuration and HTTP.
+ */
 public final class StrictJson {
-    /** Absolute technical JSON document ceiling. */
+    /**
+     * Absolute technical JSON document ceiling.
+     */
     public static final int MAXIMUM_DOCUMENT_BYTES = 16_777_216;
     private static final int MAXIMUM_CONTAINER_ENTRIES = 4_096;
     private static final JsonFactory FACTORY = createFactory();
@@ -142,6 +145,14 @@ public final class StrictJson {
         return new PkiOperationValue.ListValue(values);
     }
 
+    /**
+     * Writes the closed operation-value model to the supplied JSON generator.
+     *
+     * @param generator caller-owned generator; remains open
+     * @param value structured value to serialize
+     * @throws IOException if the generator cannot write the value
+     * @throws NullPointerException if a required argument is null
+     */
     static void write(JsonGenerator generator, PkiOperationValue value) throws IOException {
         switch (value) {
             case PkiOperationValue.Text text -> generator.writeString(text.value());

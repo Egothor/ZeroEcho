@@ -74,15 +74,39 @@ final class CredentialMetadataAuthority {
     private final TransactionalMetadataStore metadata;
     private final StagedContentStore content;
 
+    /**
+     * Creates the transactional authority for credential records and their content owner sets.
+     *
+     * @param metadata transactional credential metadata store
+     * @param content durable content resolver
+     * @throws NullPointerException if either dependency is null
+     */
     /* default */ CredentialMetadataAuthority(TransactionalMetadataStore metadata, StagedContentStore content) {
         this.metadata = Objects.requireNonNull(metadata, "metadata");
         this.content = Objects.requireNonNull(content, "content");
     }
 
+    /**
+     * Finds a credential and validates its exact content ownership and readable payload before returning it.
+     *
+     * @param id credential identifier
+     * @return validated credential, or empty if no record exists
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if record, owner set or payload validation fails
+     */
     /* default */ Optional<Credential> find(PkiId id) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) { return find(snapshot, id); }
     }
 
+    /**
+     * Finds a credential and validates its exact content ownership and readable payload before returning it.
+     *
+     * @param id credential identifier
+     * @param snapshot caller-owned pinned metadata view
+     * @return validated credential, or empty if no record exists
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if record, owner set or payload validation fails
+     */
     /* default */ Optional<Credential> find(MetadataSnapshot snapshot, PkiId id) throws IOException {
         Optional<Credential> found = raw(snapshot, id);
         if (found.isPresent()) {
@@ -95,6 +119,14 @@ final class CredentialMetadataAuthority {
         return found;
     }
 
+    /**
+     * Reads the exact credential owners and checks each owner against its authoritative credential record.
+     *
+     * @param reference content reference to inspect
+     * @return validated credential owners; empty for nonpersisted content or no owner set
+     * @throws NullPointerException if reference is null
+     * @throws IOException if persisted ownership or content coordinates are inconsistent
+     */
     /* default */ Set<DurableContentOwner> owners(DurableContentReference reference) throws IOException {
         if (reference.lifecycle() != DurableContentReference.Lifecycle.PERSISTED) { return Set.of(); }
         try (MetadataSnapshot snapshot = metadata.snapshot()) { return owners(snapshot, reference); }
@@ -115,7 +147,16 @@ final class CredentialMetadataAuthority {
         }
     }
 
-    /** Stages only; caller owns its existing content reservation and transaction. */
+    /**
+     * Stages creation of a credential and a revision-checked update of its content owner set.
+     * The caller retains the content reservation and owns committing or rolling back the transaction.
+     *
+     * @param snapshot caller-owned pinned view used for ownership revisions
+     * @param transaction caller-owned acceptance transaction
+     * @param credential new credential with persisted content in this store
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if content or ownership validation fails, encoded bounds are exceeded or staging fails
+     */
     /* default */ void stageCreate(MetadataSnapshot snapshot, MetadataTransaction transaction, Credential credential) throws IOException {
         requireReference(credential.content());
         validateContent(credential.content());
@@ -135,11 +176,25 @@ final class CredentialMetadataAuthority {
         }
     }
 
-    /** Validates both directions before any staged-content reclamation may begin. */
+    /**
+     * Validates both credential-to-content and owner-set-to-credential links before reclamation may begin.
+     *
+     * @param visitor callback for each credential after its content is validated
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if authoritative metadata, content or visitor processing fails
+     */
     /* default */ void validateAll(Visitor visitor) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) { validateAll(snapshot, visitor); }
     }
 
+    /**
+     * Validates both credential-to-content and owner-set-to-credential links before reclamation may begin.
+     *
+     * @param visitor callback for each credential after its content is validated
+     * @param snapshot caller-owned pinned metadata view
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if authoritative metadata, content or visitor processing fails
+     */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
                   void validateAll(MetadataSnapshot snapshot, Visitor visitor) throws IOException {
@@ -197,6 +252,16 @@ final class CredentialMetadataAuthority {
         }
     }
 
+    /**
+     * Encodes a nonempty bounded set of credential-record owners in canonical sorted order.
+     *
+     * @param contentId canonical content identifier bound into the owner set
+     * @param owners credential-record ownership identities
+     * @return newly allocated versioned ownership bytes
+     * @throws NullPointerException if an argument or owner is null
+     * @throws IllegalArgumentException if the content identifier or an owner category is invalid
+     * @throws IOException if owner count or encoded size exceeds its bound or encoding fails
+     */
     /* default */ static byte[] encodeOwners(String contentId, Set<DurableContentOwner> owners) throws IOException {
         AuthorityMetadataCodec.ownerSetKey(contentId);
         if (owners.isEmpty() || owners.size() > MAX_OWNERS) { throw invalid(); }
@@ -217,6 +282,15 @@ final class CredentialMetadataAuthority {
         return bytes.toByteArray();
     }
 
+    /**
+     * Decodes an exact bounded owner set and checks canonical ordering, key binding and trailing data.
+     *
+     * @param key metadata key that must bind the encoded content identifier
+     * @param bytes complete ownership record bytes
+     * @return immutable nonempty credential owner set
+     * @throws NullPointerException if bytes is null
+     * @throws IOException if the version, bounds, identities, ordering or framing are invalid
+     */
     /* default */ static Set<DurableContentOwner> decodeOwners(MetadataKey key, byte[] bytes) throws IOException {
         if (bytes.length > MAX_OWNER_BYTES) { throw invalid(); }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
@@ -244,6 +318,15 @@ final class CredentialMetadataAuthority {
         return owners;
     }
 
+    /**
+     * Reads exactly the declared bounded record length and rejects missing length or trailing data.
+     *
+     * @param record caller-owned metadata record
+     * @param maximum maximum accepted byte length
+     * @return newly allocated complete record bytes
+     * @throws NullPointerException if record is null
+     * @throws IOException if length is absent, outside bounds or inconsistent with the stream
+     */
     /* default */ static byte[] read(MetadataSnapshot.Record record, int maximum) throws IOException {
         long length = record.length().orElseThrow(CredentialMetadataAuthority::invalid);
         if (length < 0 || length > maximum) { throw invalid(); }
@@ -255,11 +338,18 @@ final class CredentialMetadataAuthority {
     }
 
     private static IOException invalid() { return new IOException("Credential metadata ownership is inconsistent"); }
-    /** Checked visitor over authoritative credential records. */
+    /**
+     * Checked visitor over authoritative credential records.
+     */
     /* default */
     @FunctionalInterface
     interface Visitor {
-        /** Consumes one credential, propagating storage failures. */
+        /**
+         * Processes one credential after authoritative ownership and payload validation.
+         *
+         * @param credential validated authoritative credential
+         * @throws IOException if processing cannot complete
+         */
         void accept(Credential credential) throws IOException;
     }
 }

@@ -65,21 +65,32 @@ public final class SyslogAuditSinkProvider implements AuditSinkProvider {
 
     private static final Set<String> KEYS = Set.of("host", "port", "protocol", "app-name");
 
-    /** Creates a syslog audit-sink provider descriptor. */
+    /**
+     * Creates a syslog audit-sink provider descriptor.
+     */
     public SyslogAuditSinkProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "syslog";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return KEYS;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateConfig(ProviderConfig config) {
         AuditSinkProvider.super.validateConfig(config);
@@ -99,6 +110,9 @@ public final class SyslogAuditSinkProvider implements AuditSinkProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AuditSink allocate(ProviderConfig config) {
         Objects.requireNonNull(config, "config");

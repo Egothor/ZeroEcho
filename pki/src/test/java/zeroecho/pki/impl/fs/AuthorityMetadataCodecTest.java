@@ -51,7 +51,13 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
+/**
+ * Contract and regression tests for authority metadata codec.
+ */
 final class AuthorityMetadataCodecTest {
+    /**
+     * Normalized base head and both membership directions have closed bindings.
+     */
     @Test void normalizedBaseHeadAndBothMembershipDirectionsHaveClosedBindings() {
         CaRecord ca = ca("authority");
         AuthorityMetadataCodec.Base base = AuthorityMetadataCodec.Base.of(ca);
@@ -67,6 +73,9 @@ final class AuthorityMetadataCodecTest {
         assertThrows(IllegalStateException.class, () -> new AuthorityMetadataCodec.Head(ca.caId(), ca.state(), ca.currentIssuanceIssuerId(), ca.issuanceChainPathId(), 0));
     }
 
+    /**
+     * Opaque identity and namespace are bound without changing payloads.
+     */
     @Test void opaqueIdentityAndNamespaceAreBoundWithoutChangingPayloads() {
         CaRecord ca = ca("authority:/opaque/žluťoučký");
         byte[] payload = FsCodec.encode(FsCodec.CA_HEAD, AuthorityMetadataCodec.Head.of(ca));
@@ -85,6 +94,9 @@ final class AuthorityMetadataCodecTest {
         assertThrows(RuntimeException.class, () -> AuthorityMetadataCodec.ownerSetKey("not-a-content-id"));
     }
 
+    /**
+     * Collision ordering uses committed revision and canonical timestamp.
+     */
     @Test void collisionOrderingUsesCommittedRevisionAndCanonicalTimestamp() {
         CaRecord ca = ca("authority");
         byte[] payload = FsCodec.encode(FsCodec.CA_HEAD, AuthorityMetadataCodec.Head.of(ca));
@@ -110,6 +122,9 @@ final class AuthorityMetadataCodecTest {
                 FsCodec.encode(FsCodec.CA_HEAD, AuthorityMetadataCodec.Head.of(ca("different"))), 1));
     }
 
+    /**
+     * History micros truncate and round trip both signed boundaries.
+     */
     @Test void historyMicrosTruncateAndRoundTripBothSignedBoundaries() {
         CaRecord ca = ca("authority");
         byte[] payload = FsCodec.encode(FsCodec.CA_HEAD, AuthorityMetadataCodec.Head.of(ca));

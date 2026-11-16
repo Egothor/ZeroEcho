@@ -66,7 +66,9 @@ import zeroecho.pki.api.credential.Credential;
  */
 public interface CaService {
 
-    /** Returns the stable cancellation argument name used by default overloads. */
+    /**
+     * Returns the stable cancellation argument name used by default overloads.
+     */
     private static String cancellationParameter() {
         return "cancellation";
     }
@@ -89,6 +91,7 @@ public interface CaService {
      * @param command validated root-authority creation command
      * @param cancellation originating cooperative cancellation signal
      * @return created authority identifier
+     * @throws NullPointerException if cancellation is null
      */
     default PkiId createRoot(CaCreateCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, cancellationParameter());
@@ -119,6 +122,7 @@ public interface CaService {
      * @param command validated root-authority import command
      * @param cancellation originating cooperative cancellation signal
      * @return imported authority identifier
+     * @throws NullPointerException if cancellation is null
      */
     default PkiId importRoot(CaImportCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, cancellationParameter());
@@ -142,6 +146,7 @@ public interface CaService {
      * @param command validated intermediate-authority creation command
      * @param cancellation originating cooperative cancellation signal
      * @return created intermediate-authority identifier
+     * @throws NullPointerException if cancellation is null
      */
     default PkiId createIntermediate(IntermediateCreateCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, cancellationParameter());
@@ -169,6 +174,7 @@ public interface CaService {
      * @param command validated intermediate credential issuance command
      * @param cancellation originating cooperative cancellation signal
      * @return newly issued CA credential
+     * @throws NullPointerException if cancellation is null
      */
     default Credential issueIntermediateCertificate(IntermediateCertIssueCommand command,
             CancellationSignal cancellation) {
@@ -192,6 +198,7 @@ public interface CaService {
      * @param command validated CA rollover command
      * @param cancellation originating cooperative cancellation signal
      * @return unchanged authority identifier after successful rollover
+     * @throws NullPointerException if cancellation is null
      */
     default PkiId rolloverCaCertificate(CaRolloverCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, cancellationParameter());
@@ -214,6 +221,7 @@ public interface CaService {
      * @param command validated CA key-rotation command
      * @param cancellation originating cooperative cancellation signal
      * @return unchanged authority identifier after successful rotation
+     * @throws NullPointerException if cancellation is null
      */
     default PkiId rotateCaKey(CaKeyRotationCommand command, CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(cancellation, cancellationParameter());

@@ -37,7 +37,9 @@ import java.util.List;
 import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
 
-/** Borrowed session service for durable recurring status generation and recovery. */
+/**
+ * Borrowed session service for durable recurring status generation and recovery.
+ */
 public interface StatusScheduleCoordinator {
     /**
      * Lists enabled schedules and unresolved executions, including disabled executions.

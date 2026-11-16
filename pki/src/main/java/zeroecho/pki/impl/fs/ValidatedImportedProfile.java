@@ -54,6 +54,15 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
      * Strict decoding may throw several runtime parsing failures. The persisted
      * bytes and their causes must not cross this boundary.
      */
+    /**
+     * Decodes and canonically revalidates immutable imported profile evidence.
+     *
+     * <p>Untrusted parsing diagnostics and causes are replaced with stable profile failure classifications.</p>
+     *
+     * @param artifact complete persisted profile-version artifact
+     * @return validated imported profile whose canonical bytes and SHA-256 commitment agree
+     * @throws zeroecho.pki.impl.ProfileLifecycleFailure if framing, requested identity, canonical document, model constraints or hash verification is invalid
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     /* default */ static ValidatedImportedProfile decode(byte[] artifact) {
         try {
@@ -70,6 +79,17 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
      * Strict decoding may throw several runtime parsing failures. The persisted
      * bytes and their causes must not cross this boundary.
      */
+    /**
+     * Decodes and canonically revalidates immutable imported profile evidence.
+     *
+     * <p>Untrusted parsing diagnostics and causes are replaced with stable profile failure classifications.</p>
+     *
+     * @param artifact complete persisted profile-version artifact
+     * @param profileId exact expected logical profile identity
+     * @param profileVersion exact expected positive version coordinate
+     * @return validated imported profile whose canonical bytes and SHA-256 commitment agree
+     * @throws zeroecho.pki.impl.ProfileLifecycleFailure if framing, requested identity, canonical document, model constraints or hash verification is invalid
+     */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     /* default */ static ValidatedImportedProfile decode(byte[] artifact, String profileId, long profileVersion) {
         try {
@@ -85,6 +105,15 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
     /*
      * Policy constructors and the strict document codec expose multiple runtime
      * failures, all deliberately normalized without input-bearing causes.
+     */
+    /**
+     * Reparses canonical profile JSON and requires its exact identity, byte representation and SHA-256 hash.
+     *
+     * @param version persisted immutable profile version to revalidate
+     * @param profileId exact expected logical profile identifier
+     * @param profileVersion exact expected positive version coordinate
+     * @return validated wrapper retaining the same immutable profile version
+     * @throws zeroecho.pki.impl.ProfileLifecycleFailure if identity, canonical JSON, structural policy or stored commitment differs
      */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     /* default */ static ValidatedImportedProfile validate(ImportedCertificateProfileVersion version, String profileId,

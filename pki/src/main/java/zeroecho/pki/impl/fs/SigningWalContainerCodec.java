@@ -39,11 +39,22 @@ import java.nio.ByteOrder;
 import java.security.MessageDigest;
 import java.util.Arrays;
 
-/** Independently integrity-checked version-one signing WAL container preamble. */
+/**
+ * Independently integrity-checked version-one signing WAL container preamble.
+ */
 final class SigningWalContainerCodec {
 
+    /**
+     * Fixed binary magic identifying this persisted format.
+     */
     /* default */ static final int MAGIC = 0x5A455743;
+    /**
+     * Current binary format version encoded independently of enum ordering.
+     */
     /* default */ static final short VERSION = 1;
+    /**
+     * Fixed encoded header length in bytes.
+     */
     /* default */ static final int HEADER_BYTES = 64;
 
     private static final short FLAGS = 0;
@@ -53,6 +64,15 @@ final class SigningWalContainerCodec {
         // utility class
     }
 
+    /**
+     * Encodes the current WAL container header and its SHA-256 integrity field.
+     *
+     * @param header nonnegative generation identity, first sequence and baseline revision
+     * @return newly allocated fixed-size container header
+     * @throws NullPointerException if the header is null
+     * @throws IllegalArgumentException if a header coordinate is negative
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static byte[] encode(Header header) {
         requireHeader(header);
         ByteBuffer output = ByteBuffer.allocate(HEADER_BYTES).order(ByteOrder.BIG_ENDIAN);
@@ -68,6 +88,14 @@ final class SigningWalContainerCodec {
         return output.array();
     }
 
+    /**
+     * Decodes an exact WAL container header and checks its version and SHA-256 integrity.
+     *
+     * @param encoded complete fixed-size container header
+     * @return validated nonnegative WAL generation and baseline coordinates
+     * @throws IOException if the header is null, truncated, corrupt or uses unsupported format coordinates
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static Header decode(byte[] encoded) throws IOException {
         if (encoded == null || encoded.length != HEADER_BYTES) {
             throw invalid("signing WAL container header is truncated");
@@ -107,6 +135,13 @@ final class SigningWalContainerCodec {
         return SigningFormatSupport.invalid(diagnostic);
     }
 
+    /**
+     * Versioned WAL generation identity and baseline recovery coordinates.
+     *
+     * @param identity exact WAL generation identity
+     * @param firstSequence first sequence assigned to the generation
+     * @param baselineRevision committed revision before the first frame in this generation
+     */
     /* default */ record Header(long identity, long firstSequence, long baselineRevision) {
     }
 }

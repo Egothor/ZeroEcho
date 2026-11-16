@@ -45,7 +45,15 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Checks that failed schedule-worker shutdown preserves dependent resources for an external retry.
+ */
 class StatusScheduleWorkerCloseTest {
+    /**
+     * Checks interrupted shutdown leaves scheduling stopped, preserves the interruption cause/status and permits a later safe external close retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void interruptedJoinKeepsWorkerStoppedAndAllowsSafeRetry() throws Exception {
         System.out.println("interruptedJoinKeepsWorkerStoppedAndAllowsSafeRetry");

@@ -82,12 +82,27 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for correlated issuance acceptance.
+ */
 final class CorrelatedIssuanceAcceptanceTest {
+    /**
+     * Concurrent identical preparations have one winner and return its receipt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentIdenticalPreparationsHaveOneWinnerAndReturnItsReceipt(@TempDir Path root) throws Exception {
         concurrent(root, false);
     }
 
+    /**
+     * Concurrent changed CSR conflicts and cleans only losing candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentChangedCsrConflictsAndCleansOnlyLosingCandidate(@TempDir Path root) throws Exception {
         concurrent(root, true);
@@ -137,6 +152,12 @@ final class CorrelatedIssuanceAcceptanceTest {
         }
     }
 
+    /**
+     * Winner arriving between prelookup and accept is attached even at capacity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void winnerArrivingBetweenPrelookupAndAcceptIsAttachedEvenAtCapacity(@TempDir Path root) throws Exception {
         for (int capacity : List.of(1, 4)) {
@@ -166,6 +187,12 @@ final class CorrelatedIssuanceAcceptanceTest {
         }
     }
 
+    /**
+     * Preexisting winner skips admission and foreign or consumed carriers cannot attach.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void preexistingWinnerSkipsAdmissionAndForeignOrConsumedCarriersCannotAttach(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root); TestProvider provider = new TestProvider()) {
@@ -190,6 +217,12 @@ final class CorrelatedIssuanceAcceptanceTest {
         }
     }
 
+    /**
+     * Different preexisting intent conflicts and definite capacity rejection cleans up.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void differentPreexistingIntentConflictsAndDefiniteCapacityRejectionCleansUp(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(root, 1, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -223,6 +256,12 @@ final class CorrelatedIssuanceAcceptanceTest {
         }
     }
 
+    /**
+     * Unknown commit preserves original receipt and candidate until authoritative resolution.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownCommitPreservesOriginalReceiptAndCandidateUntilAuthoritativeResolution(@TempDir Path root) throws Exception {
         for (boolean committed : List.of(false, true)) {
@@ -265,6 +304,12 @@ final class CorrelatedIssuanceAcceptanceTest {
                 new byte[] { 8, 7, 6 }, input.request().profileId(), Optional.empty()), input.intent());
     }
 
+    /**
+     * Retained terminal winner still owns correlation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void retainedTerminalWinnerStillOwnsCorrelation(@TempDir Path root) throws Exception {
         for (String terminal : List.of("FAILED", "CANCELLED", "EXPIRED")) {
@@ -303,6 +348,12 @@ final class CorrelatedIssuanceAcceptanceTest {
         }
     }
 
+    /**
+     * Unknown losing attempt requires original resolution before winner lookup.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownLosingAttemptRequiresOriginalResolutionBeforeWinnerLookup(@TempDir Path root) throws Exception {
         SigningAcceptanceReceipt original;

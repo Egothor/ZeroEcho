@@ -59,7 +59,15 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for default certification request service.
+ */
 final class DefaultCertificationRequestServiceTest {
+    /**
+     * Encoded request returns only an independent fingerprint checked snapshot.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void encodedRequestReturnsOnlyAnIndependentFingerprintCheckedSnapshot() throws Exception {
         DefaultCertificationRequestService service = isolated();
@@ -79,6 +87,11 @@ final class DefaultCertificationRequestServiceTest {
                 identity(maximum), attributes(new AttributeValue.BytesValue(maximum)))).encoded().bytes().length);
     }
 
+    /**
+     * Typed recovery rejects mixed attributes wrong identity and mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void typedRecoveryRejectsMixedAttributesWrongIdentityAndMutation() throws Exception {
         DefaultCertificationRequestService service = isolated();
@@ -101,6 +114,11 @@ final class DefaultCertificationRequestServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.encodedX509Request(parsed));
     }
 
+    /**
+     * Encoded request rejects wrong format cardinality type size and identity.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void encodedRequestRejectsWrongFormatCardinalityTypeSizeAndIdentity() throws Exception {
         DefaultCertificationRequestService service = isolated();

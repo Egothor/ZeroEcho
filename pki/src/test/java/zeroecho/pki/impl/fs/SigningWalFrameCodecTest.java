@@ -57,11 +57,19 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for signing WAL frame codec.
+ */
 final class SigningWalFrameCodecTest {
 
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Canonical golden round trip and boundaries.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void canonicalGoldenRoundTripAndBoundaries() throws Exception {
         SigningWalFrameCodec.Frame frame = frame(7L, new byte[] { 1, 2, 3 });
@@ -78,6 +86,11 @@ final class SigningWalFrameCodecTest {
                 new byte[SigningWalFrameCodec.MAX_PAYLOAD_BYTES + 1]));
     }
 
+    /**
+     * Malformed frame and container fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedFrameAndContainerFailClosed() throws Exception {
         byte[] valid = SigningWalFrameCodec.encode(frame(0L, new byte[] { 4 }));
@@ -94,6 +107,11 @@ final class SigningWalFrameCodecTest {
         assertThrows(IOException.class, () -> SigningWalContainerCodec.decode(container));
     }
 
+    /**
+     * Committed groups are delivered and unmarked suffix is not.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedGroupsAreDeliveredAndUnmarkedSuffixIsNot() throws Exception {
         WalFixture fixture = new WalFixture(10L);
@@ -112,6 +130,11 @@ final class SigningWalFrameCodecTest {
         assertThrows(IOException.class, () -> fixture.scan(false, new ArrayList<>()));
     }
 
+    /**
+     * Recovery payload view is callback scoped and read only.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryPayloadViewIsCallbackScopedAndReadOnly() throws Exception {
         WalFixture fixture = new WalFixture(0L);
@@ -127,6 +150,11 @@ final class SigningWalFrameCodecTest {
         }
     }
 
+    /**
+     * Torn corrupt and reordered groups never deliver uncommitted frames.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void tornCorruptAndReorderedGroupsNeverDeliverUncommittedFrames() throws Exception {
         WalFixture torn = new WalFixture(0L);
@@ -161,6 +189,11 @@ final class SigningWalFrameCodecTest {
         assertTrue(reorderedDelivered.isEmpty());
     }
 
+    /**
+     * Corrupted or missing marker does not partially apply group.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptedOrMissingMarkerDoesNotPartiallyApplyGroup() throws Exception {
         WalFixture fixture = new WalFixture(0L);
@@ -188,6 +221,11 @@ final class SigningWalFrameCodecTest {
         assertTrue(delivered.isEmpty());
     }
 
+    /**
+     * Committed revision must increase across groups.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void committedRevisionMustIncreaseAcrossGroups() throws Exception {
         WalFixture equalBaseline = new WalFixture(0L, 1L);
@@ -210,6 +248,11 @@ final class SigningWalFrameCodecTest {
         assertEquals(0L, delivered.get(0).sequence());
     }
 
+    /**
+     * Batch count is bounded before writing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void batchCountIsBoundedBeforeWriting() throws Exception {
         WalFixture fixture = new WalFixture(0L);
@@ -220,6 +263,11 @@ final class SigningWalFrameCodecTest {
         assertThrows(IllegalArgumentException.class, () -> fixture.appendCommitted(frames, 1L));
     }
 
+    /**
+     * Aggregate encoding is byte equivalent to committed channel encoding.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void aggregateEncodingIsByteEquivalentToCommittedChannelEncoding() throws Exception {
         List<SigningWalFrameCodec.Frame> frames = List.of(
@@ -237,6 +285,11 @@ final class SigningWalFrameCodecTest {
                 Arrays.copyOfRange(aggregate.array(), start, aggregate.position()));
     }
 
+    /**
+     * Large scan uses sequential transfer buffers rather than per frame reads.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void largeScanUsesSequentialTransferBuffersRatherThanPerFrameReads() throws Exception {
         Path path = Files.createTempFile(temporaryDirectory, "buffered-wal-", ".zew");

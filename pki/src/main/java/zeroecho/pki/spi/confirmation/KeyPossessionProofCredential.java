@@ -64,6 +64,9 @@ public record KeyPossessionProofCredential(ConfirmationProofSuiteBinding proofSu
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if {@code credentialId} is not canonical
+     * @param proofSuiteBinding exact configured proof-suite binding
+     * @param credentialId exact authoritative credential identity
+     * @param publicKey request-local public key extracted by PKI orchestration
      */
     public KeyPossessionProofCredential {
         Objects.requireNonNull(proofSuiteBinding, "proofSuiteBinding");
@@ -71,7 +74,10 @@ public record KeyPossessionProofCredential(ConfirmationProofSuiteBinding proofSu
         Objects.requireNonNull(publicKey, "publicKey");
     }
 
-    /** Returns a structural description without public-key encoding or implementation details. */
+    /**
+     * Returns a structural description without public-key encoding or implementation details.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "KeyPossessionProofCredential[proofSuiteBinding=" + proofSuiteBinding

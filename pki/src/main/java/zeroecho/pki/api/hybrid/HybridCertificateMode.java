@@ -55,15 +55,23 @@ public sealed interface HybridCertificateMode
      * This is the default for all profiles that do not declare hybrid support.
      */
     record None() implements HybridCertificateMode {
-        /** Singleton instance. */
+        /**
+         * Singleton instance.
+         */
         public static final None INSTANCE = new None();
     }
 
-    /** Alternative subject public-key provenance, independent of the issuer signing key. */
+    /**
+     * Alternative subject public-key provenance, independent of the issuer signing key.
+     */
     enum AlternativeSubjectKeySource {
-        /** Subject public key is read from an existing managed CA key. */
+        /**
+         * Subject public key is read from an existing managed CA key.
+         */
         MANAGED,
-        /** Subject public key is supplied by the client's dual-proof SDK request. */
+        /**
+         * Subject public key is supplied by the client's dual-proof SDK request.
+         */
         REQUEST
     }
 
@@ -81,6 +89,9 @@ public sealed interface HybridCertificateMode
         /**
          * Validates the disjoint subject-key sources without generating a key.
          * @throws IllegalArgumentException for blank algorithms or inconsistent sources
+         * @param altSignatureAlgorithmId canonical alternative signature identity
+         * @param subjectKeySource source of the alternative subject public key
+         * @param managedKeyRef managed CA subject key, present exactly for MANAGED
          */
         public AltSignature {
             if (altSignatureAlgorithmId == null || altSignatureAlgorithmId.isBlank()
@@ -127,7 +138,9 @@ public sealed interface HybridCertificateMode
      * in the profile that tooling can use to coordinate twin deployments.</p>
      */
     record TwinCertificate() implements HybridCertificateMode {
-        /** Singleton instance. */
+        /**
+         * Singleton instance.
+         */
         public static final TwinCertificate INSTANCE = new TwinCertificate();
     }
 
@@ -137,7 +150,9 @@ public sealed interface HybridCertificateMode
      * <p>Reserved for future use. Profiles using this mode are rejected by the validator.</p>
      */
     record Composite() implements HybridCertificateMode {
-        /** Singleton instance. */
+        /**
+         * Singleton instance.
+         */
         public static final Composite INSTANCE = new Composite();
     }
 }

@@ -41,8 +41,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for PKI failure reason.
+ */
 final class PkiFailureReasonTest {
 
+    /**
+     * Every reason declares a non null classification.
+     */
     @Test
     void everyReasonDeclaresANonNullClassification() {
         for (PkiFailureReason reason : PkiFailureReason.values()) {
@@ -51,6 +57,9 @@ final class PkiFailureReasonTest {
         }
     }
 
+    /**
+     * Store durability unconfirmed is recovery required and internal only.
+     */
     @Test
     void storeDurabilityUnconfirmedIsRecoveryRequiredAndInternalOnly() {
         PkiFailureReason reason = PkiFailureReason.STORE_DURABILITY_UNCONFIRMED;
@@ -60,6 +69,9 @@ final class PkiFailureReasonTest {
                 "internal storage-state reason must not be external-safe");
     }
 
+    /**
+     * Exception carries the reason structurally.
+     */
     @Test
     void exceptionCarriesTheReasonStructurally() {
         PkiException failure = new PkiException("Store durability unconfirmed",
@@ -70,6 +82,9 @@ final class PkiFailureReasonTest {
         assertEquals("Store durability unconfirmed", failure.getMessage());
     }
 
+    /**
+     * Exception carries the reason and cause together.
+     */
     @Test
     void exceptionCarriesTheReasonAndCauseTogether() {
         Throwable cause = new IllegalStateException("io");
@@ -80,6 +95,9 @@ final class PkiFailureReasonTest {
         assertSame(cause, failure.getCause());
     }
 
+    /**
+     * Unclassified exception has no reason.
+     */
     @Test
     void unclassifiedExceptionHasNoReason() {
         assertTrue(new PkiException("plain message").failureReason().isEmpty());

@@ -67,7 +67,9 @@ import zeroecho.pkix.Pkix;
 import zeroecho.pkix.cmp.CmpPbmPolicy;
 import zeroecho.pkix.cmp.CmpProtectedMessage;
 
-/** One authenticated wire call; owns and erases its binary PBM secret copy. */
+/**
+ * One authenticated wire call; owns and erases its binary PBM secret copy.
+ */
 final class CmpAuthentication implements AutoCloseable {
     private final CmpProtectedMessage.Verified verified;
     private final EnrollmentTransaction.Requester requester;
@@ -83,6 +85,20 @@ final class CmpAuthentication implements AutoCloseable {
         this.trustedChain = List.copyOf(trustedChain);
     }
 
+    /**
+     * Authenticates CMP message protection under the exact endpoint credential policy.
+     *
+     * @param request parsed protected CMP request
+     * @param expectedPbm whether the endpoint requires password-based MAC protection
+     * @param lease borrowed endpoint credential/trust lease
+     * @param realm trusted owning realm
+     * @param serverName exact expected recipient name
+     * @param now certificate-path validation instant
+     * @param cancellation cooperative cancellation signal
+     * @return authenticated requester and response-protection context, owned by the caller
+     * @throws IllegalArgumentException if protection mode, recipient, credentials, trust or message
+     *         verification fails
+     */
     /* default */ static CmpAuthentication verify(CmpProtectedMessage request, boolean expectedPbm, EnrollmentRuntime.CredentialLease lease,
             RealmId realm, X500Principal serverName, Instant now, CancellationSignal cancellation) {
         if (request.isPbm() != expectedPbm || !request.recipient().equals(serverName)) {
@@ -196,14 +212,53 @@ final class CmpAuthentication implements AutoCloseable {
         return List.copyOf(path);
     }
 
+    /**
+     * Returns the verified request-protection context.
+     *
+     * @return exact verified message used to bind protected responses
+     */
     /* default */ CmpProtectedMessage.Verified verified() { return verified; }
+    /**
+     * Returns the authenticated enrollment requester identity.
+     *
+     * @return verified realm-bound requester coordinates
+     */
     /* default */ EnrollmentTransaction.Requester requester() { return requester; }
+    /**
+     * Returns the authenticated signer certificate when signature protection was used.
+     *
+     * @return signer certificate, or empty for PBM authentication
+     */
     /* default */ Optional<X509Certificate> certificate() { return Optional.ofNullable(certificate); }
+    /**
+     * Returns the authenticated signer chain selected during trust validation.
+     *
+     * @return immutable trusted chain, empty for PBM authentication
+     */
     /* default */ List<X509Certificate> trustedChain() { return trustedChain; }
+    /**
+     * Returns the exact password-based MAC policy selected during authentication.
+     *
+     * @return endpoint PBM policy
+     * @throws IllegalArgumentException if this context used certificate-signature protection
+     */
     /* default */ CmpPbmPolicy pbmPolicy() { if (pbmPolicy == null) {
         throw invalid();
     } return pbmPolicy; }
 
+    /**
+     * Protects a response using the authentication mode and request binding already verified.
+     *
+     * @param response CMP response body and status
+     * @param lease borrowed endpoint response-signing credential lease
+     * @param serverName response sender name
+     * @param salt fresh PBM salt when password-based protection is selected
+     * @param nonce fresh response sender nonce
+     * @param time response message instant
+     * @param cancellation cooperative cancellation signal for password-based processing
+     * @return newly allocated protected response DER
+     * @throws IllegalArgumentException if response protection or certificate-chain encoding fails
+     */
     /* default */ byte[] protect(CmpProtectedMessage.Response response, EnrollmentRuntime.CredentialLease lease, X500Principal serverName,
             byte[] salt, byte[] nonce, Instant time, CancellationSignal cancellation) {
         if (secret != null) {
@@ -233,6 +288,9 @@ final class CmpAuthentication implements AutoCloseable {
         return new CmpPbmPolicy(value.minimumIterations(), value.maximumIterations(), value.minimumSaltBytes(), value.maximumSaltBytes(), digests, macs);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() { if (secret != null) {
         Arrays.fill(secret, (byte) 0);
     } }

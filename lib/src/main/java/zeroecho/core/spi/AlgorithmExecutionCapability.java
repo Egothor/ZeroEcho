@@ -52,9 +52,13 @@ public interface AlgorithmExecutionCapability {
      * Supported execution direction.
      */
     enum Direction {
-        /** Signature generation. */
+        /**
+         * Signature generation.
+         */
         SIGN,
-        /** Signature verification. */
+        /**
+         * Signature verification.
+         */
         VERIFY
     }
 

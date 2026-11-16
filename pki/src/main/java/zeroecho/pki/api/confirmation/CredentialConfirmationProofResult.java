@@ -33,7 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.api.confirmation;
 
-/** Closed data-free result of one credential-confirmation proof submission. */
+/**
+ * Closed data-free result of one credential-confirmation proof submission.
+ */
 public enum CredentialConfirmationProofResult {
     /**
      * The authoritative lifecycle is confirmed.
@@ -44,6 +46,8 @@ public enum CredentialConfirmationProofResult {
      */
     CONFIRMED,
 
-    /** A bounded proof for a pending lifecycle cryptographically failed verification. */
+    /**
+     * A bounded proof for a pending lifecycle cryptographically failed verification.
+     */
     REJECTED
 }

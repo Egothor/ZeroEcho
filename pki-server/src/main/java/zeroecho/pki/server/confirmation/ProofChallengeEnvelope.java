@@ -37,13 +37,28 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
 
-/** Immutable bounded public challenge returned by a proof suite. */
+/**
+ * Bounded public challenge with copied signing input and explicit buffer erasure.
+ *
+ * <p>The descriptor and expiry remain fixed. Signing-input access returns a copy;
+ * {@link #clear()} erases retained bytes. Callers serialize access and erasure and
+ * must not reuse the envelope for verification after erasure.</p>
+ */
 final class ProofChallengeEnvelope {
 
     private final ProofSuiteDescriptor descriptor;
     private final byte[] signatureInput;
     private final Instant expiresAt;
 
+    /**
+     * Snapshots the bounded public signing input for a proof challenge.
+     *
+     * @param descriptor exact suite profile; must not be null
+     * @param signatureInput nonempty signing input of at most 2,048 bytes; copied
+     * @param expiresAt absolute challenge expiry; must not be null
+     * @throws NullPointerException if the descriptor or expiry is null
+     * @throws IllegalArgumentException if signing input is null, empty or oversized
+     */
     /* default */ ProofChallengeEnvelope(ProofSuiteDescriptor descriptor, byte[] signatureInput,
             Instant expiresAt) {
         this.descriptor = Objects.requireNonNull(descriptor, "descriptor");
@@ -55,18 +70,39 @@ final class ProofChallengeEnvelope {
         this.signatureInput = signatureInput.clone();
     }
 
+    /**
+     * Returns the exact suite profile associated with this challenge.
+     *
+     * @return retained non-null suite descriptor
+     */
     /* default */ ProofSuiteDescriptor descriptor() {
         return descriptor;
     }
 
+    /**
+     * Copies the current challenge signing input.
+     *
+     * @return caller-owned copy, containing zeroes after {@link #clear()}
+     */
     /* default */ byte[] signatureInput() {
         return signatureInput.clone();
     }
 
+    /**
+     * Returns the absolute expiry of this challenge.
+     *
+     * @return retained non-null expiry
+     */
     /* default */ Instant expiresAt() {
         return expiresAt;
     }
 
+    /**
+     * Erases the retained signing-input bytes.
+     *
+     * <p>Previously returned copies remain the caller's responsibility. The envelope
+     * must not be reused for verification after erasure.</p>
+     */
     /* default */ void clear() {
         Arrays.fill(signatureInput, (byte) 0);
     }

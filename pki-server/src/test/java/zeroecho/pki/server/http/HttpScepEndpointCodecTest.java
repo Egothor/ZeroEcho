@@ -51,12 +51,17 @@ import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.scep.ScepEndpoint;
 
-/** Strict HTTPS decoding coverage for the SCEP endpoint admin operation family. */
+/**
+ * Strict HTTPS decoding coverage for the SCEP endpoint admin operation family.
+ */
 class HttpScepEndpointCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
     private static final String VALID_HASH = "a".repeat(64);
 
+    /**
+     * Checks SCEP endpoint/enrollment-policy coordinates, exact lowercase challenge-password commitment and mutating administer classification.
+     */
     @Test
     void registersScepEndpoint() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -80,6 +85,9 @@ class HttpScepEndpointCodecTest {
         assertTrue(DESCRIPTORS.require(ServerControlOperation.RegisterScepEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks that an otherwise valid SCEP registration rejects an additional unexpected boolean argument.
+     */
     @Test
     void rejectsRegistrationWithUnknownField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -93,6 +101,9 @@ class HttpScepEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterScepEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a SCEP endpoint label containing spaces fails strict decoding.
+     */
     @Test
     void rejectsRegistrationWithInvalidLabel() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -105,6 +116,9 @@ class HttpScepEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterScepEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that an uppercase 64-character challenge-password digest fails SCEP registration decoding.
+     */
     @Test
     void rejectsRegistrationWithInvalidHash() {
         String badHash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -118,6 +132,9 @@ class HttpScepEndpointCodecTest {
                 () -> decode(ServerControlOperation.RegisterScepEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that a label-only SCEP removal decodes to the administer permission without accepting caller scope coordinates.
+     */
     @Test
     void deregistersEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"devices\"}}";
@@ -130,6 +147,9 @@ class HttpScepEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.DeregisterScepEndpoint.NAME).action());
     }
 
+    /**
+     * Checks that SCEP removal rejects an added authority field instead of allowing input to widen its target.
+     */
     @Test
     void rejectsDeregistrationWithExtraField() {
         String json = "{\"version\":1,\"arguments\":{"
@@ -139,6 +159,9 @@ class HttpScepEndpointCodecTest {
                 () -> decode(ServerControlOperation.DeregisterScepEndpoint.NAME, json));
     }
 
+    /**
+     * Checks that label-only SCEP inspection selects the read action and is classified as nonmutating.
+     */
     @Test
     void inspectsEndpointByLabel() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"devices\"}}";
@@ -152,6 +175,9 @@ class HttpScepEndpointCodecTest {
         assertFalse(DESCRIPTORS.require(ServerControlOperation.InspectScepEndpoint.NAME).mutating());
     }
 
+    /**
+     * Checks that a SCEP listing preserves offset zero and limit 50 and selects the endpoint read permission.
+     */
     @Test
     void listsEndpointsWithBoundedPagination() {
         String json = "{\"version\":1,\"arguments\":{\"offset\":0,\"limit\":50}}";
@@ -165,6 +191,9 @@ class HttpScepEndpointCodecTest {
                 DESCRIPTORS.require(ServerControlOperation.ListScepEndpoints.NAME).action());
     }
 
+    /**
+     * Checks SCEP listing rejection for offset minus one, limit zero and limit 257.
+     */
     @Test
     void rejectsListWithInvalidPaginationBounds() {
         assertThrows(IllegalArgumentException.class, () -> decode(
@@ -184,6 +213,9 @@ class HttpScepEndpointCodecTest {
                 REALM, DESCRIPTORS::require);
     }
 
+    /**
+     * Checks that SCEP registration cannot infer its enrollment policy from a certificate profile alone.
+     */
     @Test
     void rejectsRegistrationWithoutExplicitEnrollmentProfile() {
         String json = "{\"version\":1,\"arguments\":{\"label\":\"endpoint\",\"authorityId\":\"authority\","

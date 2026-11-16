@@ -54,13 +54,21 @@ import java.util.Objects;
  */
 public final class AlgorithmIdentifier {
 
-    /** Encoding form of the optional {@code parameters} field. */
+    /**
+     * Encoding form of the optional {@code parameters} field.
+     */
     public enum ParameterForm {
-        /** No parameters field. */
+        /**
+         * No parameters field.
+         */
         ABSENT,
-        /** Parameters field present and equal to DER NULL. */
+        /**
+         * Parameters field present and equal to DER NULL.
+         */
         DER_NULL,
-        /** Parameters field present and equal to exact canonical DER. */
+        /**
+         * Parameters field present and equal to exact canonical DER.
+         */
         EXACT_DER
     }
 
@@ -100,6 +108,7 @@ public final class AlgorithmIdentifier {
      * @param oid dotted-decimal object identifier
      * @param derParameters exact DER encoding of the parameters field
      * @return identifier with an exact-DER parameter field
+     * @throws NullPointerException if {@code derParameters} is null
      */
     public static AlgorithmIdentifier exact(String oid, byte[] derParameters) {
         Objects.requireNonNull(derParameters, "derParameters");
@@ -142,6 +151,12 @@ public final class AlgorithmIdentifier {
         return oid;
     }
 
+    /**
+     * Compares the OID, parameter representation, and exact parameter bytes by value.
+     *
+     * @param other object to compare, or null
+     * @return true for a compatible value with equal OID, parameter representation, and exact parameter bytes; false otherwise
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -154,11 +169,21 @@ public final class AlgorithmIdentifier {
                 && Arrays.equals(parameters, that.parameters);
     }
 
+    /**
+     * Hashes the OID, parameter representation, and exact parameter bytes using the same components as equality.
+     *
+     * @return value-based hash code consistent with equals
+     */
     @Override
     public int hashCode() {
         return Objects.hash(oid, parameterForm, Arrays.hashCode(parameters));
     }
 
+    /**
+     * Returns a diagnostic representation containing the OID and parameter representation, omitting encoded parameter bytes.
+     *
+     * @return OID and parameter representation, omitting encoded parameter bytes
+     */
     @Override
     public String toString() {
         return "AlgorithmIdentifier[oid=" + oid + ", parameterForm=" + parameterForm + ']';

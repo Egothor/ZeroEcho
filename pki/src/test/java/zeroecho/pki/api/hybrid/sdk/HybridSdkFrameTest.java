@@ -40,7 +40,13 @@ import java.util.HexFormat;
 import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for hybrid SDK frame.
+ */
 class HybridSdkFrameTest {
+    /**
+     * Pins algorithm identifiers and canonical origins.
+     */
     @Test void pinsAlgorithmIdentifiersAndCanonicalOrigins() {
         assertEquals("300a06082a8648ce3d040303", HexFormat.of().formatHex(HybridSdkFrame.primaryAlgorithm()));
         assertEquals("300b0609608648016503040313", HexFormat.of().formatHex(HybridSdkFrame.alternativeAlgorithm()));
@@ -49,6 +55,9 @@ class HybridSdkFrameTest {
             assertThrows(IllegalArgumentException.class, () -> HybridSdkFrame.requireOrigin(origin));
         }
     }
+    /**
+     * Matches independent python framing vectors and separates proof roles.
+     */
     @Test void matchesIndependentPythonFramingVectorsAndSeparatesProofRoles() {
         var primary = vector();
         assertEquals(687, primary.encode().length);
@@ -63,6 +72,9 @@ class HybridSdkFrameTest {
         assertNotEquals(changed[0], primary.field(3)[0]);
     }
 
+    /**
+     * Rejects unknown kinds missing fields trailing data and length overflow.
+     */
     @Test void rejectsUnknownKindsMissingFieldsTrailingDataAndLengthOverflow() {
         var frame = vector();
         assertThrows(IllegalArgumentException.class, () -> new HybridSdkFrame(4, frame.fields()));
@@ -76,6 +88,9 @@ class HybridSdkFrameTest {
         assertThrows(IllegalArgumentException.class, () -> HybridSdkFrame.decode(oversized));
     }
 
+    /**
+     * Native authentication contexts are closed and carrier bound.
+     */
     @Test void nativeAuthenticationContextsAreClosedAndCarrierBound() {
         var context = new java.util.TreeMap<String, HybridSdkValue>();
         for (String key : new String[]{"endpointId", "endpointCommitment", "certificateSha256", "canonicalKeySha256", "issuerSerialSha256"}) {
@@ -95,6 +110,9 @@ class HybridSdkFrameTest {
         assertThrows(IllegalArgumentException.class, () -> new HybridSdkFrame(6, fields));
     }
 
+    /**
+     * CMP request id preserves the native unsigned64 boundary.
+     */
     @Test void cmpRequestIdPreservesTheNativeUnsigned64Boundary() {
         var context = new java.util.TreeMap<String, HybridSdkValue>();
         for (String key : new String[]{"endpointId", "endpointCommitment", "authenticationPolicyCommitment", "manifestCommitment",
@@ -119,6 +137,11 @@ class HybridSdkFrameTest {
         }
     }
 
+    /**
+     * Constructs the fixed canonical SDK frame used by the encoding vectors.
+     *
+     * @return fixed SDK frame for exact byte/digest assertions
+     */
     static HybridSdkFrame vector() {
         var fields = new TreeMap<Integer, byte[]>();
         fields.put(1, text("zeroecho-hybrid-sdk-v1")); fields.put(2, text("example-realm"));

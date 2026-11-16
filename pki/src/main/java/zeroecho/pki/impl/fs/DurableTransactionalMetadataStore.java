@@ -156,6 +156,20 @@ public final class DurableTransactionalMetadataStore implements TransactionalMet
                 DurableMetadataTransactionSupport.DefaultStagingOperations.INSTANCE);
     }
 
+    /**
+     * Creates an owned durable adapter with explicit persistence and resource-closure test seams.
+     *
+     * @param logPath exact new structural log path
+     * @param storeId authoritative store identity to persist
+     * @param maximumRecordBytes optional positive maximum encoded record length
+     * @param stagingOperations deterministic store-owned spool operations
+     * @param logFaults checked structural log fault injector
+     * @param engineFaults checked post-force publication fault injector
+     * @return owned exclusive-writer store; caller closes it
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if the advertised maximum record bound is invalid
+     * @throws IOException if log creation or adapter initialization fails
+     */
     /* default */ static DurableTransactionalMetadataStore createForTest(
             Path logPath,
             MetadataStoreId storeId,
@@ -173,6 +187,21 @@ public final class DurableTransactionalMetadataStore implements TransactionalMet
                 stagingOperations);
     }
 
+    /**
+     * Creates an owned durable adapter with explicit persistence and resource-closure test seams.
+     *
+     * @param logPath exact new structural log path
+     * @param storeId authoritative store identity to persist
+     * @param maximumRecordBytes optional positive maximum encoded record length
+     * @param stagingOperations deterministic store-owned spool operations
+     * @param logFaults checked structural log fault injector
+     * @param engineFaults checked post-force publication fault injector
+     * @param sliceOpener deterministic bounded-value reader for child-resource tests
+     * @return owned exclusive-writer store; caller closes it
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if the advertised maximum record bound is invalid
+     * @throws IOException if log creation or adapter initialization fails
+     */
     /* default */ static DurableTransactionalMetadataStore createForTest(
             Path logPath,
             MetadataStoreId storeId,
@@ -192,53 +221,76 @@ public final class DurableTransactionalMetadataStore implements TransactionalMet
                 sliceOpener);
     }
 
+    /**
+     * Returns the number of adapter operations currently holding lifecycle registration.
+     *
+     * @return number of adapter operations currently holding lifecycle registration
+     */
     /* default */ int activeOperationsForTest() {
         return lifecycle.activeOperationCount();
     }
 
+    /**
+     * Waits uninterruptibly for adapter closure to begin so lifecycle races can be tested deterministically.
+     *
+     */
     /* default */ void awaitClosingForTest() {
         lifecycle.awaitClosing();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataStoreId id() {
         lifecycle.verifyOpen();
         return storeId;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataStoreCapabilities capabilities() {
         lifecycle.verifyOpen();
         return capabilities;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataTransaction beginTransaction() throws IOException {
         return transactions.begin();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataCommitResult resolve(MetadataTransactionId transactionId) throws IOException {
         return transactions.resolve(transactionId);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void acknowledge(MetadataTransactionId transactionId) throws IOException {
         transactions.acknowledge(transactionId);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataSnapshot snapshot() throws IOException {
         return snapshots.open();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         lifecycle.close(engine);

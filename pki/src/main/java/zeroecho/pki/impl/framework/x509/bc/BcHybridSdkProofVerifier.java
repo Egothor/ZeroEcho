@@ -60,9 +60,13 @@ import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 
-/** Fixed-suite v1 verifier of two SUBJECT-key proofs; it grants no issuance authority. */
+/**
+ * Fixed-suite v1 verifier of two SUBJECT-key proofs; it grants no issuance authority.
+ */
 public final class BcHybridSdkProofVerifier {
-    /** Creates a stateless, thread-safe verifier. */
+    /**
+     * Creates a stateless, thread-safe verifier.
+     */
     public BcHybridSdkProofVerifier() { }
 
     /**
@@ -75,6 +79,7 @@ public final class BcHybridSdkProofVerifier {
      * @param now authoritative acceptance time
      * @return immutable sha512-prefixed F3 proof commitment
      * @throws PkiException for mismatched request, expired context or invalid proofs
+     * @throws NullPointerException if {@code request}, {@code primaryFrame}, {@code primaryProof}, {@code alternativeProof} or {@code now} is null
      */
     public String verify(ParsedHybridSdkRequest request, HybridSdkFrame primaryFrame,
             byte[] primaryProof, byte[] alternativeProof, Instant now) {
@@ -111,6 +116,13 @@ public final class BcHybridSdkProofVerifier {
         }
     }
 
+    /**
+     * Checks the original CSR or CRMF request's exact P-384 proof against its parsed public key.
+     *
+     * @param request bounded parsed enrollment request retaining its original DER payload
+     * @throws NullPointerException if the request or required retained evidence is null
+     * @throws IllegalArgumentException if the original request, algorithm, key or proof is inconsistent or invalid
+     */
     static void requireRequest(ParsedHybridSdkRequest request) {
         try {
             Keys keys = keys(request); byte[] der = original(request);

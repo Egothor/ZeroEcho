@@ -80,13 +80,19 @@ import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
  */
 public final class ZeroEchoLibSigningProviderFactory
         implements SigningProviderFactory, AlgorithmExecutionCapabilityProvider {
-    /** Stable failure code for a missing explicit keyring unlock provider. */
+    /**
+     * Stable failure code for a missing explicit keyring unlock provider.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final String DC_KEYRING_UNLOCK_PROVIDER_REQUIRED = "KEYRING_UNLOCK_PROVIDER_REQUIRED";
-    /** Stable failure code for an unlock-provider acquisition failure. */
+    /**
+     * Stable failure code for an unlock-provider acquisition failure.
+     */
     @SuppressWarnings("PMD.LongVariable")
     public static final String DC_KEYRING_UNLOCK_PROVIDER_FAILED = "KEYRING_UNLOCK_PROVIDER_FAILED";
-    /** Stable failure code for an I/O failure while opening the keyring. */
+    /**
+     * Stable failure code for an I/O failure while opening the keyring.
+     */
     public static final String DC_KEYRING_OPEN_FAILED = "KEYRING_OPEN_FAILED";
 
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSigningProviderFactory.class.getName());
@@ -115,17 +121,24 @@ public final class ZeroEchoLibSigningProviderFactory
      *
      * @param keyringUnlockProvider provider returning a fresh destroyable password
      *                              for each keyring open
+     * @throws NullPointerException if {@code keyringUnlockProvider} is null
      */
     public ZeroEchoLibSigningProviderFactory(KeyringUnlockProvider keyringUnlockProvider) {
         this.keyringUnlockProvider = java.util.Objects.requireNonNull(keyringUnlockProvider,
                 "keyringUnlockProvider must not be null");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "zeroecho-lib";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(KEY_KEYRING_PATH, KEY_OPERATION_HORIZON, KEY_KEYREF_PREFIX,
@@ -224,6 +237,9 @@ public final class ZeroEchoLibSigningProviderFactory
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningProvider allocate(final ProviderConfig config) {
         KeyringUnlockProvider provider = keyringUnlockProvider;
@@ -241,6 +257,7 @@ public final class ZeroEchoLibSigningProviderFactory
      * @return opened provider owning an unlocked keyring
      * @throws PkiException     if the keyring unlock provider is absent or fails
      * @throws RuntimeException if provider allocation otherwise fails
+     * @throws NullPointerException if {@code dependencies} is null
      */
     @Override
     public SigningProvider allocate(final ProviderConfig config, SigningProviderRuntimeDependencies dependencies) {

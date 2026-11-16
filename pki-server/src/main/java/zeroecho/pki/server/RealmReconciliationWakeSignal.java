@@ -37,11 +37,20 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Realm-scoped payload-free coalescing wake signal with at most one lifecycle listener. */
+/**
+ * Realm-scoped payload-free coalescing wake signal with at most one lifecycle listener.
+ */
 final class RealmReconciliationWakeSignal {
     private final AtomicReference<Runnable> listener = new AtomicReference<>();
 
-    /** Registers the realm worker's sole listener until the returned registration is closed. */
+    /**
+     * Registers the realm worker's sole payload-free listener until its registration is closed.
+     *
+     * @param callback local wake action; must not be null
+     * @return idempotent registration owner that removes only this exact callback
+     * @throws NullPointerException if callback is null
+     * @throws IllegalStateException if another listener remains registered
+     */
     /* default */ AutoCloseable register(Runnable callback) {
         Runnable exact = Objects.requireNonNull(callback, "callback");
         if (!listener.compareAndSet(null, exact)) {
@@ -55,7 +64,9 @@ final class RealmReconciliationWakeSignal {
         };
     }
 
-    /** Signals available work without retaining an operation identifier or payload. */
+    /**
+     * Signals available work without retaining an operation identifier or payload.
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // Foreground committed outcomes must not depend on wakeup.
     /* default */ void signal() {
         Runnable callback = listener.get();

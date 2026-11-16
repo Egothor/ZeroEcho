@@ -49,10 +49,18 @@ import tools.jackson.core.json.JsonFactoryBuilder;
 import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Strict bounded JSON reader for CLI configuration and operation plans. */
+/**
+ * Strict bounded JSON reader for CLI configuration and operation plans.
+ */
 final class PkiCliJson {
 
+    /**
+     * Maximum encoded JSON document size in bytes accepted by the bounded CLI parser.
+     */
     /* default */ static final int MAXIMUM_DOCUMENT_BYTES = 1_048_576;
+    /**
+     * Maximum number of entries in one JSON object or array, bounding parser allocation.
+     */
     /* default */ static final int MAXIMUM_CONTAINER_ENTRIES = 2_048;
 
     private static final int MAXIMUM_DEPTH = 16;
@@ -64,14 +72,41 @@ final class PkiCliJson {
     private PkiCliJson() {
     }
 
+    /**
+     * Parses one bounded configuration/plan JSON value with strict duplicates and no JSON null values. Input
+     * bytes are borrowed for the call.
+     *
+     * @param document complete stable JSON bytes without a UTF-8 BOM
+     * @return immutable typed value under the one-MiB, 16-level, 2048-entry container limits
+     * @throws IllegalArgumentException if bytes are null/empty/oversized or syntax, types, duplicate fields,
+     *     bounds or trailing tokens are invalid
+     */
     /* default */ static PkiOperationValue parse(byte[] document) {
         return parse(document, JSON_FACTORY, MAXIMUM_DOCUMENT_BYTES, false, false);
     }
 
+    /**
+     * Parses one remote-response JSON value under the four-MiB response limits. Input bytes are borrowed for
+     * the call.
+     *
+     * @param document complete stable JSON bytes without a UTF-8 BOM
+     * @return immutable typed value; root object result/failure names must both occur, with root nulls omitted
+     * @throws IllegalArgumentException if bytes are null/empty/oversized or syntax, types, duplicate fields,
+     *     bounds or trailing tokens are invalid
+     */
     /* default */ static PkiOperationValue parseResponse(byte[] document) {
         return parse(document, RESPONSE_FACTORY, 4 * MAXIMUM_DOCUMENT_BYTES, true, true);
     }
 
+    /**
+     * Parses one operation-argument JSON value under the 16-MiB argument limits. Input bytes are borrowed for
+     * the call.
+     *
+     * @param document complete stable JSON bytes without a UTF-8 BOM
+     * @return immutable typed value with up to 4096 entries per container
+     * @throws IllegalArgumentException if bytes are null/empty/oversized or syntax, types, duplicate fields,
+     *     bounds or trailing tokens are invalid
+     */
     /* default */ static PkiOperationValue parseArgument(byte[] document) {
         return parse(document, ARGUMENT_FACTORY, 16 * MAXIMUM_DOCUMENT_BYTES, true, false);
     }

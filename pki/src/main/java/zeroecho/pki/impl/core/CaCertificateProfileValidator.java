@@ -75,6 +75,25 @@ final class CaCertificateProfileValidator {
     private CaCertificateProfileValidator() {
     }
 
+    /**
+     * Applies the CA profile to requester subject, key, and validity inputs.
+     *
+     * @param operation validated CA operation kind; must not be null
+     * @param activeProfile exact active profile selected from authoritative state
+     * @param expectedKind required root or intermediate CA profile kind
+     * @param formatId validated credential format identity; must not be null
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param subjectCaId logical subject authority identity; must not be null
+     * @param requestedSubject requester-supplied subject before profile-fixed RDNs are applied
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param requestedValidity optional requested validity before profile bounds are applied
+     * @param evaluationTime authoritative policy evaluation instant
+     * @param issuerNotAfter optional upper validity bound from the issuing credential
+     * @param serial positive serial number encoded in at most 20 signed integer bytes
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @return gate-approved CA certificate request
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
+     */
     /* package */ static ValidatedCaCertificateRequest validate(ValidatedCaCertificateRequest.Operation operation,
             ActiveCertificateProfile activeProfile, CertificateProfileKind expectedKind, FormatId formatId,
             PkiId issuerCaId, PkiId subjectCaId, SubjectRef requestedSubject, EncodedObject exactPublicKey,
@@ -91,6 +110,25 @@ final class CaCertificateProfileValidator {
      * Package-private continuation used only after validateSubject has approved the
      * requester input. It preserves profile-fixed RDNs without treating them as a
      * second requester submission.
+     */
+    /**
+     * Applies CA policy to an already approved canonical subject without reclassifying fixed RDNs.
+     *
+     * @param operation validated CA operation kind; must not be null
+     * @param activeProfile exact active profile selected from authoritative state
+     * @param expectedKind required root or intermediate CA profile kind
+     * @param formatId validated credential format identity; must not be null
+     * @param issuerCaId logical issuing authority identity; must not be null
+     * @param subjectCaId logical subject authority identity; must not be null
+     * @param approvedSubject previously approved canonical subject RDNs, including profile-fixed values
+     * @param exactPublicKey exact encoded subject public key, defensively copied; must not be null
+     * @param requestedValidity optional requested validity before profile bounds are applied
+     * @param evaluationTime authoritative policy evaluation instant
+     * @param issuerNotAfter optional upper validity bound from the issuing credential
+     * @param serial positive serial number encoded in at most 20 signed integer bytes
+     * @param authority frozen X.509 authority snapshot; must not be null
+     * @return gate-approved CA certificate request
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
      */
     /* package */ static ValidatedCaCertificateRequest validateApprovedSubject(
             ValidatedCaCertificateRequest.Operation operation, ActiveCertificateProfile activeProfile,
@@ -111,6 +149,14 @@ final class CaCertificateProfileValidator {
                 serial, definition.caPolicy(), definition.algorithmBindingPolicy());
     }
 
+    /**
+     * Requires the selected CA profile kind, format, and supported issuance shape.
+     *
+     * @param activeProfile exact active profile selected from authoritative state
+     * @param expectedKind required root or intermediate CA profile kind
+     * @param formatId validated credential format identity; must not be null
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
+     */
     /* package */ static void requireProfileShape(ActiveCertificateProfile activeProfile,
             CertificateProfileKind expectedKind, FormatId formatId) {
         requireProfileShape(activeProfile.definition(), expectedKind, formatId);
@@ -127,6 +173,14 @@ final class CaCertificateProfileValidator {
         }
     }
 
+    /**
+     * Validates requester RDNs and adds profile-fixed subject values.
+     *
+     * @param requestedSubject requester-supplied subject before profile-fixed RDNs are applied
+     * @param definition validated certificate profile definition
+     * @return immutable approved canonical subject RDNs
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
+     */
     /* package */ static List<SubjectRdn> validateSubject(SubjectRef requestedSubject,
             CertificateProfileDefinition definition) {
         List<SubjectRdn> requested = parseSubject(requestedSubject);
@@ -175,6 +229,14 @@ final class CaCertificateProfileValidator {
      * Validates a previously approved canonical subject without reclassifying
      * profile-fixed RDNs as requester input.
      */
+    /**
+     * Validates an authoritative subject while preserving approved profile-fixed RDNs.
+     *
+     * @param trustedSubject previously approved authoritative subject; principal input preserves DER RDN order
+     * @param definition validated certificate profile definition
+     * @return immutable approved canonical subject RDNs
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
+     */
     /* package */ static List<SubjectRdn> validateTrustedSubject(SubjectRef trustedSubject,
             CertificateProfileDefinition definition) {
         return validateTrustedSubject(parseSubject(trustedSubject), definition);
@@ -183,6 +245,14 @@ final class CaCertificateProfileValidator {
     /*
      * Reads an authoritative principal in DER order. Re-parsing its RFC2253 text
      * through the requester-oriented renderer would reverse a multi-RDN name.
+     */
+    /**
+     * Validates an authoritative subject while preserving approved profile-fixed RDNs.
+     *
+     * @param trustedSubject previously approved authoritative subject; principal input preserves DER RDN order
+     * @param definition validated certificate profile definition
+     * @return immutable approved canonical subject RDNs
+     * @throws PkiException if the selected profile or subject, key, or validity policy rejects the input
      */
     /* package */ static List<SubjectRdn> validateTrustedSubject(X500Principal trustedSubject,
             CertificateProfileDefinition definition) {

@@ -33,10 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.server.enrollment;
 
-/** Lifecycle state of an enrollment profile. */
+/**
+ * Lifecycle state of an enrollment profile.
+ */
 public enum EnrollmentProfileState {
-    /** Profile is active and can process enrollment requests. */
+    /**
+     * Profile is active and can process enrollment requests.
+     */
     ACTIVE,
-    /** Profile is suspended; enrollment requests are rejected. */
+    /**
+     * Profile is suspended; enrollment requests are rejected.
+     */
     SUSPENDED
 }

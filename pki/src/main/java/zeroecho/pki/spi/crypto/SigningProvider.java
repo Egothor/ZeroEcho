@@ -81,9 +81,13 @@ import zeroecho.pki.api.audit.AccessContext;
 @SuppressWarnings("PMD.PreserveStackTrace")
 public interface SigningProvider extends AutoCloseable {
 
-    /** Immutable 256-bit commitment to effective provider configuration. */
+    /**
+     * Immutable 256-bit commitment to effective provider configuration.
+     */
     final class ConfigurationCommitment {
-        /** Required commitment length in bytes. */
+        /**
+         * Required commitment length in bytes.
+         */
         public static final int BYTE_LENGTH = 32;
         private final byte[] bytes;
 
@@ -91,6 +95,8 @@ public interface SigningProvider extends AutoCloseable {
          * Creates a commitment from a borrowed exact 32-byte value.
          *
          * @param bytes exact commitment bytes, copied by the constructor
+         * @throws NullPointerException if bytes is null
+         * @throws IllegalArgumentException if bytes does not contain exactly 32 bytes
          */
         public ConfigurationCommitment(byte[] bytes) {
             Objects.requireNonNull(bytes, "bytes");
@@ -119,17 +125,26 @@ public interface SigningProvider extends AutoCloseable {
             return other != null && MessageDigest.isEqual(bytes, other.bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean equals(Object other) {
             return this == other || other instanceof ConfigurationCommitment commitment
                     && MessageDigest.isEqual(bytes, commitment.bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int hashCode() {
             return Arrays.hashCode(bytes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String toString() {
             return "ConfigurationCommitment[redacted]";
@@ -169,6 +184,8 @@ public interface SigningProvider extends AutoCloseable {
      * @param namespace exact {@code storeNamespace + "." + providerId}
      * @param horizon authoritative identity horizon
      * @param permittedSkew authoritative future skew
+     * @throws NullPointerException if namespace, horizon, permittedSkew is null
+     * @throws IllegalArgumentException if namespace does not end with this provider identity, horizon is not 90 days or permittedSkew is nonzero
      */
     default void validateSigningDomain(String namespace, Duration horizon, Duration permittedSkew) {
         Objects.requireNonNull(namespace, "namespace");
@@ -210,26 +227,48 @@ public interface SigningProvider extends AutoCloseable {
     OperationObservation cancel(PkiId operationId, long fencingToken, CancellationReason reason,
             CallControl control);
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     void close();
 
-    /** Finite, non-sensitive provider observation taxonomy. */
+    /**
+     * Finite, non-sensitive provider observation taxonomy.
+     */
     enum ObservationState {
-        /** Provider knows the operation and it remains pending. */
+        /**
+         * Provider knows the operation and it remains pending.
+         */
         PENDING(false),
-        /** Provider cannot currently determine whether the operation exists. */
+        /**
+         * Provider cannot currently determine whether the operation exists.
+         */
         RETRYABLE_UNKNOWN(false),
-        /** Provider produced a signature. */
+        /**
+         * Provider produced a signature.
+         */
         SUCCEEDED(true),
-        /** Provider reached a permanent failure. */
+        /**
+         * Provider reached a permanent failure.
+         */
         FAILED(true),
-        /** Provider confirmed cancellation. */
+        /**
+         * Provider confirmed cancellation.
+         */
         CANCELLED(true),
-        /** Outcome cannot be recovered and execution must not be repeated. */
+        /**
+         * Outcome cannot be recovered and execution must not be repeated.
+         */
         UNRECOVERABLE(true);
 
         private final boolean terminal;
 
+        /**
+         * Associates a provider observation state with its terminal classification.
+         *
+         * @param terminal whether this state ends observation of the operation
+         */
         ObservationState(boolean terminal) {
             this.terminal = terminal;
         }
@@ -244,50 +283,92 @@ public interface SigningProvider extends AutoCloseable {
         }
     }
 
-    /** Finite safe detail codes; raw provider reasons never cross this boundary. */
+    /**
+     * Finite safe detail codes; raw provider reasons never cross this boundary.
+     */
     enum DetailCode {
-        /** Operation remains pending. */
+        /**
+         * Operation remains pending.
+         */
         PENDING,
-        /** Operation existence or outcome is temporarily unknown. */
+        /**
+         * Operation existence or outcome is temporarily unknown.
+         */
         RETRYABLE_UNKNOWN,
-        /** Signature was produced. */
+        /**
+         * Signature was produced.
+         */
         SIGNED,
-        /** Provider policy denied the request. */
+        /**
+         * Provider policy denied the request.
+         */
         DENIED,
-        /** Cancellation was confirmed. */
+        /**
+         * Cancellation was confirmed.
+         */
         CANCELLED,
-        /** Local process loss made an in-flight outcome unrecoverable. */
+        /**
+         * Local process loss made an in-flight outcome unrecoverable.
+         */
         LOCAL_RESTART_UNRECOVERABLE,
-        /** Provider returned an invalid operation identity or result shape. */
+        /**
+         * Provider returned an invalid operation identity or result shape.
+         */
         PROVIDER_RESULT_INVALID,
-        /** Key reference is malformed for this provider. */
+        /**
+         * Key reference is malformed for this provider.
+         */
         INVALID_KEY_REFERENCE,
-        /** Algorithm identity is invalid or unsupported. */
+        /**
+         * Algorithm identity is invalid or unsupported.
+         */
         INVALID_ALGORITHM,
-        /** Requested algorithm does not match the selected key. */
+        /**
+         * Requested algorithm does not match the selected key.
+         */
         ALGORITHM_MISMATCH,
-        /** Selected key is unavailable. */
+        /**
+         * Selected key is unavailable.
+         */
         KEY_NOT_FOUND,
-        /** Candidate content did not match its commitment. */
+        /**
+         * Candidate content did not match its commitment.
+         */
         CONTENT_INTEGRITY_FAILURE,
-        /** Requested signature encoding is unsupported. */
+        /**
+         * Requested signature encoding is unsupported.
+         */
         @SuppressWarnings("PMD.LongVariable")
         UNSUPPORTED_SIGNATURE_ENCODING,
-        /** Keyring input/output failed. */
+        /**
+         * Keyring input/output failed.
+         */
         KEYRING_IO_FAILURE,
-        /** Cryptographic execution failed. */
+        /**
+         * Cryptographic execution failed.
+         */
         CRYPTO_FAILURE,
-        /** The call or request deadline elapsed before completion. */
+        /**
+         * The call or request deadline elapsed before completion.
+         */
         DEADLINE_EXPIRED
     }
 
-    /** Finite non-sensitive reasons accepted by provider cancellation. */
+    /**
+     * Finite non-sensitive reasons accepted by provider cancellation.
+     */
     enum CancellationReason {
-        /** Explicit caller cancellation. */
+        /**
+         * Explicit caller cancellation.
+         */
         CALLER_REQUESTED,
-        /** Runtime is closing. */
+        /**
+         * Runtime is closing.
+         */
         RUNTIME_CLOSING,
-        /** Authoritative signing deadline elapsed. */
+        /**
+         * Authoritative signing deadline elapsed.
+         */
         DEADLINE_EXPIRED
     }
 
@@ -302,10 +383,21 @@ public interface SigningProvider extends AutoCloseable {
      */
     record OperationObservation(PkiId operationId, ObservationState state, Instant updatedAt,
             DetailCode detailCode, Optional<EncodedObject> signature) {
-        /** Maximum signature representation accepted across the SPI. */
+        /**
+         * Maximum signature representation accepted across the SPI.
+         */
         public static final int MAXIMUM_SIGNATURE_BYTES = 1_048_576;
 
-        /** Validates and snapshots one bounded observation. */
+        /**
+         * Validates and snapshots one bounded observation.
+         * @param operationId exact requested operation identifier
+         * @param state finite lifecycle observation
+         * @param updatedAt provider-observed transition time
+         * @param detailCode finite safe classification
+         * @param signature signature only for successful observations
+         * @throws NullPointerException if operationId, state, updatedAt, detailCode, signature is null
+         * @throws IllegalArgumentException if signature presence disagrees with success state, its representation is empty or exceeds the finite bound, or detailCode disagrees with state
+         */
         public OperationObservation {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(state, "state");
@@ -355,7 +447,12 @@ public interface SigningProvider extends AutoCloseable {
      * @param cancellation cooperative cancellation signal
      */
     record CallControl(Instant deadline, CancellationSignal cancellation) {
-        /** Validates one call control. */
+        /**
+         * Validates one call control.
+         * @param deadline exclusive call deadline
+         * @param cancellation cooperative cancellation signal
+         * @throws NullPointerException if deadline, cancellation is null
+         */
         public CallControl {
             Objects.requireNonNull(deadline, "deadline");
             Objects.requireNonNull(cancellation, "cancellation");
@@ -365,6 +462,8 @@ public interface SigningProvider extends AutoCloseable {
          * Rejects work at or after the deadline or after cancellation.
          *
          * @param now current clock instant
+         * @throws NullPointerException if now is null
+         * @throws IllegalStateException if cancellation was requested or now is at or after the call deadline
          */
         public void requireActive(Instant now) {
             Objects.requireNonNull(now, "now");
@@ -397,7 +496,24 @@ public interface SigningProvider extends AutoCloseable {
             ContentCommitment contentCommitment, RepeatableContent content,
             Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline,
             CancellationSignal cancellation) {
-        /** Validates structure and the constant-time canonical fingerprint. */
+        /**
+         * Validates structure and the constant-time canonical fingerprint.
+         * @param operationId exact operation identifier
+         * @param namespace exact store/provider namespace
+         * @param semanticFingerprint canonical request fingerprint
+         * @param configurationCommitment exact provider-configuration commitment
+         * @param fencingToken authoritative positive fencing token
+         * @param accessContext trusted authorization and audit context
+         * @param keyRef opaque provider key reference
+         * @param algorithmId canonical signing algorithm identifier
+         * @param contentCommitment exact candidate-content commitment
+         * @param content repeatable candidate content
+         * @param preferredSignatureEncoding requested signature encoding
+         * @param deadline optional signing deadline
+         * @param cancellation cooperative request cancellation signal
+         * @throws NullPointerException if operationId, namespace, semanticFingerprint, configurationCommitment, accessContext, keyRef, algorithmId, contentCommitment, content, preferredSignatureEncoding, deadline, cancellation is null
+         * @throws IllegalArgumentException if namespace or algorithmId is blank, fencingToken is not positive or semanticFingerprint differs from the canonical request fingerprint
+         */
         public SignRequest {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(namespace, "namespace");
@@ -450,7 +566,10 @@ public interface SigningProvider extends AutoCloseable {
                     preferredSignatureEncoding, deadline, CancellationSignal.NONE);
         }
 
-        /** Returns a deliberately redacted representation of the signing request. */
+        /**
+         * Returns a deliberately redacted representation of the signing request.
+         * @return {@inheritDoc}
+         */
         @Override
         public String toString() {
             return "SignRequest[redacted]";
@@ -468,6 +587,7 @@ public interface SigningProvider extends AutoCloseable {
          * @param preferredSignatureEncoding requested signature encoding
          * @param deadline optional signing deadline
          * @return canonical constant-size fingerprint
+         * @throws IllegalStateException if the canonical request fingerprint cannot be encoded or hashed
          */
         public static String fingerprint(ConfigurationCommitment configurationCommitment, String namespace,
                 AccessContext accessContext, KeyRef keyRef, String algorithmId,
@@ -482,6 +602,26 @@ public interface SigningProvider extends AutoCloseable {
             }
         }
 
+        /**
+         * Computes the canonical request fingerprint with an injected digest and cleanup observer.
+         *
+         * <p>The supplied digest must be fresh SHA-256 state. Owned configuration and digest
+         * arrays are cleared before the observer receives them; payload content is not read.</p>
+         *
+         * @param configurationCommitment exact provider configuration commitment
+         * @param namespace exact store and provider namespace
+         * @param accessContext trusted authorization and audit coordinates
+         * @param keyRef opaque provider key reference
+         * @param algorithmId canonical signature algorithm identity
+         * @param contentCommitment exact candidate content length and digest
+         * @param preferredSignatureEncoding requested encoding, or an empty optional
+         * @param deadline signing deadline, or an empty optional
+         * @param digest fresh SHA-256 digest state consumed by the calculation
+         * @param cleanupObserver callback receiving each owned array after it has been cleared
+         * @return version-prefixed lowercase hexadecimal request fingerprint
+         * @throws NullPointerException if a required reference is null
+         * @throws IllegalStateException if a string cannot fit the fingerprint's modified-UTF framing
+         */
         @SuppressWarnings("PMD.ExcessiveParameterList")
         /* default */ static String fingerprintWithDigest(ConfigurationCommitment configurationCommitment,
                 String namespace,
@@ -556,10 +696,19 @@ public interface SigningProvider extends AutoCloseable {
      * @param sha256 lowercase hexadecimal SHA-256 digest
      */
     record ContentCommitment(String version, long length, String sha256) {
-        /** Current commitment version. */
+        /**
+         * Current commitment version.
+         */
         public static final String SHA256_V1 = "content-sha256:v1";
 
-        /** Validates a canonical content commitment. */
+        /**
+         * Validates a canonical content commitment.
+         * @param version exact commitment schema identifier
+         * @param length exact candidate length
+         * @param sha256 lowercase hexadecimal SHA-256 digest
+         * @throws NullPointerException if version, sha256 is null
+         * @throws IllegalArgumentException if the version is unsupported, length is negative or sha256 is not 64 lowercase hexadecimal characters
+         */
         public ContentCommitment {
             Objects.requireNonNull(version, "version");
             Objects.requireNonNull(sha256, "sha256");
@@ -573,6 +722,8 @@ public interface SigningProvider extends AutoCloseable {
          *
          * @param bytes borrowed bytes to commit
          * @return immutable SHA-256 content commitment
+         * @throws NullPointerException if bytes is null
+         * @throws IllegalStateException if the runtime does not provide SHA-256
          */
         public static ContentCommitment sha256(byte[] bytes) {
             Objects.requireNonNull(bytes, "bytes");

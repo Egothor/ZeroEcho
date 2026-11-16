@@ -55,12 +55,22 @@ import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Bounded, resumable, idempotent behaviour of the generic evidence projector in the evidence projection framework. */
+/**
+ * Bounded, resumable, idempotent behaviour of the generic evidence projector in the evidence projection framework.
+ */
 class AuditEvidenceProjectorTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks a bounded three-entry pass emits and advances durably, leaving a later pass with no repeated source work.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void projectsEmitsAdvancesCursorAndResumes() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -87,6 +97,11 @@ class AuditEvidenceProjectorTest {
         }
     }
 
+    /**
+     * Checks unrecognized entries advance the delivery cursor while only recognized evidence emits an event.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void skippedEntriesStillAdvanceTheCursor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -123,6 +138,9 @@ class AuditEvidenceProjectorTest {
 
     private static final class RecordingSink implements AuditSink {
         private final List<AuditEvent> events = new ArrayList<>();
+        /**
+         * {@inheritDoc}
+         */
         @Override public void record(AuditEvent event) { events.add(event); }
     }
 
@@ -142,8 +160,14 @@ class AuditEvidenceProjectorTest {
             this.highWatermark = maximum + 1L;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public long highWatermark() { return highWatermark; }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean next(CancellationSignal cancellation) {
             if (remaining.isEmpty()) {
                 current = null;
@@ -153,6 +177,9 @@ class AuditEvidenceProjectorTest {
             return true;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public Entry current() {
             if (current == null) {
                 throw new IllegalStateException("not positioned");
@@ -160,6 +187,9 @@ class AuditEvidenceProjectorTest {
             return current;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { }
     }
 }

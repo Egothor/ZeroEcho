@@ -47,6 +47,15 @@ import zeroecho.pki.api.request.SubjectAlternativeName;
 /**
  * Public immutable result of pure SDK issuance policy evaluation. Contains public
  * metadata only; construction grants neither proof verification nor authorization.
+ *
+ * <p>The constructor snapshots the two lists with {@link List#copyOf}, retaining
+ * their immutable element references and the other supplied value objects. It
+ * requires non-null coordinates and checks a present lifecycle target against both
+ * client SPKI hashes. It does not validate digest spelling, parse certificates or
+ * SPKIs, establish generation/path/profile relationships, or admit current policy.
+ * Some malformed supplied coordinates therefore fail only when a typed value or
+ * issuer-binding frame is requested.</p>
+ *
  * @param issuerCaId logical issuer
  * @param issuerId exact issuer generation
  * @param chainPathId selected chain path
@@ -75,7 +84,31 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
         String issuerCertificateSha512,
         String providerEvidence, HybridSdkValue disclosurePolicy, Optional<SdkLifecycleTarget> lifecycleTarget,
         Optional<SdkEnrollmentTarget> enrollmentTarget) {
-    /** Snapshots finite collections and rejects missing coordinates. */
+    /**
+     * Snapshots the subject collections and checks a present lifecycle subject-key target.
+     *
+     * @param issuerCaId logical issuer
+     * @param issuerId exact issuer generation
+     * @param chainPathId selected chain path
+     * @param chainPathCommitment exact selected path commitment
+     * @param profile exact approved profile reference
+     * @param subjectRef effective subject identity
+     * @param subject approved ordered RDNs
+     * @param subjectAlternativeNames approved ordered SANs
+     * @param validity exact absolute encoded bounds
+     * @param primarySubjectSpki client primary public key
+     * @param alternativeSubjectSpki client alternative public key
+     * @param issuerBinding exact immutable outgoing issuer binding
+     * @param issuerPrimarySpki exact issuer primary subject SPKI
+     * @param issuerAlternativeSpki exact issuer alternative subject SPKI when present
+     * @param issuerCertificateSha512 SHA-512 of issuer certificate DER, lowercase hex
+     * @param providerEvidence authority snapshot semantic fingerprint
+     * @param disclosurePolicy canonical policy disclosure evidence
+     * @param lifecycleTarget optional exact predecessor/operation/subject-key target
+     * @param enrollmentTarget optional trusted native enrollment target
+     * @throws NullPointerException if a coordinate, optional container, list or list element is null
+     * @throws IllegalArgumentException if a present lifecycle target differs from either subject SPKI hash
+     */
     public SdkIssuancePreview {
         Objects.requireNonNull(issuerCaId); Objects.requireNonNull(issuerId); Objects.requireNonNull(chainPathId);
         Objects.requireNonNull(chainPathCommitment); Objects.requireNonNull(profile); Objects.requireNonNull(subjectRef);
@@ -94,15 +127,28 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
     }
 
     /**
-     * Preserves the administrative lifecycle preview constructor.
-     * @param issuerCaId issuer CA @param issuerId generation @param chainPathId path
-     * @param chainPathCommitment path commitment @param profile approved profile
-     * @param subjectRef subject @param subject ordered RDNs @param subjectAlternativeNames ordered SANs
-     * @param validity absolute bounds @param primarySubjectSpki primary SPKI @param alternativeSubjectSpki alternative SPKI
-     * @param issuerBinding outgoing binding @param issuerPrimarySpki issuer primary SPKI
-     * @param issuerAlternativeSpki issuer alternative SPKI @param issuerCertificateSha512 certificate digest
-     * @param providerEvidence authority fingerprint @param disclosurePolicy disclosure policy
+     * Creates a lifecycle preview with no native enrollment target.
+     *
+     * @param issuerCaId issuer CA
+     * @param issuerId generation
+     * @param chainPathId path
+     * @param chainPathCommitment path commitment
+     * @param profile approved profile
+     * @param subjectRef subject
+     * @param subject ordered RDNs
+     * @param subjectAlternativeNames ordered SANs
+     * @param validity absolute bounds
+     * @param primarySubjectSpki primary SPKI
+     * @param alternativeSubjectSpki alternative SPKI
+     * @param issuerBinding outgoing binding
+     * @param issuerPrimarySpki issuer primary SPKI
+     * @param issuerAlternativeSpki issuer alternative SPKI
+     * @param issuerCertificateSha512 certificate digest
+     * @param providerEvidence authority fingerprint
+     * @param disclosurePolicy disclosure policy
      * @param lifecycleTarget predecessor and operation evidence
+     * @throws NullPointerException if a coordinate, optional container, list or list element is null
+     * @throws IllegalArgumentException if a present lifecycle target differs from the subject keys
      */
     public SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
             String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
@@ -117,14 +163,26 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
     }
 
     /**
-     * Preserves the issuance-only preview constructor without lifecycle evidence.
-     * @param issuerCaId logical issuer @param issuerId generation @param chainPathId path
-     * @param chainPathCommitment path commitment @param profile approved profile
-     * @param subjectRef subject identity @param subject ordered RDNs @param subjectAlternativeNames ordered SANs
-     * @param validity absolute bounds @param primarySubjectSpki primary subject SPKI @param alternativeSubjectSpki alternative subject SPKI
-     * @param issuerBinding outgoing issuer authority @param issuerPrimarySpki issuer primary SPKI
-     * @param issuerAlternativeSpki issuer alternative SPKI @param issuerCertificateSha512 issuer DER digest
-     * @param providerEvidence provider authority fingerprint @param disclosurePolicy canonical disclosure policy
+     * Creates an ordinary issuance preview with neither lifecycle nor enrollment evidence.
+     *
+     * @param issuerCaId logical issuer
+     * @param issuerId generation
+     * @param chainPathId path
+     * @param chainPathCommitment path commitment
+     * @param profile approved profile
+     * @param subjectRef subject identity
+     * @param subject ordered RDNs
+     * @param subjectAlternativeNames ordered SANs
+     * @param validity absolute bounds
+     * @param primarySubjectSpki primary subject SPKI
+     * @param alternativeSubjectSpki alternative subject SPKI
+     * @param issuerBinding outgoing issuer authority
+     * @param issuerPrimarySpki issuer primary SPKI
+     * @param issuerAlternativeSpki issuer alternative SPKI
+     * @param issuerCertificateSha512 issuer DER digest
+     * @param providerEvidence provider authority fingerprint
+     * @param disclosurePolicy canonical disclosure policy
+     * @throws NullPointerException if a coordinate, optional container, list or list element is null
      */
     public SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
             String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
@@ -137,7 +195,17 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
                 issuerCertificateSha512, providerEvidence, disclosurePolicy, Optional.empty());
     }
 
-    /** @return strict F7 field-17 object, empty only for ordinary issuance */
+    /**
+     * Encodes the public extension selected for F7 field 17.
+     *
+     * <p>Without enrollment, the result is the lifecycle object or an empty object
+     * for ordinary issuance. With enrollment, it is a version-one wrapper containing
+     * lifecycle (possibly empty), enrollment and binding-set inputs. This method
+     * serializes supplied coordinates without authorizing the native protocol.</p>
+     *
+     * @return immutable canonical typed extension object, never null
+     * @throws IllegalArgumentException if supplied text or nested values exceed typed-value bounds
+     */
     public HybridSdkValue targetExtensionValue() {
         HybridSdkValue lifecycle = lifecycleTarget.map(SdkLifecycleTarget::value)
                 .orElseGet(() -> HybridSdkValue.object(Map.of()));
@@ -146,7 +214,15 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
                 "bindingSetInputs", bindingSetInputs())))
                 .orElse(lifecycle);
     }
-    /** @return canonical F7 effective subject, SAN and exact absolute validity value */
+    /**
+     * Encodes the effective subject, ordered RDNs/SANs and exact absolute validity for F7.
+     *
+     * <p>IP SANs retain their address bytes; the other supported SAN kinds use text.
+     * No subject normalization, profile evaluation or validity adjustment occurs.</p>
+     *
+     * @return immutable canonical public subject and validity object
+     * @throws IllegalArgumentException if supplied text, collections or encoding exceed typed-value bounds
+     */
     public HybridSdkValue effectiveSubjectValue() {
         return HybridSdkValue.object(Map.of("subjectRef", HybridSdkValue.text(subjectRef.value()),
                 "rdns", HybridSdkValue.list(subject.stream().map(rdn -> HybridSdkValue.object(Map.of(
@@ -155,7 +231,16 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
                 "notBefore", HybridSdkValue.text(validity.notBefore().toString()),
                 "notAfter", HybridSdkValue.text(validity.notAfter().toString())));
     }
-    /** @return SHA-512 commitment binding outgoing algorithms, provider authority and full chain path */
+    /**
+     * Commits the supplied issuer binding, provider fingerprint and selected path commitment.
+     *
+     * <p>The SHA-512 input is the canonical typed encoding of those three named
+     * values. The method commits existing evidence rather than reading a provider or
+     * validating every certificate in a chain.</p>
+     *
+     * @return sha512: followed by 128 lowercase hexadecimal digits
+     * @throws IllegalArgumentException if a supplied value exceeds typed-value encoding bounds
+     */
     public String bindingSetCommitment() {
         return "sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(bindingSetInputs().encode()));
     }
@@ -163,11 +248,26 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
         return HybridSdkValue.object(Map.of("issuerBinding", HybridSdkValue.text(issuerBinding.commitment()),
                 "provider", HybridSdkValue.text(providerEvidence), "path", HybridSdkValue.text(chainPathCommitment)));
     }
-    /** @return exact F8 issuer primary binding; never a client subject binding */
+    /**
+     * Encodes the outgoing issuer primary role as an F8 binding frame.
+     *
+     * <p>The SPKI hash describes the supplied issuer key, independently of the
+     * requesting client's primary key. Encoding does not establish consistency
+     * between that SPKI and the captured issuer role.</p>
+     *
+     * @return new immutable F8 public issuer-role frame
+     * @throws IllegalArgumentException if encoded fields exceed frame bounds
+     */
     public HybridSdkFrame primaryIssuerBindingFrame() {
         return keyFrame(8, issuerBinding.primary(), issuerPrimarySpki);
     }
-    /** @return exact F9 issuer alternative binding when the selected CA has one */
+    /**
+     * Encodes the outgoing issuer alternative role as an F9 binding frame when present.
+     *
+     * @return immutable F9 frame, or empty when the captured binding has no alternative role
+     * @throws java.util.NoSuchElementException if the binding has an alternative role but its SPKI is absent
+     * @throws IllegalArgumentException if encoded fields exceed frame bounds
+     */
     public Optional<HybridSdkFrame> alternativeIssuerBindingFrame() {
         return issuerBinding.alternative().map(key -> keyFrame(9, key, issuerAlternativeSpki.orElseThrow()));
     }

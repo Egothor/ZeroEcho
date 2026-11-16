@@ -62,6 +62,13 @@ public record IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, Sub
      * Creates an intermediate create command.
      *
      * @throws IllegalArgumentException if any component is null, bounded text is invalid
+     * @param formatId credential format id
+     * @param issuerCaId issuer CA entity id, strict UTF-8 at most 4,096 bytes
+     * @param subjectRef normalized subject reference for the intermediate
+     * @param profileId nonblank strict UTF-8 profile id, at most 256 bytes
+     * @param keyRef managed subject key, strict UTF-8 at most 1,048,576 bytes
+     * @param attributes universal attributes (may be empty but not null)
+     * @param signatureAlgorithmId exact outgoing primary signature selection, empty for legacy default
      */
     public IntermediateCreateCommand {
         CaCommandInputs.required(formatId);
@@ -89,6 +96,9 @@ public record IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, Sub
         this(formatId, issuerCaId, subjectRef, profileId, keyRef, attributes, java.util.Optional.empty());
     }
 
-    /** Returns a diagnostic representation without command coordinates or attributes. */
+    /**
+     * Returns a diagnostic representation without command coordinates or attributes.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "IntermediateCreateCommand[redacted]"; }
 }

@@ -136,6 +136,9 @@ public interface DataContentChainBuilder {
             this.encrypt = encrypt;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public DataContentChainBuilder add(final DataContentBuilder<? extends DataContent> builder) {
             final DataContent previous = tail;
@@ -149,6 +152,9 @@ public interface DataContentChainBuilder {
             return this;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public DataContent build() {
             return tail;

@@ -36,10 +36,18 @@ package zeroecho;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
 
+/**
+ * Test-only password provider factory with independent destroyable passwords for each acquisition.
+ */
 final class TestKeyringUnlocks {
     private TestKeyringUnlocks() {
     }
 
+    /**
+     * Creates a test-only provider with a fresh password object on each acquisition.
+     *
+     * @return reusable provider; each acquired password must be closed by its owner
+     */
     static KeyringUnlockProvider provider() {
         return () -> new KeyringPassword(new char[] { 't', 'e', 's', 't', '-', 'k', 'e', 'y', 'r', 'i', 'n', 'g' });
     }

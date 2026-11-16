@@ -69,6 +69,11 @@ public record CorrelatedEndEntityRenewalRequest(PkiId issuerCaId, EndEntityRenew
      * Validates all required coordinates without accessing a store.
      * @throws NullPointerException if an argument is null
      * @throws IllegalArgumentException if a coordinate is oversized or the digest is malformed
+     * @param issuerCaId expected logical issuing authority
+     * @param request predecessor and optional validity override
+     * @param predecessorSha256 canonical lowercase SHA-256 of the predecessor DER
+     * @param intent frozen orchestration identity and selection
+     * @param originalRequest exact protocol request when present; requires fresh PoP, predecessor identity equality and frozen CSR-signature binding validation
      */
     public CorrelatedEndEntityRenewalRequest {
         Objects.requireNonNull(issuerCaId, "issuerCaId");
@@ -86,7 +91,11 @@ public record CorrelatedEndEntityRenewalRequest(PkiId issuerCaId, EndEntityRenew
         CorrelatedEndEntityIssuanceRequest.requireBoundedIdentifier(intent.expectedChainPathId().value());
     }
 
-    /** @return redacted diagnostic description */
+    /**
+     * Returns a fixed redacted diagnostic label for this lifecycle request.
+     *
+     * @return redacted diagnostic description
+     */
     @Override public String toString() {
         return "CorrelatedEndEntityRenewalRequest[redacted]";
     }

@@ -47,7 +47,9 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Idempotent local CA-proof verification and terminal-signing publication driver. */
+/**
+ * Idempotent local CA-proof verification and terminal-signing publication driver.
+ */
 public final class SigningOuterTerminalDriver
         implements SigningStepExecutor.OuterTerminalDriver {
     private static final int MAXIMUM_CAS_ATTEMPTS = 8;
@@ -71,6 +73,7 @@ public final class SigningOuterTerminalDriver
      * @param store authoritative durable store
      * @param bindings immutable session X.509 bindings
      * @param pureEdDsaMaximumTbsBytes inclusive raw-message bound for pure EdDSA
+     * @throws NullPointerException if store, bindings is null
      */
     public SigningOuterTerminalDriver(PkiStore store, X509BindingCatalog bindings, long pureEdDsaMaximumTbsBytes) {
         this.store = Objects.requireNonNull(store, "store");
@@ -87,6 +90,7 @@ public final class SigningOuterTerminalDriver
      * @param authority session-owned immutable verification authority and bindings
      * @param verifier exact verification executor bound to that authority
      * @param pureEdDsaMaximumTbsBytes inclusive raw pure-EdDSA message bound
+     * @throws NullPointerException if store is null
      */
     public SigningOuterTerminalDriver(PkiStore store, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, long pureEdDsaMaximumTbsBytes) {
@@ -98,6 +102,9 @@ public final class SigningOuterTerminalDriver
         proof = Optional.of(new ManagedKeyProofVerifier(store, authority, verifier, pureEdDsaMaximumTbsBytes));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void advance(SignWorkflowStore.Workflow workflow) {
         SignWorkflowStore.Workflow exact = Objects.requireNonNull(workflow, "workflow");
         if (exact.envelope().outer().filter(value -> value.kind() == DomainContinuationStore.Kind.STATUS

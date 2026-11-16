@@ -64,6 +64,9 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 public final class XWingPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String SEED_B64 = "seed.b64";
+    /**
+     * Required length of a raw X-Wing private seed, in bytes.
+     */
     /* default */ static final int SEED_LENGTH = 32;
     private final byte[] seed;
     private final ReentrantLock lifecycleLock = new ReentrantLock();
@@ -138,6 +141,9 @@ public final class XWingPrivateKeySpec implements AlgorithmKeySpec, Destroyable 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void destroy() {
         lifecycleLock.lock();
@@ -151,6 +157,9 @@ public final class XWingPrivateKeySpec implements AlgorithmKeySpec, Destroyable 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean isDestroyed() {
         lifecycleLock.lock();
@@ -161,6 +170,11 @@ public final class XWingPrivateKeySpec implements AlgorithmKeySpec, Destroyable 
         }
     }
 
+    /**
+     * Returns the specification label and encoded-key length without disclosing key bytes.
+     *
+     * @return diagnostic type label and retained encoding length in bytes
+     */
     @Override
     public String toString() {
         return "XWingPrivateKeySpec[len=" + seed.length + "]";

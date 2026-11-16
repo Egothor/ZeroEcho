@@ -47,8 +47,17 @@ import javax.naming.directory.InitialDirContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Actual JNDI multi-attribute lookup must receive the nonce-owned TXT proof. */
+/**
+ * Actual JNDI multi-attribute lookup must receive the nonce-owned TXT proof.
+ */
 class ExerciseProtocolDnsTest {
+    /**
+     * Checks actual JNDI TXT/CNAME lookup sends an ANY query and receives the nonce-owned TXT proof from the local responder.
+     *
+     * @param root isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void actualJndiTxtAndCnameLookupReceivesTxtForAnyQuery(@TempDir Path root) throws Exception {
         String nonce="a".repeat(32), token="b".repeat(43), name="_acme-challenge.probe.example.invalid";

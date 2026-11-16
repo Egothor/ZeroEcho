@@ -56,6 +56,7 @@ public sealed interface CorrelatedIssuancePreparation
         /**
          * Creates a snapshot result.
          * @throws NullPointerException if the operation is null
+         * @param operation authoritative retained semantic snapshot
          */
         public Existing { Objects.requireNonNull(operation, "operation"); }
     }
@@ -71,6 +72,7 @@ public sealed interface CorrelatedIssuancePreparation
         /**
          * Creates a custody carrier.
          * @throws NullPointerException if the preparation is null
+         * @param prepared opaque preparation exclusively owning its staged candidate
          */
         public Prepared { Objects.requireNonNull(prepared, "prepared"); }
     }

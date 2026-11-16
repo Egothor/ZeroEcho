@@ -61,6 +61,9 @@ import zeroecho.sdk.ZeroEchoSession;
  */
 class CryptoArchitectureTest {
 
+    /**
+     * Checks that consumers share the authoritative algorithm registry.
+     */
     @Test
     void authoritativeRegistry() {
         System.out.println("authoritativeRegistry");
@@ -76,6 +79,11 @@ class CryptoArchitectureTest {
         System.out.println("authoritativeRegistry...ok");
     }
 
+    /**
+     * Checks the declared ordering of session policy evaluation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void explicitPolicyOrder() throws Exception {
         System.out.println("explicitPolicyOrder");
@@ -113,6 +121,11 @@ class CryptoArchitectureTest {
         System.out.println("explicitPolicyOrder...ok");
     }
 
+    /**
+     * Checks that session audit configuration is isolated from other sessions.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void isolatedAuditConfiguration() throws Exception {
         System.out.println("isolatedAuditConfiguration");
@@ -142,6 +155,9 @@ class CryptoArchitectureTest {
         System.out.println("isolatedAuditConfiguration...ok");
     }
 
+    /**
+     * Checks that deriving a session configuration preserves the original session.
+     */
     @Test
     void immutableSessionChanges() {
         System.out.println("immutableSessionChanges");
@@ -159,6 +175,11 @@ class CryptoArchitectureTest {
         System.out.println("immutableSessionChanges...ok");
     }
 
+    /**
+     * Checks consistent concurrent access to immutable session configuration.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentSessionReads() throws Exception {
         System.out.println("concurrentSessionReads");
@@ -192,6 +213,11 @@ class CryptoArchitectureTest {
         System.out.println("concurrentSessionReads...ok");
     }
 
+    /**
+     * Checks that manual audit mode does not emit automatic events.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void manualModeSilent() throws Exception {
         System.out.println("manualModeSilent");

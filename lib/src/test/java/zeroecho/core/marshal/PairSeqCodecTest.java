@@ -53,6 +53,9 @@ import org.junit.jupiter.api.Test;
  */
 class PairSeqCodecTest {
 
+    /**
+     * Marshal and static factory unmarshal succeed.
+     */
     @Test
     void marshalAndStaticFactoryUnmarshalSucceed() {
         System.out.println("marshalAndStaticFactoryUnmarshalSucceed");
@@ -67,6 +70,9 @@ class PairSeqCodecTest {
         System.out.println("marshalAndStaticFactoryUnmarshalSucceed...ok");
     }
 
+    /**
+     * Repeated operations reuse cached plans.
+     */
     @Test
     void repeatedOperationsReuseCachedPlans() {
         System.out.println("repeatedOperationsReuseCachedPlans");
@@ -87,6 +93,9 @@ class PairSeqCodecTest {
         System.out.println("repeatedOperationsReuseCachedPlans...ok");
     }
 
+    /**
+     * Separate runtime classes use separate marshal plans.
+     */
     @Test
     void separateRuntimeClassesUseSeparateMarshalPlans() {
         System.out.println("separateRuntimeClassesUseSeparateMarshalPlans");
@@ -102,6 +111,9 @@ class PairSeqCodecTest {
         System.out.println("separateRuntimeClassesUseSeparateMarshalPlans...ok");
     }
 
+    /**
+     * Constructor fallback unmarshals successfully.
+     */
     @Test
     void constructorFallbackUnmarshalsSuccessfully() {
         System.out.println("constructorFallbackUnmarshalsSuccessfully");
@@ -114,6 +126,9 @@ class PairSeqCodecTest {
         System.out.println("constructorFallbackUnmarshalsSuccessfully...ok");
     }
 
+    /**
+     * Broadly declared factory return remains compatible.
+     */
     @Test
     void broadlyDeclaredFactoryReturnRemainsCompatible() {
         System.out.println("broadlyDeclaredFactoryReturnRemainsCompatible");
@@ -126,6 +141,9 @@ class PairSeqCodecTest {
         System.out.println("broadlyDeclaredFactoryReturnRemainsCompatible...ok");
     }
 
+    /**
+     * Missing and incompatible methods report context.
+     */
     @Test
     void missingAndIncompatibleMethodsReportContext() {
         System.out.println("missingAndIncompatibleMethodsReportContext");
@@ -150,6 +168,9 @@ class PairSeqCodecTest {
         System.out.println("missingAndIncompatibleMethodsReportContext...ok");
     }
 
+    /**
+     * Target failures retain invocation context.
+     */
     @Test
     void targetFailuresRetainInvocationContext() {
         System.out.println("targetFailuresRetainInvocationContext");
@@ -168,6 +189,9 @@ class PairSeqCodecTest {
         System.out.println("targetFailuresRetainInvocationContext...ok");
     }
 
+    /**
+     * Null inputs are rejected.
+     */
     @Test
     void nullInputsAreRejected() {
         System.out.println("nullInputsAreRejected");
@@ -181,6 +205,11 @@ class PairSeqCodecTest {
         System.out.println("nullInputsAreRejected...ok");
     }
 
+    /**
+     * Concurrent first access uses one cached plan.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentFirstAccessUsesOneCachedPlan() throws Exception {
         System.out.println("concurrentFirstAccessUsesOneCachedPlan");

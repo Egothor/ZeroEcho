@@ -76,7 +76,9 @@ import zeroecho.pkix.Pkix;
  */
 public final class CrmfRequest {
     private static final int CERTIFICATE_REFERENCE_FIELDS = 2;
-    /** Maximum complete CertReqMsg size in bytes. */
+    /**
+     * Maximum complete CertReqMsg size in bytes.
+     */
     public static final int MAXIMUM_ENCODED_BYTES = 1_048_576;
     private final byte[] encoded;
     private final BigInteger requestId;
@@ -90,11 +92,18 @@ public final class CrmfRequest {
 
     /**
      * Immutable structural predecessor reference; possession and authority are not asserted.
+     *
      * @param issuer certificate issuer distinguished name
      * @param serialNumber positive certificate serial of at most 160 bits
      */
     public record CertificateReference(X500Principal issuer, BigInteger serialNumber) {
-        /** Validates nonnull bounded coordinates. */
+        /**
+         * Validates nonnull bounded coordinates.
+         *
+         * @param issuer certificate issuer distinguished name
+         * @param serialNumber positive certificate serial of at most 160 bits
+         * @throws NullPointerException if any of {@code issuer}, {@code serialNumber} is null
+         */
         public CertificateReference {
             Objects.requireNonNull(issuer, "issuer");
             Objects.requireNonNull(serialNumber, "serialNumber");
@@ -102,7 +111,11 @@ public final class CrmfRequest {
                 throw invalid();
             }
         }
-        /** @return a redacted diagnostic description */
+        /**
+         * Returns a fixed diagnostic label without certificate coordinates.
+         *
+         * @return redacted certificate-reference label
+         */
         @Override public String toString() { return "CertificateReference[redacted]"; }
     }
 
@@ -137,9 +150,11 @@ public final class CrmfRequest {
 
     /**
      * Parses one bounded canonical DER CertReqMsg with the supported signing proof.
+     *
      * @param der caller-owned exact CertReqMsg, copied before parsing
      * @return immutable structural projection without a proof-validity assertion
      * @throws IllegalArgumentException if size, DER, or the supported grammar is invalid
+     * @throws NullPointerException if {@code der} is null
      */
     public static CrmfRequest parse(byte[] der) {
         Objects.requireNonNull(der, "der");
@@ -161,50 +176,63 @@ public final class CrmfRequest {
 
     /**
      * Returns the exact request bytes.
+     *
      * @return defensive DER snapshot
      */
     public byte[] encoded() { return encoded.clone(); }
     /**
      * Returns the retained CRMF request identity.
+     *
      * @return immutable nonnegative request ID
      */
     public BigInteger requestId() { return requestId; }
     /**
      * Returns the requested subject.
+     *
      * @return immutable subject DN
      */
     public X500Principal subject() { return subject; }
     /**
      * Returns the proof's public key.
+     *
      * @return defensive SubjectPublicKeyInfo DER
      */
     public byte[] subjectPublicKeyInfo() { return publicKey.clone(); }
     /**
      * Returns the proof algorithm.
+     *
      * @return immutable signature algorithm identifier
      */
     public AlgorithmIdentifier signatureAlgorithm() { return signatureAlgorithm; }
     /**
      * Returns the exact signed CertRequest.
+     *
      * @return defensive canonical DER snapshot
      */
     public byte[] signedRequest() { return signedRequest.clone(); }
     /**
      * Returns the signing-key proof bytes.
+     *
      * @return defensive signature snapshot
      */
     public byte[] signature() { return signature.clone(); }
     /**
      * Returns requested extensions without policy approval.
+     *
      * @return immutable extension list
      */
     public List<CertificateExtension> requestedExtensions() { return extensions; }
     /**
      * Returns the signed standard predecessor reference, if supplied.
+     *
      * @return immutable structural reference without ownership or validity assertion
      */
     public Optional<CertificateReference> oldCertificate() { return oldCertificate; }
-    /** Returns a diagnostic representation without request data. */
+    /**
+     * Returns a diagnostic representation without request data.
+     *
+     * @return fixed redacted request label
+     */
     @Override public String toString() { return "CrmfRequest[redacted]"; }
 
     private static IllegalArgumentException invalid() {
@@ -256,6 +284,13 @@ public final class CrmfRequest {
 
     // Bound the ASN.1 provider's recursive parser before invoking it. Canonical DER
     // and the closed CRMF grammar are checked again by re-encoding the parsed value.
+    /**
+     * Checks DER nesting and content boundaries before invoking the recursive ASN.1 parser.
+     *
+     * @param bytes complete encoded request; must not be null
+     * @throws NullPointerException if the encoding is null
+     * @throws IllegalArgumentException if DER framing, nesting, or root boundaries are invalid
+     */
     /* default */ static void validateStructure(byte[] bytes) {
         int[] ends = new int[64];
         ends[0] = bytes.length;
@@ -291,7 +326,9 @@ public final class CrmfRequest {
         }
     }
 
-    /** Bounded DER header reader; the enclosing traversal owns nesting and content boundaries. */
+    /**
+     * Bounded DER header reader; the enclosing traversal owns nesting and content boundaries.
+     */
     private static final class DerCursor {
         private static final int HIGH_TAG = 31;
         private static final int CONSTRUCTED = 32;

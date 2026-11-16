@@ -46,7 +46,13 @@ import java.util.Objects;
 public record MetadataTransactionId(MetadataStoreId storeId, String token) {
     private static final String PREFIX = "v1:";
 
-    /** Validates the canonical identity components. */
+    /**
+     * Validates the canonical identity components.
+     * @param storeId durable owning-store identity
+     * @param token 32 lowercase hexadecimal transaction token
+     * @throws NullPointerException if storeId, token is null
+     * @throws IllegalArgumentException if token is not exactly 32 lowercase hexadecimal characters
+     */
     public MetadataTransactionId {
         Objects.requireNonNull(storeId, "storeId");
         Objects.requireNonNull(token, "token");
@@ -78,7 +84,10 @@ public record MetadataTransactionId(MetadataStoreId storeId, String token) {
         return result;
     }
 
-    /** Returns the complete current canonical representation. */
+    /**
+     * Returns the complete current canonical representation.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return PREFIX + storeId.value() + ":" + token;

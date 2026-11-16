@@ -89,32 +89,110 @@ import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
-/** Real filesystem/keyring fixture with a clock deliberately unrelated to wall time. */
+/**
+ * Real filesystem/keyring fixture with a clock deliberately unrelated to wall time.
+ */
 final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
+    /**
+     * Stable X.509 format identifier used by the hybrid fixture.
+     */
     static final FormatId X509 = new FormatId("x509");
+    /**
+     * Fixed authoritative clock used to make fixture timestamps deterministic.
+     */
     static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneOffset.UTC);
+    /**
+     * Filesystem root retaining this fixture's keyring and PKI store.
+     */
     final Path root;
+    /**
+     * Path of the encrypted fixture keyring.
+     */
     final Path keyring;
+    /**
+     * Canonical algorithm family used for the root keys.
+     */
     final String family;
+    /**
+     * Configured signature identity used by the local signing session.
+     */
     final String signature;
+    /**
+     * Selected classical/alternative certificate-signature profile.
+     */
     final HybridCertificateMode mode;
+    /**
+     * Primary root key pair retained for issuance and independent verification.
+     */
     final KeyPair rootKey;
+    /**
+     * Replacement primary root key pair used by rotation cases.
+     */
     final KeyPair rotatedKey;
+    /**
+     * Child authority key pair used by issuance and proof cases.
+     */
     final KeyPair childKey;
+    /**
+     * Alternative-signature key pair used by the hybrid root.
+     */
     final KeyPair altKey;
+    /**
+     * Replacement alternative-signature key pair used by hybrid rotation cases.
+     */
     final KeyPair rotatedAltKey;
+    /**
+     * Clock supplied to newly opened fixture sessions; defaults to the fixed fixture clock.
+     */
     Clock clock = CLOCK;
+    /**
+     * Store retained by the fixture for persisted-state assertions.
+     */
     PkiStore store;
+    /**
+     * Store-opening function that tests may replace before creating the session.
+     */
     java.util.function.BiFunction<ProviderConfig, PkiStoreRuntimeDependencies, PkiStore> storeFactory = PkiBootstrap::openStore;
+    /**
+     * Named alternative-signature failure injected by the fixture.
+     */
     String alternativeFault;
+    /**
+     * Wrapper applied to the fixture store to observe or reject selected operations.
+     */
     java.util.function.UnaryOperator<PkiStore> storeDecorator = java.util.function.UnaryOperator.identity();
+    /**
+     * Wrapper applied to the fixture signing provider before session composition.
+     */
     java.util.function.UnaryOperator<zeroecho.pki.spi.crypto.SigningProvider> signingDecorator = java.util.function.UnaryOperator.identity();
 
+    /**
+     * Creates the encrypted-keyring fixture with real primary, replacement, child, and alternative keys.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @param jcaAlgorithm JCA algorithm selected for the primary root and replacement keys
+     * @param family canonical algorithm-family identifier used when persisting primary keys
+     * @param signature canonical signature algorithm identity configured for the fixture session
+     * @param mode selected hybrid certificate-signature policy
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     HybridIssuanceFixture(Path root, String jcaAlgorithm, String family, String signature,
             HybridCertificateMode mode) throws Exception {
         this(root, jcaAlgorithm, family, signature, mode, jcaAlgorithm, "ML-DSA-65");
     }
 
+    /**
+     * Creates the encrypted-keyring fixture with real primary, replacement, child, and alternative keys.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @param jcaAlgorithm JCA algorithm selected for the primary root and replacement keys
+     * @param family canonical algorithm-family identifier used when persisting primary keys
+     * @param signature canonical signature algorithm identity configured for the fixture session
+     * @param mode selected hybrid certificate-signature policy
+     * @param childAlgorithm JCA algorithm selected for the child key pair
+     * @param alternativeAlgorithm JCA algorithm selected for alternative-signature key pairs
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     HybridIssuanceFixture(Path root, String jcaAlgorithm, String family, String signature,
             HybridCertificateMode mode, String childAlgorithm, String alternativeAlgorithm) throws Exception {
         BouncyCastleActivator.init();
@@ -139,6 +217,13 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         }
     }
 
+    /**
+     * Generates a real Bouncy Castle key pair using the selected fixture algorithm.
+     *
+     * @param algorithm algorithm identifier selected by this cryptographic fixture
+     * @return newly generated key pair
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static KeyPair pair(String algorithm) throws Exception {
         String jca = algorithm.equals("EC384") ? "EC" : algorithm.equals("RSA4096") ? "RSA" : algorithm;
         KeyPairGenerator generator = KeyPairGenerator.getInstance(jca, "BC");
@@ -160,8 +245,19 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         store.putPublic(name + ".pub", algorithm, pair.getPublic());
     }
 
+    /**
+     * Maps a fixture alias to the private-key reference used by the local signing provider.
+     *
+     * @param name alias of the private key installed in the fixture keyring
+     * @return private-key reference with the fixture provider prefix
+     */
     static KeyRef key(String name) { return new KeyRef("zeroecho-lib:" + name + ".prv"); }
 
+    /**
+     * Opens an owned PKI session against the fixture store and encrypted signing keyring.
+     *
+     * @return open session that the caller must close
+     */
     PkiSession open() {
         LocalSigningConfiguration signing = new LocalSigningConfiguration(new ProviderConfig("zeroecho-lib",
                 Map.of("keyringPath", keyring.toString())), signature, Duration.ofMinutes(5), Optional.empty(),
@@ -172,11 +268,25 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                 PkiSessionRuntimeDependencies.withKeyringUnlockProvider(TestKeyringUnlocks.provider()), clock, this);
     }
 
+    /**
+     * Executes local signing and requires a completed outcome.
+     *
+     * @param session borrowed open PKI session used to execute the fixture operation
+     * @param operation retained signing operation or typed command being exercised
+     * @return completed signing result; any other outcome fails the fixture assertion
+     * @throws AssertionError if the operation did not complete successfully
+     */
     LocalSigningResult.Completed execute(PkiSession session, PkiSigningOperation operation) {
         LocalSigningResult result = session.localSigning().orElseThrow().execute(operation, CancellationSignal.NONE);
         return assertInstanceOf(LocalSigningResult.Completed.class, result, () -> failureDescription(result));
     }
 
+    /**
+     * Collects retained workflow and recovery diagnostics for a failed fixture operation.
+     *
+     * @param result signing outcome inspected for the fixture assertion or diagnostic
+     * @return fixture failure description, including available retained-state context
+     */
     String failureDescription(LocalSigningResult result) {
         String description = result instanceof LocalSigningResult.Failed failed
                 ? failed.failure().code() : "Unexpected result: " + result.getClass().getName();
@@ -199,16 +309,35 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         return description;
     }
 
+    /**
+     * Creates the fixture root authority through the typed local signing path.
+     *
+     * @param session borrowed open PKI session used to execute the fixture operation
+     * @return logical identity of the newly created root authority
+     */
     PkiId create(PkiSession session) {
         execute(session, new PkiSigningOperation.CreateAuthority(X509, new SubjectRef("CN=Matrix Root,C=CZ"),
                 "matrix-root", key("root")));
         return store.listCas().getFirst().caId();
     }
 
+    /**
+     * Resolves the selected current issuer generation to its credential identity.
+     *
+     * @param ca logical authority identifier whose current credential or CRL is inspected
+     * @return current issuance credential identifier
+     */
     PkiId current(PkiId ca) {
         return store.getIssuerGeneration(store.getCa(ca).orElseThrow().currentIssuanceIssuerId()).orElseThrow().credentialId();
     }
 
+    /**
+     * Reads and parses the exact retained fixture certificate.
+     *
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @return parsed X.509 certificate
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     X509Certificate certificate(PkiId id) throws Exception {
         Credential credential = store.getCredential(id).orElseThrow();
         try (RepeatableContent content = store.stagedContent().openContent(credential.content());
@@ -219,10 +348,25 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         }
     }
 
+    /**
+     * Checks primary/alternative signatures and retained profile mode of the fixture root certificate.
+     *
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @param expected key pair whose public component must verify the fixture certificate
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     void verifyRoot(PkiId id, KeyPair expected) throws Exception {
         verifyRoot(id, expected, mode);
     }
 
+    /**
+     * Checks primary/alternative signatures and retained profile mode of the fixture root certificate.
+     *
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @param expected key pair whose public component must verify the fixture certificate
+     * @param expectedProfileMode hybrid signature mode required in the retained profile evidence
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     void verifyRoot(PkiId id, KeyPair expected, HybridCertificateMode expectedProfileMode) throws Exception {
         X509Certificate certificate = certificate(id);
         assertTrue(java.util.Arrays.equals(expected.getPublic().getEncoded(), certificate.getPublicKey().getEncoded()));
@@ -241,6 +385,14 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         }
     }
 
+    /**
+     * Installs a compatible leaf profile, stores a real CSR, and issues through the selected authority.
+     *
+     * @param session borrowed open PKI session used to execute the fixture operation
+     * @param issuer issuer authority, key pair, or credential selected by the fixture
+     * @return issued leaf credential identifier
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     PkiId issueLeaf(PkiSession session, PkiId issuer) throws Exception {
         byte[] document = new String(zeroecho.pki.testkit.H7ProfileDocuments.noSanOrEkuProfile(),
                 java.nio.charset.StandardCharsets.UTF_8).replace("h7-no-san-eku", "matrix-leaf")
@@ -266,6 +418,13 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         return new PkiId(((PkiOperationValue.Text) completed.result().fields().get("credentialId")).value());
     }
 
+    /**
+     * Verifies the fixture authority's retained CRL, including its alternative signature when configured.
+     *
+     * @param ca logical authority identifier whose current credential or CRL is inspected
+     * @param issuer issuer authority, key pair, or credential selected by the fixture
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     void verifyCrl(PkiId ca, KeyPair issuer) throws Exception {
         zeroecho.pki.api.status.StatusObject status = store.listStatusObjects(ca).getFirst();
         try (RepeatableContent content = store.stagedContent().openContent(status.content());
@@ -283,10 +442,29 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         }
     }
 
+    /**
+     * Builds the selected versioned root or intermediate profile for the hybrid fixture.
+     *
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @param version certificate-profile version to construct
+     * @param kind certificate-profile kind selected for this fixture
+     * @param selected hybrid signature mode stored in the fixture profile
+     * @return profile definition carrying the selected signature policy and subject-key constraints
+     */
     CertificateProfileDefinition profile(String id, long version, CertificateProfileKind kind, HybridCertificateMode selected) {
         return profile(id, version, kind, selected, Set.of(family));
     }
 
+    /**
+     * Builds the selected versioned root or intermediate profile for the hybrid fixture.
+     *
+     * @param id profile, attribute, or credential identifier selected by the fixture
+     * @param version certificate-profile version to construct
+     * @param kind certificate-profile kind selected for this fixture
+     * @param selected hybrid signature mode stored in the fixture profile
+     * @param subjectAlgorithms accepted subject-key algorithm identifiers
+     * @return profile definition carrying the selected signature policy and subject-key constraints
+     */
     CertificateProfileDefinition profile(String id, long version, CertificateProfileKind kind, HybridCertificateMode selected,
             Set<String> subjectAlgorithms) {
         return new CertificateProfileDefinition(kind, id, version, X509, "Hybrid lifecycle matrix", Duration.ofDays(365),
@@ -298,11 +476,23 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                 X509AlgorithmBindingPolicy.standardOnly(), Optional.empty(), selected);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void validateStore(ProviderConfig configuration) { PkiBootstrap.validateStoreConfiguration(configuration); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void validateAudit(ProviderConfig configuration) { PkiBootstrap.validateAuditConfiguration(configuration); }
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiStore openStore(ProviderConfig configuration) {
         return openStore(configuration, new PkiStoreRuntimeDependencies(clock));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiStore openStore(ProviderConfig configuration, PkiStoreRuntimeDependencies dependencies) {
         store = storeFactory.apply(configuration, dependencies);
         if (store.getActiveProfileRef("matrix-root").isEmpty()) {
@@ -327,7 +517,13 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
                 });
         return storeDecorator.apply(diagnosed);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public AuditSink openAudit(ProviderConfig configuration) { return event -> { }; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public PkiBootstrap.SigningComposition openSigningComposition(ProviderConfig configuration,
             SigningProviderRuntimeDependencies dependencies) {
         PkiBootstrap.SigningComposition real = PkiBootstrap.openConfiguredSigningComposition(configuration, dependencies);
@@ -361,6 +557,11 @@ final class HybridIssuanceFixture implements DefaultPkiSession.Bootstrap {
         return new PkiBootstrap.SigningComposition(wrapped, real.capabilities());
     }
 
+    /**
+     * Selects the fixture ML-DSA-65 alternative-signature identity and key reference.
+     *
+     * @return alternative-signature certificate mode bound to the fixture alternative key
+     */
     static HybridCertificateMode alternative() {
         return new HybridCertificateMode.AltSignature(BootstrapAlgorithmIdentities.ML_DSA_65_SIGNATURE.canonicalForm(),
                 key("alt").value());

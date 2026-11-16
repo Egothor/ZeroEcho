@@ -39,14 +39,24 @@ package zeroecho.core;
  * @since 1.0
  */
 public enum KeyOperation {
-    /** Generates a symmetric key. */
+    /**
+     * Generates a symmetric key.
+     */
     SYMMETRIC_GENERATE,
-    /** Imports a symmetric key. */
+    /**
+     * Imports a symmetric key.
+     */
     SYMMETRIC_IMPORT,
-    /** Generates an asymmetric key pair. */
+    /**
+     * Generates an asymmetric key pair.
+     */
     ASYMMETRIC_KEY_PAIR_GENERATE,
-    /** Imports an asymmetric public key. */
+    /**
+     * Imports an asymmetric public key.
+     */
     ASYMMETRIC_PUBLIC_IMPORT,
-    /** Imports an asymmetric private key. */
+    /**
+     * Imports an asymmetric private key.
+     */
     ASYMMETRIC_PRIVATE_IMPORT
 }

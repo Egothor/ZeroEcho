@@ -44,13 +44,31 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.ServerRealmContext;
 
-/** Authenticated, disclosure-independent public-certificate retrieval with exact live content permission checks. */
+/**
+ * Authenticated, disclosure-independent public-certificate retrieval with exact live content permission checks.
+ */
 final class CertificateArtifactHttp {
     private static final int MAXIMUM_BYTES=4_194_304;
     private final ServerRealmContext realm;
+    /**
+     * Binds certificate transport projection to one borrowed realm context.
+     *
+     * @param realm realm-owned authorization and repository services
+     * @throws NullPointerException if realm is null
+     */
     CertificateArtifactHttp(ServerRealmContext realm) { this.realm=java.util.Objects.requireNonNull(realm,"realm"); }
 
-    /** Resolves trusted metadata first and opens bytes only after both full-content permissions succeed. */
+    /**
+     * Resolves trusted certificate metadata and opens bytes only after both full-content permissions succeed.
+     *
+     * @param rawPath raw administrative certificate-artifact or authority-certificate route
+     * @param query raw representation selector for downloads, or null for metadata
+     * @param principal authenticated principal identity
+     * @param trace transport correlation identity used for audit
+     * @param cancellation exact transport cancellation signal
+     * @return bounded metadata, attachment or safe unavailable response
+     * @throws IOException if repository I/O, bounded download or content-length validation fails
+     */
     HttpResponses.Response respond(String rawPath,String query,String principal,String trace,CancellationSignal cancellation)throws IOException {
         try {
             String[] path=rawPath.split("/",-1);

@@ -65,6 +65,7 @@ public final class EnrollmentSubjectPattern {
      * @param pattern nonempty pattern, at most 512 code units
      * @return immutable thread-safe matcher
      * @throws IllegalArgumentException if the syntax or size is unsupported
+     * @throws NullPointerException if {@code pattern} is null
      */
     public static EnrollmentSubjectPattern compile(String pattern) {
         Objects.requireNonNull(pattern, "pattern");
@@ -118,6 +119,7 @@ public final class EnrollmentSubjectPattern {
      * @param subject canonical subject DN text, at most 4096 code units
      * @return whether the entire subject matches
      * @throws IllegalArgumentException if the subject exceeds the finite bound
+     * @throws NullPointerException if {@code subject} is null
      */
     public boolean matches(String subject) {
         Objects.requireNonNull(subject, "subject");
@@ -152,7 +154,9 @@ public final class EnrollmentSubjectPattern {
         return new IllegalArgumentException("Subject pattern supports only literals and .* wildcards");
     }
 
-    /** One literal pattern segment and its precomputed linear-time matching table. */
+    /**
+     * One literal pattern segment and its precomputed linear-time matching table.
+     */
     private static final class Literal {
         private final String text;
         private final int[] prefix;

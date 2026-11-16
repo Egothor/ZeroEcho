@@ -39,8 +39,16 @@ import java.io.IOException;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Regression coverage for invalid top-level CLI invocations and their exit status.
+ */
 class ZeroEchoTest {
 
+    /**
+     * Checks the failure exit status for an asymmetric encryption command missing its parameters.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testAsymetricOptionWithoutParamsReturnsOne() throws IOException {
         System.out.println("testAsymetricOptionWithoutParamsReturnsOne");
@@ -49,6 +57,11 @@ class ZeroEchoTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the failure exit status for a password encryption command missing its parameters.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testAesPswOptionWithoutParamsReturnsOne() throws IOException {
         System.out.println("testAesPswOptionWithoutParamsReturnsOne");
@@ -57,6 +70,11 @@ class ZeroEchoTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the failure exit status when no command option is supplied.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testNoOptionReturnsOne() throws IOException {
         System.out.println("testNoOptionReturnsOne");
@@ -65,6 +83,11 @@ class ZeroEchoTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks the failure exit status for an unknown command option.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testInvalidOptionReturnsOne() throws IOException {
         System.out.println("testInvalidOptionReturnsOne");

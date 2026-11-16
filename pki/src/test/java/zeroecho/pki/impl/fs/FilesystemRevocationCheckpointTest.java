@@ -63,6 +63,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for filesystem revocation checkpoint.
+ */
 final class FilesystemRevocationCheckpointTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -72,9 +75,17 @@ final class FilesystemRevocationCheckpointTest {
     private static final PkiId FIRST = new PkiId("credential:a");
     private static final PkiId SECOND = new PkiId("credential:b");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Publication discovery and ordered cursors preserve all current states.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publicationDiscoveryAndOrderedCursorsPreserveAllCurrentStates() throws Exception {
         System.out.print("publicationDiscoveryAndOrderedCursorsPreserveAllCurrentStates ");
@@ -104,6 +115,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Revision zero and stale historical coverage bind without prefix replay.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void revisionZeroAndStaleHistoricalCoverageBindWithoutPrefixReplay() throws Exception {
         System.out.print("revisionZeroAndStaleHistoricalCoverageBindWithoutPrefixReplay ");
@@ -131,6 +147,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Binding rejects foreign identity wrong frame boundary commitment and entry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bindingRejectsForeignIdentityWrongFrameBoundaryCommitmentAndEntry() throws Exception {
         System.out.print("bindingRejectsForeignIdentityWrongFrameBoundaryCommitmentAndEntry ");
@@ -175,6 +196,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Sorted source count and lifecycle are strict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sortedSourceCountAndLifecycleAreStrict() throws Exception {
         System.out.print("sortedSourceCountAndLifecycleAreStrict ");
@@ -205,6 +231,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Publication faults never expose partial generation and directory force is advisory.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publicationFaultsNeverExposePartialGenerationAndDirectoryForceIsAdvisory() throws Exception {
         System.out.print("publicationFaultsNeverExposePartialGenerationAndDirectoryForceIsAdvisory ");
@@ -240,6 +271,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Idempotent publication reuses identical generation and rejects filename mismatch.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void idempotentPublicationReusesIdenticalGenerationAndRejectsFilenameMismatch() throws Exception {
         System.out.print("idempotentPublicationReusesIdenticalGenerationAndRejectsFilenameMismatch ");
@@ -268,6 +304,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Incomplete current generation is rejected and older generation remains usable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void incompleteCurrentGenerationIsRejectedAndOlderGenerationRemainsUsable() throws Exception {
         System.out.print("incompleteCurrentGenerationIsRejectedAndOlderGenerationRemainsUsable ");
@@ -293,6 +334,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Ambiguous highest revision falls back to older unambiguous generation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ambiguousHighestRevisionFallsBackToOlderUnambiguousGeneration() throws Exception {
         System.out.print("ambiguousHighestRevisionFallsBackToOlderUnambiguousGeneration ");
@@ -317,6 +363,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cursor cancellation close and owner close are strict.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cursorCancellationCloseAndOwnerCloseAreStrict() throws Exception {
         System.out.print("cursorCancellationCloseAndOwnerCloseAreStrict ");
@@ -356,6 +407,11 @@ final class FilesystemRevocationCheckpointTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Open reader survives posix filename retirement.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void openReaderSurvivesPosixFilenameRetirement() throws Exception {
         System.out.print("openReaderSurvivesPosixFilenameRetirement ");

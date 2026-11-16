@@ -37,14 +37,31 @@ package zeroecho.pki.api.signing;
 import java.util.Objects;
 import zeroecho.pki.api.PkiId;
 
-/** Allocation-free strict UTF-8 bounds for proof request and scope coordinates. */
+/**
+ * Allocation-free strict UTF-8 bounds for proof request and scope coordinates.
+ */
 final class ManagedKeyProofInputs {
     private ManagedKeyProofInputs() { }
 
+    /**
+     * Checks a proof coordinate identifier against the 4,096-byte strict UTF-8 bound.
+     *
+     * @param id logical identifier to validate without provider or store access
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if its text is blank, malformed Unicode or oversized
+     */
     /* default */ static void identifier(PkiId id) {
         text(Objects.requireNonNull(id, "identifier").value(), 4096);
     }
 
+    /**
+     * Checks nonblank strict UTF-8 text against a caller-selected byte bound.
+     *
+     * @param value coordinate text to validate without allocating an encoded array
+     * @param maximumBytes inclusive maximum encoded byte length
+     * @throws NullPointerException if the coordinate is null
+     * @throws IllegalArgumentException if it is blank, contains an unpaired surrogate or exceeds the byte bound
+     */
     /* default */ static void text(String value, int maximumBytes) {
         Objects.requireNonNull(value, "coordinate");
         if (value.length() > maximumBytes || value.isBlank()) {

@@ -84,12 +84,17 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 @ExtendWith(RequiresSymlinkCreation.SymlinkCreationCondition.class)
 @interface RequiresSymlinkCreation {
 
-    /** JUnit condition that gates a {@link RequiresSymlinkCreation} test on symbolic-link support. */
+    /**
+     * JUnit condition that gates a {@link RequiresSymlinkCreation} test on symbolic-link support.
+     */
     final class SymlinkCreationCondition implements ExecutionCondition {
 
         private static final ConditionEvaluationResult ENABLED =
                 ConditionEvaluationResult.enabled("symbolic-link creation is permitted on this host");
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public ConditionEvaluationResult evaluateExecutionCondition(ExtensionContext context) {
             Path probeDirectory = null;

@@ -68,13 +68,21 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Terminal co-commit and startup reconciliation of the publication-evidence log. */
+/**
+ * Terminal co-commit and startup reconciliation of the publication-evidence log.
+ */
 final class FilesystemPublicationEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
     private static final PkiId PUBLICATION_ID = new PkiId("publication:crash");
 
+    /**
+     * Terminal publication co commits evidence and reconciles the crash window.
+     *
+     * @param tempDir isolated temporary directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalPublicationCoCommitsEvidenceAndReconcilesTheCrashWindow(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);

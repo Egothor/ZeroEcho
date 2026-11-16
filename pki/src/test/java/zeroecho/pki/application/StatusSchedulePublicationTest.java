@@ -63,9 +63,19 @@ import zeroecho.pki.api.schedule.StatusScheduleState;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for status schedule publication.
+ */
 class StatusSchedulePublicationTest {
     private static final Instant NOW = Instant.parse("2026-10-05T12:00:00Z");
 
+    /**
+     * Disabled accepted schedule recovers publication cuts without another signature.
+     *
+     * @param cut named lifecycle boundary at which execution or snapshotting stops
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {"cancel", "before-dispatch", "prepared", "delivered"})
     void disabledAcceptedScheduleRecoversPublicationCutsWithoutAnotherSignature(String cut, @TempDir Path root) throws Exception {
         LocalPkiSessionTest.Fixture fixture = new LocalPkiSessionTest.Fixture(root);

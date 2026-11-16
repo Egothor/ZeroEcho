@@ -43,7 +43,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 
-/** Repeatable bounded-memory PEM encoding which retains ownership of immutable DER content. */
+/**
+ * Repeatable bounded-memory PEM encoding which retains ownership of immutable DER content.
+ */
 public final class StreamingPemContent implements RepeatableContent {
     private final RepeatableContent source;
     private final byte[] header;
@@ -57,6 +59,8 @@ public final class StreamingPemContent implements RepeatableContent {
      * @param label fixed format-owned armor label
      * @param cancellation shared cooperative cancellation checked on each bounded chunk
      * @throws IllegalArgumentException if the source length or armor label is invalid
+     * @throws NullPointerException if the source or cancellation signal is null
+     * @throws ArithmeticException if the complete armored byte length cannot fit a signed long
      */
     public StreamingPemContent(RepeatableContent source,String label,CancellationSignal cancellation) {
         this.source=Objects.requireNonNull(source,"source");this.cancellation=Objects.requireNonNull(cancellation,"cancellation");
@@ -68,16 +72,33 @@ public final class StreamingPemContent implements RepeatableContent {
         long characters=Math.multiplyExact(Math.addExact(bytes,2)/3,4);
         length=Math.addExact(header.length+footer.length,Math.addExact(characters,Math.addExact(characters,63)/64));
     }
-    /** @return new independently positioned reader; retains at most one 48-KiB input chunk and its encoding */
+    /**
+     * Opens an independently positioned streaming PEM reader over the owned DER source.
+     *
+     * @return new independently positioned reader; retains at most one 48-KiB input chunk and its encoding
+     * @throws IOException if this lease is closed, cancellation is requested or the source cannot be opened
+     */
     @Override public InputStream openStream()throws IOException {
         if(closed.get())throw new IOException("PEM content lease closed");cancellation.throwIfCancelled();
         return new PemStream(source.openStream());
     }
-    /** @return exact PEM byte length including armor and line endings */
+    /**
+     * Returns the exact encoded length of the armored PEM representation.
+     *
+     * @return exact PEM byte length including armor and line endings
+     */
     @Override public OptionalLong length(){return OptionalLong.of(length);}
-    /** @return non-secret format/content identity */
+    /**
+     * Returns the format-qualified identity of the retained DER content.
+     *
+     * @return non-secret format/content identity
+     */
     @Override public String contentId(){return "pem:"+source.contentId();}
-    /** Releases the owned source exactly once. @throws IOException if source release fails */
+    /**
+     * Releases the owned source exactly once.
+     *
+     * @throws IOException if source release fails
+     */
     @Override public void close()throws IOException {if(closed.compareAndSet(false,true))source.close();}
     private final class PemStream extends InputStream {
         private final InputStream input;
@@ -104,12 +125,21 @@ public final class StreamingPemContent implements RepeatableContent {
             if(!footerWritten){footerWritten=true;segment=footer;return true;}
             return false;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read()throws IOException {return advance()?segment[offset++]&255:-1;}
+        /**
+         * {@inheritDoc}
+         */
         @Override public int read(byte[] buffer,int start,int size)throws IOException {
             Objects.checkFromIndexSize(start,size,buffer.length);if(size==0)return 0;int copied=0;
             while(copied<size&&advance()){int count=Math.min(size-copied,segment.length-offset);System.arraycopy(segment,offset,buffer,start+copied,count);offset+=count;copied+=count;}
             return copied==0?-1:copied;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close()throws IOException {if(!readerClosed){readerClosed=true;input.close();}}
     }
 }

@@ -49,16 +49,38 @@ import zeroecho.pki.api.ca.CaHeadSnapshot;
  */
 public record CaLifecycleContext(int version, Operation operation, CaHeadSnapshot expectedHead,
         PkiId originalCredentialId, String originalCertificateSha256, Optional<PkiId> transitionId) {
-    /** Closed lifecycle kinds; creation uses its existing distinct command. */
+    /**
+     * Closed lifecycle kinds; creation uses its existing distinct command.
+     */
     public enum Operation {
-        /** Same-key/same-algorithm root credential rollover. */ ROOT_ROLLOVER,
-        /** Root key or outgoing algorithm change, pending separate activation. */ ROOT_CANDIDATE,
-        /** New credential/path for an existing intermediate authority. */ INTERMEDIATE_ISSUE,
-        /** Same-key intermediate rollover. */ INTERMEDIATE_ROLLOVER,
-        /** Explicit intermediate outgoing role rotation. */ INTERMEDIATE_ROTATION
+        /**
+         * Same-key/same-algorithm root credential rollover.
+         */ ROOT_ROLLOVER,
+        /**
+         * Root key or outgoing algorithm change, pending separate activation.
+         */ ROOT_CANDIDATE,
+        /**
+         * New credential/path for an existing intermediate authority.
+         */ INTERMEDIATE_ISSUE,
+        /**
+         * Same-key intermediate rollover.
+         */ INTERMEDIATE_ROLLOVER,
+        /**
+         * Explicit intermediate outgoing role rotation.
+         */ INTERMEDIATE_ROTATION
     }
 
-    /** Rejects partial evidence and a transition identity on a noncandidate operation. */
+    /**
+     * Rejects partial evidence and a transition identity on a noncandidate operation.
+     * @param version context version, one
+     * @param operation exact lifecycle kind
+     * @param expectedHead original selected generation/path and monotonic epoch
+     * @param originalCredentialId exact original CA credential
+     * @param originalCertificateSha256 lowercase original certificate DER SHA-256
+     * @param transitionId root candidate transition identity, absent for immediate publication
+     * @throws NullPointerException if operation, expectedHead, originalCredentialId, transitionId is null
+     * @throws IllegalArgumentException if the version, certificate commitment or lifecycle metadata violates the canonical context contract
+     */
     public CaLifecycleContext {
         Objects.requireNonNull(operation, "operation"); Objects.requireNonNull(expectedHead, "expectedHead");
         Objects.requireNonNull(originalCredentialId, "originalCredentialId"); Objects.requireNonNull(transitionId, "transitionId");

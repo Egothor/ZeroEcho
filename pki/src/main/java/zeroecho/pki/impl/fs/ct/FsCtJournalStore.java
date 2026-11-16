@@ -95,7 +95,9 @@ public final class FsCtJournalStore implements CtJournalStore {
 
     private static final Logger LOG = Logger.getLogger(FsCtJournalStore.class.getName());
 
-    /** Byte size of one serialized journal entry. */
+    /**
+     * Byte size of one serialized journal entry.
+     */
     /* default */ static final int RECORD_BYTES = 512;
 
     private static final int OFFSET_SEQ = 0;
@@ -112,7 +114,9 @@ public final class FsCtJournalStore implements CtJournalStore {
     private static final int OFFSET_ENTRY_HASH = 266;
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    /** Maps hex-encoded certificate fingerprint → sequence number. */
+    /**
+     * Maps hex-encoded certificate fingerprint → sequence number.
+     */
     private final Map<String, Long> fingerprintIndex;
     private final AtomicLong headSequence;
     private final FileChannel channel;
@@ -125,6 +129,7 @@ public final class FsCtJournalStore implements CtJournalStore {
      * @param journalDir path to the journal directory; created if absent
      * @throws CtJournalException if the directory or file cannot be opened or
      *                            if existing records are unreadable
+     * @throws NullPointerException if journalDir is null
      */
     /* default */ FsCtJournalStore(final Path journalDir) throws CtJournalException {
         Objects.requireNonNull(journalDir, "journalDir");
@@ -149,6 +154,9 @@ public final class FsCtJournalStore implements CtJournalStore {
         this.closed = false;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void append(final CtJournalEntry entry) throws CtJournalException {
         Objects.requireNonNull(entry, "entry");
@@ -183,6 +191,9 @@ public final class FsCtJournalStore implements CtJournalStore {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CtJournalEntry lookup(final byte[] certSha256) throws CtJournalException {
         Objects.requireNonNull(certSha256, "certSha256");
@@ -200,6 +211,9 @@ public final class FsCtJournalStore implements CtJournalStore {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public long latestSequenceNumber() {
         lock.readLock().lock();
@@ -211,6 +225,9 @@ public final class FsCtJournalStore implements CtJournalStore {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CtJournalVerificationResult verify(final long fromSequence, final long toSequence)
             throws CtJournalException {
@@ -270,6 +287,9 @@ public final class FsCtJournalStore implements CtJournalStore {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         lock.writeLock().lock();

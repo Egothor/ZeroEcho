@@ -83,6 +83,14 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
     private boolean closed;
     private boolean hideNextCommittedOutcome;
 
+    /**
+     * Creates a transactional metadata fixture with the selected length and record-size capabilities.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @param lengthModel content-length declaration model advertised by the metadata fixture
+     * @param maximumRecordSize optional maximum accepted encoded record size, in bytes
+     * @throws IOException if fixture construction, execution, or cleanup fails
+     */
     InMemoryTransactionalMetadataStore(
             Path root,
             MetadataStoreCapabilities.ContentLengthModel lengthModel,
@@ -94,6 +102,15 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
                 maximumRecordSize);
     }
 
+    /**
+     * Creates a transactional metadata fixture with the selected length and record-size capabilities.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @param storeId exact metadata-store identity retained across the fixture open
+     * @param lengthModel content-length declaration model advertised by the metadata fixture
+     * @param maximumRecordSize optional maximum accepted encoded record size, in bytes
+     * @throws IOException if fixture construction, execution, or cleanup fails
+     */
     InMemoryTransactionalMetadataStore(
             Path root,
             MetadataStoreId storeId,
@@ -110,32 +127,59 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
                 maximumRecordSize);
     }
 
+    /**
+     * Makes the next committed transaction outcome unavailable to simulate uncertain observation.
+     */
     void hideNextCommittedOutcome() {
         hideNextCommittedOutcome = true;
     }
 
+    /**
+     * Returns how many content-source streams the metadata fixture has opened.
+     *
+     * @return cumulative source-open count
+     */
     int openedSourceCount() {
         return openedSources.get();
     }
 
+    /**
+     * Returns the number of metadata operations currently holding admission.
+     *
+     * @return current active-admission count
+     */
     synchronized int activeAdmissionCount() {
         return activeAdmissions;
     }
 
+    /**
+     * Waits until the fixture store has begun its closing transition.
+     *
+     * @throws InterruptedException if fixture construction, execution, or cleanup fails
+     */
     void awaitClosingStarted() throws InterruptedException {
         closingStarted.await();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized MetadataStoreId id() {
         return storeId;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public MetadataStoreCapabilities capabilities() {
         return capabilities;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized MetadataTransaction beginTransaction() {
         requireOpen();
@@ -146,6 +190,9 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
         return new Transaction(transactionId);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized MetadataCommitResult resolve(MetadataTransactionId transactionId)
             throws MetadataStoreException {
@@ -160,6 +207,9 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized void acknowledge(MetadataTransactionId transactionId)
             throws MetadataStoreException {
@@ -172,6 +222,9 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized MetadataSnapshot snapshot() {
         requireOpen();
@@ -180,6 +233,9 @@ final class InMemoryTransactionalMetadataStore implements TransactionalMetadataS
         return new Snapshot(authority, storeRevision, view);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         List<Path> files;

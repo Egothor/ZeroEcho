@@ -56,12 +56,18 @@ import zeroecho.pki.application.PkiSessionConfiguration.SigningLanePool;
 import zeroecho.pki.application.PkiSessionConfiguration.SigningTopology;
 import zeroecho.pki.spi.ProviderConfig;
 
+/**
+ * Contract and regression tests for PKI session configuration signing topology.
+ */
 final class PkiSessionConfigurationSigningTopologyTest {
     private static final Duration PROVIDER_TIMEOUT = Duration.ofSeconds(5L);
     private static final Duration CLAIM_LEASE = Duration.ofSeconds(6L);
     private static final Duration IDLE_POLL = Duration.ofMillis(1L);
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(2L);
 
+    /**
+     * Current version six signing configuration carries validated topology.
+     */
     @Test
     void currentVersionSixSigningConfigurationCarriesValidatedTopology() {
         SigningTopology topology = new SigningTopology(coordinator(1), List.of(),
@@ -75,6 +81,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
         assertEquals(topology, signing.topology());
     }
 
+    /**
+     * Resolves explicit and fifty percent concurrency aware pure ed dsa limits.
+     */
     @Test
     void resolvesExplicitAndFiftyPercentConcurrencyAwarePureEdDsaLimits() {
         SigningTopology oneLane = new SigningTopology(coordinator(1), List.of(),
@@ -102,6 +111,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
         assertEquals(4, fourLanes.totalLaneCount());
     }
 
+    /**
+     * Rejects invalid pure ed dsa limit inputs.
+     */
     @Test
     void rejectsInvalidPureEdDsaLimitInputs() {
         SigningTopology topology = new SigningTopology(coordinator(1), List.of(),
@@ -126,6 +138,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                 Duration.ofMinutes(1L), Optional.empty(), topology, maximum);
     }
 
+    /**
+     * Accepts empty exact groups and snapshots every list.
+     */
     @Test
     void acceptsEmptyExactGroupsAndSnapshotsEveryList() {
         List<KeyRef> mutableKeys = new ArrayList<>(List.of(new KeyRef("key-sensitive")));
@@ -147,6 +162,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                 new SigningTopology(coordinator(1), List.of(), new SigningLanePool(1, 1)));
     }
 
+    /**
+     * Rejects missing or invalid topology parts and duplicate keys.
+     */
     @Test
     void rejectsMissingOrInvalidTopologyPartsAndDuplicateKeys() {
         SigningLanePool pool = new SigningLanePool(1, 1);
@@ -176,6 +194,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
         assertFalse(across.getMessage().contains(secret.value()));
     }
 
+    /**
+     * Enforces per pool and aggregate lane and prefetch bounds.
+     */
     @Test
     void enforcesPerPoolAndAggregateLaneAndPrefetchBounds() {
         assertThrows(IllegalArgumentException.class, () -> new SigningLanePool(0, 1));
@@ -205,6 +226,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                         new SigningLanePool(1, 1)));
     }
 
+    /**
+     * Rejects oversized topology collections before traversal copy or hashing.
+     */
     @Test
     void rejectsOversizedTopologyCollectionsBeforeTraversalCopyOrHashing() {
         SigningLanePool pool = new SigningLanePool(1, 1);
@@ -216,6 +240,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                         new NonTraversableList<>(256), pool));
     }
 
+    /**
+     * Enforces UTF-8 key reference bytes at multibyte and surrogate boundaries.
+     */
     @Test
     void enforcesUtf8KeyReferenceBytesAtMultibyteAndSurrogateBoundaries() {
         SigningLanePool pool = new SigningLanePool(1, 1);
@@ -236,6 +263,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                 new KeyRef(malformedSurrogates).utf8Length());
     }
 
+    /**
+     * Enforces page and duration bounds including aggregate prefetch.
+     */
     @Test
     void enforcesPageAndDurationBoundsIncludingAggregatePrefetch() {
         assertThrows(IllegalArgumentException.class,
@@ -266,6 +296,9 @@ final class PkiSessionConfigurationSigningTopologyTest {
                 new SigningLanePool(1, 3)).coordinator().pageSize());
     }
 
+    /**
+     * Redacts every key from group and topology diagnostics.
+     */
     @Test
     void redactsEveryKeyFromGroupAndTopologyDiagnostics() {
         String secret = "never-render-this-key";

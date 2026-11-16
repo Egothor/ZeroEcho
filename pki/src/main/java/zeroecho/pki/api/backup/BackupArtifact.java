@@ -56,6 +56,8 @@ public record BackupArtifact(PkiId backupId, EncodedObject payload) {
      * Creates a backup artifact.
      *
      * @throws IllegalArgumentException if inputs are null
+     * @param backupId backup identifier
+     * @param payload backup payload bytes
      */
     public BackupArtifact {
         if (backupId == null) {

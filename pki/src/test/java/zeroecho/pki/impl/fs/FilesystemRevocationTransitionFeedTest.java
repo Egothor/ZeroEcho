@@ -68,14 +68,25 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
+/**
+ * Contract and regression tests for filesystem revocation transition feed.
+ */
 final class FilesystemRevocationTransitionFeedTest {
     private static final MetadataStoreId STORE_ID = new MetadataStoreId("102030405060708090a0b0c0d0e0f001");
     private static final MetadataStoreId OTHER_STORE_ID =
             new MetadataStoreId("102030405060708090a0b0c0d0e0f002");
     private static final int LARGE_RECORD_BYTES = 200_000;
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Validates genesis head and older prefixes and rejects false coordinates.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validatesGenesisHeadAndOlderPrefixesAndRejectsFalseCoordinates() throws Exception {
         try (FilesystemRevocationAuthority authority = authority(temporaryDirectory.resolve("prefixes"), STORE_ID, true)) {
@@ -121,6 +132,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Prefix validation reads exactly preamble and one successor without scanning history.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void prefixValidationReadsExactlyPreambleAndOneSuccessorWithoutScanningHistory() throws Exception {
         Path root = temporaryDirectory.resolve("bounded-prefix");
@@ -165,6 +181,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Prefix cancellation before open and after EOF preserves checked failure and closes channel.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void prefixCancellationBeforeOpenAndAfterEofPreservesCheckedFailureAndClosesChannel() throws Exception {
         for (boolean empty : List.of(true, false)) {
@@ -203,6 +224,11 @@ final class FilesystemRevocationTransitionFeedTest {
         return new RevocationTransitionFeed.HighWatermark(head.storeId(), head.globalRevision(), head.globalCommitment().value());
     }
 
+    /**
+     * Streams global append order with captured head isolation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void streamsGlobalAppendOrderWithCapturedHeadIsolation() throws Exception {
         try (FilesystemRevocationAuthority authority = authority(temporaryDirectory.resolve("ordered"), STORE_ID,
@@ -227,6 +253,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Resumes in constant position after restart.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void resumesInConstantPositionAfterRestart() throws Exception {
         Path root = temporaryDirectory.resolve("resume");
@@ -252,6 +283,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Rejects foreign tampered and truncated positions.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsForeignTamperedAndTruncatedPositions() throws Exception {
         Path firstRoot = temporaryDirectory.resolve("positions-first");
@@ -287,6 +323,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Detects corruption and preserves position on cancellation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void detectsCorruptionAndPreservesPositionOnCancellation() throws Exception {
         Path root = temporaryDirectory.resolve("corruption");
@@ -319,6 +360,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Non head open reads only fixed preamble before large successor.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void nonHeadOpenReadsOnlyFixedPreambleBeforeLargeSuccessor() throws Exception {
         Path root = temporaryDirectory.resolve("fixed-open");
@@ -356,6 +402,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Reuses one exact decode scratch per feed and never shares between feeds.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reusesOneExactDecodeScratchPerFeedAndNeverSharesBetweenFeeds() throws Exception {
         Path root = temporaryDirectory.resolve("decode-scratch");
@@ -394,6 +445,11 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
+    /**
+     * Empty and closed feeds fail at documented boundaries.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void emptyAndClosedFeedsFailAtDocumentedBoundaries() throws Exception {
         FilesystemRevocationAuthority authority = authority(temporaryDirectory.resolve("lifecycle"), STORE_ID, true);
@@ -459,7 +515,9 @@ final class FilesystemRevocationTransitionFeedTest {
         }
     }
 
-    /** Observes only backing-array identity and never mutates caller buffers. */
+    /**
+     * Observes only backing-array identity and never mutates caller buffers.
+     */
     private static final class ScratchTrackingChannel implements SeekableByteChannel {
         private final SeekableByteChannel delegate;
         private final Set<byte[]> scratchBuffers = Collections.newSetFromMap(new IdentityHashMap<>());

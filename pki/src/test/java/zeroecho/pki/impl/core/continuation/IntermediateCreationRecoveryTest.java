@@ -73,7 +73,16 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for intermediate creation recovery.
+ */
 final class IntermediateCreationRecoveryTest {
+    /**
+     * Resumes every publication prefix after reopen with retained internal proof.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void resumesEveryPublicationPrefixAfterReopenWithRetainedInternalProof(@TempDir Path temporary) throws Exception {
         for (DomainContinuationPublisher.PublicationFaultPoint point : new DomainContinuationPublisher.PublicationFaultPoint[] {
                 DomainContinuationPublisher.PublicationFaultPoint.AFTER_CREDENTIAL,
@@ -142,6 +151,13 @@ final class IntermediateCreationRecoveryTest {
         }
     }
 
+    /**
+     * Existing authority operations recover after internal proof and publication crash.
+     *
+     * @param operation named operation variant under test
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = {"ISSUE_INTERMEDIATE", "ROLLOVER_INTERMEDIATE"})
     void existingAuthorityOperationsRecoverAfterInternalProofAndPublicationCrash(String operation,

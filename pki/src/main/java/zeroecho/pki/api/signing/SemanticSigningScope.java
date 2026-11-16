@@ -64,6 +64,14 @@ public record SemanticSigningScope(SemanticSigningKind kind, String operation,
      * Validates immutable scope coordinates and the exact proof-kind combination.
      * @throws NullPointerException if a mandatory coordinate or optional container is null
      * @throws IllegalArgumentException if operation/profile text or the proof-kind combination is invalid
+     * @param kind semantic domain
+     * @param operation validated canonical outer-command discriminator
+     * @param accessContext original trusted actor and audit context from the envelope
+     * @param keyRef exact signing key from the envelope and validated outer command
+     * @param authorityId issuing or existing authority, absent for root creation
+     * @param subjectAuthorityId target authority for intermediate operations or CA subject-key proofs, otherwise empty
+     * @param profileId frozen logical certificate profile, absent for status and OCSP responder proof operations
+     * @param keyProof purpose-specific scope, present exactly for {@link SemanticSigningKind#KEY_PROOF}
      */
     public SemanticSigningScope {
         Objects.requireNonNull(kind, "kind");
@@ -81,6 +89,9 @@ public record SemanticSigningScope(SemanticSigningKind kind, String operation,
         }
     }
 
-    /** Returns a representation that omits privileged scope coordinates. */
+    /**
+     * Returns a representation that omits privileged scope coordinates.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "SemanticSigningScope[redacted]"; }
 }

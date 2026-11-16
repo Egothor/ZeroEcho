@@ -63,10 +63,23 @@ public record SignedCertificateTimestamp( // NOPMD DataClass - Immutable RFC car
         String signatureAlgorithm,
         byte[] signature) {
 
-    /** Required byte length of a CT log ID. */
+    /**
+     * Required byte length of a CT log ID.
+     */
     public static final int LOG_ID_LENGTH = 32;
 
-    /** Validates and defensively copies all array fields. */
+    /**
+     * Validates and defensively copies all array fields.
+     *
+     * @param version SCT version: 0 = v1 (RFC 6962), 1 = v2 (RFC 9162)
+     * @param logId 32-byte SHA-256 fingerprint of the CT log's public key
+     * @param timestamp the time at which the SCT was issued by the log
+     * @param extensions raw TLS-encoded extensions bytes (empty for most logs)
+     * @param signatureAlgorithm JCA signature algorithm name (e.g. {@code "SHA256withECDSA"})
+     * @param signature raw signature bytes from the {@code DigitallySigned} structure
+     * @throws NullPointerException if any of {@code logId}, {@code timestamp}, {@code extensions}, {@code signatureAlgorithm}, {@code signature} is null
+     * @throws IllegalArgumentException if the log ID is not 32 bytes, the signature algorithm is blank, or the signature is empty
+     */
     public SignedCertificateTimestamp {
         Objects.requireNonNull(logId, "logId");
         Objects.requireNonNull(timestamp, "timestamp");

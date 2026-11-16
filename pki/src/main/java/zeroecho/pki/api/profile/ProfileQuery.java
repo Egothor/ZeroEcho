@@ -51,6 +51,9 @@ public record ProfileQuery(Optional<FormatId> formatId, Optional<String> profile
      * Creates a profile query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param formatId optional format filter
+     * @param profileId optional profile id filter
+     * @param activeOnly optional filter (true -> only active profiles, false -> only inactive, empty -> all)
      */
     public ProfileQuery {
         if (formatId == null || profileId == null || activeOnly == null) {

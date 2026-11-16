@@ -122,24 +122,34 @@ final class AuthorityFairQueue {
         return operation;
     }
 
-    /** Returns the exact number of buffered operations. */
+    /**
+     * Returns the exact number of buffered operations.
+     * @return current buffered operation count
+     */
     /* default */ int size() {
         return operations.size();
     }
 
-    /** Returns the exact number of operations that may still be buffered. */
+    /**
+     * Returns the exact number of operations that may still be buffered.
+     * @return configured capacity minus the current buffered operation count
+     */
     /* default */ int remainingCapacity() {
         return capacity - operations.size();
     }
 
-    /** Removes every operation and authority bucket for immediate reuse. */
+    /**
+     * Removes every operation and authority bucket for immediate reuse.
+     */
     /* default */ void clear() {
         operations.clear();
         byAuthority.clear();
         authorityRing.clear();
     }
 
-    /** One active authority's FIFO operations. */
+    /**
+     * One active authority's FIFO operations.
+     */
     private static final class AuthorityBucket {
         private final PkiId authorityId;
         private final Deque<PkiId> operations = new ArrayDeque<>();

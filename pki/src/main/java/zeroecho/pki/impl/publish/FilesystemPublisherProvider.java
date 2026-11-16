@@ -42,26 +42,39 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.publish.Publisher;
 import zeroecho.pki.spi.publish.PublisherProvider;
 
-/** Explicit filesystem publication-destination provider. */
+/**
+ * Explicit filesystem publication-destination provider.
+ */
 public final class FilesystemPublisherProvider implements PublisherProvider {
     private static final String ROOT = "root";
     private static final String TARGET_ID = "targetId";
 
-    /** Creates a filesystem publisher provider descriptor. */
+    /**
+     * Creates a filesystem publisher provider descriptor.
+     */
     public FilesystemPublisherProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "filesystem";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(ROOT, TARGET_ID);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateConfig(ProviderConfig config) {
         PublisherProvider.super.validateConfig(config);
@@ -69,6 +82,9 @@ public final class FilesystemPublisherProvider implements PublisherProvider {
         new PublicationTarget(PublicationTargetType.FILESYSTEM, config.require(TARGET_ID));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Publisher allocate(ProviderConfig config) {
         validateConfig(config);

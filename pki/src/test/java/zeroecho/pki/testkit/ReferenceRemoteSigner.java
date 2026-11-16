@@ -104,14 +104,25 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         this(keys, requireApproval, defaultCapabilities());
     }
 
-    /** Creates a signer with exact server-captured capabilities. */
+    /**
+     * Creates a signer with exact server-captured capabilities.
+     *
+     * @param keys remote key-handle-to-real-key-pair mapping copied for the signer
+     * @param requireApproval whether new submissions wait for the fixture approval step
+     * @param capabilities exact server capability and configuration snapshot
+     * @throws NullPointerException if keys or capabilities is null
+     */
     public ReferenceRemoteSigner(Map<String, KeyPair> keys, boolean requireApproval, RemoteCapabilities capabilities) {
         this.keys = new HashMap<>(Objects.requireNonNull(keys, "keys"));
         this.requireApproval = requireApproval;
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
     }
 
-    /** Returns the standard reference protocol capability fixture. */
+    /**
+     * Returns the standard reference protocol capability fixture.
+     *
+     * @return standard immutable reference protocol capability snapshot
+     */
     public static RemoteCapabilities defaultCapabilities() {
         byte[] configurationCommitment = new byte[32];
         for (int index = 0; index < configurationCommitment.length; index++) {
@@ -131,6 +142,9 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
                 new SigningInputCapabilities(SigningInputCapabilities.REMOTE_RAW_LIMIT, prehash));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized RemoteSigningStatus submit(RemoteSignRequest request, RemoteCallControl control) {
         Objects.requireNonNull(request, "request");
@@ -163,6 +177,9 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         return sign(operationId, request);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized RemoteSigningStatus status(String operationId, RemoteCallControl control) {
         Objects.requireNonNull(operationId, "operationId");
@@ -174,6 +191,9 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         return current;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized RemoteSigningStatus cancel(String operationId, long fencingToken, String reason,
             RemoteCallControl control) {
@@ -196,6 +216,9 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
                 Optional.empty(), ""));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized byte[] publicKeyInfo(String keyHandle, RemoteCallControl control) {
         KeyPair keyPair = keys.get(Objects.requireNonNull(keyHandle, "keyHandle"));
@@ -205,16 +228,25 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         return keyPair.getPublic().getEncoded();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized RemoteCapabilities capabilities() {
         return capabilities;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean supportsCallbacks() {
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AutoCloseable subscribe(RemoteSigningCallback callback) {
         Objects.requireNonNull(callback, "callback");
@@ -222,7 +254,13 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         return () -> callbacks.remove(callback);
     }
 
-    /** Approves a pending operation, driving it to a terminal signature. */
+    /**
+     * Approves a pending operation, driving it to a terminal signature.
+     *
+     * @param operationId remote operation identity selected for the explicit approval decision
+     * @return terminal signature status produced by the retained request
+     * @throws IllegalStateException if no pending approval exists for the operation
+     */
     public synchronized RemoteSigningStatus approve(String operationId) {
         RemoteSignRequest request = pendingApproval.remove(operationId);
         if (request == null) {
@@ -231,13 +269,22 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         return sign(operationId, request);
     }
 
-    /** Denies a pending operation with a non-secret justification. */
+    /**
+     * Denies a pending operation with a non-secret justification.
+     *
+     * @param operationId remote operation identity selected for the explicit approval decision
+     * @param reason non-secret caller justification; ignored by this reference implementation
+     * @return new denied status for the selected operation
+     */
     public synchronized RemoteSigningStatus deny(String operationId, String reason) {
         pendingApproval.remove(operationId);
         return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.DENIED, Instant.now(),
                 Optional.empty(), ""));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         callbacks.clear();

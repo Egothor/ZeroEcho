@@ -82,10 +82,22 @@ import zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration;
 import zeroecho.pki.server.enrollment.EnrollmentTransaction;
 import zeroecho.pkix.cmp.CmpProtectedMessage;
 
-/** Adapter behavior with independent protected wire messages and explicit custody boundaries. */
+/**
+ * Adapter behavior with independent protected wire messages and explicit custody boundaries.
+ */
 class CmpServiceFlowTest {
+    /**
+     * Initializes the shared real CMP authentication certificate fixtures before flow tests.
+     *
+     * @throws Exception if certificate fixture initialization fails
+     */
     @BeforeAll static void certificates() throws Exception { CmpAuthenticationTest.certificates(); }
 
+    /**
+     * Checks that discovery responses become durable before delivery and exact replay uses retained authenticated state.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void protectedDiscoveryPersistsBeforeDeliveryAndExactReplayBypassesFreshStatus() throws Exception {
         Fixture fixture = new Fixture();
         byte[] request = CmpAuthenticationTest.signed(CmpAuthenticationTest.client,
@@ -104,6 +116,11 @@ class CmpServiceFlowTest {
         assertArrayEquals(response, fixture.response.get());
     }
 
+    /**
+     * Rejects fresh CMP transactions when the signer or its validated anchor is held or revoked.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void heldRevokedSignerOrValidatedAnchorCannotObtainFreshTransaction() throws Exception {
         for (EffectiveCredentialStatus status : List.of(EffectiveCredentialStatus.HELD, EffectiveCredentialStatus.PERMANENTLY_REVOKED)) {
             for (java.security.cert.X509Certificate blocked : List.of(CmpAuthenticationTest.client, CmpAuthenticationTest.ca)) {
@@ -117,6 +134,11 @@ class CmpServiceFlowTest {
         }
     }
 
+    /**
+     * Checks that uncommitted responses are withheld and response signing retains its frozen credential selection.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void uncommittedResponseNeverEscapesAndFrozenCredentialRemainsSelected() throws Exception {
         Fixture fixture = new Fixture();
         byte[] request = CmpAuthenticationTest.signed(CmpAuthenticationTest.client,
@@ -130,6 +152,11 @@ class CmpServiceFlowTest {
         verify(fixture.runtime, never()).acquire("rotated");
     }
 
+    /**
+     * Rejects unrelated signer revocation before any durable request reservation.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void unrelatedSignatureCannotRevokeAnotherCertificateBeforeReservation() throws Exception {
         Fixture fixture = new Fixture();
         Credential target = fixture.known(CmpAuthenticationTest.server);
@@ -144,6 +171,11 @@ class CmpServiceFlowTest {
         verify(fixture.session, never()).operations();
     }
 
+    /**
+     * Checks request identity and nonce-chain continuity through waiting, polling, certificate delivery, and confirmation.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void waitingPollCertificateAndExplicitConfirmationKeepExactRequestAndNonceChain() throws Exception {
         Fixture fixture = new Fixture();
         byte[] crmf = new org.bouncycastle.cert.crmf.CertificateRequestMessageBuilder(BigInteger.valueOf(7))
@@ -203,6 +235,11 @@ class CmpServiceFlowTest {
         verify(fixture.coordinator).admitCmp(any(), any());
     }
 
+    /**
+     * Rejects PBM authorization for revocation or replacement even when identity aliases resemble credential ownership.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void binaryPbmCannotAuthorizeRevocationOrReplacementDespiteOwnerAliases() throws Exception {
         Fixture fixture = new Fixture();
         byte[] secret = CmpAuthenticationTest.filled(32, 0x80); secret[0] = 0;
@@ -245,6 +282,11 @@ class CmpServiceFlowTest {
         verify(fixture.session, never()).operations();
     }
 
+    /**
+     * Checks owner/scoped-RA revocation evidence and exact replay after a lost response.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void exactOwnerAndScopedRaRevocationsCarryHonestEvidenceAndRecoverLostResponse() throws Exception {
         for (boolean ra : List.of(false, true)) {
             Fixture fixture = new Fixture();
@@ -291,6 +333,11 @@ class CmpServiceFlowTest {
         }
     }
 
+    /**
+     * Checks signature-authorized replacement preserves the new CRMF key and exact predecessor identity.
+     *
+     * @throws Exception if fixture setup, protocol invocation, or cleanup fails
+     */
     @Test void signatureOwnerReplacementRetainsActualNewKeyCrmfAndPredecessor() throws Exception {
         Fixture fixture = new Fixture();
         Credential predecessor = fixture.known(CmpAuthenticationTest.client);

@@ -41,11 +41,17 @@ package zeroecho.core.storage;
  *                                    absolute decoded maximum
  */
 public record KeyringProtection(int operationalIterationMaximum) {
-    /** Iterations used when a new keyring is created. */
+    /**
+     * Iterations used when a new keyring is created.
+     */
     public static final int CREATION_ITERATIONS = 600_000;
-    /** Largest operationally accepted PBKDF2 iteration count. */
+    /**
+     * Largest operationally accepted PBKDF2 iteration count.
+     */
     public static final int MAX_OPERATIONAL_ITERATIONS = 1_000_000;
-    /** Absolute safety ceiling for decoded PBKDF2 iteration counts. */
+    /**
+     * Absolute safety ceiling for decoded PBKDF2 iteration counts.
+     */
     public static final int MAX_DECODED_ITERATIONS = 10_000_000;
 
     /**
@@ -53,6 +59,9 @@ public record KeyringProtection(int operationalIterationMaximum) {
      *
      * @throws IllegalArgumentException if the limit is below the creation setting
      *                                  or above the absolute operational maximum
+     * @param operationalIterationMaximum maximum accepted PBKDF2 iteration count;
+     *                                    it may restrict but never exceed the
+     *                                    absolute decoded maximum
      */
     public KeyringProtection {
         if (operationalIterationMaximum < CREATION_ITERATIONS

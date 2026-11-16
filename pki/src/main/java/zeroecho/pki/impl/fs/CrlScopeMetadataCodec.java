@@ -65,9 +65,18 @@ import zeroecho.pki.spi.store.MetadataKey;
  */
 final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
     private static final int SHA256_HEX_LENGTH = 64;
+    /**
+     * Inclusive maximum identifier length in UTF-8 bytes.
+     */
     /* default */ static final int MAXIMUM_ID_BYTES = 4096;
+    /**
+     * Inclusive maximum encoded record length in bytes.
+     */
     /* default */ static final int MAXIMUM_ENCODED_BYTES = 12 + 32 + 4 + CrlScope.MAXIMUM_NAME_BYTES
             + 4 + CrlScope.MAXIMUM_SPKI_BYTES + 4 + 20 + 4 + 4 + MAXIMUM_ID_BYTES + 32;
+    /**
+     * Inclusive maximum encoded CRL scope counter length in bytes.
+     */
     /* default */ static final int MAXIMUM_COUNTER_ENCODED_BYTES = 12 + 32 + 4 + 20; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
     private static final int MAGIC = 0x5a454353; // ZECS
     private static final int VERSION = 1;
@@ -80,19 +89,49 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
 
     private CrlScopeMetadataCodec() { }
 
+    /**
+     * Derives the exact metadata identity of the structural scope ownership claim.
+     *
+     * @param owner structural scope ownership claim
+     * @return canonical metadata key without accessing storage
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey key(CrlScopeOwner owner) {
         return ownerKey(Objects.requireNonNull(owner, "owner").scope());
     }
 
+    /**
+     * Derives the ownership metadata key for an exact structural CRL scope.
+     *
+     * @param scope immutable structural CRL scope
+     * @return scope-digest key in the CRL scope ownership namespace
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey ownerKey(CrlScope scope) {
         return new MetadataKey("io.zeroecho.pki.crl-scope-owner", Objects.requireNonNull(scope, "scope").digest());
     }
 
+    /**
+     * Derives the exact metadata identity of the permanent scope and serial reservation.
+     *
+     * @param reservation permanent scope and serial reservation
+     * @return canonical metadata key without accessing storage
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey key(ScopeSerialReservation reservation) {
         Objects.requireNonNull(reservation, "reservation");
         return reservationKey(reservation.scope(), reservation.serial());
     }
 
+    /**
+     * Derives a scope-wide serial reservation key with canonical hexadecimal serial framing.
+     *
+     * @param scope immutable structural CRL scope
+     * @param serial positive certificate serial of at most 159 bits
+     * @return exact scope and serial reservation metadata key
+     * @throws NullPointerException if a required argument is null
+     * @throws IllegalArgumentException if the serial is nonpositive or exceeds 159 bits
+     */
     /* default */ static MetadataKey reservationKey(CrlScope scope, BigInteger serial) {
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(serial, "serial");
@@ -104,10 +143,24 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
                 scope.digest() + ":" + HEX.formatHex(serial.toByteArray()));
     }
 
+    /**
+     * Derives the exact metadata identity of the scope digest and next-number counter.
+     *
+     * @param counter scope digest and next-number counter
+     * @return canonical metadata key without accessing storage
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey key(CrlScopeCounter counter) {
         return counterKey(Objects.requireNonNull(counter, "counter").scopeDigest());
     }
 
+    /**
+     * Derives the next-number counter key for an exact structural CRL scope.
+     *
+     * @param scope immutable structural CRL scope
+     * @return scope-digest key in the CRL counter namespace
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static MetadataKey counterKey(CrlScope scope) {
         return counterKey(Objects.requireNonNull(scope, "scope").digest());
     }
@@ -117,6 +170,14 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
         return new MetadataKey("io.zeroecho.pki.crl-scope-counter", scopeDigest);
     }
 
+    /**
+     * Encodes the scope digest and next unissued CRL number in the current bounded binary format.
+     *
+     * @param counter validated immutable scope digest and next unissued CRL number
+     * @return newly allocated complete metadata record
+     * @throws NullPointerException if the value is null
+     * @throws IllegalArgumentException if a bounded identifier or canonical commitment is invalid
+     */
     /* default */ static byte[] encode(CrlScopeCounter counter) {
         Objects.requireNonNull(counter, "counter");
         byte[] signed = counter.nextNumber().toByteArray();
@@ -129,6 +190,14 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Decodes a canonical CRL counter and requires its derived metadata key to match.
+                   *
+                   * @param key exact persisted metadata identity
+                   * @param encoded complete bounded counter record
+                   * @return validated scope digest and next-number state
+                   * @throws IOException if identity, size, integer representation, version or trailing data is invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static CrlScopeCounter decodeCounter(MetadataKey key, byte[] encoded) throws IOException {
         if (key == null || encoded == null || encoded.length > MAXIMUM_COUNTER_ENCODED_BYTES) {
@@ -152,6 +221,14 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
         }
     }
 
+    /**
+     * Encodes the structural scope and owning authority in the current bounded binary format.
+     *
+     * @param owner validated immutable structural scope and owning authority
+     * @return newly allocated complete metadata record
+     * @throws NullPointerException if the value is null
+     * @throws IllegalArgumentException if a bounded identifier or canonical commitment is invalid
+     */
     /* default */ static byte[] encode(CrlScopeOwner owner) {
         Objects.requireNonNull(owner, "owner");
         byte[] id = utf8(owner.authorityId().value(), MAXIMUM_ID_BYTES);
@@ -160,6 +237,14 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
         return output.array();
     }
 
+    /**
+     * Encodes the structural scope, serial and exact issuance owner in the current bounded binary format.
+     *
+     * @param reservation validated immutable structural scope, serial and exact issuance owner
+     * @return newly allocated complete metadata record
+     * @throws NullPointerException if the value is null
+     * @throws IllegalArgumentException if a bounded identifier or canonical commitment is invalid
+     */
     /* default */ static byte[] encode(ScopeSerialReservation reservation) {
         Objects.requireNonNull(reservation, "reservation");
         byte[] serial = reservation.serial().toByteArray();
@@ -187,6 +272,13 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Decodes one exact structural CRL scope ownership record.
+                   *
+                   * @param encoded complete bounded ownership record
+                   * @return validated scope and owning authority claim
+                   * @throws IOException if framing, structural scope, authority identity or trailing data is invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static CrlScopeOwner decodeOwner(byte[] encoded) throws IOException {
         try {
@@ -201,6 +293,13 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
     }
 
     /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  /**
+                   * Decodes a canonical scope-wide serial reservation and its closed owner variant.
+                   *
+                   * @param encoded complete bounded reservation record
+                   * @return validated structural scope, positive serial and exact issuance owner
+                   * @throws IOException if framing, serial canonicality, scope, owner code, identifiers or trailing data is invalid
+                   */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static ScopeSerialReservation decodeReservation(byte[] encoded) throws IOException {
         try {
@@ -224,10 +323,24 @@ final class CrlScopeMetadataCodec { // NOPMD - CyclomaticComplexity totals indep
         }
     }
 
+    /**
+     * Requires a bounded strict UTF-8 scope metadata identifier.
+     *
+     * @param id logical identifier with an encoded length of at most 4,096 bytes
+     * @throws NullPointerException if the identifier is null
+     * @throws IllegalArgumentException if it is blank, malformed Unicode or exceeds its encoded byte bound
+     */
     /* default */ static void requireId(PkiId id) {
         utf8(Objects.requireNonNull(id, "id").value(), MAXIMUM_ID_BYTES);
     }
 
+    /**
+     * Requires the canonical lowercase hexadecimal representation of a SHA-256 commitment.
+     *
+     * @param hash exact 64-character lowercase hexadecimal commitment
+     * @throws NullPointerException if the commitment is null
+     * @throws IllegalArgumentException if its length or alphabet is invalid
+     */
     /* default */ static void requireHash(String hash) {
         Objects.requireNonNull(hash, "commitment");
         if (hash.length() != SHA256_HEX_LENGTH) {

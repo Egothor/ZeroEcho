@@ -47,12 +47,22 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import zeroecho.pkix.cert.CertificateBuilder;
 
-/** Independent ASN.1 transcript assertions and real signatures for the Cor.3 baseline. */
+/**
+ * Independent ASN.1 transcript assertions and real signatures for the Cor.3 baseline.
+ */
 final class Cor3AlternativeSignatureTest {
     private static final AlgorithmIdentifier NATIVE = AlgorithmIdentifier.absent("1.2.840.10045.4.3.3");
     private static final AlgorithmIdentifier ALT = AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.19");
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void providers() { zeroecho.sdk.util.BouncyCastleActivator.init(); }
 
+    /**
+     * Retains both native algorithms and rejects legacy transcript and tampering.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void retainsBothNativeAlgorithmsAndRejectsLegacyTranscriptAndTampering() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("EC", "BC");
         generator.initialize(new ECGenParameterSpec("secp384r1"));
@@ -85,6 +95,11 @@ final class Cor3AlternativeSignatureTest {
         assertFalse(Pkix.verifyAlternativeSignatureCor3(missing, alternative.getPublic()));
     }
 
+    /**
+     * Excludes existing alternative value regardless of its bytes.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void excludesExistingAlternativeValueRegardlessOfItsBytes() throws Exception {
         KeyPair primary = KeyPairGenerator.getInstance("Ed25519", "BC").generateKeyPair();
         KeyPair alternative = KeyPairGenerator.getInstance("ML-DSA-87", "BC").generateKeyPair();
@@ -94,6 +109,13 @@ final class Cor3AlternativeSignatureTest {
         assertThrows(NullPointerException.class, () -> builder(primary, alternative).buildAlternativeSignatureTbs(null));
     }
 
+    /**
+     * Matches independent synthetic structural vector.
+     *
+     * @param name named independent structural vector
+     * @param expectedSha256 expected SHA-256 digest of the vector transcript
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
             "root,08e5b9e128853cdeeb401149cc03ca887b14a0c2469fc602d5b7884ce58fca3d",

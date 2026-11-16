@@ -84,6 +84,9 @@ class HybridDerivedAesDemoTest {
 
     private static final Logger LOG = Logger.getLogger(HybridDerivedAesDemoTest.class.getName());
 
+    /**
+     * Attempts optional cryptographic provider activation before the sample scenarios.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only algorithms in the broader test suite.
@@ -94,6 +97,11 @@ class HybridDerivedAesDemoTest {
         }
     }
 
+    /**
+     * Checks the condensed builder path for hybrid-derived AES-GCM payload delivery.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybridDerived_aes_gcm_condensed() throws Exception {
         System.out.println("hybridDerived_aes_gcm_condensed()");
@@ -257,6 +265,11 @@ class HybridDerivedAesDemoTest {
         }
     }
 
+    /**
+     * Checks the expanded builder path for hybrid-derived AES-GCM payload delivery.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybridDerived_aes_gcm_expanded() throws Exception {
         System.out.println("hybridDerived_aes_gcm_expanded()");
@@ -434,6 +447,11 @@ class HybridDerivedAesDemoTest {
         }
     }
 
+    /**
+     * Checks hybrid-derived AES-GCM delivery to a local self recipient.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybridDerived_aes_gcm_local_self_recipient() throws Exception {
         System.out.println("hybridDerived_aes_gcm_local_self_recipient()");

@@ -50,10 +50,15 @@ import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Maps status-evidence feed entries to payload-free audit events through the status adapter. */
+/**
+ * Maps status-evidence feed entries to payload-free audit events through the status adapter.
+ */
 class StatusAuditProjectionTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 
+    /**
+     * Checks status-generation projection preserves authoritative time, CRL object identity and issuing authority.
+     */
     @Test
     void projectsStatusGenerationEvidence() {
         StatusGenerationEvidence evidence = StatusGenerationEvidence.system("CRL", "ca-a", "x509",
@@ -76,6 +81,9 @@ class StatusAuditProjectionTest {
         assertFalse(event.details().containsKey("signature"));
     }
 
+    /**
+     * Checks an entry without recognized status evidence produces no fabricated audit event.
+     */
     @Test
     void skipsEntriesWithoutStatusEvidence() {
         byte[] payload = DomainAttributeEncoding.encode(SimpleAttributeSet.builder().build())
@@ -84,6 +92,9 @@ class StatusAuditProjectionTest {
         assertTrue(StatusAuditProjection.toEvent(entry).isEmpty());
     }
 
+    /**
+     * Checks repeated projection of the same authoritative status entry produces an equal deterministic event identity.
+     */
     @Test
     void deterministicEventIdIsStableAcrossReprojection() {
         StatusGenerationEvidence evidence = StatusGenerationEvidence.system("OCSP", "ca-a", "x509",

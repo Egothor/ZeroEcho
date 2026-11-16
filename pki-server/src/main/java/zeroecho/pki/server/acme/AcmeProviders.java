@@ -47,7 +47,9 @@ import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.core.io.CancellationSignal;
 
-/** Deterministic explicitly enabled ACME ServiceLoader composition. */
+/**
+ * Deterministic explicitly enabled ACME ServiceLoader composition.
+ */
 
 public final class AcmeProviders {
     private AcmeProviders() { }
@@ -60,6 +62,7 @@ public final class AcmeProviders {
      * @return immutable providers keyed by configured identity
      * @throws IllegalArgumentException if a configured provider is unavailable or duplicated
      * @throws IllegalStateException if discovery yields duplicate provider identities
+     * @throws NullPointerException if {@code loader} is null
      */
     public static Map<String, AcmeChallengeProvider> challenges(List<ProviderConfig> enabled,
             ClassLoader loader) {
@@ -104,6 +107,7 @@ public final class AcmeProviders {
      * @return immutable providers keyed by configured identity
      * @throws IllegalArgumentException if a configured provider is unavailable or duplicated
      * @throws IllegalStateException if discovery yields duplicate provider identities
+     * @throws NullPointerException if {@code loader} is null
      */
     public static Map<String, AcmeExternalAccountBindingProvider> eab(List<ProviderConfig> enabled,
             ClassLoader loader) {

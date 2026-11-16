@@ -48,11 +48,17 @@ import zeroecho.pki.api.PkiId;
  */
 public record AuthorityExposurePolicy(Mode mode, Set<PkiId> authorityIds,
         boolean authorityCreationPermitted) {
-    /** Closed authority-exposure modes. */
+    /**
+     * Closed authority-exposure modes.
+     */
     public enum Mode {
-        /** Every authority in the realm session is eligible for scoped exposure. */
+        /**
+         * Every authority in the realm session is eligible for scoped exposure.
+         */
         ALL_REALM_AUTHORITIES(1),
-        /** Only the exact configured authority identities are eligible. */
+        /**
+         * Only the exact configured authority identities are eligible.
+         */
         EXPLICIT_AUTHORITIES(2);
 
         private final int code;
@@ -86,7 +92,15 @@ public record AuthorityExposurePolicy(Mode mode, Set<PkiId> authorityIds,
         }
     }
 
-    /** Validates and defensively snapshots the exposure policy. */
+    /**
+     * Validates and defensively snapshots the exposure policy.
+     * @param mode exposure mode
+     * @param authorityIds exact exposed authorities for explicit mode
+     * @param authorityCreationPermitted whether realm-scoped authority creation is permitted
+     * @throws NullPointerException if any of {@code mode}, {@code authorityIds} is null
+     * @throws IllegalArgumentException if all-authority exposure is combined with an explicit authority set or
+     *         explicit exposure selects no authorities
+     */
     public AuthorityExposurePolicy {
         Objects.requireNonNull(mode, "mode");
         authorityIds = Set.copyOf(Objects.requireNonNull(authorityIds, "authorityIds"));
@@ -103,6 +117,7 @@ public record AuthorityExposurePolicy(Mode mode, Set<PkiId> authorityIds,
      *
      * @param authorityId authority to test
      * @return whether the process may expose it
+     * @throws NullPointerException if {@code authorityId} is null
      */
     public boolean allows(PkiId authorityId) {
         Objects.requireNonNull(authorityId, "authorityId");

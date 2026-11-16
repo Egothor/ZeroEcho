@@ -55,10 +55,24 @@ import org.junit.jupiter.params.provider.ValueSource;
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for keyring stateful process.
+ */
 class KeyringStatefulProcessTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path root;
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll static void provider() { BouncyCastleActivator.init(); }
 
+    /**
+     * Authority fence excludes another JVM and releases after exit.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void authorityFenceExcludesAnotherJvmAndReleasesAfterExit() throws Exception {
         Path ledger = root.resolve("authority");
         LocalStatefulSigningAuthority.create(ledger).close();
@@ -83,6 +97,12 @@ class KeyringStatefulProcessTest {
         LocalStatefulSigningAuthority.open(ledger).close();
     }
 
+    /**
+     * Actual JVM crash never reuses returned leaf.
+     *
+     * @param transition durable signing transition at which the fixture JVM terminates
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = { "reserved", "image", "ready" })
     void actualJvmCrashNeverReusesReturnedLeaf(String transition) throws Exception {
         Path keys = root.resolve("keys/store");

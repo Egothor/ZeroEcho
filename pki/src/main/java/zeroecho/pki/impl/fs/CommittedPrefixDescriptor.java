@@ -36,13 +36,38 @@ package zeroecho.pki.impl.fs;
 import java.security.MessageDigest;
 import java.util.Objects;
 
-/** Immutable lower-exclusive and forced-upper-inclusive active-WAL prefix bounds. */
+/**
+ * Immutable lower-exclusive and forced-upper-inclusive active-WAL prefix bounds.
+ * @param generationId exact generation identity
+ * @param exclusiveStartOffset exclusive lower byte boundary of the accepted WAL prefix
+ * @param exclusiveStartSequence sequence at the exclusive lower boundary
+ * @param exclusiveStartRevision committed revision at the exclusive lower boundary
+ * @param exclusiveStartCommitment rolling commitment at the exclusive lower boundary
+ * @param inclusiveForcedEndOffset forced upper byte boundary included by the descriptor
+ * @param inclusiveForcedEndSequence last sequence covered by the forced upper boundary
+ * @param inclusiveForcedEndRevision committed revision covered by the forced upper boundary
+ * @param inclusiveForcedEndCommitment rolling commitment at the forced upper boundary
+ */
 record CommittedPrefixDescriptor(long generationId,
         long exclusiveStartOffset, long exclusiveStartSequence,
         long exclusiveStartRevision, byte[] exclusiveStartCommitment,
         long inclusiveForcedEndOffset, long inclusiveForcedEndSequence,
         long inclusiveForcedEndRevision, byte[] inclusiveForcedEndCommitment) {
 
+    /**
+     * Creates an immutable lower-exclusive and forced-upper-inclusive active-WAL prefix bounds.
+     *
+     * @param generationId exact generation identity
+     * @param exclusiveStartOffset exclusive lower byte boundary of the accepted WAL prefix
+     * @param exclusiveStartSequence sequence at the exclusive lower boundary
+     * @param exclusiveStartRevision committed revision at the exclusive lower boundary
+     * @param exclusiveStartCommitment rolling commitment at the exclusive lower boundary
+     * @param inclusiveForcedEndOffset forced upper byte boundary included by the descriptor
+     * @param inclusiveForcedEndSequence last sequence covered by the forced upper boundary
+     * @param inclusiveForcedEndRevision committed revision covered by the forced upper boundary
+     * @param inclusiveForcedEndCommitment rolling commitment at the forced upper boundary
+     * @throws IllegalArgumentException if {@code (generationId < 0L || exclusiveStartOffset < SigningWalContainerCodec.HEADER_BYTES || inclusiveForcedEndOffset < exclusiveStartOffset || exclusiveStartSequence < -1L || inclusiveForcedEndSequence < exclusiveStartSequence || exclusiveStartRevision < 0L || inclusiveForcedEndRevision < exclusiveStartRevision)}; or if {@code (empty != endpointEqual)}
+     */
     CommittedPrefixDescriptor {
         requireCommitment(exclusiveStartCommitment);
         requireCommitment(inclusiveForcedEndCommitment);
@@ -67,21 +92,42 @@ record CommittedPrefixDescriptor(long generationId,
         inclusiveForcedEndCommitment = inclusiveForcedEndCommitment.clone();
     }
 
+    /**
+     * Returns an independent copy of the retained lower-bound rolling commitment bytes.
+     *
+     * @return newly allocated array containing the rolling commitment at the exclusive lower boundary
+     */
     @Override
     public byte[] exclusiveStartCommitment() {
         return exclusiveStartCommitment.clone();
     }
 
+    /**
+     * Returns an independent copy of the retained forced upper-bound rolling commitment bytes.
+     *
+     * @return newly allocated array containing the rolling commitment at the forced upper boundary
+     */
     @Override
     public byte[] inclusiveForcedEndCommitment() {
         return inclusiveForcedEndCommitment.clone();
     }
 
+    /**
+     * Reports whether the accepted WAL prefix contains no bytes beyond its exclusive lower boundary.
+     *
+     * @return true when the forced upper and exclusive lower byte boundaries are equal
+     */
     /* default */ boolean isEmpty() {
         return inclusiveForcedEndOffset == exclusiveStartOffset;
     }
 
-    /** Compares the forced-end commitment without exposing or cloning it. */
+    /**
+     * Compares the forced-end commitment without exposing or cloning it.
+     *
+     * @param expected independently supplied commitment bytes; any length is accepted for comparison
+     * @return true only when the expected bytes equal the retained forced-end commitment
+     * @throws NullPointerException if the expected array is null
+     */
     /* default */ boolean matchesInclusiveForcedEndCommitment(byte[] expected) {
         return MessageDigest.isEqual(inclusiveForcedEndCommitment,
                 Objects.requireNonNull(expected, "expected"));

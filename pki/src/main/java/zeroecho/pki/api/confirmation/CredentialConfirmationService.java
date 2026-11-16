@@ -38,7 +38,9 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 
-/** Session-owned application facade for authoritative credential confirmation. */
+/**
+ * Session-owned application facade for authoritative credential confirmation.
+ */
 public interface CredentialConfirmationService {
     /**
      * Initializes or exactly replays one frozen confirmation lifecycle.

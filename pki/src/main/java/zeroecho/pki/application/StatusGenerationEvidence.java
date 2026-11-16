@@ -64,23 +64,39 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 public record StatusGenerationEvidence(String statusObjectType, String issuerCaId, String formatId,
         String thisUpdate, Optional<String> nextUpdate, Outcome outcome) {
 
-    /** Outcome committed with the status object. */
+    /**
+     * Outcome committed with the status object.
+     */
     public enum Outcome {
-        /** The status object was generated successfully. */
+        /**
+         * The status object was generated successfully.
+         */
         GENERATED
     }
 
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId STATUS_TYPE = id("status-type");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId ISSUER_CA_ID = id("issuer-ca-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId FORMAT_ID = id("format-id");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId THIS_UPDATE = id("this-update");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId NEXT_UPDATE = id("next-update");
-    /** Evidence attribute vocabulary. */
+    /**
+     * Evidence attribute vocabulary.
+     */
     public static final AttributeId OUTCOME = id("outcome");
 
     private static final String EVIDENCE_PREFIX = "urn:zeroecho:pki:status-evidence:";
@@ -88,7 +104,16 @@ public record StatusGenerationEvidence(String statusObjectType, String issuerCaI
     private static final Set<AttributeId> EVIDENCE_V1 = Set.of(STATUS_TYPE, ISSUER_CA_ID, FORMAT_ID, THIS_UPDATE,
             NEXT_UPDATE, OUTCOME);
 
-    /** Validates the closed evidence model. */
+    /**
+     * Validates the closed evidence model.
+     * @param statusObjectType generated status object type
+     * @param issuerCaId issuing authority identity
+     * @param formatId status object format identity
+     * @param thisUpdate the produced status object's {@code thisUpdate}
+     * @param nextUpdate the produced status object's {@code nextUpdate}, when present
+     * @param outcome outcome committed atomically with the status object
+     * @throws NullPointerException if nextUpdate, outcome is null
+     */
     public StatusGenerationEvidence {
         requireBounded(statusObjectType, "status type");
         requireBounded(issuerCaId, "issuer CA ID");
@@ -137,6 +162,7 @@ public record StatusGenerationEvidence(String statusObjectType, String issuerCaI
      * @param attributes attributes to inspect
      * @return empty only when no version-one evidence attribute is present
      * @throws IllegalArgumentException if evidence is unknown, partial, duplicated, or mistyped
+     * @throws NullPointerException if attributes is null
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // untrusted evidence values must not escape through causes
     public static Optional<StatusGenerationEvidence> decode(AttributeSet attributes) {

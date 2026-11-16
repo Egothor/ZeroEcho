@@ -44,7 +44,14 @@ import java.util.Objects;
  * @param definition authoritative immutable definition
  */
 public record ActiveCertificateProfile(CertificateProfileRef reference, CertificateProfileDefinition definition) {
-    /** Creates an active profile result. */
+    /**
+     * Creates an active profile result.
+     * @param reference exact active version reference
+     * @param definition authoritative immutable definition
+     * @throws NullPointerException if reference or definition is null
+     * @throws IllegalArgumentException if reference identity, version or canonical digest differs from the
+     *     profile definition
+     */
     public ActiveCertificateProfile {
         Objects.requireNonNull(reference, "reference");
         Objects.requireNonNull(definition, "definition");

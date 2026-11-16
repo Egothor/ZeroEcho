@@ -54,7 +54,9 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** Test-only same-origin static host and fixed-route bridge to verified backend mTLS. */
+/**
+ * Test-only same-origin static host and fixed-route bridge to verified backend mTLS.
+ */
 final class FrontendTestBridge implements AutoCloseable {
     private static final int MAX_BYTES = 2 * 1024 * 1024;
     private static final Set<String> GET_ROUTES = Set.of("/admin/v1/realm", "/admin/v1/operations", "/admin/v1/health");
@@ -68,6 +70,14 @@ final class FrontendTestBridge implements AutoCloseable {
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), new ThreadPoolExecutor.AbortPolicy());
 
+    /**
+     * Starts an isolated local bridge serving the built frontend and forwarding explicit fixture identities to HTTPS.
+     *
+     * @param root existing built-frontend filesystem root, resolved to its real path
+     * @param backend actual loopback backend listener address
+     * @param tls administrator and separate approver TLS fixture contexts
+     * @throws IOException if the frontend root or bridge listener cannot be opened
+     */
     FrontendTestBridge(Path root, InetSocketAddress backend, HttpServerTestSupport.Fixture tls) throws IOException {
         this.root = root.toRealPath();
         upstream = URI.create("https://localhost:" + backend.getPort());
@@ -89,8 +99,18 @@ final class FrontendTestBridge implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the actual loopback origin selected for the running frontend bridge.
+     *
+     * @return local HTTP origin with the bound ephemeral port
+     */
     URI baseUri() { return URI.create("http://127.0.0.1:" + server.getAddress().getPort()); }
 
+    /**
+     * Installs or clears the fixture-only backend restart callback.
+     *
+     * @param callback returns the replacement backend address after restart, or null to disable the route
+     */
     void restartWith(java.util.function.Supplier<InetSocketAddress> callback) { restart = callback; }
 
     private void handle(HttpExchange exchange) throws IOException {
@@ -197,6 +217,9 @@ final class FrontendTestBridge implements AutoCloseable {
         if (body.length > 0) exchange.getResponseBody().write(body);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() {
         server.stop(0);
         executor.shutdownNow();
@@ -214,8 +237,17 @@ final class FrontendTestBridge implements AutoCloseable {
         private final HttpResponse.BodySubscriber<byte[]> delegate = HttpResponse.BodySubscribers.ofByteArray();
         private Flow.Subscription subscription;
         private long received;
+        /**
+         * {@inheritDoc}
+         */
         @Override public CompletionStage<byte[]> getBody() { return delegate.getBody(); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void onSubscribe(Flow.Subscription value) { subscription = value; delegate.onSubscribe(value); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void onNext(List<ByteBuffer> buffers) {
             for (ByteBuffer buffer : buffers) received += buffer.remaining();
             if (received > MAX_BYTES) {
@@ -223,7 +255,13 @@ final class FrontendTestBridge implements AutoCloseable {
                 delegate.onError(new IOException("Fixture response exceeded its byte budget"));
             } else delegate.onNext(buffers);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void onError(Throwable failure) { delegate.onError(failure); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void onComplete() { delegate.onComplete(); }
     }
 }

@@ -51,9 +51,22 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
-/** Real serializer/framing budgets; prototypes are never authority, persisted records or signing inputs. */
+/**
+ * Real serializer/framing budgets; prototypes are never authority, persisted records or signing inputs.
+ */
 final class CrlHybridTransactionBudget {
     private CrlHybridTransactionBudget() { }
+    /**
+     * Calculates the maximum exact encoded mutation size among modeled hybrid CRL lifecycle phases.
+     *
+     * @param parent exact frozen hybrid parent acceptance envelope
+     * @param execution retained hybrid execution coordinates used to project future phase shapes
+     * @param rows borrowed reader of exact current dependency metadata
+     * @return maximum complete transaction payload size in bytes
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if required dependency rows cannot be read or validated
+     * @throws IllegalArgumentException if a modeled phase violates finite transaction count or payload bounds
+     */
     static long maximum(SignWorkflowStore.AcceptanceEnvelope parent, CrlHybridExecution execution,
             SigningHybridCrlDependencies.RowReader rows) throws IOException {
         long[] maximum = {0};
@@ -61,6 +74,19 @@ final class CrlHybridTransactionBudget {
         return maximum[0];
     }
 
+    /**
+     * Enumerates conservative complete mutation sets for the modeled hybrid CRL execution and publication phases.
+     *
+     * <p>This calculation supplies budgeting evidence; it does not commit the projected mutations.</p>
+     *
+     * @param parent exact frozen hybrid parent acceptance envelope
+     * @param execution retained execution coordinates used to project future phase shapes
+     * @param rows borrowed reader of exact current dependency metadata
+     * @param sink synchronous consumer receiving each detached modeled mutation list
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if required dependency metadata cannot be read or validated
+     * @throws RuntimeException if phase projection or the supplied consumer rejects a mutation set
+     */
     static void visitPhases(SignWorkflowStore.AcceptanceEnvelope parent, CrlHybridExecution execution,
             SigningHybridCrlDependencies.RowReader rows, Consumer<List<SigningTransactionPayloadCodec.Mutation>> sink) throws IOException {
         var child = CrlHybridMetadata.futureChildEnvelope(parent, execution, rows);

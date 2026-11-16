@@ -47,8 +47,16 @@ import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract tests for signing direct maintenance benchmark.
+ */
 final class SigningDirectMaintenanceBenchmarkTest {
 
+    /**
+     * Strict configuration rejects unsupported shapes.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void strictConfigurationRejectsUnsupportedShapes(@TempDir Path temporary) {
         SigningDirectMaintenanceBenchmark.Configuration configuration =
@@ -76,6 +84,12 @@ final class SigningDirectMaintenanceBenchmarkTest {
                 "--checkpointIdentity=1"));
     }
 
+    /**
+     * Tiny real maintenance measures boundary and zero copy.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void tinyRealMaintenanceMeasuresBoundaryAndZeroCopy(@TempDir Path temporary)
             throws IOException {
@@ -98,6 +112,12 @@ final class SigningDirectMaintenanceBenchmarkTest {
         assertEquals(4, result.evidence().reclaimedArtifacts());
     }
 
+    /**
+     * Schema uses exact timing names and truthful direct scope.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void schemaUsesExactTimingNamesAndTruthfulDirectScope(@TempDir Path temporary)
             throws IOException {
@@ -124,6 +144,12 @@ final class SigningDirectMaintenanceBenchmarkTest {
         assertFalse(json.contains("threshold"));
     }
 
+    /**
+     * Existing root fails before mutation and preserves artifact.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void existingRootFailsBeforeMutationAndPreservesArtifact(@TempDir Path temporary)
             throws IOException {
@@ -143,6 +169,11 @@ final class SigningDirectMaintenanceBenchmarkTest {
         assertArrayEquals(before, Files.readAllBytes(manifest));
     }
 
+    /**
+     * Output inside work root is rejected before mutation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void outputInsideWorkRootIsRejectedBeforeMutation(@TempDir Path temporary) {
         Path workRoot = temporary.resolve("work");
@@ -159,6 +190,12 @@ final class SigningDirectMaintenanceBenchmarkTest {
         assertFalse(Files.exists(workRoot));
     }
 
+    /**
+     * Report rejects symbolic link and replaces regular leaf.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws IOException if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     @Test
     void reportRejectsSymbolicLinkAndReplacesRegularLeaf(@TempDir Path temporary)
             throws IOException {
@@ -180,6 +217,9 @@ final class SigningDirectMaintenanceBenchmarkTest {
         assertEquals("new" + System.lineSeparator(), Files.readString(regular));
     }
 
+    /**
+     * Non monotonic or missing boundary fails stable.
+     */
     @Test
     void nonMonotonicOrMissingBoundaryFailsStable() {
         SigningDirectMaintenanceBenchmark.BenchmarkException nonMonotonic = assertThrows(

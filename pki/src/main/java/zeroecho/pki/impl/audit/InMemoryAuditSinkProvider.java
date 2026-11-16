@@ -56,16 +56,24 @@ import zeroecho.pki.spi.audit.AuditSinkProvider;
 public class InMemoryAuditSinkProvider implements AuditSinkProvider {
     private static final Logger LOG = Logger.getLogger(InMemoryAuditSinkProvider.class.getName());
 
-    /** Creates an in-memory audit-sink provider descriptor. */
+    /**
+     * Creates an in-memory audit-sink provider descriptor.
+     */
     public InMemoryAuditSinkProvider() {
         // Stateless provider descriptor.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "memory";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of("size");
@@ -95,6 +103,9 @@ public class InMemoryAuditSinkProvider implements AuditSinkProvider {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AuditSink allocate(ProviderConfig config) {
         validateConfig(config);

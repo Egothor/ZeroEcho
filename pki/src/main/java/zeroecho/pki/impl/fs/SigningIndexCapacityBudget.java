@@ -37,7 +37,9 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
-/** One conservative resident-index byte budget for one signing ledger. */
+/**
+ * One conservative resident-index byte budget for one signing ledger.
+ */
 @SuppressWarnings("PMD.AvoidLiteralsInIfCondition")
 final class SigningIndexCapacityBudget {
     private final long maximumBytes;
@@ -52,10 +54,23 @@ final class SigningIndexCapacityBudget {
     private Runnable releaseSignal;
     private final ThreadLocal<Loan> preparationLoan = new ThreadLocal<>();
 
+    /**
+     * Creates a conservative byte budget with explicit total and ordinary-admission ceilings.
+     *
+     * @param maximumBytes positive inclusive total reservation limit in bytes
+     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside zero through the total
+     */
     /* default */ SigningIndexCapacityBudget(long maximumBytes) {
         this(maximumBytes, 0L);
     }
 
+    /**
+     * Creates a conservative byte budget with explicit total and ordinary-admission ceilings.
+     *
+     * @param maximumBytes positive inclusive total reservation limit in bytes
+     * @param protectedProgressBytes nonnegative byte floor excluded from ordinary admission, no greater than the total limit
+     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside zero through the total
+     */
     /* default */ SigningIndexCapacityBudget(long maximumBytes,
             long protectedProgressBytes) {
         if (maximumBytes <= 0L) {
@@ -70,12 +85,28 @@ final class SigningIndexCapacityBudget {
         ordinaryMaximumBytes = maximumBytes - protectedProgressBytes;
     }
 
-    /** Reserves bytes atomically or changes no accounting. */
+    /**
+     * Reserves bytes atomically or changes no accounting.
+     *
+     * @param bytes nonnegative byte count requested from ordinary admission
+     * @return owned rollback reservation; close it or transfer responsibility for its bytes
+     * @throws IllegalArgumentException if the requested count is negative
+     * @throws CapacityExceededException if ordinary capacity or the current preparation loan is insufficient
+     */
     /* default */ Reservation reserve(long bytes) {
         return reserve(bytes, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
-    /** Reserves bytes against the admission class's ceiling or changes no accounting. */
+    /**
+     * Reserves bytes against the admission class's ceiling or changes no accounting.
+     *
+     * @param bytes nonnegative byte count to reserve
+     * @param admissionClass ordinary or protected accepted-signing admission class
+     * @return owned rollback reservation, supplied by thread-local escrow when a preparation loan is active
+     * @throws NullPointerException if the admission class is null
+     * @throws IllegalArgumentException if the requested count is negative
+     * @throws CapacityExceededException if total, selected-class or preparation-loan capacity is insufficient
+     */
     /* default */ Reservation reserve(long bytes,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
         if (bytes < 0L) {
@@ -112,6 +143,11 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Captures current, peak and configured byte reservations under the budget lock.
+     *
+     * @return new immutable constant-size budget observation
+     */
     /* default */ Snapshot snapshot() {
         lock.lock();
         try {
@@ -121,14 +157,29 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Returns the byte reservation floor protected for already accepted signing progress.
+     *
+     * @return byte reservation floor protected for already accepted signing progress
+     */
     /* default */ long protectedProgressBytes() {
         return protectedProgressBytes;
     }
 
+    /**
+     * Returns the maximum bytes available for ordinary admission outside the protected progress floor.
+     *
+     * @return maximum bytes available for ordinary admission outside the protected progress floor
+     */
     /* default */ long ordinaryMaximumBytes() {
         return ordinaryMaximumBytes;
     }
 
+    /**
+     * Reads the current ordinary-admission byte reservation under the budget lock.
+     *
+     * @return current ordinary-admission accounted bytes
+     */
     /* default */ long ordinaryReservedBytes() {
         lock.lock();
         try {
@@ -138,6 +189,11 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Reads the current protected accepted-signing byte reservation under the budget lock.
+     *
+     * @return current protected accepted-signing accounted bytes
+     */
     /* default */ long protectedReservedBytes() {
         lock.lock();
         try {
@@ -147,10 +203,28 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Releases previously transferred byte ownership and signals an armed capacity waiter after unlocking.
+     *
+     * <p>The overload without a class releases ordinary-admission bytes.</p>
+     *
+     * @param bytes nonnegative committed byte count to release
+     * @throws RuntimeException if the armed release callback fails after accounting changed; bytes are not restored
+     * @throws IllegalStateException if the release exceeds the total or selected-class reservation
+     */
     /* default */ void releaseCommitted(long bytes) {
         release(bytes, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
+    /**
+     * Releases previously transferred byte ownership and signals an armed capacity waiter after unlocking.
+     *
+     * @param bytes nonnegative committed byte count to release
+     * @param admissionClass exact class against which these bytes were originally reserved
+     * @throws NullPointerException if an explicit admission class is null
+     * @throws IllegalStateException if the release exceeds the total or selected-class reservation
+     * @throws RuntimeException if the armed release callback fails after accounting changed; bytes are not restored
+     */
     /* default */ void releaseCommitted(long bytes,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
         release(bytes, admissionClass);
@@ -159,6 +233,15 @@ final class SigningIndexCapacityBudget {
     /**
      * Arms one wake after the observed failure, or signals immediately when a
      * release already occurred between failure observation and registration.
+     *
+     * <p>Only one callback can be armed. An existing callback wins when the observed
+     * epoch still matches; a newer release triggers this callback immediately.
+     * Registration never replaces an already armed callback.</p>
+     *
+     * @param observedReleaseEpoch release epoch captured by the failed admission
+     * @param signal non-null one-shot callback; immediate delivery occurs after unlocking
+     * @throws NullPointerException if the callback is null
+     * @throws RuntimeException if an immediately delivered callback fails
      */
     /* default */ void signalOnReleaseAfter(long observedReleaseEpoch, Runnable signal) {
         Objects.requireNonNull(signal, "signal");
@@ -180,6 +263,10 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Disarms the current one-shot capacity-release callback without changing reservations.
+     *
+     */
     /* default */ void clearReleaseSignal() {
         lock.lock();
         try {
@@ -189,7 +276,16 @@ final class SigningIndexCapacityBudget {
         }
     }
 
-    /** Reserves a stable steady-budget cutover endpoint without performing I/O. */
+    /**
+     * Reserves a stable steady-budget cutover endpoint without performing I/O.
+     *
+     * @param displacedBytes nonnegative ordinary bytes owned by the root being displaced
+     * @param replacementBytes nonnegative ordinary bytes required by the replacement root
+     * @return owned active cutover permit; accounting is revalidated when reclassification begins
+     * @throws IllegalArgumentException if either byte count is negative
+     * @throws IllegalStateException if displaced bytes exceed current ordinary ownership
+     * @throws CapacityExceededException if the resulting steady root exceeds ordinary or total limits
+     */
     /* default */ CutoverPermit prepareCutover(long displacedBytes, long replacementBytes) {
         if (displacedBytes < 0L || replacementBytes < 0L) {
             throw new IllegalArgumentException("signing index cutover capacity is invalid");
@@ -221,6 +317,14 @@ final class SigningIndexCapacityBudget {
      * <p>The fixed lock order is steady then transient. The returned token keeps
      * both locks until commit or rollback, so root-field publication can neither
      * race another reservation nor expose partially reclassified accounting.</p>
+     * @param steadyPermit active permit identifying displaced and replacement steady ownership
+     * @param transientBudget distinct budget currently owning the detached replacement root
+     * @param replacementTransientBytes nonnegative bytes of transient ownership transferred into the steady envelope
+     * @return rollback-capable token retaining both budget locks until same-thread closure
+     * @throws NullPointerException if the permit or transient budget is null
+     * @throws IllegalArgumentException if budgets are identical or a byte count is negative
+     * @throws IllegalStateException if ownership or permit lifecycle is inconsistent
+     * @throws CapacityExceededException if the resulting steady accounting exceeds its limits
      */
     @SuppressWarnings("PMD.CompareObjectsWithEquals") // Distinct lock identities are required.
     /* default */ static Reclassification reclassify(CutoverPermit steadyPermit,
@@ -309,7 +413,9 @@ final class SigningIndexCapacityBudget {
         }
     }
 
-    /** Rollback-capable reservation; transfer is idempotent and retains the bytes. */
+    /**
+     * Rollback-capable reservation; transfer is idempotent and retains the bytes.
+     */
     /* default */ static final class Reservation implements AutoCloseable {
         private final SigningIndexCapacityBudget owner;
         private final long bytes;
@@ -324,10 +430,27 @@ final class SigningIndexCapacityBudget {
             this.admissionClass = admissionClass;
         }
 
+        /**
+         * Transfers byte-release responsibility away from this rollback-capable reservation.
+         *
+         * <p>Transfer is idempotent; closing the reservation afterward retains its committed bytes.</p>
+         *
+         */
         /* default */ void transfer() {
             active.set(false);
         }
 
+        /**
+         * Releases this reservation once unless byte ownership was already transferred.
+         *
+         * <p>An uncommitted preparation loan receives an escrow refund; otherwise the
+         * global reservation is released. Callback failure propagates after accounted
+         * release and does not restore the bytes or reactivate this token.</p>
+         *
+         * @throws IllegalStateException if reservation accounting or loan lifecycle is inconsistent
+         * @throws ArithmeticException if an escrow refund counter overflows
+         * @throws RuntimeException if an armed global release callback fails
+         */
         @Override
         public void close() {
             if (active.compareAndSet(true, false)) {
@@ -341,6 +464,9 @@ final class SigningIndexCapacityBudget {
      * Opens a single-operation preparation scope over already committed ordinary
      * bytes. No bytes are freed globally; allocations borrow only this owner's
      * escrow. The scope must leave the preparing thread before publication.
+     * @param bytes nonnegative ordinary committed bytes owned by this operation
+     * @return owned thread-local preparation loan; detach before publication and close to roll back unused ownership
+     * @throws IllegalStateException if another preparation loan is active, the count is negative or ordinary ownership is insufficient
      */
     /* default */ Loan borrowCommitted(long bytes) {
         if (bytes < 0L || preparationLoan.get() != null) {
@@ -359,7 +485,9 @@ final class SigningIndexCapacityBudget {
         }
     }
 
-    /** Parent-owned byte conversion with rollback before authoritative publication. */
+    /**
+     * Parent-owned byte conversion with rollback before authoritative publication.
+     */
     /* default */ final class Loan implements AutoCloseable {
         private final Thread preparingThread = Thread.currentThread();
         private final long initial;
@@ -400,7 +528,11 @@ final class SigningIndexCapacityBudget {
             } finally { lock.unlock(); }
         }
 
-        /** Ends ambient preparation eligibility without retaining a thread lock. */
+        /**
+         * Ends ambient preparation eligibility without retaining a thread lock.
+         *
+         * @throws IllegalStateException if called outside the preparing thread or after ambient loan ownership changed
+         */
         /* default */ void detach() {
             if (Thread.currentThread() != preparingThread || preparationLoan.get() != this) {
                 throw new IllegalStateException("signing capacity loan thread differs");
@@ -409,7 +541,12 @@ final class SigningIndexCapacityBudget {
             detached = true;
         }
 
-        /** Checks the remaining phase allowance before irreversible WAL admission. */
+        /**
+         * Checks the remaining phase allowance before irreversible WAL admission.
+         *
+         * @param residual nonnegative bytes required for the next retained phase
+         * @throws CapacityExceededException if this loan is not detached, is closed or lacks the requested residual
+         */
         /* default */ void requireResidual(long residual) {
             lock.lock();
             try {
@@ -419,7 +556,13 @@ final class SigningIndexCapacityBudget {
             } finally { lock.unlock(); }
         }
 
-        /** Converts borrowed allocations and retains exactly the next phase's escrow. */
+        /**
+         * Converts borrowed allocations and retains exactly the next phase's escrow.
+         *
+         * @param residual nonnegative bytes retained for the next phase, no greater than the remaining loan
+         * @throws IllegalStateException if the loan is not detached, is closed or its residual is invalid
+         * @throws RuntimeException if an armed release callback fails after committed accounting changed
+         */
         /* default */ void publish(long residual) {
             lock.lock();
             try {
@@ -432,6 +575,17 @@ final class SigningIndexCapacityBudget {
             } finally { lock.unlock(); }
         }
 
+        /**
+         * Rolls back a preparation loan after all borrowed allocations have been refunded.
+         *
+         * <p>An attached loan first detaches on its preparing thread. Outstanding
+         * allocations leave the loan detached and open: release those allocations,
+         * then retry closure. Successful closure and previously published closure
+         * are idempotent.</p>
+         *
+         * @throws IllegalStateException if an attached loan is closed from the wrong
+         *     preparing scope or borrowed allocations still remain outstanding
+         */
         @Override public void close() {
             lock.lock();
             try {
@@ -445,11 +599,23 @@ final class SigningIndexCapacityBudget {
         }
     }
 
+    /**
+     * Current, peak and maximum byte reservations for one capacity budget.
+     *
+     * @param reservedBytes current accounted reservation in bytes
+     * @param highWaterReservedBytes highest accounted byte reservation observed
+     * @param maximumBytes inclusive configured byte reservation limit
+     */
     /* default */ record Snapshot(long reservedBytes, long highWaterReservedBytes,
             long maximumBytes) {
     }
 
-    /** Short-lived steady-budget exclusion held across manifest publication. */
+    /**
+     * Validated steady-budget endpoint consumed by locked reclassification.
+     *
+     * <p>This permit retains no budget lock. {@link Reclassification} revalidates
+     * its endpoint and owns both budget locks across root publication.</p>
+     */
     /* default */ static final class CutoverPermit implements AutoCloseable {
         private final SigningIndexCapacityBudget owner;
         private final long displacedBytes;
@@ -474,6 +640,9 @@ final class SigningIndexCapacityBudget {
             active = false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             owner.lock.lock();
@@ -488,7 +657,9 @@ final class SigningIndexCapacityBudget {
         }
     }
 
-    /** Controlled capacity result suitable for maintenance deferral. */
+    /**
+     * Controlled capacity result suitable for maintenance deferral.
+     */
     /* default */ static final class CapacityExceededException extends IllegalStateException {
         private static final long serialVersionUID = 1L;
         private final long releaseEpoch;
@@ -498,12 +669,19 @@ final class SigningIndexCapacityBudget {
             this.releaseEpoch = releaseEpoch;
         }
 
+        /**
+         * Returns the capacity release epoch captured when admission was rejected.
+         *
+         * @return capacity release epoch captured when admission was rejected
+         */
         /* default */ long releaseEpoch() {
             return releaseEpoch;
         }
     }
 
-    /** Rollback token retaining both budget locks across root publication. */
+    /**
+     * Rollback token retaining both budget locks across root publication.
+     */
     /* default */ static final class Reclassification implements AutoCloseable {
         private final SigningIndexCapacityBudget steadyBudget;
         private final long displacedSteadyBytes;
@@ -531,11 +709,21 @@ final class SigningIndexCapacityBudget {
             this.steadyPermit = steadyPermit;
         }
 
+        /**
+         * Commits the reclassified accounting and consumes its steady cutover permit.
+         *
+         * <p>Both budget locks remain held until this token is closed on the acquiring thread.</p>
+         *
+         * @throws IllegalStateException if the steady cutover permit is no longer active
+         */
         /* default */ void commit() {
             steadyPermit.transferred();
             active = false;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             if (closed) {

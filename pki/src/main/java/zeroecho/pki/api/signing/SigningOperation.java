@@ -58,7 +58,21 @@ public record SigningOperation(SigningSubmissionId submissionId,
         SigningOperationState state, long revision, Instant createdAt,
         Instant deadline, Optional<Instant> providerUpdatedAt,
         Optional<String> detailCode, Optional<EncodedObject> signature) {
-    /** Validates and snapshots one public operation. */
+    /**
+     * Validates and snapshots one public operation.
+     * @param submissionId durable operation identity
+     * @param state projected lifecycle state; internal RETIRED never leaks
+     * @param revision monotonic durable revision
+     * @param createdAt store-bound creation time
+     * @param deadline authoritative deadline
+     * @param providerUpdatedAt optional trusted provider observation time
+     * @param detailCode optional finite non-sensitive detail
+     * @param signature BINARY signature only for successful state
+     * @throws NullPointerException if submissionId, state, createdAt, deadline, providerUpdatedAt, detailCode,
+     *     signature is null
+     * @throws IllegalArgumentException if revision is negative, deadline precedes creation, succeeded state and
+     *     signature presence disagree, signature is not binary, or detailCode is blank
+     */
     public SigningOperation {
         Objects.requireNonNull(submissionId, "submissionId");
         Objects.requireNonNull(state, "state");
@@ -76,6 +90,9 @@ public record SigningOperation(SigningSubmissionId submissionId,
         }
     }
 
-    /** Returns a deliberately redacted representation. */
+    /**
+     * Returns a deliberately redacted representation.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "SigningOperation[redacted]"; }
 }

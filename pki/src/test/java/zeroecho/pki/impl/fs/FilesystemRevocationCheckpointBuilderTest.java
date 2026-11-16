@@ -65,6 +65,9 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for filesystem revocation checkpoint builder.
+ */
 final class FilesystemRevocationCheckpointBuilderTest {
 
     private static final MetadataStoreId STORE_ID =
@@ -75,6 +78,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Bounded multi pass build publishes canonical current state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedMultiPassBuildPublishesCanonicalCurrentState() throws Exception {
         System.out.print("boundedMultiPassBuildPublishesCanonicalCurrentState ");
@@ -110,6 +118,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Frozen snapshot remains at captured revision during live update.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void frozenSnapshotRemainsAtCapturedRevisionDuringLiveUpdate() throws Exception {
         System.out.print("frozenSnapshotRemainsAtCapturedRevisionDuringLiveUpdate ");
@@ -135,6 +148,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Log append after freeze produces valid historical checkpoint.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void logAppendAfterFreezeProducesValidHistoricalCheckpoint() throws Exception {
         System.out.print("logAppendAfterFreezeProducesValidHistoricalCheckpoint ");
@@ -165,6 +183,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Empty index builds genesis checkpoint.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void emptyIndexBuildsGenesisCheckpoint() throws Exception {
         System.out.print("emptyIndexBuildsGenesisCheckpoint ");
@@ -184,6 +207,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Run failure publishes nothing and cleans workspace.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void runFailurePublishesNothingAndCleansWorkspace() throws Exception {
         System.out.print("runFailurePublishesNothingAndCleansWorkspace ");
@@ -207,6 +235,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Bounds are validated without creating workspace.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundsAreValidatedWithoutCreatingWorkspace() throws Exception {
         System.out.print("boundsAreValidatedWithoutCreatingWorkspace ");
@@ -221,6 +254,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Frozen copy and force failures release builder resources.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void frozenCopyAndForceFailuresReleaseBuilderResources() throws Exception {
         System.out.print("frozenCopyAndForceFailuresReleaseBuilderResources ");
@@ -253,6 +291,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Run and merge force failures preserve previous generation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void runAndMergeForceFailuresPreservePreviousGeneration() throws Exception {
         System.out.print("runAndMergeForceFailuresPreservePreviousGeneration ");
@@ -292,6 +335,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Bounded resources and repeated build are deterministic.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedResourcesAndRepeatedBuildAreDeterministic() throws Exception {
         System.out.print("boundedResourcesAndRepeatedBuildAreDeterministic ");
@@ -382,6 +430,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Current state fields and authoritative locators are exact.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void currentStateFieldsAndAuthoritativeLocatorsAreExact() throws Exception {
         System.out.print("currentStateFieldsAndAuthoritativeLocatorsAreExact ");
@@ -419,6 +472,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Corrupt or truncated temporary run fails closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptOrTruncatedTemporaryRunFailsClosed() throws Exception {
         System.out.print("corruptOrTruncatedTemporaryRunFailsClosed ");
@@ -457,6 +515,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Publication failure and cleanup failure have safe independent outcomes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publicationFailureAndCleanupFailureHaveSafeIndependentOutcomes() throws Exception {
         System.out.print("publicationFailureAndCleanupFailureHaveSafeIndependentOutcomes ");
@@ -497,6 +560,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Frozen snapshot close invalidates cursor and deletes copy.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void frozenSnapshotCloseInvalidatesCursorAndDeletesCopy() throws Exception {
         System.out.print("frozenSnapshotCloseInvalidatesCursorAndDeletesCopy ");
@@ -520,6 +588,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Frozen close failure cannot replace published generation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void frozenCloseFailureCannotReplacePublishedGeneration() throws Exception {
         System.out.print("frozenCloseFailureCannotReplacePublishedGeneration ");
@@ -542,6 +615,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Frozen close failure is suppressed before publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void frozenCloseFailureIsSuppressedBeforePublication() throws Exception {
         System.out.print("frozenCloseFailureIsSuppressedBeforePublication ");
@@ -571,6 +649,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Malformed frozen slot population fails before publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedFrozenSlotPopulationFailsBeforePublication() throws Exception {
         System.out.print("malformedFrozenSlotPopulationFailsBeforePublication ");
@@ -588,6 +671,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Maximum component entry is one bounded singleton run.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void maximumComponentEntryIsOneBoundedSingletonRun() throws Exception {
         System.out.print("maximumComponentEntryIsOneBoundedSingletonRun ");
@@ -624,6 +712,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Duplicate identity injected into temporary run fails closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void duplicateIdentityInjectedIntoTemporaryRunFailsClosed() throws Exception {
         System.out.print("duplicateIdentityInjectedIntoTemporaryRunFailsClosed ");
@@ -658,6 +751,11 @@ final class FilesystemRevocationCheckpointBuilderTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Authentic superseded transition cannot replace frozen current state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authenticSupersededTransitionCannotReplaceFrozenCurrentState() throws Exception {
         System.out.print("authenticSupersededTransitionCannotReplaceFrozenCurrentState ");

@@ -86,16 +86,24 @@ import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
  */
 public final class Pkcs11SigningProviderFactory implements SigningProviderFactory {
 
-    /** Stable failure code when the HSM PIN environment variable is absent or empty. */
+    /**
+     * Stable failure code when the HSM PIN environment variable is absent or empty.
+     */
     public static final String DC_PIN_ENV_NOT_SET = "HSM_PIN_ENV_NOT_SET";
-    /** Stable failure code when the PKCS#11 provider cannot be loaded. */
+    /**
+     * Stable failure code when the PKCS#11 provider cannot be loaded.
+     */
     public static final String DC_PKCS11_PROVIDER_LOAD_FAILED = "PKCS11_PROVIDER_LOAD_FAILED"; // NOPMD LongVariable - Preserve the exported stable diagnostic code name.
-    /** Stable failure code when the HSM KeyStore cannot be opened. */
+    /**
+     * Stable failure code when the HSM KeyStore cannot be opened.
+     */
     public static final String DC_HSM_KEYSTORE_OPEN_FAILED = "HSM_KEYSTORE_OPEN_FAILED";
 
     private static final Logger LOG = Logger.getLogger(Pkcs11SigningProviderFactory.class.getName());
 
-    /** Default JCA algorithm names supported by FIPS-validated HSMs. */
+    /**
+     * Default JCA algorithm names supported by FIPS-validated HSMs.
+     */
     /* default */ static final Set<String> DEFAULT_ALGORITHMS = Set.of(
             "SHA256withECDSA", "SHA384withECDSA", "SHA512withECDSA", "RSASSA-PSS");
 
@@ -114,11 +122,17 @@ public final class Pkcs11SigningProviderFactory implements SigningProviderFactor
      */
     private static final java.util.concurrent.ConcurrentMap<String, Provider> REGISTERED_PROVIDERS = new ConcurrentHashMap<>();
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return "pkcs11";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Set<String> supportedKeys() {
         return Set.of(KEY_PKCS11_CONFIG_FILE, KEY_PIN_VARIABLE, KEY_SLOT,
@@ -174,11 +188,17 @@ public final class Pkcs11SigningProviderFactory implements SigningProviderFactor
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningProvider allocate(ProviderConfig config) {
         return allocate(config, SigningProviderRuntimeDependencies.none());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SigningProvider allocate(ProviderConfig config, SigningProviderRuntimeDependencies dependencies) {
         validateConfig(config);
@@ -263,6 +283,20 @@ public final class Pkcs11SigningProviderFactory implements SigningProviderFactor
         return Set.copyOf(result);
     }
 
+    /**
+     * Commits to the absolute configuration path, slot and sorted algorithm identities.
+     *
+     * <p>This commitment identifies configuration coordinates; it does not read the
+     * configuration file, initialize PKCS #11 or access token keys.</p>
+     *
+     * @param pkcs11ConfigFile provider configuration path, converted to an absolute path
+     * @param slot configured slot index
+     * @param algorithms exact supported algorithm identities, sorted before hashing
+     * @return SHA-256 provider configuration commitment
+     * @throws NullPointerException if the path, algorithm set or an algorithm is null
+     * @throws java.nio.file.InvalidPathException if the configuration path is invalid
+     * @throws IllegalStateException if SHA-256 is unavailable or a string exceeds modified-UTF framing limits
+     */
     /* default */ static ConfigurationCommitment computeCommitment(String pkcs11ConfigFile, int slot,
             Set<String> algorithms) {
         try {
@@ -284,7 +318,9 @@ public final class Pkcs11SigningProviderFactory implements SigningProviderFactor
             throw new IllegalStateException("In-memory commitment computation failed", impossible);
         }
     }
-    /** Creates a provider factory without opening an HSM session. */
+    /**
+     * Creates a provider factory without opening an HSM session.
+     */
     public Pkcs11SigningProviderFactory() {
         super();
     }

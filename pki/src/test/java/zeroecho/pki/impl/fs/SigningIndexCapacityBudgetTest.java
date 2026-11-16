@@ -39,8 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing index capacity budget.
+ */
 final class SigningIndexCapacityBudgetTest {
 
+    /**
+     * Private future allowance survives rollback and cannot be stolen by other parents.
+     */
     @Test
     void privateFutureAllowanceSurvivesRollbackAndCannotBeStolenByOtherParents() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(300L);
@@ -69,6 +75,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Borrowed protected allocations rollback their accounting class.
+     */
     @Test
     void borrowedProtectedAllocationsRollbackTheirAccountingClass() {
         var budget = new SigningIndexCapacityBudget(300L, 50L);
@@ -85,6 +94,9 @@ final class SigningIndexCapacityBudgetTest {
         budget.releaseCommitted(200L);
     }
 
+    /**
+     * Exact boundary and rollback are deterministic.
+     */
     @Test
     void exactBoundaryAndRollbackAreDeterministic() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(256L);
@@ -107,6 +119,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(256L, budget.snapshot().highWaterReservedBytes());
     }
 
+    /**
+     * Near long maximum reservation cannot overflow or change failed accounting.
+     */
     @Test
     void nearLongMaximumReservationCannotOverflowOrChangeFailedAccounting() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(Long.MAX_VALUE);
@@ -121,12 +136,18 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(Long.MAX_VALUE - 1L, budget.snapshot().highWaterReservedBytes());
     }
 
+    /**
+     * Rejects zero and negative signing-index capacity limits.
+     */
     @Test
     void maximumMustBePositive() {
         assertThrows(IllegalArgumentException.class, () -> new SigningIndexCapacityBudget(0L));
         assertThrows(IllegalArgumentException.class, () -> new SigningIndexCapacityBudget(-1L));
     }
 
+    /**
+     * Protected progress capacity cannot be consumed by ordinary admission.
+     */
     @Test
     void protectedProgressCapacityCannotBeConsumedByOrdinaryAdmission() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(256L, 64L);
@@ -159,6 +180,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Ordinary capacity is independent of protected allocation order.
+     */
     @Test
     void ordinaryCapacityIsIndependentOfProtectedAllocationOrder() {
         SigningIndexCapacityBudget budget = new SigningIndexCapacityBudget(256L, 64L);
@@ -181,6 +205,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(0L, budget.snapshot().reservedBytes());
     }
 
+    /**
+     * Protected progress partition must fit the existing total budget.
+     */
     @Test
     void protectedProgressPartitionMustFitTheExistingTotalBudget() {
         assertThrows(IllegalArgumentException.class,
@@ -192,6 +219,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(0L, entireBudgetProtected.ordinaryMaximumBytes());
     }
 
+    /**
+     * Cross budget reclassification commits atomically.
+     */
     @Test
     void crossBudgetReclassificationCommitsAtomically() {
         SigningIndexCapacityBudget steady = committedBudget(1_024L, 600L);
@@ -212,6 +242,9 @@ final class SigningIndexCapacityBudgetTest {
         steady.releaseCommitted(700L);
     }
 
+    /**
+     * Cutover uses ordinary subtotal while protected workspace is reserved.
+     */
     @Test
     void cutoverUsesOrdinarySubtotalWhileProtectedWorkspaceIsReserved() {
         SigningIndexCapacityBudget steady = new SigningIndexCapacityBudget(1_024L, 200L);
@@ -244,6 +277,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(0L, steady.snapshot().reservedBytes());
     }
 
+    /**
+     * Cross budget reclassification rolls back or rejects without changing accounting.
+     */
     @Test
     void crossBudgetReclassificationRollsBackOrRejectsWithoutChangingAccounting() {
         SigningIndexCapacityBudget steady = committedBudget(700L, 600L);
@@ -272,6 +308,9 @@ final class SigningIndexCapacityBudgetTest {
         transientBudget.releaseCommitted(400L);
     }
 
+    /**
+     * Cutover permit leaves reservation admission to the engine capture gate.
+     */
     @Test
     void cutoverPermitLeavesReservationAdmissionToTheEngineCaptureGate() {
         SigningIndexCapacityBudget steady = committedBudget(1_024L, 600L);
@@ -296,6 +335,9 @@ final class SigningIndexCapacityBudgetTest {
         steady.releaseCommitted(600L);
     }
 
+    /**
+     * Deferred capacity signal runs once after a real release.
+     */
     @Test
     void deferredCapacitySignalRunsOnceAfterARealRelease() {
         SigningIndexCapacityBudget budget = committedBudget(1_024L, 600L);
@@ -312,6 +354,9 @@ final class SigningIndexCapacityBudgetTest {
         budget.releaseCommitted(400L);
     }
 
+    /**
+     * Release between failure and registration signals exactly once.
+     */
     @Test
     void releaseBetweenFailureAndRegistrationSignalsExactlyOnce() {
         SigningIndexCapacityBudget budget = committedBudget(1_024L, 600L);
@@ -328,6 +373,9 @@ final class SigningIndexCapacityBudgetTest {
         assertEquals(1, signals.get());
     }
 
+    /**
+     * Combined capacity observation fails closed on overflow.
+     */
     @Test
     void combinedCapacityObservationFailsClosedOnOverflow() {
         SigningLedgerStoreEngine.CapacitySnapshot observation =

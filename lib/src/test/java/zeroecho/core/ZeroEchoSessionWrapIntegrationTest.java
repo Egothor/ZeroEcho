@@ -78,14 +78,25 @@ import zeroecho.core.tag.TagEngine;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for zero echo session wrap integration.
+ */
 class ZeroEchoSessionWrapIntegrationTest {
     private static final AtomicInteger CONTEXT_IDS = new AtomicInteger();
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void initializeProvider() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Checks audit wrapping for stream contexts created through registered algorithms.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void registeredStreamContexts() throws Exception {
         System.out.println("registeredStreamContexts");
@@ -144,6 +155,11 @@ class ZeroEchoSessionWrapIntegrationTest {
         System.out.println("registeredStreamContexts...ok");
     }
 
+    /**
+     * Checks audit wrapping for registered key-agreement contexts.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void registeredAgreementContexts() throws Exception {
         System.out.println("registeredAgreementContexts");
@@ -183,6 +199,11 @@ class ZeroEchoSessionWrapIntegrationTest {
         System.out.println("registeredAgreementContexts...ok");
     }
 
+    /**
+     * Checks audit wrapping for registered key-encapsulation contexts.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void registeredKemContexts() throws Exception {
         System.out.println("registeredKemContexts");

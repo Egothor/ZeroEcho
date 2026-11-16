@@ -41,13 +41,23 @@ import java.util.HexFormat;
 
 import zeroecho.pki.api.PkiId;
 
-/** Canonical domain-separated SHA-256 commitment encoder for challenge record version 1. */
+/**
+ * Canonical domain-separated SHA-256 commitment encoder for challenge record version 1.
+ */
 final class ConfirmationChallengeCommitment {
     private static final byte[] DOMAIN =
             "zeroecho:credential-confirmation-challenge:v1".getBytes(StandardCharsets.US_ASCII);
 
     private ConfirmationChallengeCommitment() { }
 
+    /**
+     * Commits to all challenge coordinates using the version 1 domain and canonical field order.
+     *
+     * @param input already validated challenge fields; the raw challenge is read without retaining or copying it
+     * @return 64 lowercase hexadecimal characters encoding the SHA-256 commitment
+     * @throws NullPointerException if the input or a required component is null
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static String calculate(Input input) {
         MessageDigest digest = sha256();
         bytes(digest, DOMAIN);
@@ -67,6 +77,24 @@ final class ConfirmationChallengeCommitment {
         return HexFormat.of().formatHex(digest.digest());
     }
 
+    /**
+     * Carries previously validated challenge fields for canonical commitment calculation.
+     *
+     * <p>This internal carrier does not validate or defensively copy its components.
+     * Callers must preserve the raw challenge until calculation finishes.</p>
+     *
+     * @param realm deployment realm binding
+     * @param serverAudience exact audience text encoded as UTF-8
+     * @param credentialId credential whose confirmation is challenged
+     * @param expectedLifecycleRevision expected lifecycle revision
+     * @param expectedLifecycleCommitment canonical commitment to the expected lifecycle
+     * @param initialDisclosurePolicy initial disclosure classification
+     * @param confirmationPolicyCommitment canonical confirmation policy commitment
+     * @param proofSuiteBinding exact proof suite and its RSA size bound
+     * @param rawChallenge borrowed challenge bytes
+     * @param issuedAt challenge issuance instant, including nanoseconds
+     * @param expiresAt challenge expiration instant, including nanoseconds
+     */
     /* default */ record Input(ConfirmationRealmBinding realm, String serverAudience,
             PkiId credentialId, long expectedLifecycleRevision, String expectedLifecycleCommitment,
             ConfirmationDisclosurePolicy initialDisclosurePolicy, String confirmationPolicyCommitment,

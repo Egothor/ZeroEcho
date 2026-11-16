@@ -72,6 +72,8 @@ final class PlatformFs {
     }
 
     /**
+     * Returns the filesystem strategy resolved for the current platform.
+     *
      * @return the resolved platform strategy (never {@code null})
      */
     /* default */ static PlatformFsOps ops() {
@@ -115,6 +117,7 @@ final class PlatformFs {
      * @param source source path
      * @param destination destination path
      * @param options copy options (e.g. {@code ATOMIC_MOVE}, {@code REPLACE_EXISTING})
+     * @return exact destination path after successful move
      * @throws IOException on non-transient failure or after exhausting the retry budget
      */
 

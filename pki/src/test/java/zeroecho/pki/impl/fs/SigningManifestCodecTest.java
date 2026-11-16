@@ -45,8 +45,16 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing manifest codec.
+ */
 final class SigningManifestCodecTest {
 
+    /**
+     * Canonical round trip copies mutable inputs.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void canonicalRoundTripCopiesMutableInputs() throws Exception {
         byte[] checkpointDigest = digest(1);
@@ -67,6 +75,9 @@ final class SigningManifestCodecTest {
         assertArrayEquals(encoded, SigningManifestCodec.encode(decoded));
     }
 
+    /**
+     * Malformed envelope and lengths fail before allocation.
+     */
     @Test
     void malformedEnvelopeAndLengthsFailBeforeAllocation() {
         byte[] valid = SigningManifestCodec.encode(genesis());
@@ -83,6 +94,9 @@ final class SigningManifestCodecTest {
         assertThrows(IOException.class, () -> SigningManifestCodec.decode(Arrays.copyOf(valid, valid.length + 1)));
     }
 
+    /**
+     * Names ranges commitments and revision must be consistent.
+     */
     @Test
     void namesRangesCommitmentsAndRevisionMustBeConsistent() {
         SigningManifestCodec.ActiveWal active = genesis().activeWal();
@@ -105,6 +119,9 @@ final class SigningManifestCodecTest {
         }
     }
 
+    /**
+     * Generation identities must be unique across every artifact kind.
+     */
     @Test
     void generationIdentitiesMustBeUniqueAcrossEveryArtifactKind() {
         SigningManifestCodec.ActiveWal active = active(7L, 1L, 1L);

@@ -57,7 +57,9 @@ import zeroecho.pkix.crl.CrlBuilder;
 import zeroecho.pkix.crl.CrlEntry;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** BouncyCastle-backed {@link CrlBuilder} yielding a JDK CRL. */
+/**
+ * BouncyCastle-backed {@link CrlBuilder} yielding a JDK CRL.
+ */
 final class BcCrlBuilder implements CrlBuilder {
 
     private X500Principal issuer;
@@ -69,48 +71,72 @@ final class BcCrlBuilder implements CrlBuilder {
     private final java.util.List<CrlEntry> entries = new java.util.ArrayList<>();
     private final java.util.List<CertificateExtension> extraExtensions = new java.util.ArrayList<>();
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder issuer(X500Principal issuer) {
         this.issuer = issuer;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder thisUpdate(Instant thisUpdate) {
         this.thisUpdate = thisUpdate;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder nextUpdate(Instant nextUpdate) {
         this.nextUpdate = nextUpdate;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder crlNumber(BigInteger crlNumber) {
         this.crlNumber = crlNumber;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder authorityKeyIdentifier(byte[] keyIdentifier) {
         this.authorityKeyIdentifier = keyIdentifier == null ? null : keyIdentifier.clone();
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder deltaCrlIndicator(BigInteger baseCrlNumber) {
         this.deltaBaseCrlNumber = baseCrlNumber;
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder addEntry(CrlEntry entry) {
         entries.add(Objects.requireNonNull(entry, "entry"));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder addEntries(Iterator<CrlEntry> newEntries) {
         while (newEntries.hasNext()) {
@@ -119,12 +145,18 @@ final class BcCrlBuilder implements CrlBuilder {
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CrlBuilder addExtension(CertificateExtension extension) {
         extraExtensions.add(Objects.requireNonNull(extension, "extension"));
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509CRL build(ContentSigner signer) {
         Objects.requireNonNull(issuer, "issuer");

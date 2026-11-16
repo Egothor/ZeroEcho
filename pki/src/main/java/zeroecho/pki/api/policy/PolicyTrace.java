@@ -49,6 +49,8 @@ public record PolicyTrace(PkiId decisionId, List<PolicyTraceStep> steps) {
      * Creates a policy trace.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param decisionId decision id this trace explains
+     * @param steps ordered evaluation steps
      */
     public PolicyTrace {
         if (decisionId == null) {

@@ -36,7 +36,14 @@ package zeroecho.pki.spi.store;
 import java.time.Clock;
 import java.util.Objects;
 
-/** Immutable process-local runtime dependencies supplied when opening a PKI store. */
+/**
+ * Process-local clock and optional public-verification dependencies for opening a store.
+ *
+ * <p>The dependency references are immutable and retained as supplied; callbacks are
+ * not cloned or invoked by construction. Their presence is a configured capability,
+ * not evidence that a particular certificate, candidate or native child was verified.
+ * They do not supply private keys or authorize signing.</p>
+ */
 public final class PkiStoreRuntimeDependencies {
     private final Clock clock;
     private final java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier;
@@ -55,9 +62,11 @@ public final class PkiStoreRuntimeDependencies {
     }
 
     /**
-     * Creates process-local dependencies with immutable public issuer validation.
+     * Creates dependencies retaining the supplied issuer-evidence verifier and no CRL-child verifier.
+     *
      * @param clock authoritative store clock
      * @param verifier trusted configured public algorithm verifier; never a private-key resolver
+     * @throws NullPointerException if the clock or verifier is null
      */
     public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier) {
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -69,9 +78,11 @@ public final class PkiStoreRuntimeDependencies {
      * Creates immutable process-local public verification authorities for issuer
      * metadata and streamed hybrid CRL child adoption. Neither callback supplies
      * private keys or signing capability; implementations must be thread-safe.
+     *
      * @param clock authoritative store clock
      * @param verifier trusted configured public issuer algorithm verifier
      * @param crlVerifier trusted configured pure hybrid CRL adoption verifier
+     * @throws NullPointerException if any dependency is null
      */
     public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier,
             CrlHybridNativeChildVerifier crlVerifier) {
@@ -80,12 +91,20 @@ public final class PkiStoreRuntimeDependencies {
         this.crlHybridNativeChildVerifier = java.util.Optional.of(Objects.requireNonNull(crlVerifier, "crlVerifier"));
     }
 
-    /** @return optional configured public verification for hybrid native-child adoption */
+    /**
+     * Returns the retained hybrid-CRL adoption verifier, when explicitly configured.
+     *
+     * @return the configured verifier; empty for the one- and two-argument constructors
+     */
     public java.util.Optional<CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier() {
         return crlHybridNativeChildVerifier;
     }
 
-    /** @return optional configured public issuer validation, with no private-key capability */
+    /**
+     * Returns the retained public issuer-algorithm evidence verifier.
+     *
+     * @return the configured verifier; empty for the clock-only constructor
+     */
     public java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier() {
         return issuerAlgorithmEvidenceVerifier;
     }
@@ -93,7 +112,7 @@ public final class PkiStoreRuntimeDependencies {
     /**
      * Returns dependencies using the production system UTC clock.
      *
-     * @return runtime dependencies backed by {@link Clock#systemUTC()}
+     * @return new dependencies backed by {@link Clock#systemUTC()}, with both verifiers absent
      */
     public static PkiStoreRuntimeDependencies systemUtc() {
         return new PkiStoreRuntimeDependencies(Clock.systemUTC());

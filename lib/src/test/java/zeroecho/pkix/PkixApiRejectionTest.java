@@ -64,6 +64,11 @@ class PkixApiRejectionTest {
         return generator.generateKeyPair();
     }
 
+    /**
+     * Rejects malformed certificate CSR CRL OCSP and bad po p.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsMalformedCertificateCsrCrlOcspAndBadPoP() throws Exception {
         // Malformed DER is rejected by every parser.

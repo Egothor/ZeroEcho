@@ -64,7 +64,16 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for CRL scope reservation store.
+ */
 class CrlScopeReservationStoreTest {
+    /**
+     * Owner creation includes counter and replay cannot reset it.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ownerCreationIncludesCounterAndReplayCannotResetIt(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Counter").getEncoded(),
@@ -84,6 +93,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Claim rejects missing or orphan counter instead of repairing pair.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void claimRejectsMissingOrOrphanCounterInsteadOfRepairingPair(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Incomplete").getEncoded(),
@@ -106,6 +121,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Acceptance stages both owner counter pairs and serial atomically.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptanceStagesBothOwnerCounterPairsAndSerialAtomically(@TempDir Path root) throws Exception {
         byte[] spki = HexFormat.of().parseHex("302a300506032b6570032100" + "01".repeat(32));
@@ -136,6 +157,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Authority scan rejects malformed keys and missing owners.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authorityScanRejectsMalformedKeysAndMissingOwners(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Recovery").getEncoded(),
@@ -161,6 +188,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Authority scan preserves orphan signing reservation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authorityScanPreservesOrphanSigningReservation(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Recovery").getEncoded(),
@@ -183,6 +216,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Pinned export sees both scope and serial or neither at concurrent commit.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pinnedExportSeesBothScopeAndSerialOrNeitherAtConcurrentCommit(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Concurrent").getEncoded(),
@@ -226,6 +265,12 @@ class CrlScopeReservationStoreTest {
         }
     }
 
+    /**
+     * Permanent claims survive reopen and reject changed authority serial owner.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void permanentClaimsSurviveReopenAndRejectChangedAuthoritySerialOwner(@TempDir Path root) throws Exception {
         CrlScope scope = CrlScope.of(new X500Principal("CN=Root").getEncoded(),

@@ -52,7 +52,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.credential.Credential;
 
+/**
+ * Contract and regression tests for authority metadata layout.
+ */
 final class AuthorityMetadataLayoutTest {
+    /**
+     * Populated legacy authority fails before mutation.
+     *
+     * @param relative relative artifact name used by the path-safety case
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest @ValueSource(strings = {
         "cas/by-id/legacy/current.bin", "cas/by-id/legacy/history/123-1.bin",
         "issuer-generations/by-id/legacy.bin", "issuer-chain-paths/by-id/legacy.bin",
@@ -74,6 +84,12 @@ final class AuthorityMetadataLayoutTest {
         assertEquals(before, image(root));
     }
 
+    /**
+     * Previous version is rejected without repair and empty directories are accepted.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void previousVersionIsRejectedWithoutRepairAndEmptyDirectoriesAreAccepted(@TempDir Path root) throws Exception {
         {
             FilesystemPkiStore ignored = open(root);
@@ -98,6 +114,12 @@ final class AuthorityMetadataLayoutTest {
         }
     }
 
+    /**
+     * Legacy credential sidecar owner is rejected before reclamation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void legacyCredentialSidecarOwnerIsRejectedBeforeReclamation(@TempDir Path root) throws Exception {
         Credential credential;
         try (FilesystemPkiStore store = open(root)) {

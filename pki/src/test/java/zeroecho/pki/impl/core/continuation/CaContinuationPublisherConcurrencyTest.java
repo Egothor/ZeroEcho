@@ -81,12 +81,21 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for ca continuation publisher concurrency.
+ */
 final class CaContinuationPublisherConcurrencyTest {
     private static final Instant BEFORE = Instant.parse("2026-08-20T10:00:00Z");
     private static final Instant AFTER = Instant.parse("2027-08-20T10:00:00Z");
     private static final String DIGEST = "1".repeat(64);
     private static final PkiId MIDDLE = new PkiId("middle-authority");
 
+    /**
+     * Root rollover stale head remains conflict without signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rootRolloverStaleHeadRemainsConflictWithoutSigning(@TempDir Path root) throws Exception {
         KeyPair key = DomainContinuationPublisherRecoveryTest.rsa();
@@ -103,6 +112,12 @@ final class CaContinuationPublisherConcurrencyTest {
         }
     }
 
+    /**
+     * Intermediate issuance stale head retains winner without signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void intermediateIssuanceStaleHeadRetainsWinnerWithoutSigning(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -118,6 +133,12 @@ final class CaContinuationPublisherConcurrencyTest {
         }
     }
 
+    /**
+     * Root creation and rollover replay preserve later disabled selection and appended generations.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rootCreationAndRolloverReplayPreserveLaterDisabledSelectionAndAppendedGenerations(@TempDir Path root)
             throws Exception {
@@ -145,6 +166,12 @@ final class CaContinuationPublisherConcurrencyTest {
         }
     }
 
+    /**
+     * Intermediate issue and rollover replay preserve later full authority record.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void intermediateIssueAndRolloverReplayPreserveLaterFullAuthorityRecord(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -172,6 +199,12 @@ final class CaContinuationPublisherConcurrencyTest {
         }
     }
 
+    /**
+     * Published membership cannot bypass exact graph ownership or creation prefix checks.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void publishedMembershipCannotBypassExactGraphOwnershipOrCreationPrefixChecks(@TempDir Path root) throws Exception {
         KeyPair key = DomainContinuationPublisherRecoveryTest.rsa();

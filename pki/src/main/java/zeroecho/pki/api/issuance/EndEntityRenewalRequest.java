@@ -51,6 +51,8 @@ public record EndEntityRenewalRequest(PkiId existingCredentialId, Optional<Valid
     /**
      * Validates the immutable input in constant time and auxiliary memory.
      * @throws IllegalArgumentException if either argument is null
+     * @param existingCredentialId authoritative predecessor identifier
+     * @param validityOverride optional duration, evaluated from the captured preparation time
      */
     public EndEntityRenewalRequest {
         if (existingCredentialId == null || validityOverride == null) {
@@ -58,6 +60,10 @@ public record EndEntityRenewalRequest(PkiId existingCredentialId, Optional<Valid
         }
     }
 
-    /** @return a redacted diagnostic representation */
+    /**
+     * Returns a fixed redacted diagnostic label for this lifecycle request.
+     *
+     * @return a redacted diagnostic representation
+     */
     @Override public String toString() { return "EndEntityRenewalRequest[redacted]"; }
 }

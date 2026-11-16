@@ -61,7 +61,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Strict durable I/O for bounded filesystem metadata records. */
+/**
+ * Strict durable I/O for bounded filesystem metadata records.
+ */
 final class DurableMetadataFiles {
 
     private static final int FINAL_TEMP_CREATE_ATTEMPT = 15;
@@ -73,14 +75,52 @@ final class DurableMetadataFiles {
     private DurableMetadataFiles() {
     }
 
+    /**
+     * Publishes a new bounded metadata record through an owned same-directory temporary file.
+     *
+     * <p>The caller serializes target creation or replacement. The temporary file is forced before publication and the parent directory afterward.</p>
+     *
+     * @param target authoritative target path with a parent directory
+     * @param maximumBytes positive inclusive encoded record length limit in bytes
+     * @param encoder checked synchronous encoder writing one complete bounded record
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the byte limit is not positive
+     * @throws UncertainAfterMutationException if atomic move completed but its parent-directory force failed
+     * @throws IOException if secure opening, bounded encoding, file forcing or atomic publication fails
+     */
     /* default */ static void create(Path target, long maximumBytes, Encoder encoder) throws IOException {
         write(target, maximumBytes, encoder, false);
     }
 
+    /**
+     * Replaces an existing bounded metadata record through a forced same-directory temporary file.
+     *
+     * <p>The caller serializes target creation or replacement. The temporary file is forced before publication and the parent directory afterward.</p>
+     *
+     * @param target authoritative target path with a parent directory
+     * @param maximumBytes positive inclusive encoded record length limit in bytes
+     * @param encoder checked synchronous encoder writing one complete bounded record
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the byte limit is not positive
+     * @throws UncertainAfterMutationException if atomic move completed but its parent-directory force failed
+     * @throws IOException if secure opening, bounded encoding, file forcing or atomic publication fails
+     */
     /* default */ static void replace(Path target, long maximumBytes, Encoder encoder) throws IOException {
         write(target, maximumBytes, encoder, true);
     }
 
+    /**
+     * Reads one complete bounded metadata record through a secure directory session.
+     *
+     * @param <T> decoded immutable metadata value type
+     * @param target exact metadata file path with a parent directory
+     * @param maximumBytes positive inclusive record byte limit
+     * @param decoder checked decoder consuming one complete metadata record
+     * @return decoder result after verifying that no trailing bytes remain
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the byte limit is not positive
+     * @throws IOException if secure opening, byte bounds, decoding, trailing-data validation or closure fails
+     */
     /* default */ static <T> T read(Path target, long maximumBytes, Decoder<T> decoder) throws IOException {
         Objects.requireNonNull(decoder, "decoder");
         requireMaximum(maximumBytes);
@@ -99,6 +139,15 @@ final class DurableMetadataFiles {
         }
     }
 
+    /**
+     * Lists immediate directory entries with an exact filename suffix in stable filename order.
+     *
+     * @param parent directory opened through the secure filesystem strategy
+     * @param suffix literal filename suffix used to filter entries
+     * @return immutable resolved paths sorted by filename
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if the directory cannot be opened or enumerated
+     */
     /* default */ static List<Path> list(Path parent, String suffix) throws IOException {
         Objects.requireNonNull(suffix, "suffix");
         List<Path> paths = new ArrayList<>();
@@ -113,6 +162,15 @@ final class DurableMetadataFiles {
         return List.copyOf(paths);
     }
 
+    /**
+     * Deletes one metadata entry and confirms durability of the parent namespace update.
+     *
+     * @param target exact metadata file path with a parent directory
+     * @return true after deletion and confirmed directory force; false if the entry was absent
+     * @throws NullPointerException if a required input is null
+     * @throws UncertainAfterMutationException if deletion completed but directory durability could not be confirmed
+     * @throws IOException if secure directory access or deletion fails
+     */
     /* default */ static boolean delete(Path target) throws IOException {
         Path parent = requireParent(target);
         try (DurableDirectory directory = openDurableDirectory(parent)) {
@@ -131,10 +189,20 @@ final class DurableMetadataFiles {
         }
     }
 
+    /**
+     * Installs a deterministic persistence fault injector for the current thread.
+     *
+     * @param injector non-null fault callback replacing the thread's prior injector
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static void installFault(FaultInjector injector) {
         FAULTS.set(Objects.requireNonNull(injector, "injector"));
     }
 
+    /**
+     * Removes the current thread's deterministic persistence fault injector.
+     *
+     */
     /* default */ static void clearFault() {
         FAULTS.remove();
     }
@@ -280,34 +348,96 @@ final class DurableMetadataFiles {
         }
     }
 
-    /** Package-private streaming encoder used only by filesystem metadata persistence. */
+    /**
+     * Package-private streaming encoder used only by filesystem metadata persistence.
+     */
     /* default */
     @FunctionalInterface
     interface Encoder {
-        /** Writes one complete bounded metadata record. */
+        /**
+         * Writes one complete bounded metadata record.
+         * @param output borrowed destination stream for one complete bounded metadata record
+         * @throws IOException if the bounded record cannot be written to the destination
+         */
         void encode(DataOutputStream output) throws IOException;
     }
 
-    /** Package-private incremental decoder used only by filesystem metadata persistence. */
+    /**
+     * Package-private incremental decoder used only by filesystem metadata persistence.
+     *
+     * @param <T> decoded metadata value type
+     */
     /* default */
     @FunctionalInterface
     interface Decoder<T> {
-        /** Decodes one complete bounded metadata record. */
+        /**
+         * Decodes one complete bounded metadata record.
+         * @param input borrowed source stream positioned at the start of one metadata record
+         * @return decoded metadata value after bounded framing validation
+         * @throws IOException if input is truncated, malformed or cannot be read
+         */
         T decode(DataInputStream input) throws IOException;
     }
 
-    /** Package-private deterministic fault injection points. */
+    /**
+     * Package-private deterministic fault injection points.
+     */
     /* default */ enum FaultPoint {
-        TEMP_CREATE, WRITE, FILE_FORCE, MOVE, DIRECTORY_FORCE_AFTER_MOVE, DIRECTORY_FORCE_AFTER_DELETE, SECURE_OPEN,
-        DECODE, CLEANUP
+        /**
+         * Fault injection point for temporary file creation.
+         */
+        TEMP_CREATE,
+        /**
+         * Fault injection point for file content writes.
+         */
+        WRITE,
+        /**
+         * Fault injection point for forcing file data and metadata.
+         */
+        FILE_FORCE,
+        /**
+         * Fault injection point for file publication by rename.
+         */
+        MOVE,
+        /**
+         * Fault injection point for forcing the parent directory after a rename.
+         */
+        DIRECTORY_FORCE_AFTER_MOVE,
+        /**
+         * Fault injection point for forcing the parent directory after deletion.
+         */
+        DIRECTORY_FORCE_AFTER_DELETE,
+        /**
+         * Fault injection point for opening a validated regular file.
+         */
+        SECURE_OPEN,
+        /**
+         * Fault injection point for decoding persisted content.
+         */
+        DECODE,
+        /**
+         * Fault injection point for cleanup of owned temporary artifacts.
+         */
+        CLEANUP
     }
 
-    /** Mutation whose namespace durability is uncertain. */
+    /**
+     * Mutation whose namespace durability is uncertain.
+     */
     /* default */ enum Mutation {
-        MOVE, DELETE
+        /**
+         * Publishes an owned temporary file by moving it into the authoritative namespace.
+         */
+        MOVE,
+        /**
+         * Deletes an existing metadata identity.
+         */
+        DELETE
     }
 
-    /** Path-free marker for a completed mutation with uncertain directory force. */
+    /**
+     * Path-free marker for a completed mutation with uncertain directory force.
+     */
     /* default */ static final class UncertainAfterMutationException extends IOException {
         private static final long serialVersionUID = 6317105201345803018L;
         private final Mutation mutation;
@@ -317,6 +447,11 @@ final class DurableMetadataFiles {
             this.mutation = mutation;
         }
 
+        /**
+         * Returns the namespace mutation whose directory durability could not be confirmed.
+         *
+         * @return namespace mutation whose directory durability could not be confirmed
+         */
         /* default */ Mutation mutation() {
             return mutation;
         }
@@ -329,11 +464,17 @@ final class DurableMetadataFiles {
     /* default */
     @FunctionalInterface
     interface FaultInjector {
-        /** Fails the selected operation point when requested by a focused test. */
+        /**
+         * Fails the selected operation point when requested by a focused test.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
     }
 
-    /** Input wrapper rejecting records larger than their finite limit. */
+    /**
+     * Input wrapper rejecting records larger than their finite limit.
+     */
     private static final class BoundedInputStream extends FilterInputStream {
         private long remaining;
 
@@ -342,6 +483,9 @@ final class DurableMetadataFiles {
             this.remaining = maximumBytes;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read() throws IOException {
             if (remaining == ZERO_BYTES) {
@@ -358,6 +502,9 @@ final class DurableMetadataFiles {
             return value;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int read(byte[] bytes, int offset, int length) throws IOException {
             Objects.checkFromIndexSize(offset, length, bytes.length);
@@ -376,7 +523,9 @@ final class DurableMetadataFiles {
         }
     }
 
-    /** Output wrapper rejecting records larger than their finite limit. */
+    /**
+     * Output wrapper rejecting records larger than their finite limit.
+     */
     private static final class BoundedOutputStream extends FilterOutputStream {
         private long remaining;
 
@@ -385,6 +534,9 @@ final class DurableMetadataFiles {
             this.remaining = maximumBytes;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void write(int value) throws IOException {
             requireCapacity(1);
@@ -392,6 +544,9 @@ final class DurableMetadataFiles {
             remaining--;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void write(byte[] bytes, int offset, int length) throws IOException {
             Objects.checkFromIndexSize(offset, length, bytes.length);

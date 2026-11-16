@@ -47,16 +47,39 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.zip.CRC32C;
 
-/** Version-one, big-endian signing WAL frame, batch marker, and scanner codec. */
+/**
+ * Version-one, big-endian signing WAL frame, batch marker, and scanner codec.
+ */
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class SigningWalFrameCodec {
 
+    /**
+     * Fixed binary magic identifying this persisted format.
+     */
     /* default */ static final int MAGIC = 0x5A455746;
+    /**
+     * Current binary format version encoded independently of enum ordering.
+     */
     /* default */ static final short VERSION = 1;
+    /**
+     * Fixed encoded header length in bytes.
+     */
     /* default */ static final int HEADER_BYTES = 44;
+    /**
+     * Encoded frame checksum length in bytes.
+     */
     /* default */ static final int CHECKSUM_BYTES = Integer.BYTES;
+    /**
+     * Inclusive maximum encoded frame payload length in bytes.
+     */
     /* default */ static final int MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
+    /**
+     * Inclusive maximum complete frame length, including header and checksum, in bytes.
+     */
     /* default */ static final int MAX_FRAME_BYTES = HEADER_BYTES + MAX_PAYLOAD_BYTES + CHECKSUM_BYTES;
+    /**
+     * Inclusive maximum number of frames in one committed WAL batch.
+     */
     /* default */ static final int MAX_BATCH_FRAMES = 32;
 
     private static final short FLAGS = 0;
@@ -64,6 +87,9 @@ final class SigningWalFrameCodec {
     private static final int BATCH_CORE_BYTES = 40;
     private static final int BATCH_PAYLOAD_BYTES = BATCH_CORE_BYTES + 3 * SigningFormatSupport.SHA_256_BYTES;
     private static final long NO_REMAINING_BYTES = 0L;
+    /**
+     * Encoded batch commit marker length in bytes.
+     */
     /* default */ static final int BATCH_MARKER_BYTES = HEADER_BYTES + BATCH_PAYLOAD_BYTES + CHECKSUM_BYTES;
     private static final UUID STRUCTURAL_TRANSACTION = new UUID(0L, 0L);
     private static final byte[] GROUP_DOMAIN =
@@ -75,6 +101,14 @@ final class SigningWalFrameCodec {
         // utility class
     }
 
+    /**
+     * Encodes one bounded WAL frame into an independent checksum-protected byte array.
+     *
+     * @param frame data frame to encode
+     * @return newly allocated complete encoded bytes
+     * @throws NullPointerException if frame is null
+     * @throws IllegalArgumentException if frame is a structural batch-commit record
+     */
     /* default */ static byte[] encode(Frame frame) {
         requireDataFrame(frame);
         ByteBuffer output = ByteBuffer.allocate(frameLength(frame.payloadInternal().length));
@@ -89,11 +123,27 @@ final class SigningWalFrameCodec {
         return output.array();
     }
 
+    /**
+     * Calculates the complete encoded frame length, including fixed framing and checksum bytes.
+     *
+     * @param frame data frame to encode
+     * @return complete encoded byte length
+     * @throws NullPointerException if frame is null
+     * @throws IllegalArgumentException if frame is a structural batch-commit record
+     */
     /* default */ static int encodedLength(Frame frame) {
         requireDataFrame(frame);
         return frameLength(frame.payloadInternal().length);
     }
 
+    /**
+     * Authenticates and decodes exactly one complete WAL frame, rejecting malformed or trailing data.
+     *
+     * @param encoded complete encoded payload
+     * @return authenticated decoded value
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if encoded is null
+     */
     /* default */ static Frame decode(byte[] encoded) throws IOException {
         Objects.requireNonNull(encoded, "encoded");
         if (encoded.length < HEADER_BYTES + CHECKSUM_BYTES || encoded.length > MAX_FRAME_BYTES) {
@@ -112,8 +162,17 @@ final class SigningWalFrameCodec {
     }
 
     /**
-     * Writes data frames followed by one integrity-covered commit marker. The
-     * caller may force the channel once after this method returns.
+     * Encodes and writes one bounded committed group at the current position of the borrowed channel. This method does not force the channel; the caller must force the complete group before acknowledging durability.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param frames nonempty bounded list of consecutively sequenced data frames
+     * @param previousCommittedRevision revision immediately before the group
+     * @param committedRevision new revision committed by this group
+     * @param previousCommitment preceding 32-byte group commitment
+     * @return group boundaries and chained commitment
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or frames is null
+     * @throws IllegalArgumentException if the group, revisions or preceding commitment violate committed-group encoding requirements
      */
     /* default */ static BatchCommit writeCommittedBatch(WritableByteChannel channel,
             List<Frame> frames, long previousCommittedRevision, long committedRevision,
@@ -127,7 +186,18 @@ final class SigningWalFrameCodec {
         return commit;
     }
 
-    /** Encodes one complete committed group into caller-owned contiguous storage. */
+    /**
+     * Encodes one bounded committed group into the supplied writable, array-backed buffer and advances its position. Frames must have consecutive sequences and the new revision must advance the previous committed revision.
+     *
+     * @param output destination buffer or output stream, retained by the caller
+     * @param frames nonempty bounded list of consecutively sequenced data frames
+     * @param previousCommittedRevision revision immediately before the group
+     * @param committedRevision new revision committed by this group
+     * @param previousCommitment preceding 32-byte group commitment
+     * @return group boundaries and chained commitment
+     * @throws IllegalArgumentException if the group, revisions, commitment or destination-buffer capacity violates encoding requirements
+     * @throws NullPointerException if output or frames is null
+     */
     /* default */ static BatchCommit encodeCommittedBatch(ByteBuffer output,
             List<Frame> frames, long previousCommittedRevision, long committedRevision,
             byte[] previousCommitment) {
@@ -182,6 +252,18 @@ final class SigningWalFrameCodec {
         return result;
     }
 
+    /**
+     * Scans validated committed WAL groups and delivers their frames in order. An incomplete terminal suffix is reported for an active WAL and rejected for a sealed WAL; callbacks never receive an uncommitted group.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param expectedFirstSequence sequence required for the first WAL frame
+     * @param activeWal whether an incomplete terminal suffix may be reported for active-WAL repair
+     * @param consumer callback for validated committed data
+     * @return validated scan endpoint, commitment and terminal-tail classification
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or consumer is null
+     * @throws IllegalArgumentException if expectedFirstSequence is negative
+     */
     /* default */ static ScanResult scan(SeekableByteChannel channel, long expectedFirstSequence,
             boolean activeWal, java.util.function.Consumer<Frame> consumer) throws IOException {
         Objects.requireNonNull(consumer, "consumer");
@@ -192,13 +274,36 @@ final class SigningWalFrameCodec {
         }, false);
     }
 
-    /** Scans and delivers each group only after its commit marker is validated. */
+    /**
+     * Scans and authenticates complete committed groups in sequence, invoking the consumer only after each group commitment is validated. Active-WAL terminal incompleteness is reported for repair; sealed-WAL incompleteness is rejected.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param expectedFirstSequence sequence required for the first WAL frame
+     * @param activeWal whether an incomplete terminal suffix may be reported for active-WAL repair
+     * @param consumer callback for validated committed data
+     * @return validated scan endpoint, commitment and terminal-tail classification
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or consumer is null
+     * @throws IllegalArgumentException if expectedFirstSequence is negative
+     */
     /* default */ static ScanResult scanGroups(SeekableByteChannel channel,
             long expectedFirstSequence, boolean activeWal, GroupConsumer consumer) throws IOException {
         return scanGroups(channel, expectedFirstSequence, activeWal, consumer, false);
     }
 
-    /** Scans with optional whole-file commitment calculation for immutable files. */
+    /**
+     * Scans and authenticates complete committed groups in sequence, invoking the consumer only after each group commitment is validated. Active-WAL terminal incompleteness is reported for repair; sealed-WAL incompleteness is rejected.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param expectedFirstSequence sequence required for the first WAL frame
+     * @param activeWal whether an incomplete terminal suffix may be reported for active-WAL repair
+     * @param consumer callback for validated committed data
+     * @param calculateFileCommitment whether to calculate the complete scanned-file commitment
+     * @return validated scan endpoint, commitment and terminal-tail classification
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or consumer is null
+     * @throws IllegalArgumentException if expectedFirstSequence is negative
+     */
     @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.NcssCount" })
     /* default */ static ScanResult scanGroups(SeekableByteChannel channel,
             long expectedFirstSequence, boolean activeWal, GroupConsumer consumer,
@@ -303,8 +408,16 @@ final class SigningWalFrameCodec {
     }
 
     /**
-     * Validates one lower-exclusive, forced-upper-inclusive committed suffix.
-     * No channel read crosses the descriptor's forced-end offset.
+     * Validates only the descriptor-bounded committed prefix and delivers accepted groups without reading beyond its forced endpoint. The supplied revision limit must not precede the descriptor's exclusive starting revision.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param descriptor authoritative committed-prefix boundaries and commitments
+     * @param maximumAcceptedRevision inclusive maximum revision delivered to the consumer
+     * @param consumer callback for validated committed data
+     * @return validated accepted prefix endpoint and commitment
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel, descriptor or consumer is null
+     * @throws IllegalArgumentException if maximumAcceptedRevision precedes the descriptor's exclusive starting revision
      */
     @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.NcssCount" })
     /* default */ static PrefixScanResult scanCommittedPrefix(SeekableByteChannel channel,
@@ -652,10 +765,49 @@ final class SigningWalFrameCodec {
         return SigningFormatSupport.invalid(diagnostic);
     }
 
-    /** Closed structural record kinds; payload schemas are defined separately. */
+    /**
+     * Closed structural record kinds; payload schemas are defined separately.
+     */
     /* default */ enum RecordType {
-        INTENT(1), MUTATION(2), PROVIDER_RESULT(3), TERMINAL(4),
-        ISSUE(10), COMMIT(11), REJECT(12), ACK(13), WATERMARK(14),
+        /**
+         * Signing intent record.
+         */
+        INTENT(1),
+        /**
+         * Metadata mutation record.
+         */
+        MUTATION(2),
+        /**
+         * Retained provider observation record.
+         */
+        PROVIDER_RESULT(3),
+        /**
+         * Terminal signing outcome record.
+         */
+        TERMINAL(4),
+        /**
+         * Transaction issuance record.
+         */
+        ISSUE(10),
+        /**
+         * Committed transaction terminal record.
+         */
+        COMMIT(11),
+        /**
+         * Rejected transaction terminal record.
+         */
+        REJECT(12),
+        /**
+         * Retained transaction outcome acknowledgement record.
+         */
+        ACK(13),
+        /**
+         * Authoritative signing-time watermark record.
+         */
+        WATERMARK(14),
+        /**
+         * Commit marker covering a bounded batch of frames.
+         */
         BATCH_COMMIT(127);
 
         private final short wireCode;
@@ -664,6 +816,11 @@ final class SigningWalFrameCodec {
             this.wireCode = (short) wireCode;
         }
 
+        /**
+         * Returns the stable explicitly assigned binary record discriminator.
+         *
+         * @return stable explicitly assigned binary record discriminator
+         */
         /* default */ short wireCode() {
             return wireCode;
         }
@@ -673,7 +830,9 @@ final class SigningWalFrameCodec {
         }
     }
 
-    /** Immutable data frame with single-owned decoded payload storage. */
+    /**
+     * Immutable data frame with single-owned decoded payload storage.
+     */
     @SuppressWarnings("PMD.DataClass")
     /* default */ static final class Frame {
         private final RecordType recordType;
@@ -681,6 +840,16 @@ final class SigningWalFrameCodec {
         private final long sequence;
         private final byte[] payload;
 
+        /**
+         * Creates an immutable frame, validating its nonnegative sequence and bounded payload and defensively copying the payload bytes.
+         *
+         * @param recordType data-frame discriminator
+         * @param transactionId transaction identity associated with the frame
+         * @param sequence nonnegative frame sequence
+         * @param payload bounded frame payload bytes
+         * @throws NullPointerException if a required argument is null
+         * @throws IllegalArgumentException if the sequence is negative or the payload exceeds its bound
+         */
         /* default */ Frame(RecordType recordType, UUID transactionId, long sequence, byte[] payload) {
             this(recordType, transactionId, sequence, payload, false);
         }
@@ -702,24 +871,52 @@ final class SigningWalFrameCodec {
             return new Frame(type, transactionId, sequence, payload, true);
         }
 
-        /** Accepts payload storage already copied and exclusively owned by the caller. */
+        /**
+         * Creates a frame by taking exclusive ownership of the supplied payload array. The caller must relinquish every mutable alias and must not modify the array afterward.
+         *
+         * @param type data-frame discriminator
+         * @param transactionId transaction identity associated with the frame
+         * @param sequence nonnegative frame sequence
+         * @param payload bounded frame payload bytes
+         * @return frame owning the supplied payload array
+         */
         /* default */ static Frame owned(RecordType type, UUID transactionId,
                 long sequence, byte[] payload) {
             return new Frame(type, transactionId, sequence, payload, true);
         }
 
+        /**
+         * Returns the closed persisted record discriminator.
+         *
+         * @return closed persisted record discriminator
+         */
         /* default */ RecordType recordType() {
             return recordType;
         }
 
+        /**
+         * Returns the exact transaction UUID retained by the frame.
+         *
+         * @return exact transaction UUID retained by the frame
+         */
         /* default */ UUID transactionId() {
             return transactionId;
         }
 
+        /**
+         * Returns the exact persisted frame sequence.
+         *
+         * @return exact persisted frame sequence
+         */
         /* default */ long sequence() {
             return sequence;
         }
 
+        /**
+         * Returns the new independent copy of the complete encoded frame payload.
+         *
+         * @return new independent copy of the complete encoded frame payload
+         */
         /* default */ byte[] payload() {
             return payload.clone();
         }
@@ -729,9 +926,31 @@ final class SigningWalFrameCodec {
         }
     }
 
+    /**
+     * Commit marker binding a bounded contiguous frame group to its prior and resulting commitments.
+     *
+     * @param startSequence first sequence included by the committed batch
+     * @param endSequence last sequence included by the committed batch
+     * @param frameCount number of frames included by the result
+     * @param committedRevision authoritative committed revision
+     * @param previousCommitment rolling commitment before the group
+     * @param groupCommitment commitment to the exact grouped frames
+     * @param resultingCommitment rolling commitment after the group
+     */
     /* default */ record BatchCommit(long startSequence, long endSequence, int frameCount,
             long committedRevision, byte[] previousCommitment, byte[] groupCommitment,
             byte[] resultingCommitment) {
+        /**
+         * Creates the commit marker binding a bounded contiguous frame group to its prior and resulting commitments.
+         *
+         * @param startSequence first sequence included by the committed batch
+         * @param endSequence last sequence included by the committed batch
+         * @param frameCount number of frames included by the result
+         * @param committedRevision authoritative committed revision
+         * @param previousCommitment rolling commitment before the group
+         * @param groupCommitment commitment to the exact grouped frames
+         * @param resultingCommitment rolling commitment after the group
+         */
         BatchCommit {
             requireCommitment(previousCommitment);
             requireCommitment(groupCommitment);
@@ -741,37 +960,128 @@ final class SigningWalFrameCodec {
             resultingCommitment = resultingCommitment.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained previous rolling commitment bytes.
+         *
+         * @return newly allocated array containing the rolling commitment before the group
+         */
         @Override public byte[] previousCommitment() { return previousCommitment.clone(); }
+        /**
+         * Returns an independent copy of the retained batch group commitment bytes.
+         *
+         * @return newly allocated array containing the commitment to the exact grouped frames
+         */
         @Override public byte[] groupCommitment() { return groupCommitment.clone(); }
+        /**
+         * Returns an independent copy of the retained resulting rolling commitment bytes.
+         *
+         * @return newly allocated array containing the rolling commitment after the group
+         */
         @Override public byte[] resultingCommitment() { return resultingCommitment.clone(); }
         private byte[] previousCommitmentInternal() { return previousCommitment; }
         private byte[] groupCommitmentInternal() { return groupCommitment; }
         private byte[] resultingCommitmentInternal() { return resultingCommitment; }
     }
 
+    /**
+     * Validated complete-WAL scan coordinates and integrity commitments.
+     *
+     * @param frameCount number of frames included by the result
+     * @param lastSequence last validated sequence in the scanned prefix
+     * @param committedRevision authoritative committed revision
+     * @param incompleteTailOffset byte offset of the incomplete tail, using the scanner's absent-tail sentinel when complete
+     * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+     * @param fileCommitment integrity commitment of the complete encoded file
+     */
     /* default */ record ScanResult(long frameCount, long lastSequence, long committedRevision,
             long incompleteTailOffset, byte[] rollingCommitment, byte[] fileCommitment) {
+        /**
+         * Creates the validated complete-WAL scan coordinates and integrity commitments.
+         *
+         * @param frameCount number of frames included by the result
+         * @param lastSequence last validated sequence in the scanned prefix
+         * @param committedRevision authoritative committed revision
+         * @param incompleteTailOffset byte offset of the incomplete tail, using the scanner's absent-tail sentinel when complete
+         * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+         * @param fileCommitment integrity commitment of the complete encoded file
+         */
         ScanResult {
             rollingCommitment = rollingCommitment.clone();
             fileCommitment = fileCommitment.clone();
         }
+        /**
+         * Tests whether scanning found a terminal suffix that does not contain a complete committed group.
+         *
+         * @return true if the scan found an incomplete terminal suffix
+         */
         /* default */ boolean hasIncompleteTail() { return incompleteTailOffset >= 0L; }
+        /**
+         * Returns an independent copy of the retained rolling WAL commitment bytes.
+         *
+         * @return newly allocated array containing the rolling WAL commitment at the accepted end boundary
+         */
         @Override public byte[] rollingCommitment() { return rollingCommitment.clone(); }
+        /**
+         * Returns an independent copy of the retained complete-file commitment bytes.
+         *
+         * @return newly allocated array containing the integrity commitment of the complete encoded file
+         */
         @Override public byte[] fileCommitment() { return fileCommitment.clone(); }
     }
 
+    /**
+     * Validated committed-prefix scan coordinates and forced-boundary status.
+     *
+     * @param frameCount number of frames included by the result
+     * @param lastSequence last validated sequence in the scanned prefix
+     * @param committedRevision authoritative committed revision
+     * @param acceptedOffset exclusive byte boundary of the accepted prefix
+     * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+     * @param forcedEndReached whether scanning reached the required forced end boundary
+     */
     /* default */ record PrefixScanResult(long frameCount, long lastSequence,
             long committedRevision, long acceptedOffset, byte[] rollingCommitment,
             boolean forcedEndReached) {
+        /**
+         * Creates the validated committed-prefix scan coordinates and forced-boundary status.
+         *
+         * @param frameCount number of frames included by the result
+         * @param lastSequence last validated sequence in the scanned prefix
+         * @param committedRevision authoritative committed revision
+         * @param acceptedOffset exclusive byte boundary of the accepted prefix
+         * @param rollingCommitment rolling WAL commitment at the accepted end boundary
+         * @param forcedEndReached whether scanning reached the required forced end boundary
+         */
         PrefixScanResult {
             rollingCommitment = rollingCommitment.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained rolling WAL commitment bytes.
+         *
+         * @return newly allocated array containing the rolling WAL commitment at the accepted end boundary
+         */
         @Override public byte[] rollingCommitment() { return rollingCommitment.clone(); }
     }
 
-    /** Callback-scoped decoded frame and exact immutable-file location. */
+    /**
+     * Callback-scoped decoded frame and exact immutable-file location.
+     * @param frame decoded frame valid for the callback scope
+     * @param offset zero-based encoded byte offset
+     * @param encodedLength complete encoded frame length in bytes
+     * @param revision authoritative metadata revision
+     */
     /* default */ record ScannedFrame(Frame frame, long offset, int encodedLength, long revision) {
+        /**
+         * Creates the callback-scoped decoded frame and exact immutable-file location.
+         *
+         * @param frame decoded frame valid for the callback scope
+         * @param offset zero-based encoded byte offset
+         * @param encodedLength complete encoded frame length in bytes
+         * @param revision authoritative metadata revision
+         * @throws NullPointerException if {@code frame} is null
+         * @throws IllegalArgumentException if {@code (offset < SigningWalContainerCodec.HEADER_BYTES || encodedLength <= 0 || encodedLength > MAX_FRAME_BYTES || revision < -1L)}
+         */
         ScannedFrame {
             Objects.requireNonNull(frame, "frame");
             if (offset < SigningWalContainerCodec.HEADER_BYTES || encodedLength <= 0
@@ -780,30 +1090,53 @@ final class SigningWalFrameCodec {
             }
         }
 
-        /** Read-only payload view valid only for the current scanner callback. */
+        /**
+         * Creates a read-only view of this scanned frame's payload. The view is valid only during the consumer callback and must not be retained.
+         *
+         * @return read-only callback-scoped payload view
+         */
         /* default */ ByteBuffer payloadView() {
             return ByteBuffer.wrap(frame.payloadInternal()).asReadOnlyBuffer();
         }
     }
 
-    /** Bounded committed-group delivery seam used by recovery. */
+    /**
+     * Bounded committed-group delivery seam used by recovery.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface GroupConsumer {
-        /** Receives one fully validated committed group. */
+        /**
+         * Consumes one fully validated bounded committed group. Frame payload views are callback-scoped and must not be retained.
+         *
+         * @param frames validated committed frames; their views must not escape the callback
+         * @param commit authenticated group commit coordinates
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         void accept(List<ScannedFrame> frames, BatchCommit commit) throws IOException;
     }
 
-    /** Committed-prefix callback including the validated exclusive next offset. */
+    /**
+     * Committed-prefix callback including the validated exclusive next offset.
+     */
     @FunctionalInterface
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     /* default */ interface PrefixGroupConsumer {
-        /** Receives one validated group and its exclusive physical end. */
+        /**
+         * Consumes one fully validated bounded committed group. Frame payload views are callback-scoped and must not be retained.
+         *
+         * @param frames validated committed frames; their views must not escape the callback
+         * @param commit authenticated group commit coordinates
+         * @param acceptedOffset exclusive byte offset of the accepted committed group
+         * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+         */
         void accept(List<ScannedFrame> frames, BatchCommit commit,
                 long acceptedOffset) throws IOException;
     }
 
-    /** Sequential buffered adapter that never seeks per frame. */
+    /**
+     * Sequential buffered adapter that never seeks per frame.
+     */
     private static final class BufferedInput {
         private final SeekableByteChannel channel;
         private final long limit;

@@ -67,6 +67,9 @@ public final class SlhDsaLargeDataTest {
     private static final String INDENT = "...";
     private static final int MAX_HEX_BYTES = 32;
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,
@@ -78,6 +81,11 @@ public final class SlhDsaLargeDataTest {
         }
     }
 
+    /**
+     * Signs and verifies large streaming inputs across the supported SLH-DSA parameter sets.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void slhdsa_complete_suite_streaming_sign_verify_large_data() throws Exception {
         String testName = "slhdsa_complete_suite_streaming_sign_verify_large_data";

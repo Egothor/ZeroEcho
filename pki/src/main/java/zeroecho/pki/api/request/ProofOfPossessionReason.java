@@ -49,35 +49,59 @@ import java.util.Objects;
  */
 public enum ProofOfPossessionReason {
 
-    /** Proof-of-possession evidence was successfully verified. */
+    /**
+     * Proof-of-possession evidence was successfully verified.
+     */
     VERIFIED(ProofOfPossessionStatus.VERIFIED),
 
-    /** No proof-of-possession evidence was present (acceptable only if policy allows). */
+    /**
+     * No proof-of-possession evidence was present (acceptable only if policy allows).
+     */
     NOT_PRESENT(ProofOfPossessionStatus.NOT_PRESENT),
 
-    /** The certification-request payload required for verification was missing. */
+    /**
+     * The certification-request payload required for verification was missing.
+     */
     CSR_PAYLOAD_MISSING(ProofOfPossessionStatus.FAILED),
 
-    /** The certification request could not be parsed or is structurally invalid. */
+    /**
+     * The certification request could not be parsed or is structurally invalid.
+     */
     CSR_MALFORMED(ProofOfPossessionStatus.FAILED),
 
-    /** The proof-of-possession signature was present but did not verify. */
+    /**
+     * The proof-of-possession signature was present but did not verify.
+     */
     SIGNATURE_INVALID(ProofOfPossessionStatus.FAILED),
 
-    /** The request's algorithm is not supported for proof-of-possession verification. */
+    /**
+     * The request's algorithm is not supported for proof-of-possession verification.
+     */
     UNSUPPORTED_ALGORITHM(ProofOfPossessionStatus.NOT_SUPPORTED),
 
-    /** The verification operation did not reach a terminal outcome. */
+    /**
+     * The verification operation did not reach a terminal outcome.
+     */
     OPERATION_INCOMPLETE(ProofOfPossessionStatus.FAILED),
 
-    /** The verification provider was unavailable or returned no usable status. */
+    /**
+     * The verification provider was unavailable or returned no usable status.
+     */
     PROVIDER_UNAVAILABLE(ProofOfPossessionStatus.FAILED),
 
-    /** Verification failed for an internal or otherwise unclassified reason. */
+    /**
+     * Verification failed for an internal or otherwise unclassified reason.
+     */
     INTERNAL_FAILURE(ProofOfPossessionStatus.FAILED);
 
     private final ProofOfPossessionStatus status;
 
+    /**
+     * Associates this reason with its only valid proof-of-possession status.
+     *
+     * @param status verification status assigned by the enum declaration
+     * @throws NullPointerException if the status is null
+     */
     ProofOfPossessionReason(ProofOfPossessionStatus status) {
         this.status = Objects.requireNonNull(status, "status");
     }

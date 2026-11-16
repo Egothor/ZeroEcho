@@ -54,7 +54,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Checks durable artifact ownership, byte budgets, leases, expiry and crash-recovery transitions.
+ */
 class BackupArtifactRepositoryTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
     private static final Instant NOW = Instant.parse("2026-10-06T10:00:00Z");
     private static final byte[] BODY = {1, 2, 3, 4};
@@ -73,6 +79,11 @@ class BackupArtifactRepositoryTest {
         return repository.reserve("owner", BackupArtifactRepository.Purpose.IMPORT, new PkiId("backup"), BODY.length, digest(BODY));
     }
 
+    /**
+     * Checks durable ready/verified bytes survive restart while wrong-owner, traversal and duplicate-lease operations are rejected.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void completedTransferSurvivesRestartWithOwnershipAndSingleLease() throws Exception {
         String handle;
         try (BackupArtifactRepository repository = open(NOW)) {
@@ -93,6 +104,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks failed artifact handoff retains its preparation/workspace reservation and prevents premature repository closure.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void failedHandoffRetainsPreparationAdmissionUntilSourceOwnerCloses() throws Exception {
         try (BackupArtifactRepository repository = open(NOW)) {
             BackupArtifactRepository.PreparationJob job = repository.prepare();
@@ -111,6 +127,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks transfer I/O failure and oversized input stay failed rather than ready and cleanup removes their retained artifacts.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void interruptedAndOversizedInputsAreNeverReadyAndAreCleaned() throws Exception {
         try (BackupArtifactRepository repository = open(NOW)) {
             String interrupted = reserve(repository).handle();
@@ -129,6 +150,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks expired completed transfers and incomplete reservations become unavailable after durable recovery.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void expiryAndIncompleteReservationsAreReclaimedOnRestart() throws Exception {
         String ready;
         String incomplete;
@@ -144,6 +170,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks a restore interrupted after dispatch remains uncertain across repository reopen.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void interruptedRestoreRemainsUncertainAfterRestart() throws Exception {
         String handle;
         try (BackupArtifactRepository repository = open(NOW)) {
@@ -158,6 +189,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks exclusive process-lock ownership, realm binding and metadata corruption rejection on spool open.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsDifferentRealmCorruptMetadataAndConcurrentOwner() throws Exception {
         String handle;
         try (BackupArtifactRepository repository = open(NOW)) {
@@ -171,6 +207,11 @@ class BackupArtifactRepositoryTest {
         assertThrows(IOException.class, () -> open(NOW));
     }
 
+    /**
+     * Checks an archive larger than four MiB is received using reads no larger than 64 KiB.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void streamedInputLargerThanFourMiBUsesBoundedReads() throws Exception {
         long size = 5L * 1024 * 1024;
         byte[] block = new byte[65536];
@@ -195,6 +236,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks a stale closed lease cannot change state now owned by a later live lease.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void closedLeaseCannotMutateSubsequentLease() throws Exception {
         try (BackupArtifactRepository repository = open(NOW)) {
             String handle = reserve(repository).handle();
@@ -213,6 +259,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks integrity verification rejects syntactically valid but modified retained metadata.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void syntacticallyValidMetadataCorruptionIsRejected() throws Exception {
         String handle;
         try (BackupArtifactRepository repository = open(NOW)) {
@@ -228,6 +279,11 @@ class BackupArtifactRepositoryTest {
         assertEquals("Corrupt backup artifact descriptor", assertThrows(IOException.class, () -> open(NOW)).getMessage());
     }
 
+    /**
+     * Checks deletion failure cannot make a durably consumed export handle readable or leasable again.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void failedDeletionCannotReviveConsumedHandle() throws Exception {
         java.util.concurrent.atomic.AtomicBoolean fail = new java.util.concurrent.atomic.AtomicBoolean();
         String handle;
@@ -252,6 +308,12 @@ class BackupArtifactRepositoryTest {
         assertEquals(false, Files.exists(directory.resolve(handle + ".zip")));
     }
 
+    /**
+     * Injects a durability-boundary crash and checks subsequent publications remain fenced until repository reopen.
+     *
+     * @param crash exact publication boundary at which failure is injected
+     * @throws Exception if fixture setup, publication or recovery execution fails
+     */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.EnumSource(value = BackupArtifactRepository.Phase.class,
             names = {"METADATA_FORCED", "METADATA_RENAMED", "DIRECTORY_FORCED"})
@@ -270,6 +332,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks spool creation refuses absent or nonprivate directories rather than silently creating ownership prerequisites.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void requiresPreexistingPrivateDirectory() throws Exception {
         Files.delete(directory);
         assertThrows(IOException.class, () -> open(NOW));
@@ -281,6 +348,11 @@ class BackupArtifactRepositoryTest {
         try (BackupArtifactRepository repository = open(NOW)) { reserve(repository); }
     }
 
+    /**
+     * Checks spool recovery refuses symlink entries and a symlinked root directory.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsSymlinkEntriesAndRoot() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.getFileStore(directory).supportsFileAttributeView("posix"));
         Path link = directory.resolve("linked");
@@ -298,6 +370,11 @@ class BackupArtifactRepositoryTest {
         }
     }
 
+    /**
+     * Checks expiry removes archive bytes while retaining unresolved restore correlation and its metadata quota until authoritative reconciliation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void expiredUncertainWorkflowRetainsExactCorrelationAndConsumesMetadataQuota() throws Exception {
         String handle;
         String restoreId = "66e46212-b0a0-4efe-9e96-81f266721f73";

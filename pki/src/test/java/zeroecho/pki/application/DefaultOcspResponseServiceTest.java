@@ -106,12 +106,20 @@ import zeroecho.pkix.crl.CrlReason;
 import zeroecho.pkix.ocsp.CertStatus;
 import zeroecho.pkix.ocsp.OcspResponse;
 
-/** Real session/reactor OCSP signing and bounded failure/custody contracts. */
+/**
+ * Real session/reactor OCSP signing and bounded failure/custody contracts.
+ */
 final class DefaultOcspResponseServiceTest {
     private static final String ALGORITHM = IntermediateCreationFixture.ALGORITHM;
     private static final String RESPONSE_FAILURE = "OCSP response generation failed: code=OCSP_RESPONSE_FAILED";
     private static final String BINDING_FAILURE = "OCSP signing binding validation failed: code=OCSP_SIGNING_BINDING_FAILED";
 
+    /**
+     * Mixed statuses hashes responder forms nonce and exact chain use one closed snapshot.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void mixedStatusesHashesResponderFormsNonceAndExactChainUseOneClosedSnapshot(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -175,6 +183,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Binding proof uses exact challenge explicit intermediate fairness and selected binding.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bindingProofUsesExactChallengeExplicitIntermediateFairnessAndSelectedBinding(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -195,6 +209,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Authority algorithm and wrong key failures are safe and never return unverified DER.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authorityAlgorithmAndWrongKeyFailuresAreSafeAndNeverReturnUnverifiedDer(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -218,6 +238,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Corruption fails before signing rather than becoming unknown.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void corruptionFailsBeforeSigningRatherThanBecomingUnknown(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -232,6 +258,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Already cancelled response and binding fail safely before preparation or acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void alreadyCancelledResponseAndBindingFailSafelyBeforePreparationOrAcceptance(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -258,6 +290,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Pending disposition survives cancellation failure without discard or resubmission.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void pendingDispositionSurvivesCancellationFailureWithoutDiscardOrResubmission(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -289,6 +327,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Failed initial attempt remains OCSP failure when cleanup finds success.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failedInitialAttemptRemainsOcspFailureWhenCleanupFindsSuccess(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -309,6 +353,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Real durable capacity rejection preserves overload for response and proof.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void realDurableCapacityRejectionPreservesOverloadForResponseAndProof(@TempDir Path root) throws Exception {
         Fixture fixture = new Fixture();
@@ -335,6 +385,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * Session availability and closed access follow configured signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sessionAvailabilityAndClosedAccessFollowConfiguredSigning(@TempDir Path root) throws Exception {
         Fixture absent = new Fixture();
@@ -394,6 +450,12 @@ final class DefaultOcspResponseServiceTest {
     @FunctionalInterface private interface Action { void run() throws Exception; }
     @FunctionalInterface private interface BeforeCall { void run(String method, Object[] arguments); }
 
+    /**
+     * SDK evidence uses actual managed dual roles and one closed status view.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sdkEvidenceUsesActualManagedDualRolesAndOneClosedStatusView(@TempDir Path directory) throws Exception {
         try (SdkFixture fixture = new SdkFixture(directory)) {
@@ -420,6 +482,12 @@ final class DefaultOcspResponseServiceTest {
         }
     }
 
+    /**
+     * SDK invalid alternative cancellation lost acceptance and delayed completion expose no bundle.
+     *
+     * @param directory isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sdkInvalidAlternativeCancellationLostAcceptanceAndDelayedCompletionExposeNoBundle(@TempDir Path directory) throws Exception {
         try (SdkFixture fixture = new SdkFixture(directory)) {

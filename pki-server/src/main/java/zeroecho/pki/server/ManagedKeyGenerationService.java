@@ -51,7 +51,9 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
 
-/** Durable public receipts around one provider-owned generate-only capability. */
+/**
+ * Durable public receipts around one provider-owned generate-only capability.
+ */
 final class ManagedKeyGenerationService {
     private static final int MAGIC = 0x5a4d4b31;
     private static final int MAX_PUBLIC_BYTES = 16384;
@@ -61,6 +63,14 @@ final class ManagedKeyGenerationService {
     private final Optional<ManagedKeyGeneration> provider;
     private final ReentrantLock lane = new ReentrantLock();
 
+    /**
+     * Composes generate-only managed-key admission over durable public receipts.
+     *
+     * @param configuration trusted realm and configured initial administrator
+     * @param store durable server-control authority
+     * @param provider optional provider-owned generation/observation capability
+     * @throws NullPointerException if a required reference is null
+     */
     ManagedKeyGenerationService(ServerRealmConfiguration configuration, ServerControlStore store,
             Optional<ManagedKeyGeneration> provider) {
         this.realm = configuration.realmId();
@@ -69,8 +79,20 @@ final class ManagedKeyGenerationService {
         this.provider = Objects.requireNonNull(provider, "provider");
     }
 
+    /**
+     * Checks whether managed generation is configured and the initial administrator is durably pinned.
+     *
+     * @return whether both the provider capability and matching immutable administrator pin exist
+     */
     boolean available() { return initialAdministrator.isPresent() && provider.isPresent() && pinned(); }
 
+    /**
+     * Requires the enabled pinned initial administrator and a configured generation provider.
+     *
+     * @param actor authenticated requesting principal
+     * @throws SecurityException if the actor is not the enabled pinned initial administrator
+     * @throws IllegalStateException if no generation provider is configured
+     */
     void requireAdministrator(String actor) {
         if (!initialAdministrator.filter(actor::equals).isPresent() || !pinned() || !store.requirePrincipal(actor).enabled()) {
             throw new SecurityException("Managed key generation requires the initial administrator");
@@ -78,6 +100,14 @@ final class ManagedKeyGenerationService {
         if (provider.isEmpty()) throw new IllegalStateException("MANAGED_KEY_GENERATION_NOT_CONFIGURED");
     }
 
+    /**
+     * Creates or checks the immutable realm-bound initial-administrator pin.
+     *
+     * @param configuration trusted realm and optional configured initial administrator
+     * @param store durable server-control authority
+     * @param administrator bootstrap-selected principal identity
+     * @throws SecurityException if bootstrap identity differs from configuration or a retained pin
+     */
     static void pinInitialAdministrator(ServerRealmConfiguration configuration, ServerControlStore store, String administrator) {
         if (configuration.initialAdministratorPrincipalId().isEmpty()) return;
         if (!configuration.initialAdministratorPrincipalId().orElseThrow().equals(administrator)) {
@@ -100,6 +130,22 @@ final class ManagedKeyGenerationService {
                 .filter(record -> MessageDigest.isEqual(expected, record.payload())).isPresent();
     }
 
+    /**
+     * Reserves, generates or observes one idempotently identified managed-key generation.
+     *
+     * <p>An ambiguous retained reservation is observed through the provider; it never
+     * causes blind regeneration. Authorization is rechecked immediately before key creation.</p>
+     *
+     * @param generationId stable bounded generation identity
+     * @param parameters exact supported key-generation parameter set
+     * @param actor authenticated initial administrator principal
+     * @return public managed-key result; no private key material is returned
+     * @throws IllegalArgumentException if generation identity is invalid
+     * @throws NullPointerException if parameters are null
+     * @throws SecurityException if the actor is not the enabled pinned administrator
+     * @throws IllegalStateException if configuration, capacity, concurrency, identity or reconciliation
+     *         prerequisites fail
+     */
     ManagedKeyGeneration.Result generate(String generationId, ManagedKeyGeneration.Parameters parameters, String actor) {
         Permission.requireId(generationId, "generation identity");
         Objects.requireNonNull(parameters, "parameters");

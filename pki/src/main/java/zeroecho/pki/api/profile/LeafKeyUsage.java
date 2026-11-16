@@ -37,18 +37,32 @@ package zeroecho.pki.api.profile;
  * Closed X.509 key-usage bit set available to leaf certificate profiles.
  */
 public enum LeafKeyUsage {
-    /** digitalSignature. */
+    /**
+     * digitalSignature.
+     */
     DIGITAL_SIGNATURE,
-    /** nonRepudiation/contentCommitment. */
+    /**
+     * nonRepudiation/contentCommitment.
+     */
     CONTENT_COMMITMENT,
-    /** keyEncipherment. */
+    /**
+     * keyEncipherment.
+     */
     KEY_ENCIPHERMENT,
-    /** dataEncipherment. */
+    /**
+     * dataEncipherment.
+     */
     DATA_ENCIPHERMENT,
-    /** keyAgreement. */
+    /**
+     * keyAgreement.
+     */
     KEY_AGREEMENT,
-    /** encipherOnly. */
+    /**
+     * encipherOnly.
+     */
     ENCIPHER_ONLY,
-    /** decipherOnly. */
+    /**
+     * decipherOnly.
+     */
     DECIPHER_ONLY
 }

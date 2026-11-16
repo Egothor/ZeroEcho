@@ -58,6 +58,9 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 
+/**
+ * Contract and regression tests for metadata frame codec.
+ */
 final class MetadataFrameCodecTest {
 
     private static final String TOKEN = "00112233445566778899aabbccddeeff";
@@ -71,9 +74,17 @@ final class MetadataFrameCodecTest {
     private static final int PAYLOAD_LENGTH_OFFSET = 32;
     private static final int HEADER_DIGEST_OFFSET = 40;
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * All frame types use one canonical round trip.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void allFrameTypesUseOneCanonicalRoundTrip() throws IOException {
         System.out.print("allFrameTypesUseOneCanonicalRoundTrip ");
@@ -101,6 +112,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Zero and multi buffer payloads remain streaming.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void zeroAndMultiBufferPayloadsRemainStreaming() throws IOException {
         System.out.print("zeroAndMultiBufferPayloadsRemainStreaming ");
@@ -134,6 +150,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Partial header at every boundary is incomplete tail.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialHeaderAtEveryBoundaryIsIncompleteTail() throws IOException {
         System.out.print("partialHeaderAtEveryBoundaryIsIncompleteTail ");
@@ -149,6 +170,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Hostile authenticated header fields fail closed.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void hostileAuthenticatedHeaderFieldsFailClosed() throws IOException {
         System.out.print("hostileAuthenticatedHeaderFieldsFailClosed ");
@@ -165,6 +191,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Unauthenticated length corruption is never incomplete tail.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unauthenticatedLengthCorruptionIsNeverIncompleteTail() throws IOException {
         System.out.print("unauthenticatedLengthCorruptionIsNeverIncompleteTail ");
@@ -178,6 +209,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Payload truncation and digest mismatch are distinguished.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void payloadTruncationAndDigestMismatchAreDistinguished() throws IOException {
         System.out.print("payloadTruncationAndDigestMismatchAreDistinguished ");
@@ -194,6 +230,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Technical limit is adapter controlled.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void technicalLimitIsAdapterControlled() throws IOException {
         System.out.print("technicalLimitIsAdapterControlled ");
@@ -228,6 +269,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Writer rejects length mismatch and observes cancellation.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void writerRejectsLengthMismatchAndObservesCancellation() throws IOException {
         System.out.print("writerRejectsLengthMismatchAndObservesCancellation ");
@@ -290,6 +336,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Decoder leaves next frame unread and is deterministic.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void decoderLeavesNextFrameUnreadAndIsDeterministic() throws IOException {
         System.out.print("decoderLeavesNextFrameUnreadAndIsDeterministic ");
@@ -330,6 +381,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Partial progress works and zero progress fails.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialProgressWorksAndZeroProgressFails() throws IOException {
         System.out.print("partialProgressWorksAndZeroProgressFails ");
@@ -374,6 +430,11 @@ final class MetadataFrameCodecTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Cancellation during header write prevents content open.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationDuringHeaderWritePreventsContentOpen() throws IOException {
         System.out.print("cancellationDuringHeaderWritePreventsContentOpen ");

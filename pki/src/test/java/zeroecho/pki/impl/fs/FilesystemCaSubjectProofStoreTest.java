@@ -101,10 +101,18 @@ import zeroecho.pki.spi.store.SignWorkflowStore.Workflow;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
-/** Composite storage, two-step reactor execution and recovery evidence. */
+/**
+ * Composite storage, two-step reactor execution and recovery evidence.
+ */
 final class FilesystemCaSubjectProofStoreTest {
     private static final Duration LEASE = Duration.ofSeconds(5);
 
+    /**
+     * Dual workflow cannot retain alternative success before primary verification.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void dualWorkflowCannotRetainAlternativeSuccessBeforePrimaryVerification(@TempDir Path root) throws Exception {
         var fixture = new IntermediateCreationFixture();
@@ -130,6 +138,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * One acceptance owns both candidates and reopens verifier before certificate readiness.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oneAcceptanceOwnsBothCandidatesAndReopensVerifierBeforeCertificateReadiness(@TempDir Path root)
             throws Exception {
@@ -186,6 +200,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Cancelling proof success cannot advance and rejects old fence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellingProofSuccessCannotAdvanceAndRejectsOldFence(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -209,6 +229,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Verification and ready cancellation clear signature without losing proof outcome.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void verificationAndReadyCancellationClearSignatureWithoutLosingProofOutcome(@TempDir Path root) throws Exception {
         for (boolean makeReady : List.of(false, true)) {
@@ -233,6 +259,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Provider failure timestamp does not replace failure with expiry.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void providerFailureTimestampDoesNotReplaceFailureWithExpiry(@TempDir Path root) throws Exception {
         for (ObservationState disposition : List.of(ObservationState.FAILED, ObservationState.UNRECOVERABLE)) {
@@ -256,6 +288,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Successful and cancelled provider time at or after deadline expires.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void successfulAndCancelledProviderTimeAtOrAfterDeadlineExpires(@TempDir Path root) throws Exception {
         for (ObservationState disposition : List.of(ObservationState.SUCCEEDED, ObservationState.CANCELLED)) {
@@ -279,6 +317,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * One capacity slot owns two bindings and rejected candidates do not delete accepted bytes.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void oneCapacitySlotOwnsTwoBindingsAndRejectedCandidatesDoNotDeleteAcceptedBytes(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -311,6 +355,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Definite and unknown acceptance keep both candidates consistent across recovery.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void definiteAndUnknownAcceptanceKeepBothCandidatesConsistentAcrossRecovery(@TempDir Path root) throws Exception {
         for (FilesystemPkiStore.SignAcceptanceCommitFault fault : FilesystemPkiStore.SignAcceptanceCommitFault.values()) {
@@ -340,6 +390,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Six composite parents retire and purge both bindings within mutation bound.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void sixCompositeParentsRetireAndPurgeBothBindingsWithinMutationBound(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -379,6 +435,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Authoritative deadline expires even failure with earlier provider timestamp.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authoritativeDeadlineExpiresEvenFailureWithEarlierProviderTimestamp(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -399,6 +461,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Binding rejects proof SPKI and algorithm different from exact final tbs.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void bindingRejectsProofSpkiAndAlgorithmDifferentFromExactFinalTbs(@TempDir Path root) throws Exception {
         for (String substitution : List.of("SPKI", "ALGORITHM")) {
@@ -414,6 +482,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Reactor signs proof then certificate on separate key lanes including pending proof.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reactorSignsProofThenCertificateOnSeparateKeyLanesIncludingPendingProof(@TempDir Path root) throws Exception {
         for (boolean pendingProof : List.of(false, true)) {
@@ -439,6 +513,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Wrong proof signature terminates parent without certificate dispatch or publication.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void wrongProofSignatureTerminatesParentWithoutCertificateDispatchOrPublication(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -462,6 +542,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Restart resumes verification ready and claimed certificate without repeating proof.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartResumesVerificationReadyAndClaimedCertificateWithoutRepeatingProof(@TempDir Path root) throws Exception {
         for (SignWorkflowStore.Stage stage : List.of(SignWorkflowStore.Stage.CA_PROOF_VERIFYING,
@@ -505,6 +591,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Executor rejects local verification and readiness without changing claims.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void executorRejectsLocalVerificationAndReadinessWithoutChangingClaims(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
@@ -527,6 +619,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Verification read failure retains proof signature and restarts without another proof call.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void verificationReadFailureRetainsProofSignatureAndRestartsWithoutAnotherProofCall(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();
@@ -577,6 +675,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Cancellation and expiry during verification cannot release certificate signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationAndExpiryDuringVerificationCannotReleaseCertificateSigning(@TempDir Path root) throws Exception {
         for (boolean expire : List.of(false, true)) {
@@ -640,6 +744,12 @@ final class FilesystemCaSubjectProofStoreTest {
         }
     }
 
+    /**
+     * Stale proof dispatch callback cannot override new cancellation claim.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void staleProofDispatchCallbackCannotOverrideNewCancellationClaim(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock();

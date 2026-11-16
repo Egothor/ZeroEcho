@@ -49,9 +49,17 @@ import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Boundary and malformed-input coverage for LSB payload framing.
+ */
 class LSBSteganographyMethodLengthTest {
     private static final int PREFIX_BITS = Integer.SIZE;
 
+    /**
+     * Checks LSB payload round trips at valid length boundaries.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void validBoundaryPayloadsRoundTrip() throws Exception {
         System.out.println("validBoundaryPayloadsRoundTrip");
@@ -71,6 +79,11 @@ class LSBSteganographyMethodLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks exact-capacity behavior and rejection when an image cannot hold the framed payload.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void exactCapacityAndInsufficientCapacityFailClosed() throws Exception {
         System.out.println("exactCapacityAndInsufficientCapacityFailClosed");
@@ -88,6 +101,11 @@ class LSBSteganographyMethodLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects malformed LSB length prefixes and incomplete payload data.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void malformedPrefixesAndTruncatedPayloadsFailClosed() throws Exception {
         System.out.println("malformedPrefixesAndTruncatedPayloadsFailClosed");
@@ -108,6 +126,11 @@ class LSBSteganographyMethodLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks every incomplete length prefix and representative truncated payloads.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void everyIncompletePrefixAndRepresentativePayloadTruncationFailsClosed() throws Exception {
         System.out.println("everyIncompletePrefixAndRepresentativePayloadTruncationFailsClosed");
@@ -142,6 +165,11 @@ class LSBSteganographyMethodLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that rejecting an oversized message consumes only a bounded amount of input.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void overCapacityMessageReadIsDeterministicallyBounded() throws Exception {
         System.out.println("overCapacityMessageReadIsDeterministicallyBounded");

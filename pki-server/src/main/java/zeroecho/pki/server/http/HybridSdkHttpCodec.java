@@ -42,19 +42,30 @@ import java.util.Set;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Strict shared SDK HTTP byte grammar; decoded values establish no caller authority. */
+/**
+ * Strict shared SDK HTTP byte grammar; decoded values establish no caller authority.
+ */
 public final class HybridSdkHttpCodec {
-    /** Exact SDK JSON media type. */
+    /**
+     * Exact SDK JSON media type.
+     */
     public static final String MEDIA_TYPE = "application/vnd.zeroecho.hybrid-sdk+json";
-    /** Fixed profile advertised only by explicitly configured listeners. */
+    /**
+     * Fixed profile advertised only by explicitly configured listeners.
+     */
     public static final String PROFILE = "zeroecho-hybrid-sdk-v1";
     private HybridSdkHttpCodec() { }
     /**
-     * Reads one closed SDK action document without protocol authentication.
-     * @param document bounded JSON @param maximumBytes existing listener bound
-     * @param acceptance whether this is acceptance rather than challenge
-     * @param adapterFields exact adapter-specific required members
-     * @return immutable decoded fields @throws IllegalArgumentException for invalid framing
+     * Parses one closed SDK action document without verifying native authentication or client signatures.
+     *
+     * @param document complete bounded JSON bytes, borrowed for parsing
+     * @param maximumBytes listener body ceiling, positive and no greater than StrictJson maximum
+     * @param acceptance true for acceptance fields, false for a challenge nonce
+     * @param adapterFields exact additional required adapter-member names
+     * @return immutable field-map copy containing immutable typed values
+     * @throws NullPointerException if the adapter-member set is null
+     * @throws IllegalArgumentException if JSON/bounds/closed fields, version/profile, identities or encoded
+     *     proof/nonce shape is invalid
      */
     public static Map<String, PkiOperationValue> parse(byte[] document, int maximumBytes,
             boolean acceptance, Set<String> adapterFields) {
@@ -73,10 +84,15 @@ public final class HybridSdkHttpCodec {
         return Map.copyOf(fields);
     }
     /**
-     * Reads canonical unpadded base64url with decoded bounds.
-     * @param fields decoded closed document @param name member @param minimumBytes inclusive lower bound
-     * @param maximumBytes inclusive upper bound @return independently owned bytes
-     * @throws IllegalArgumentException for malformed or oversized bytes
+     * Decodes exact unpadded base64url after applying encoded and decoded size checks.
+     *
+     * @param fields decoded typed field map
+     * @param name required binary member name
+     * @param minimumBytes inclusive decoded lower bound selected by the caller
+     * @param maximumBytes inclusive decoded upper bound selected by the caller
+     * @return new independently owned decoded bytes
+     * @throws NullPointerException if the field map is null or rejects a null key
+     * @throws IllegalArgumentException if text/type/alphabet/canonical re-encoding or decoded bounds fail
      */
     public static byte[] bytes(Map<String, PkiOperationValue> fields, String name, int minimumBytes, int maximumBytes) {
         String value = text(fields, name);
@@ -86,15 +102,28 @@ public final class HybridSdkHttpCodec {
                 || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value)) throw invalid();
         return decoded;
     }
-    /** @param fields decoded document @param name member @return exact text @throws IllegalArgumentException for another type */
+    /**
+     * Reads required typed text without trimming, normalization or interpreting it as authentication.
+     *
+     * @param fields decoded typed field map
+     * @param name required text member
+     * @return exact supplied text
+     * @throws NullPointerException if the map is null or rejects a null key
+     * @throws IllegalArgumentException if the member is absent or has another type
+     */
     public static String text(Map<String, PkiOperationValue> fields, String name) {
         if (!(fields.get(name) instanceof PkiOperationValue.Text text)) throw invalid();
         return text.value();
     }
     /**
-     * Encodes the closed retained challenge response.
-     * @param intentId retained identity @param primary exact F1 @param target exact F7
-     * @return SDK JSON bytes
+     * Encodes retained challenge fields and derives F2 by changing the supplied primary-frame kind.
+     *
+     * @param intentId retained intent identity, encoded without identity/frame correspondence checks
+     * @param primary retained F1 fields including tag-eight expiry
+     * @param target retained target frame encoded without a kind check here
+     * @return new JSON bytes with F1/F2/target and expiry derived from the primary frame
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the derived frame or JSON representation violates its encoding bounds
      */
     public static byte[] challenge(String intentId, HybridSdkFrame primary, HybridSdkFrame target) {
         return StrictJson.encode(new PkiOperationValue.ObjectValue(Map.of(
@@ -104,10 +133,15 @@ public final class HybridSdkHttpCodec {
                 "expiresAt", new PkiOperationValue.Text(Instant.ofEpochSecond(ByteBuffer.wrap(primary.field(8)).getLong()).toString()))));
     }
     /**
-     * Encodes configured capability metadata without inferring an origin.
-     * @param basePath exact SDK route @param operations allowed native operations
-     * @param canonicalOrigin exact configured HTTPS origin
-     * @param maximumBodyBytes listener body bound @return closed capability JSON
+     * Encodes configured listener capability metadata without creating or enabling a listener.
+     *
+     * @param basePath configured SDK route prefix, retained without route syntax validation
+     * @param operations configured operation names, encoded in supplied order
+     * @param canonicalOrigin configured canonical HTTPS origin, explicitly validated
+     * @param maximumBodyBytes advertised listener body limit, encoded without a positivity check here
+     * @return new closed capability JSON with existing request/proof/durable-admission ceilings
+     * @throws NullPointerException if operations or an operation element is null
+     * @throws IllegalArgumentException if the origin or encoded values fail their representation constraints
      */
     public static byte[] capability(String basePath, java.util.List<String> operations, String canonicalOrigin, int maximumBodyBytes) {
         var fields = new LinkedHashMap<String, PkiOperationValue>();

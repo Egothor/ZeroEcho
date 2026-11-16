@@ -51,7 +51,9 @@ import zeroecho.pki.server.scep.ScepEndpoint;
 import zeroecho.pki.server.scep.ScepProtocolException;
 import zeroecho.pki.server.scep.ScepService;
 
-/** Bounded RFC 8894 HTTPS transport; CMS authenticates requests before enrollment. */
+/**
+ * Bounded RFC 8894 HTTPS transport; CMS authenticates requests before enrollment.
+ */
 final class ScepHttpHandler implements HttpHandler {
     private static final String HTTP_GET = "GET";
     private static final String HTTP_POST = "POST";
@@ -62,6 +64,17 @@ final class ScepHttpHandler implements HttpHandler {
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
 
+    /**
+     * Composes the SCEP HTTP boundary without taking ownership of its collaborators.
+     *
+     * @param configuration protocol listener limits and transport policy
+     * @param realm lifecycle-owned realm context
+     * @param service realm-owned SCEP service
+     * @param runtime lifecycle-owned admission and bounded execution owner
+     * @param requestIds correlation-identifier validator/generator
+     * @param ready readiness observation checked before request admission
+     * @throws NullPointerException if any collaborator is null
+     */
     /* default */ ScepHttpHandler(PkiServerConfiguration.ScepListener configuration, ServerRealmContext realm,
             ScepService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
@@ -72,6 +85,9 @@ final class ScepHttpHandler implements HttpHandler {
         this.ready = Objects.requireNonNull(ready, "ready");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             try {

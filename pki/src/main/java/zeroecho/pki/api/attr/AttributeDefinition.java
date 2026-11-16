@@ -59,6 +59,14 @@ public record AttributeDefinition(AttributeId id, String displayName, AttributeV
      * Creates an attribute definition.
      *
      * @throws IllegalArgumentException if inputs are invalid
+     * @param id stable attribute identifier
+     * @param displayName human-readable name
+     * @param valueType logical value type
+     * @param multiValued whether multiple values are allowed
+     * @param sensitivity sensitivity classification
+     * @param stability lifecycle maturity
+     * @param accessPolicy governance hints
+     * @param meta structured documentation metadata
      */
     public AttributeDefinition {
         if (id == null) {

@@ -51,8 +51,16 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for util.
+ */
 public class UtilTest {
 
+    /**
+     * Write and read UUID.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testWriteAndReadUUID() throws IOException {
         System.out.println("testWriteAndReadUUID");
@@ -65,6 +73,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Write and read UTF-8.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testWriteAndReadUTF8() throws IOException {
         System.out.println("testWriteAndReadUTF8");
@@ -77,6 +90,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Write and read long.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testWriteAndReadLong() throws IOException {
         System.out.println("testWriteAndReadLong");
@@ -89,6 +107,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Write and read byte array.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testWriteAndReadByteArray() throws IOException {
         System.out.println("testWriteAndReadByteArray");
@@ -102,6 +125,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Read with max length exceeded.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testReadWithMaxLengthExceeded() throws IOException {
         System.out.println("testReadWithMaxLengthExceeded");
@@ -115,6 +143,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Read UTF-8 with max length exceeded.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testReadUTF8WithMaxLengthExceeded() throws IOException {
         System.out.println("testReadUTF8WithMaxLengthExceeded");
@@ -127,6 +160,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Packed integer encoding decoding.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testPackedIntegerEncodingDecoding() throws IOException {
         System.out.println("testPackedIntegerEncodingDecoding");
@@ -146,6 +184,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Packed writers preserve wire bytes at sign bit boundaries.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void packedWritersPreserveWireBytesAtSignBitBoundaries() throws IOException {
         System.out.println("packedWritersPreserveWireBytesAtSignBitBoundaries");
@@ -166,6 +209,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Packed long boundary round trips and consumes exactly.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void packedLongBoundaryRoundTripsAndConsumesExactly() throws IOException {
         System.out.println("packedLongBoundaryRoundTripsAndConsumesExactly");
@@ -191,6 +239,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Packed long rejects initial and continuation EOF.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void packedLongRejectsInitialAndContinuationEof() throws IOException {
         System.out.println("packedLongRejectsInitialAndContinuationEof");
@@ -215,6 +268,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Packed long rejects width and overflow within ten reads.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void packedLongRejectsWidthAndOverflowWithinTenReads() throws IOException {
         System.out.println("packedLongRejectsWidthAndOverflowWithinTenReads");
@@ -243,6 +301,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Read EOF handling.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testReadEOFHandling() throws IOException {
         System.out.println("testReadEOFHandling");
@@ -251,6 +314,11 @@ public class UtilTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Write and read large data.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void testWriteAndReadLargeData() throws IOException {
         System.out.println("testWriteAndReadLargeData");

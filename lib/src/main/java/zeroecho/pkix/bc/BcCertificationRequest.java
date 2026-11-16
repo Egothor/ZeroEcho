@@ -56,7 +56,9 @@ import zeroecho.pkix.csr.CertificationRequest;
 import zeroecho.pkix.csr.CsrAttribute;
 import zeroecho.pkix.sign.ContentVerifier;
 
-/** BouncyCastle-backed parsed {@link CertificationRequest}. */
+/**
+ * BouncyCastle-backed parsed {@link CertificationRequest}.
+ */
 final class BcCertificationRequest implements CertificationRequest {
 
     private final PKCS10CertificationRequest request;
@@ -67,6 +69,13 @@ final class BcCertificationRequest implements CertificationRequest {
     private final List<CertificateExtension> requestedExtensions;
     private final List<CsrAttribute> attributes;
 
+    /**
+     * Parses a PKCS#10 request without establishing signature validity or trust.
+     *
+     * @param der complete encoded PKCS#10 request; must not be null
+     * @throws IllegalArgumentException if the encoding cannot be parsed
+     * @throws NullPointerException if the encoding is null
+     */
     /* default */ BcCertificationRequest(byte[] der) {
         try {
             this.request = new PKCS10CertificationRequest(der);
@@ -128,11 +137,17 @@ final class BcCertificationRequest implements CertificationRequest {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X500Principal subject() {
         return subject;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicKey publicKey() {
         if (publicKey == null) {
@@ -145,27 +160,42 @@ final class BcCertificationRequest implements CertificationRequest {
         return publicKey;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public AlgorithmIdentifier signatureAlgorithm() {
         return signatureAlgorithm;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<GeneralName> requestedSubjectAlternativeNames() {
         return List.copyOf(requestedSans);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CertificateExtension> requestedExtensions() {
         return List.copyOf(requestedExtensions);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<CsrAttribute> attributes() {
         return List.copyOf(attributes);
     }
 
     // Defensive copies require one independent immutable result per raw attribute.
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     @Override
     public List<CsrAttribute> rawAttributes() {
@@ -184,6 +214,9 @@ final class BcCertificationRequest implements CertificationRequest {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] subjectPublicKeyInfo() {
         try {
@@ -193,6 +226,9 @@ final class BcCertificationRequest implements CertificationRequest {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] certificationRequestInfo() {
         try {
@@ -203,11 +239,17 @@ final class BcCertificationRequest implements CertificationRequest {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] signature() {
         return request.getSignature();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] encoded() {
         try {
@@ -217,6 +259,9 @@ final class BcCertificationRequest implements CertificationRequest {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean verifySelfSignature() {
         ContentVerifier verifier = new JcaContentVerifier(publicKey(), signatureAlgorithm);

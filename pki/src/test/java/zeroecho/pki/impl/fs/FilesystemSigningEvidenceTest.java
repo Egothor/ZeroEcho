@@ -78,11 +78,20 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for filesystem signing evidence.
+ */
 final class FilesystemSigningEvidenceTest {
     private static final Instant NOW = IntermediateCreationFixture.NOW;
     private static final Duration TTL = Duration.ofMinutes(1);
     private static final Principal OWNER = new Principal("TEST", "owner");
 
+    /**
+     * Disabled audit has no log and retained terminal recovery survives purge.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void disabledAuditHasNoLogAndRetainedTerminalRecoverySurvivesPurge(@TempDir Path root) throws Exception {
         assertFalse(FsPkiStoreOptions.defaults().signingEvidenceAudit());
         for (SignWorkflowStore.State state : List.of(SignWorkflowStore.State.SUCCEEDED, SignWorkflowStore.State.FAILED,
@@ -124,6 +133,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Enabled parent evidence uses provider time and fallback without duplicate retirement entries.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void enabledParentEvidenceUsesProviderTimeAndFallbackWithoutDuplicateRetirementEntries(@TempDir Path root) throws Exception {
         for (boolean providerTime : new boolean[] {false, true}) {
             try (FilesystemPkiStore store = open(root.resolve(Boolean.toString(providerTime)), true, new MutableClock())) {
@@ -139,6 +154,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Proof evidence is independent of active then cancelled parent and survives retirement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void proofEvidenceIsIndependentOfActiveThenCancelledParentAndSurvivesRetirement(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         PkiId parent;
@@ -180,6 +201,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Valid large principal and unrepresentable provider time cannot change primary failure.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void validLargePrincipalAndUnrepresentableProviderTimeCannotChangePrimaryFailure(@TempDir Path root) throws Exception {
         for (boolean hugePrincipal : new boolean[] {true, false}) {
             Path directory = root.resolve(Boolean.toString(hugePrincipal));
@@ -203,6 +230,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Failed proof can retain instant max without reinterpreting confirmed parent outcome.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void failedProofCanRetainInstantMaxWithoutReinterpretingConfirmedParentOutcome(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         try (FilesystemPkiStore store = open(root, true, new MutableClock())) {
@@ -221,6 +254,9 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Nonterminal proof dispositions cannot become retained audit evidence.
+     */
     @Test void nonterminalProofDispositionsCannotBecomeRetainedAuditEvidence() {
         for (SigningProvider.ObservationState state : List.of(SigningProvider.ObservationState.PENDING,
                 SigningProvider.ObservationState.RETRYABLE_UNKNOWN)) {
@@ -229,6 +265,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Primary uncertainty and audit uncertainty keep distinct outcomes across reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void primaryUncertaintyAndAuditUncertaintyKeepDistinctOutcomesAcrossReopen(@TempDir Path root) throws Exception {
         for (boolean primaryFailure : new boolean[] {true, false}) {
             for (int forceOrdinal : primaryFailure ? new int[] {1} : new int[] {2, 3}) {
@@ -282,6 +324,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Uncertain parent audit stops remaining proof append and reopen restores both.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void uncertainParentAuditStopsRemainingProofAppendAndReopenRestoresBoth(@TempDir Path root) throws Exception {
         IntermediateCreationFixture fixture = new IntermediateCreationFixture();
         ArmedWalFailure operations = new ArmedWalFailure();
@@ -328,6 +376,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Concurrently confirmed callback survives another callbacks audit fence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void concurrentlyConfirmedCallbackSurvivesAnotherCallbacksAuditFence(@TempDir Path root) throws Exception {
         AuditBarrierClock clock = new AuditBarrierClock();
         ArmedWalFailure operations = new ArmedWalFailure();
@@ -372,6 +426,12 @@ final class FilesystemSigningEvidenceTest {
         }
     }
 
+    /**
+     * Unrelated illegal state from optional audit is not hidden without recovery evidence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void unrelatedIllegalStateFromOptionalAuditIsNotHiddenWithoutRecoveryEvidence(@TempDir Path root) throws Exception {
         AuditBarrierClock clock = new AuditBarrierClock();
         ArmedWalFailure operations = new ArmedWalFailure();

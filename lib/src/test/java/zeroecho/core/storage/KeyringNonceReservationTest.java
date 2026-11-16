@@ -57,6 +57,9 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Contract and regression tests for keyring nonce reservation.
+ */
 class KeyringNonceReservationTest {
     private static final int MAGIC_BYTES = 8;
     private static final int VERSION_OFFSET = MAGIC_BYTES;
@@ -65,9 +68,17 @@ class KeyringNonceReservationTest {
     private static final int CURRENT_SIDECAR_VERSION = 2;
     private static final char[] PASSWORD = { 'n', 'o', 'n', 'c', 'e' };
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * HKDF uses fixed rfc5869 contract.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hkdfUsesFixedRfc5869Contract() throws Exception {
         start("hkdfUsesFixedRfc5869Contract");
@@ -112,6 +123,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Current sidecar survives restart and derived key is cleared.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void currentSidecarSurvivesRestartAndDerivedKeyIsCleared() throws Exception {
         start("currentSidecarSurvivesRestartAndDerivedKeyIsCleared");
@@ -145,6 +161,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Direct master key mac and sidecar tampering fail closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void directMasterKeyMacAndSidecarTamperingFailClosed() throws Exception {
         start("directMasterKeyMacAndSidecarTamperingFailClosed");
@@ -158,6 +179,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Sidecar cannot be copied across stores.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sidecarCannotBeCopiedAcrossStores() throws Exception {
         start("sidecarCannotBeCopiedAcrossStores");
@@ -173,6 +199,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Restart and abandoned reservation advance monotonically.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void restartAndAbandonedReservationAdvanceMonotonically() throws Exception {
         start("restartAndAbandonedReservationAdvanceMonotonically");
@@ -214,6 +245,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Failed sidecar reservation does not advance or encrypt.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void failedSidecarReservationDoesNotAdvanceOrEncrypt() throws Exception {
         start("failedSidecarReservationDoesNotAdvanceOrEncrypt");
@@ -250,6 +286,11 @@ class KeyringNonceReservationTest {
         ok();
     }
 
+    /**
+     * Nonce allocation uses one durable counter per encryption.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void nonceAllocationUsesOneDurableCounterPerEncryption() throws Exception {
         start("nonceAllocationUsesOneDurableCounterPerEncryption");

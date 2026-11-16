@@ -84,14 +84,23 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 class KeyringAlgorithmCoverageTest {
     private static final byte[] MESSAGE = "keyring-algorithm-matrix".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void initializeProviders() {
         BouncyCastleActivator.init();
     }
 
+    /**
+     * Persistent importer universe has accepted cardinality.
+     */
     @Test
     void persistentImporterUniverseHasAcceptedCardinality() {
         List<KeyringImportRegistry.PersistentMapping> mappings = KeyringImportRegistry.mappings();
@@ -100,6 +109,9 @@ class KeyringAlgorithmCoverageTest {
         assertEquals(6, count(mappings, KeyringStore.Kind.SECRET_KEY));
     }
 
+    /**
+     * Public API requires unlock material and exposes no plaintext store path.
+     */
     @Test
     void publicApiRequiresUnlockMaterialAndExposesNoPlaintextStorePath() {
         List<Method> publicMethods = Arrays.stream(KeyringStore.class.getDeclaredMethods())
@@ -116,6 +128,11 @@ class KeyringAlgorithmCoverageTest {
         assertTrue(Arrays.stream(KeyringStore.class.getFields()).noneMatch(field -> field.getType() == byte[].class));
     }
 
+    /**
+     * Asymmetric encrypted store round trips.
+     *
+     * @return dynamic cases exercising each supported algorithm specification
+     */
     @TestFactory
     Stream<DynamicTest> asymmetricEncryptedStoreRoundTrips() {
         List<String> algorithms = KeyringImportRegistry.mappings().stream()
@@ -125,6 +142,11 @@ class KeyringAlgorithmCoverageTest {
                 .dynamicTest(algorithmId + " PUBLIC/X.509 + PRIVATE/PKCS#8", () -> roundTripAsymmetric(algorithmId)));
     }
 
+    /**
+     * Secret encrypted store round trips.
+     *
+     * @return dynamic cases exercising each supported algorithm specification
+     */
     @TestFactory
     Stream<DynamicTest> secretEncryptedStoreRoundTrips() {
         return KeyringImportRegistry.mappings().stream()

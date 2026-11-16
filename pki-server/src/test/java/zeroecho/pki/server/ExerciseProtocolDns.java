@@ -42,7 +42,9 @@ import java.time.Duration;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Test-only loopback TXT responder; no recursion, forwarding, network publication or key access. */
+/**
+ * Test-only loopback TXT responder; no recursion, forwarding, network publication or key access.
+ */
 public final class ExerciseProtocolDns {
     private ExerciseProtocolDns() { }
     /**
@@ -66,6 +68,16 @@ public final class ExerciseProtocolDns {
             }
         }
     }
+    /**
+     * Builds a nonrecursive DNS response only for the nonce/run-owned TXT proof fixture.
+     *
+     * @param root owned environment containing the public DNS proof document
+     * @param nonce expected environment-owner nonce
+     * @param runId expected qualification run identity
+     * @param query complete received DNS datagram
+     * @return bounded DNS response bytes, or null for malformed/unsupported query framing
+     * @throws Exception if the bounded proof file cannot be read or the response cannot be encoded
+     */
     static byte[] response(Path root,String nonce,String runId,byte[] query)throws Exception {
         if(query.length<17||query.length>256||query[4]!=0||query[5]!=1||(query[2]&0x80)!=0)return null;
         int position=12;var name=new StringBuilder();

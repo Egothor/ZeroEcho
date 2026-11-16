@@ -49,7 +49,13 @@ import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+/**
+ * Contract and regression tests for LMS XMSS guard.
+ */
 class LmsXmssGuardTest {
+    /**
+     * Recognizes every installed stateful signature service and alias.
+     */
     @Test
     void recognizesEveryInstalledStatefulSignatureServiceAndAlias() {
         Provider provider = new BouncyCastlePQCProvider();
@@ -70,6 +76,9 @@ class LmsXmssGuardTest {
         });
     }
 
+    /**
+     * Handles oid and custom codec identity without parsing parameters.
+     */
     @Test
     void handlesOidAndCustomCodecIdentityWithoutParsingParameters() {
         for (String oid : List.of("1.2.840.113549.1.9.16.3.17", "0.4.0.127.0.15.1.1.13.0",
@@ -85,6 +94,9 @@ class LmsXmssGuardTest {
         assertFalse(StatefulSigningGuard.isStateful("SLH-DSA-SHA2-128s"));
     }
 
+    /**
+     * PKIX rejects before parsing CSR or encoding private keys.
+     */
     @Test
     void pkixRejectsBeforeParsingCsrOrEncodingPrivateKeys() {
         BouncyCastleActivator.init();

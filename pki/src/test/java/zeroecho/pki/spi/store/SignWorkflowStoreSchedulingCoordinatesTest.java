@@ -44,8 +44,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for sign workflow store scheduling coordinates.
+ */
 final class SignWorkflowStoreSchedulingCoordinatesTest {
 
+    /**
+     * Validates components and retains record equality.
+     */
     @Test
     void validatesComponentsAndRetainsRecordEquality() {
         KeyRef keyRef = new KeyRef("key-sensitive");
@@ -67,6 +73,9 @@ final class SignWorkflowStoreSchedulingCoordinatesTest {
                 () -> new SignWorkflowStore.SchedulingCoordinates(keyRef, null));
     }
 
+    /**
+     * Redacts scheduling coordinates.
+     */
     @Test
     void redactsSchedulingCoordinates() {
         String key = "key-must-not-leak";

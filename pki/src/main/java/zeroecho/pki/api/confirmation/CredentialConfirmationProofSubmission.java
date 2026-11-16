@@ -55,6 +55,8 @@ public record CredentialConfirmationProofSubmission(CredentialConfirmationProofC
      *
      * @throws NullPointerException if {@code proofCas} is {@code null}
      * @throws IllegalArgumentException if the response is null, empty, or exceeds 16384 bytes
+     * @param proofCas exact pending lifecycle and challenge compare-and-set coordinates
+     * @param response non-empty suite-defined response, at most 16384 bytes
      */
     public CredentialConfirmationProofSubmission {
         Objects.requireNonNull(proofCas, "proofCas");
@@ -75,7 +77,11 @@ public record CredentialConfirmationProofSubmission(CredentialConfirmationProofC
         return response.clone();
     }
 
-    /** Compares response bytes by content. */
+    /**
+     * Compares response bytes by content.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof CredentialConfirmationProofSubmission candidate
@@ -83,13 +89,19 @@ public record CredentialConfirmationProofSubmission(CredentialConfirmationProofC
                 && Arrays.equals(response, candidate.response);
     }
 
-    /** Returns a content-based hash code for every component. */
+    /**
+     * Returns a content-based hash code for every component.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return 31 * proofCas.hashCode() + Arrays.hashCode(response);
     }
 
-    /** Returns a structural description without response bytes. */
+    /**
+     * Returns a structural description without response bytes.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "CredentialConfirmationProofSubmission[proofCas=" + proofCas

@@ -53,9 +53,17 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.impl.core.CrlScope;
 import zeroecho.pki.spi.store.MetadataKey;
 
+/**
+ * Contract and regression tests for CRL scope metadata codec.
+ */
 class CrlScopeMetadataCodecTest {
     private static final String HASH = "ab".repeat(32);
 
+    /**
+     * Counter includes zero maximum issued and exhausted sentinel with minimal unsigned bytes.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void counterIncludesZeroMaximumIssuedAndExhaustedSentinelWithMinimalUnsignedBytes() throws IOException {
         for (BigInteger number : new BigInteger[] {BigInteger.ZERO, BigInteger.ONE, BigInteger.valueOf(127),
@@ -80,6 +88,11 @@ class CrlScopeMetadataCodecTest {
         assertThrows(NullPointerException.class, () -> new CrlScopeCounter(HASH, null));
     }
 
+    /**
+     * Counter binds its key and owns decoded input.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void counterBindsItsKeyAndOwnsDecodedInput() throws IOException {
         CrlScopeCounter counter = new CrlScopeCounter(scope().digest(), BigInteger.valueOf(128));
@@ -100,6 +113,9 @@ class CrlScopeMetadataCodecTest {
         assertNotEquals(encoded[0], CrlScopeMetadataCodec.encode(decoded)[0]);
     }
 
+    /**
+     * Counter rejects truncation trailing legacy versions types and noncanonical unsigned numbers.
+     */
     @Test
     void counterRejectsTruncationTrailingLegacyVersionsTypesAndNoncanonicalUnsignedNumbers() {
         CrlScopeCounter counter = new CrlScopeCounter(scope().digest(), BigInteger.valueOf(128));
@@ -141,6 +157,9 @@ class CrlScopeMetadataCodecTest {
         assertThrows(IOException.class, () -> CrlScopeMetadataCodec.decodeReservation(encoded));
     }
 
+    /**
+     * Principal equality defines scope across case whitespace string types and rdn ordering.
+     */
     @Test
     void principalEqualityDefinesScopeAcrossCaseWhitespaceStringTypesAndRdnOrdering() {
         X500Principal first = new X500Principal("CN=Example  CA+OU=Trust,O=Example");
@@ -155,6 +174,9 @@ class CrlScopeMetadataCodecTest {
         assertEquals(CrlScope.of(printable, spki()), CrlScope.of(utf8, spki()));
     }
 
+    /**
+     * Identity includes name and key and owns all arrays.
+     */
     @Test
     void identityIncludesNameAndKeyAndOwnsAllArrays() {
         byte[] name = new X500Principal("CN=Example").getEncoded();
@@ -171,6 +193,11 @@ class CrlScopeMetadataCodecTest {
         assertEquals(scope.hashCode(), scope().hashCode());
     }
 
+    /**
+     * Digest uses independent length framed domain name and key.
+     *
+     * @throws NoSuchAlgorithmException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void digestUsesIndependentLengthFramedDomainNameAndKey() throws NoSuchAlgorithmException {
         byte[] domain = "zeroecho:pki:crl-scope:v1".getBytes(StandardCharsets.US_ASCII);
@@ -182,6 +209,9 @@ class CrlScopeMetadataCodecTest {
                 scope().digest());
     }
 
+    /**
+     * Rejects malformed names keys and noncanonical stored identity.
+     */
     @Test
     void rejectsMalformedNamesKeysAndNoncanonicalStoredIdentity() {
         assertThrows(IllegalArgumentException.class, () -> CrlScope.of(new byte[] { 1 }, spki()));
@@ -198,6 +228,11 @@ class CrlScopeMetadataCodecTest {
                 new X500Principal("CN=Example").getEncoded(), malformedAlgorithm));
     }
 
+    /**
+     * Records round trip with both closed owner types and distinct keys.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recordsRoundTripWithBothClosedOwnerTypesAndDistinctKeys() throws IOException {
         CrlScopeOwner owner = new CrlScopeOwner(scope(), new PkiId("authority"));
@@ -215,6 +250,9 @@ class CrlScopeMetadataCodecTest {
         assertEquals(CrlScopeMetadataCodec.key(owner), CrlScopeMetadataCodec.key(changedAuthority));
     }
 
+    /**
+     * Serial is positive and fits twenty signed DER content octets.
+     */
     @Test
     void serialIsPositiveAndFitsTwentySignedDerContentOctets() {
         ScopeSerialReservation.IssuanceOwner owner = new ScopeSerialReservation.ImportedCertificateOwner(HASH);
@@ -224,6 +262,9 @@ class CrlScopeMetadataCodecTest {
         new ScopeSerialReservation(scope(), BigInteger.ONE.shiftLeft(159).subtract(BigInteger.ONE), owner);
     }
 
+    /**
+     * Owners reject malformed and oversize identifiers and commitments.
+     */
     @Test
     void ownersRejectMalformedAndOversizeIdentifiersAndCommitments() {
         assertThrows(IllegalArgumentException.class, () -> new CrlScopeOwner(scope(), new PkiId("a".repeat(4097))));
@@ -234,6 +275,11 @@ class CrlScopeMetadataCodecTest {
         assertThrows(IllegalArgumentException.class, () -> new CrlScopeOwner(scope(), new PkiId("é".repeat(2049))));
     }
 
+    /**
+     * Enforces finite input bounds and decoded mutation isolation.
+     *
+     * @throws IOException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void enforcesFiniteInputBoundsAndDecodedMutationIsolation() throws IOException {
         byte[] name = new X500Principal("CN=Example").getEncoded();
@@ -249,6 +295,9 @@ class CrlScopeMetadataCodecTest {
         assertArrayEquals(spki(), decoded.scope().subjectPublicKeyInfoDer());
     }
 
+    /**
+     * Codec rejects all truncations trailing unknown versions types and mutated constituents.
+     */
     @Test
     void codecRejectsAllTruncationsTrailingUnknownVersionsTypesAndMutatedConstituents() {
         byte[] owner = CrlScopeMetadataCodec.encode(new CrlScopeOwner(scope(), new PkiId("authority")));
@@ -286,6 +335,9 @@ class CrlScopeMetadataCodecTest {
         assertThrows(IOException.class, () -> CrlScopeMetadataCodec.decodeReservation(owner));
     }
 
+    /**
+     * Reservation rejects noncanonical serial and unknown owner discriminator.
+     */
     @Test
     void reservationRejectsNoncanonicalSerialAndUnknownOwnerDiscriminator() {
         byte[] encoded = CrlScopeMetadataCodec.encode(new ScopeSerialReservation(scope(), BigInteger.valueOf(128),

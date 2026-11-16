@@ -38,7 +38,9 @@ import java.nio.channels.SeekableByteChannel;
 import java.util.List;
 import java.util.Objects;
 
-/** Bounded committed-prefix validation and exact-once candidate application. */
+/**
+ * Bounded committed-prefix validation and exact-once candidate application.
+ */
 final class SigningCommittedPrefixReader {
 
     private static final long NO_APPLIED_FRAMES = 0L;
@@ -47,7 +49,18 @@ final class SigningCommittedPrefixReader {
         // utility class
     }
 
-    /** Reads one prefix and adapts validated groups to frame-at-a-time consumers. */
+    /**
+     * Reads one prefix and adapts validated groups to frame-at-a-time consumers.
+     * @param channel borrowed source channel whose position may change
+     * @param descriptor exact lower-exclusive and forced-upper-inclusive generation bounds
+     * @param candidateRevision last revision already present in the detached candidate
+     * @param publishedMvccRevision greatest authoritative revision currently visible in MVCC
+     * @param consumer callback receiving only eligible validated frames or groups
+     * @return accepted physical prefix, applied frame count and agreement with the forced MVCC endpoint
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if candidate revision precedes the descriptor start or exceeds published MVCC
+     * @throws IOException if bounded framing, integrity, continuity or the callback fails
+     */
     /* default */ static Result read(SeekableByteChannel channel,
             CommittedPrefixDescriptor descriptor, long candidateRevision,
             long publishedMvccRevision, FrameConsumer consumer) throws IOException {
@@ -63,6 +76,15 @@ final class SigningCommittedPrefixReader {
     /**
      * Reads validated groups after the descriptor start and applies only revisions
      * absent from the supplied candidate and already visible in MVCC.
+     * @param channel borrowed source channel whose position may change
+     * @param descriptor exact lower-exclusive and forced-upper-inclusive generation bounds
+     * @param candidateRevision last revision already present in the detached candidate
+     * @param publishedMvccRevision greatest authoritative revision currently visible in MVCC
+     * @param consumer callback receiving only eligible validated frames or groups
+     * @return accepted physical prefix, applied frame count and agreement with the forced MVCC endpoint
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if candidate revision precedes the descriptor start or exceeds published MVCC
+     * @throws IOException if bounded framing, integrity, continuity or the callback fails
      */
     /* default */ static Result read(SeekableByteChannel channel,
             CommittedPrefixDescriptor descriptor, long candidateRevision,
@@ -128,24 +150,55 @@ final class SigningCommittedPrefixReader {
         cursor[0] = group;
     }
 
-    /** Receives one validated frame that is eligible for candidate application. */
+    /**
+     * Receives one validated frame that is eligible for candidate application.
+     */
     /* default */ @FunctionalInterface
     interface GroupConsumer {
-        /** Applies one eligible committed group and advances to its accepted endpoint. */
+        /**
+         * Applies one eligible committed group and advances to its accepted endpoint.
+         *
+         * @param frames validated contiguous frames absent from the candidate and already visible in MVCC
+         * @param acceptedGroup exact descriptor ending after this eligible committed group
+         * @throws IOException if candidate application fails
+         */
         void accept(List<SigningWalFrameCodec.ScannedFrame> frames,
                 CommittedPrefixDescriptor acceptedGroup) throws IOException;
     }
 
-    /** Receives one validated frame eligible for application. */
+    /**
+     * Receives one validated frame eligible for application.
+     */
     /* default */ @FunctionalInterface
     interface FrameConsumer {
-        /** Applies one eligible frame. */
+        /**
+         * Applies one eligible frame.
+         *
+         * @param frame validated physical frame absent from the candidate and already visible in MVCC
+         * @throws IOException if candidate application fails
+         */
         void accept(SigningWalFrameCodec.ScannedFrame frame) throws IOException;
     }
 
-    /* default */ @SuppressWarnings("PMD.LongVariable")
+    /* default */ /**
+     * Applied committed-prefix evidence and agreement with the forced WAL endpoint.
+     *
+     * @param acceptedPrefix exact committed prefix accepted by the reader
+     * @param appliedFrames number of frames applied from that prefix
+     * @param forcedAndProjectedEndpointsEqual whether forced and projected end coordinates agree
+     */
+    @SuppressWarnings("PMD.LongVariable")
     record Result(CommittedPrefixDescriptor acceptedPrefix,
             long appliedFrames, boolean forcedAndProjectedEndpointsEqual) {
+        /**
+         * Creates the applied committed-prefix evidence and agreement with the forced WAL endpoint.
+         *
+         * @param acceptedPrefix exact committed prefix accepted by the reader
+         * @param appliedFrames number of frames applied from that prefix
+         * @param forcedAndProjectedEndpointsEqual whether forced and projected end coordinates agree
+         * @throws NullPointerException if {@code acceptedPrefix} is null
+         * @throws IllegalArgumentException if {@code (appliedFrames < NO_APPLIED_FRAMES)}
+         */
         Result {
             Objects.requireNonNull(acceptedPrefix, "acceptedPrefix");
             if (appliedFrames < NO_APPLIED_FRAMES) {

@@ -55,6 +55,7 @@ public final class BcX509PublicKeyAdapter {
      * Creates an adapter for one immutable binding catalog.
      *
      * @param catalog authoritative X.509 representation-binding catalog
+     * @throws NullPointerException if {@code catalog} is null
      */
     public BcX509PublicKeyAdapter(X509BindingCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -84,6 +85,7 @@ public final class BcX509PublicKeyAdapter {
      * @param input exact active SPKI DER
      * @return canonical native SPKI DER; the input itself for standard encodings
      * @throws IOException if nested SPKI bytes are malformed or non-canonical
+     * @throws NullPointerException if {@code input} is null
      */
     public byte[] unwrap(byte[] input) throws IOException {
         Objects.requireNonNull(input, "input");

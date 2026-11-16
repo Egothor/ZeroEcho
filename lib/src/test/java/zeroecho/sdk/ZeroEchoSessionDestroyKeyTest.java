@@ -52,7 +52,15 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.core.audit.AuditListener;
 
+/**
+ * Contract and regression tests for zero echo session destroy key.
+ */
 class ZeroEchoSessionDestroyKeyTest {
+    /**
+     * Strict destroy distinguishes every lifecycle outcome.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void strictDestroyDistinguishesEveryLifecycleOutcome() throws Exception {
         System.out.print("ZeroEchoSession/destroy-strict...");
@@ -80,6 +88,11 @@ class ZeroEchoSessionDestroyKeyTest {
         System.out.println("ok");
     }
 
+    /**
+     * Concurrent strict destroy reports and audits one transition.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void concurrentStrictDestroyReportsAndAuditsOneTransition() throws Exception {
         System.out.print("ZeroEchoSession/destroy-concurrent...");

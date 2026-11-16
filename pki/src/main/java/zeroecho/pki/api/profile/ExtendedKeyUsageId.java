@@ -46,6 +46,9 @@ public record ExtendedKeyUsageId(String oid) {
 
     /**
      * Validates and constructs the identifier.
+     * @param oid dotted-decimal object identifier
+     * @throws IllegalArgumentException if oid is null or is not a supported canonical dotted-decimal object
+     *     identifier
      */
     public ExtendedKeyUsageId {
         if (oid == null || !OID.matcher(oid).matches() || !secondArcInRange(oid)) {

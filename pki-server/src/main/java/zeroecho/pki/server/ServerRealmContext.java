@@ -62,10 +62,16 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
  * Lifecycle owner for one server realm, one long-lived PKI session, and one
  * dedicated durable server-control authority.
  *
- * <p>The context is transport-neutral and synchronous. It creates no execution
- * lane, queue, thread, scheduler, retry loop, HTTP type, or ACME object. A future
- * transport can retain one instance for its process lifetime and submit existing
- * typed operations through {@link #gateway()}.</p>
+ * <p>Opening the context recovers the dedicated control authority, opens the PKI
+ * session/shared audit sink and composes realm services, including typed ACME
+ * control records and retained administrative workflows. It does not bind an HTTP
+ * listener or start the permanent server's transport/reconciliation execution
+ * pools. Transport owners retain one context and use its typed gateways.</p>
+ *
+ * <p>Service/session getters return borrowed realm-owned objects, not new resource
+ * owners. Callers must respect the realm lifecycle and service authorization
+ * boundaries; obtaining a reference does not authorize a request. Configuration,
+ * payload and audit input getters are not generic secret-redaction functions.</p>
  */
 // Realm services share one lifecycle and authorization boundary; splitting them would duplicate state.
 @SuppressWarnings({ "PMD.CommentDefaultAccessModifier", "PMD.CloseResource", "PMD.UseProperClassLoader",
@@ -74,11 +80,22 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
         "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects" })
 public final class ServerRealmContext implements AutoCloseable { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
-    /** Closed lifecycle states. */
+    /**
+     * Closed lifecycle states.
+     */
     public enum State {
-        /** Realm accepts operations. */ OPEN,
-        /** Realm rejects new work while owned resources close. */ CLOSING,
-        /** All realm-owned resources are closed. */ CLOSED
+        /**
+         * Realm accepts operations.
+         */
+        OPEN,
+        /**
+         * Realm rejects new work while owned resources close.
+         */
+        CLOSING,
+        /**
+         * All realm-owned resources are closed.
+         */
+        CLOSED
     }
 
     private final ServerRealmConfiguration configuration;
@@ -193,21 +210,48 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * Opens one production realm using explicit process-local capabilities.
      *
      * @param configuration validated immutable realm configuration
-     * @param dependencies key-access capabilities, never secret values
+     * @param dependencies process-local key/provider capability references; resolved during startup
+     * @throws NullPointerException if configuration or dependencies is null
+     * @throws IllegalStateException if control/session/provider recovery or integrity checks fail
      * @return fully recovered realm context
      * @throws IllegalArgumentException if a restore coordinator exists and server-control
-     *         storage is nested inside the replaceable PKI root
+     * storage is nested inside the replaceable PKI root
      */
     public static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies) {
         return open(configuration, dependencies, Clock.systemUTC(), new SecureRandom());
     }
 
+    /**
+     * Opens a realm with explicit clock and entropy while leaving SDK transport disabled.
+     *
+     * @param configuration validated immutable realm configuration
+     * @param dependencies process-local provider and key capabilities
+     * @param clock authoritative realm lifecycle, audit and eligibility clock
+     * @param random secure entropy source
+     * @return fully recovered realm context owned by the caller
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if storage topology, control-log path is invalid
+     * @throws IllegalStateException if control/session recovery or provider/integrity initialization fails
+     */
     static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random) {
         return open(configuration, dependencies, clock, random, Optional.empty());
     }
 
+    /**
+     * Recovers one realm and composes its services before any HTTP listener is bound.
+     *
+     * @param sdkOrigin canonical public SDK origin, or empty when SDK transport is disabled
+     * @param configuration validated immutable realm configuration
+     * @param dependencies process-local provider and key capabilities
+     * @param clock authoritative realm lifecycle, audit and eligibility clock
+     * @param random secure entropy source
+     * @return fully recovered realm context owned by the caller
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if storage topology, control-log path or SDK origin is invalid
+     * @throws IllegalStateException if control/session recovery or provider/integrity initialization fails
+     */
     static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random, Optional<String> sdkOrigin) {
         Objects.requireNonNull(sdkOrigin, "sdkOrigin").ifPresent(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame::requireOrigin);
@@ -300,6 +344,15 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         }));
     }
 
+    /**
+     * Installs the durable streaming-backup companion after validating restore authority separation.
+     *
+     * @param transfer private spool location and transfer resource budgets
+     * @param clock artifact expiry clock
+     * @param random opaque transfer-handle entropy source
+     * @throws IOException if topology validation, spool recovery or restore reconciliation fails
+     * @throws IllegalStateException if a companion is already installed or streaming backup is unavailable
+     */
     void installBackupTransfer(BackupTransferConfiguration transfer, Clock clock, SecureRandom random) throws IOException {
         if (backupTransfers != null) throw new IllegalStateException("Backup transfer already installed");
         validateTransferTopology(transfer);
@@ -317,6 +370,14 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         }
     }
 
+    /**
+     * Opens the realm's enrollment custody companion and resource-limit owner exactly once.
+     *
+     * @param configured enrollment custody, spool and resource-limit configuration
+     * @param dependencies process-local enrollment provider capabilities
+     * @param clock enrollment expiry and audit time source
+     * @throws IllegalStateException if the realm is not open or the runtime is already installed
+     */
     void installEnrollmentRuntime(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration configured,
             PkiSessionRuntimeDependencies dependencies, Clock clock) {
         requireOpen();
@@ -327,13 +388,23 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
 
     /**
      * Returns explicitly installed enrollment custody and resource limits.
+     *
      * @return empty when the server has no enrollment companion
+     * @throws IllegalStateException if the realm is not open
      */
     public Optional<zeroecho.pki.server.enrollment.EnrollmentRuntime> enrollmentRuntime() {
         requireOpen();
         return Optional.ofNullable(enrollmentRuntime);
     }
 
+    /**
+     * Installs durable enrollment coordination after its custody runtime is available.
+     *
+     * @param authentication trusted enrollment identity-alias configuration
+     * @param clock transaction, policy and expiry time source
+     * @throws IllegalStateException if the realm is not open or coordination is already installed
+     * @throws java.util.NoSuchElementException if the required enrollment runtime is absent
+     */
     void installEnrollmentCoordinator(PkiServerConfiguration.Authentication authentication, Clock clock) {
         requireOpen();
         if (enrollmentCoordinator != null) throw new IllegalStateException("Enrollment coordinator already installed");
@@ -343,14 +414,19 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         gateway.installEnrollmentCoordinator(enrollmentCoordinator);
     }
 
-    /** Returns the coordinator installed for this realm's enrollment services.
-     * @return installed durable coordinator, empty for deployments without enrollment */
+    /**
+     * Returns the coordinator installed for this realm's enrollment services.
+     *
+     * @return installed durable coordinator, empty for deployments without enrollment
+     * @throws IllegalStateException if the realm is not open
+     */
     public Optional<zeroecho.pki.server.enrollment.EnrollmentCoordinator> enrollmentCoordinator() {
         requireOpen(); return Optional.ofNullable(enrollmentCoordinator);
     }
 
     /**
      * Returns explicitly installed binary transfer settings.
+     *
      * @return empty when remote backup transfer is disabled
      */
     public Optional<BackupTransferConfiguration> backupTransferConfiguration() {
@@ -376,6 +452,14 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         }
     }
 
+    /**
+     * Binds the configured confirmation proof suite and realm audience into process-local dependencies.
+     *
+     * @param configuration realm identity and configured proof policy
+     * @param dependencies existing process-local runtime capabilities
+     * @return replacement dependencies carrying the exact signature-proof provider and policy
+     * @throws NullPointerException if either argument is null
+     */
     static PkiSessionRuntimeDependencies confirmationProofRuntime(
             ServerRealmConfiguration configuration, PkiSessionRuntimeDependencies dependencies) {
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
@@ -393,12 +477,19 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 .withCredentialConfirmationProofPolicy(policy);
     }
 
-    /** @return configured administrative SDK facade; empty means disabled */
+    /**
+     * Returns configured administrative SDK facade; empty means disabled.
+     *
+     * @return configured administrative SDK facade; empty means disabled
+     * @throws IllegalStateException if the realm is not open
+     */
     public Optional<HybridSdkHttpService> hybridSdkHttp() { requireOpen(); return hybridSdkHttp; }
 
     /**
      * Returns the realm-owned retained administrative workflow.
+     *
      * @return coordinator whose worker starts only for a permanent server
+     * @throws IllegalStateException if the realm is not open
      */
     public AdministrativeRequestCoordinator administrativeRequests() { requireOpen(); return administrativeRequests; }
 
@@ -406,15 +497,24 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * Returns exact realm configuration without rendering provider values.
      *
      * @return exact realm configuration without rendering provider values
+     * @throws IllegalStateException if the realm is not open
      */
     public ServerRealmConfiguration configuration() { requireOpen(); return configuration; }
     /**
      * Returns the one long-lived PKI session.
      *
      * @return the one long-lived PKI session
+     * @throws IllegalStateException if the realm is not open
      */
     public PkiSession session() { requireOpen(); return session; }
 
+    /**
+     * Pins the configured initial administrator in durable managed-key control metadata.
+     *
+     * @param administrator principal selected by the bootstrap owner
+     * @throws IllegalStateException if the realm is not open
+     * @throws SecurityException if configured or previously pinned administrator identity differs
+     */
     void recordInitialAdministrator(String administrator) {
         requireOpen();
         ManagedKeyGenerationService.pinInitialAdministrator(configuration, control, administrator);
@@ -423,78 +523,92 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * Returns immutable built-in role template catalog.
      *
      * @return immutable built-in role template catalog
+     * @throws IllegalStateException if the realm is not open
      */
     public RoleTemplateCatalog roleTemplates() { requireOpen(); return roles; }
     /**
      * Returns deterministic authorization engine.
      *
      * @return deterministic authorization engine
+     * @throws IllegalStateException if the realm is not open
      */
     public AuthorizationEngine authorization() { requireOpen(); return authorization; }
     /**
      * Returns durable approval service.
      *
      * @return durable approval service
+     * @throws IllegalStateException if the realm is not open
      */
     public ApprovalService approvals() { requireOpen(); return approvals; }
     /**
      * Returns durable break-glass service.
      *
      * @return durable break-glass service
+     * @throws IllegalStateException if the realm is not open
      */
     public BreakGlassService breakGlass() { requireOpen(); return breakGlass; }
     /**
      * Returns durable disclosure decision service.
      *
      * @return durable disclosure decision service
+     * @throws IllegalStateException if the realm is not open
      */
     public DisclosureService disclosure() { requireOpen(); return disclosure; }
     /**
      * Returns synchronous authoritative credential publication gate.
      *
      * @return synchronous authoritative credential publication gate
+     * @throws IllegalStateException if the realm is not open
      */
     public CredentialPublicationGate credentialPublication() { requireOpen(); return credentialPublication; }
     /**
      * Returns durable non-authoritative public repository alias service.
      *
      * @return durable non-authoritative public repository alias service
+     * @throws IllegalStateException if the realm is not open
      */
     public RepositoryAliasService repositoryAliases() { requireOpen(); return repositoryAliases; }
     /**
      * Returns typed ACME records in the realm's sole durable control authority.
      *
      * @return typed ACME records in the realm's sole durable control authority
+     * @throws IllegalStateException if the realm is not open
      */
     public AcmeControlStore acmeControl() { requireOpen(); return acmeControl; }
     /**
      * Returns durable exact OCSP responder bindings.
      *
      * @return durable exact OCSP responder bindings
+     * @throws IllegalStateException if the realm is not open
      */
     public OcspResponderService ocspResponders() { requireOpen(); return ocspResponders; }
     /**
      * Returns read-only disclosed public repository gateway.
      *
      * @return read-only disclosed public repository gateway
+     * @throws IllegalStateException if the realm is not open
      */
     public PublicRepositoryGateway publicRepository() { requireOpen(); return publicRepository; }
     /**
      * Returns explicit auditor projection service.
      *
      * @return explicit auditor projection service
+     * @throws IllegalStateException if the realm is not open
      */
     public AuditorViews auditorViews() { requireOpen(); return auditorViews; }
     /**
      * Returns authorized typed-operation gateway.
      *
      * @return authorized typed-operation gateway
+     * @throws IllegalStateException if the realm is not open
      */
     public ServerOperationGateway gateway() { requireOpen(); return gateway; }
 
     /**
      * Returns the realm-owned durable enrollment endpoint authority.
+     *
      * @return shared thread-safe registry, usable only while this realm is open
+     * @throws IllegalStateException if the realm is not open
      */
     public zeroecho.pki.server.enrollment.EnrollmentEndpointRegistry enrollmentEndpoints() {
         requireOpen();
@@ -503,7 +617,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
 
     /**
      * Returns the realm-owned durable enrollment policy authority.
+     *
      * @return shared thread-safe policy registry, usable only while this realm is open
+     * @throws IllegalStateException if the realm is not open
      */
     public zeroecho.pki.server.enrollment.EnrollmentProfileService enrollmentProfiles() {
         requireOpen();
@@ -519,7 +635,18 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         return revocationAuditProjector;
     }
 
-    /** Runs one bounded pass of every per-family success-evidence projector and folds their scheduling hints. */
+    /**
+     * Runs one bounded pass per success-evidence family and combines advisory scheduling hints.
+     *
+     * <p>Each projector receives the complete per-family budget. A failed projector
+     * is skipped for this cycle rather than preventing other families from running;
+     * this return value is not proof that all audit evidence reached the sink.</p>
+     *
+     * @param maximumRecords per-family examined-record ceiling
+     * @param maximumSinkCalls per-family sink-call ceiling
+     * @param cancellation cooperative projection cancellation
+     * @return combined immediate/earliest retry scheduling hints
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // A projector failure must not stop scheduling.
     /* default */ AuditProjectionWorker.EvidenceHint runEvidenceProjections(int maximumRecords,
             int maximumSinkCalls, zeroecho.core.io.CancellationSignal cancellation) {
@@ -560,7 +687,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         requireOpen();
         return reconciliationWake;
     }
-    /** Signals committed reconciliation work without retaining its identity. */
+    /**
+     * Signals committed reconciliation work without retaining its identity.
+     */
     /* default */ void signalReconciliation() { reconciliationWake.signal(); }
     /**
      * Resolves one persisted principal for transport authentication.
@@ -624,7 +753,10 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      *
      * @param action stable transport action
      * @param principalId authenticated principal or {@code system}
-     * @param safeDetails finite pre-redacted details
+     * @param safeDetails finite details already redacted by the caller; copied before recording
+     * @throws NullPointerException if the detail map or a key/value is null
+     * @throws IllegalArgumentException if action or principal grammar is invalid
+     * @throws IllegalStateException if the realm is not open
      */
     public void auditTransport(String action, String principalId, Map<String, String> safeDetails) {
         requireOpen();
@@ -633,13 +765,39 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         audit.record(action, principalId, Optional.empty(), Map.copyOf(safeDetails));
     }
 
-    /** Records an administrative HTTP request upon handler entry, including rejected requests. */
+    /**
+     * Records an administrative HTTP request upon handler entry, including rejected requests.
+     */
     public void recordAdminRequest() { adminRequests.updateAndGet(value -> value == Long.MAX_VALUE ? value : value + 1); }
 
+    /**
+     * Returns the saturating count of administrative HTTP handler entries.
+     *
+     * @return nonnegative request count including rejected requests
+     */
     long adminRequestsTotal() { return adminRequests.get(); }
+    /**
+     * Returns the saturating count of recorded status-schedule failures.
+     *
+     * @return nonnegative cumulative schedule-failure count
+     */
     long scheduleFailureTotal() { return scheduleFailures.get(); }
+    /**
+     * Counts approvals still pending at the supplied observation time.
+     *
+     * @param now absolute time used to classify pending and expired approvals
+     * @return current pending-approval count
+     * @throws IllegalStateException if the realm is not open
+     */
     long pendingApprovalCount(java.time.Instant now) { requireOpen(); return control.pendingApprovalCount(now); }
 
+    /**
+     * Sums current consecutive failure counts across revocation and evidence audit projections.
+     *
+     * @return current retained failure-count sum, rather than a lifetime failure total
+     * @throws IllegalStateException if the realm is not open
+     * @throws ArithmeticException if the sum exceeds the signed-long range
+     */
     long auditProjectionFailureTotal() {
         requireOpen();
         long count = RevocationAuditProjectionState.load(control).map(value -> (long) value.state().failureCount()).orElse(0L);
@@ -647,6 +805,12 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         return count;
     }
 
+    /**
+     * Counts and records one safe status-schedule failure classification.
+     *
+     * @param code safe stable failure code, used in the warning log and audit details
+     * @throws NullPointerException if code is null
+     */
     void recordScheduleFailure(String code) {
         scheduleFailures.updateAndGet(value -> value == Long.MAX_VALUE ? value : value + 1);
         SCHEDULE_LOG.log(java.util.logging.Level.WARNING, "Status schedule failure: code={0}", code);
@@ -664,6 +828,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      *
      * @param principal validated principal to create
      * @param actorPrincipalId authenticated administrative actor
+     * @throws IllegalStateException if the realm is not open
      */
     public void createPrincipal(SecurityPrincipal principal, String actorPrincipalId) {
         requireOpen();
@@ -679,6 +844,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @param enabled desired enabled state
      * @param actorPrincipalId authenticated administrative actor
      * @return durably updated principal
+     * @throws IllegalStateException if the realm is not open
      */
     public SecurityPrincipal setPrincipalEnabled(String principalId, boolean enabled, String actorPrincipalId) {
         requireOpen();
@@ -696,6 +862,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      *
      * @param assignment validated scoped role assignment
      * @param actorPrincipalId authenticated administrative actor
+     * @throws IllegalStateException if the realm is not open
      */
     public void assignRole(RoleTemplateCatalog.Assignment assignment, String actorPrincipalId) {
         requireOpen();
@@ -711,6 +878,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      *
      * @param grant validated scoped permission grant
      * @param actorPrincipalId authenticated administrative actor
+     * @throws IllegalStateException if the realm is not open
      */
     public void grant(Permission.Grant grant, String actorPrincipalId) {
         requireOpen();
@@ -721,8 +889,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     }
 
     /**
-     * Rejects new work and closes session then server-control authority. Repeated
-     * calls are harmless and failure suppression preserves causal order.
+     * Verifies startup audit integrity against the separately retained trusted prefix
+     * and advances the anchor only after an intact report. This is synchronous
+     * boot reconciliation, not session shutdown or a background verification loop.
      */
     // Cross-store tamper-evidence: verify the audit log against the durably anchored trusted head, then
     // advance the anchor. A consistent full rewrite of the audit file alone (which its self-contained hash
@@ -785,6 +954,14 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * Checked failures retain their original cause and suppression when translated
      * to I/O failures; I/O and unchecked identities are unchanged. Interruption is
      * restored for each caller, and incomplete shutdown may be retried.
+     *
+     * <p>The administrative worker must stop before dependent services close.
+     * Backup transfer and enrollment resources precede the session; the control
+     * store remains last so durable authority is available through cleanup.
+     * A resource failure can leave the context CLOSING and prevent later closure
+     * steps in that attempt. CLOSED is published only after a successful attempt;
+     * close is not an unconditional drain or a guarantee that every callback stops.</p>
+     *
      * @throws IOException if checked resource closure fails
      */
     @Override
@@ -792,6 +969,12 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         closeFromServerWorker(false);
     }
 
+    /**
+     * Closes realm-owned resources through the retryable lifecycle gate.
+     *
+     * @param workerThread whether closure originates from an owned server worker
+     * @throws IOException if checked resource closure fails
+     */
     void closeFromServerWorker(boolean workerThread) throws IOException {
         closeGate.close(workerThread, this::quiesce, this::closeAttempt);
     }
@@ -924,36 +1107,58 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         private boolean closed;
 
         private SharedAuditSink(AuditSink delegate) { this.delegate = Objects.requireNonNull(delegate, "delegate"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized void record(zeroecho.pki.api.audit.AuditEvent event) {
             if (closed) throw new IllegalStateException("Audit sink is closed");
             delegate.record(event);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized void close() {
             if (!closed) { closed = true; delegate.close(); }
         }
 
-        /** @return whether the underlying sink supports bounded search and hash-chain verification */
+        /**
+         * Returns whether the underlying sink supports bounded search and hash-chain verification.
+         *
+         * @return whether the underlying sink supports bounded search and hash-chain verification
+         */
         synchronized boolean supportsQuery() {
             return delegate instanceof zeroecho.pki.api.audit.AuditService
                     && delegate instanceof zeroecho.pki.api.audit.AuditIntegrityService;
         }
 
         // Reads are serialized against writes so a bounded admin query never races an in-progress append.
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized java.util.List<zeroecho.pki.api.audit.AuditEvent> search(
                 zeroecho.pki.api.audit.AuditQuery query) {
             if (closed) throw new IllegalStateException("Audit sink is closed");
             return ((zeroecho.pki.api.audit.AuditService) delegate).search(query);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized Optional<zeroecho.pki.api.audit.AuditEvent> get(
                 zeroecho.pki.api.PkiId eventId) {
             if (closed) throw new IllegalStateException("Audit sink is closed");
             return ((zeroecho.pki.api.audit.AuditService) delegate).get(eventId);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyIntegrity(
                 Optional<zeroecho.pki.api.audit.AuditChainHead> expectedHead) {
             if (closed) throw new IllegalStateException("Audit sink is closed");
             return ((zeroecho.pki.api.audit.AuditIntegrityService) delegate).verifyIntegrity(expectedHead);
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyAnchoredPrefix(
                 zeroecho.pki.api.audit.AuditChainHead anchor) {
             if (closed) throw new IllegalStateException("Audit sink is closed");

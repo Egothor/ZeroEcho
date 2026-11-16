@@ -50,8 +50,14 @@ import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
+/**
+ * Contract and regression tests for revocation execution evidence.
+ */
 class RevocationExecutionEvidenceTest {
 
+    /**
+     * Commits exact justification presence and never stores plaintext.
+     */
     @Test
     void commitsExactJustificationPresenceAndNeverStoresPlaintext() {
         String absent = RevocationExecutionEvidence.commitJustification(Optional.empty());
@@ -72,6 +78,9 @@ class RevocationExecutionEvidenceTest {
                 .anyMatch("ticket-ä"::equals));
     }
 
+    /**
+     * Keeps ACME protocol native and rejects mixed classifications.
+     */
     @Test
     void keepsAcmeProtocolNativeAndRejectsMixedClassifications() {
         RevocationExecutionEvidence acme = RevocationExecutionEvidence.acme("account-a", "realm-a", "request-a");
@@ -89,6 +98,9 @@ class RevocationExecutionEvidenceTest {
                 RevocationExecutionEvidence.Outcome.COMMITTED));
     }
 
+    /**
+     * Strictly decodes only complete closed version one evidence.
+     */
     @Test
     void strictlyDecodesOnlyCompleteClosedVersionOneEvidence() {
         RevocationExecutionEvidence administrative = RevocationExecutionEvidence.administrative("operator-a",
@@ -137,6 +149,9 @@ class RevocationExecutionEvidenceTest {
                 () -> RevocationExecutionEvidence.decode(validWithUnknownVersion));
     }
 
+    /**
+     * CMP signature evidence preserves scoped authorization and cannot impersonate administrator.
+     */
     @Test
     void cmpSignatureEvidencePreservesScopedAuthorizationAndCannotImpersonateAdministrator() {
         for (RevocationExecutionEvidence.Authorization authorization : List.of(

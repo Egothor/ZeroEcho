@@ -51,6 +51,9 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiId;
 
+/**
+ * Contract and regression tests for credential confirmation challenge model.
+ */
 final class CredentialConfirmationChallengeModelTest {
     private static final ConfirmationRealmBinding REALM = new ConfirmationRealmBinding("prod-eu");
     private static final String AUDIENCE = "https://pki.example.test/confirmation";
@@ -64,6 +67,9 @@ final class CredentialConfirmationChallengeModelTest {
     private static final Instant ISSUED_AT = Instant.ofEpochSecond(1_767_225_600L);
     private static final Instant EXPIRES_AT = Instant.ofEpochSecond(1_767_225_900L);
 
+    /**
+     * Accepts exact realm and suite boundaries.
+     */
     @Test
     void acceptsExactRealmAndSuiteBoundaries() {
         assertEquals("a", new ConfirmationRealmBinding("a").value());
@@ -82,6 +88,9 @@ final class CredentialConfirmationChallengeModelTest {
                 () -> new ConfirmationProofSuiteBinding(SUITE.proofSuiteRef(), 16_385));
     }
 
+    /**
+     * Owns raw challenge defensively and uses content value semantics.
+     */
     @Test
     void ownsRawChallengeDefensivelyAndUsesContentValueSemantics() {
         byte[] callerOwned = rawChallenge();
@@ -104,6 +113,9 @@ final class CredentialConfirmationChallengeModelTest {
         assertEquals(challenge.hashCode(), reconstructed.hashCode());
     }
 
+    /**
+     * Produces exact version one commitment vector and separates mutation.
+     */
     @Test
     void producesExactVersionOneCommitmentVectorAndSeparatesMutation() {
         CredentialConfirmationChallenge baseline = challenge(rawChallenge());
@@ -122,6 +134,9 @@ final class CredentialConfirmationChallengeModelTest {
                 "0".repeat(64)));
     }
 
+    /**
+     * Rejects invalid audience lifecycle policy challenge and times.
+     */
     @Test
     void rejectsInvalidAudienceLifecyclePolicyChallengeAndTimes() {
         assertEquals("a".repeat(512), challenge("a".repeat(512), rawChallenge()).serverAudience());
@@ -143,6 +158,9 @@ final class CredentialConfirmationChallengeModelTest {
                 ConfirmationDisclosurePolicy.OWNER_ONLY, rawChallenge(), EXPIRES_AT, ISSUED_AT));
     }
 
+    /**
+     * Proof cas composes exact lifecycle and challenge expectations.
+     */
     @Test
     void proofCasComposesExactLifecycleAndChallengeExpectations() {
         CredentialConfirmationChallenge challenge = challenge(rawChallenge());
@@ -159,6 +177,9 @@ final class CredentialConfirmationChallengeModelTest {
                         LIFECYCLE_COMMITMENT, "0".repeat(63)));
     }
 
+    /**
+     * Uses exclusive expiry validity interval at whole seconds.
+     */
     @Test
     void usesExclusiveExpiryValidityIntervalAtWholeSeconds() {
         CredentialConfirmationChallenge challenge = challenge(rawChallenge());
@@ -172,6 +193,9 @@ final class CredentialConfirmationChallengeModelTest {
         assertThrows(IllegalArgumentException.class, () -> challenge.isLiveAt(ISSUED_AT.plusNanos(1L)));
     }
 
+    /**
+     * Every committed coordinate rejects substitution and changes commitment.
+     */
     @Test
     void everyCommittedCoordinateRejectsSubstitutionAndChangesCommitment() {
         CredentialConfirmationChallenge baseline = challenge(rawChallenge());
@@ -223,6 +247,9 @@ final class CredentialConfirmationChallengeModelTest {
         }
     }
 
+    /**
+     * Challenge issuance enforces inclusive whole second TTL bounds.
+     */
     @Test
     void challengeIssuanceEnforcesInclusiveWholeSecondTtlBounds() {
         assertEquals(Duration.ofSeconds(10L), issuance(Duration.ofSeconds(10L), rawChallenge()).timeToLive());
@@ -235,6 +262,9 @@ final class CredentialConfirmationChallengeModelTest {
                 () -> issuance(Duration.ofSeconds(10L).plusNanos(1L), rawChallenge()));
     }
 
+    /**
+     * Challenge issuance owns and redacts caller nonce.
+     */
     @Test
     void challengeIssuanceOwnsAndRedactsCallerNonce() {
         byte[] callerOwned = rawChallenge();

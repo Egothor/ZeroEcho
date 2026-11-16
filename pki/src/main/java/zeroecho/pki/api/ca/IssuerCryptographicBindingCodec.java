@@ -53,54 +53,114 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * The full canonical domain form allows four MiB for generation coordinate context
  * plus new evidence. Compact persisted rows and combined transactions retain the
  * filesystem's separate two-MiB limit; this codec does not enlarge store budgets.
+ *
+ * <p>Encoding and decoding describe public evidence only. They do not resolve managed
+ * keys, validate current signing authority, verify a certificate signature or migrate
+ * a store. The fixed magic, version and reserved flags distinguish this domain form
+ * from compact storage representations.
  */
 public final class IssuerCryptographicBindingCodec {
     private static final int MAGIC = 0x5a494342;
     private static final int MAXIMUM_BYTES = 4 * 1024 * 1024;
-    private IssuerCryptographicBindingCodec() { }
+    private IssuerCryptographicBindingCodec() {
+    }
 
-    /** @param value complete binding @return deterministic domain-separated encoding */
+    /**
+     * Encodes all public binding coordinates in deterministic version-one order.
+     *
+     * <p>The result includes ZICB magic, version, reserved flags, length-framed UTF-8
+     * text and binary evidence, and a strict alternative-role discriminator. The
+     * caller owns the returned bytes; no private key is requested or serialized.
+     *
+     * @param value complete immutable binding; must not be null
+     * @return independently owned canonical domain encoding
+     * @throws NullPointerException if the binding is null
+     * @throws IllegalArgumentException if a field or the complete encoding exceeds four MiB
+     * @throws IllegalStateException if in-memory canonical encoding unexpectedly fails
+     */
     public static byte[] encode(IssuerCryptographicBinding value) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (DataOutputStream out = new DataOutputStream(bytes)) {
-                out.writeInt(MAGIC); out.writeShort(1); out.writeShort(0);
-                text(out, value.issuerId().value()); text(out, value.authorityId().value());
-                text(out, value.credentialId().value()); text(out, value.formatId());
-                key(out, value.primary()); out.writeBoolean(value.alternative().isPresent());
-                if (value.alternative().isPresent()) { key(out, value.alternative().orElseThrow()); }
-                text(out, value.certificateSha256()); text(out, value.profile().profileId());
-                out.writeLong(value.profile().profileVersion()); data(out, value.profile().canonicalSha256());
-                text(out, value.bindingSetCommitment()); text(out, value.certificateHybridBaseline().name());
+                out.writeInt(MAGIC);
+                out.writeShort(1);
+                out.writeShort(0);
+                text(out, value.issuerId().value());
+                text(out, value.authorityId().value());
+                text(out, value.credentialId().value());
+                text(out, value.formatId());
+                key(out, value.primary());
+                out.writeBoolean(value.alternative().isPresent());
+                if (value.alternative().isPresent()) {
+                    key(out, value.alternative().orElseThrow());
+                }
+                text(out, value.certificateSha256());
+                text(out, value.profile().profileId());
+                out.writeLong(value.profile().profileVersion());
+                data(out, value.profile().canonicalSha256());
+                text(out, value.bindingSetCommitment());
+                text(out, value.certificateHybridBaseline().name());
                 text(out, value.evidenceSha256());
             }
-            if (bytes.size() > MAXIMUM_BYTES) { throw new IllegalArgumentException("Issuer binding too large"); }
+            if (bytes.size() > MAXIMUM_BYTES) {
+                throw new IllegalArgumentException("Issuer binding too large");
+            }
             return bytes.toByteArray();
-        } catch (IOException impossible) { throw new IllegalStateException(impossible); }
+        } catch (IOException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
-    /** @param bytes exact bounded encoding @return validated complete binding @throws IllegalArgumentException for malformed or unknown encodings */
+    /**
+     * Decodes a complete bounded domain encoding and validates its public binding structure.
+     *
+     * <p>The supplied array is borrowed during parsing and must not be mutated
+     * concurrently. Decoded field bytes are independently owned. Unknown magic,
+     * version, flags or baseline, invalid UTF-8/framing, nonbinary optional flags,
+     * inconsistent binding coordinates and trailing bytes are rejected. No live
+     * provider or store authority is consulted.
+     *
+     * @param bytes exact complete domain encoding, at most four MiB
+     * @return an independently owned immutable complete public binding
+     * @throws IllegalArgumentException if input is null, oversized, truncated, unknown or malformed
+     */
     public static IssuerCryptographicBinding decode(byte[] bytes) {
-        if (bytes == null || bytes.length > MAXIMUM_BYTES) { throw invalid(); }
+        if (bytes == null || bytes.length > MAXIMUM_BYTES) {
+            throw invalid();
+        }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedShort() != 0) { throw invalid(); }
-            PkiId issuer = new PkiId(text(in)), authority = new PkiId(text(in)), credential = new PkiId(text(in));
-            String format = text(in); IssuerKeyBinding primary = key(in);
+            if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedShort() != 0) {
+                throw invalid();
+            }
+            PkiId issuer = new PkiId(text(in));
+            PkiId authority = new PkiId(text(in));
+            PkiId credential = new PkiId(text(in));
+            String format = text(in);
+            IssuerKeyBinding primary = key(in);
             Optional<IssuerKeyBinding> alternative = flag(in) ? Optional.of(key(in)) : Optional.empty();
-            String certificate = text(in), profile = text(in); long profileVersion = in.readLong();
+            String certificate = text(in);
+            String profile = text(in);
+            long profileVersion = in.readLong();
             CertificateProfileRef reference = new CertificateProfileRef(profile, profileVersion, data(in));
             String bindings = text(in);
-            var baseline = IssuerCryptographicBinding.HybridSignatureBaseline.valueOf(text(in));
+            IssuerCryptographicBinding.HybridSignatureBaseline baseline =
+                    IssuerCryptographicBinding.HybridSignatureBaseline.valueOf(text(in));
             String evidence = text(in);
-            if (in.available() != 0) { throw invalid(); }
+            if (in.available() != 0) {
+                throw invalid();
+            }
             return new IssuerCryptographicBinding(1, issuer, authority, credential, format, primary, alternative,
                     certificate, reference, bindings, baseline, evidence);
-        } catch (IOException | RuntimeException failure) { throw new IllegalArgumentException("Malformed issuer binding", failure); }
+        } catch (IOException | RuntimeException failure) {
+            throw new IllegalArgumentException("Malformed issuer binding", failure);
+        }
     }
 
     private static void key(DataOutputStream out, IssuerKeyBinding value) throws IOException {
-        text(out, value.keyRef().value()); text(out, value.publicKeyAlgorithm().canonicalForm());
-        text(out, value.signatureAlgorithm().canonicalForm()); data(out, value.signatureAlgorithmIdentifier().bytes());
+        text(out, value.keyRef().value());
+        text(out, value.publicKeyAlgorithm().canonicalForm());
+        text(out, value.signatureAlgorithm().canonicalForm());
+        data(out, value.signatureAlgorithmIdentifier().bytes());
         text(out, value.subjectSpkiSha256());
     }
     private static IssuerKeyBinding key(DataInputStream in) throws IOException {
@@ -108,22 +168,41 @@ public final class IssuerCryptographicBindingCodec {
                 AlgorithmIdentity.parse(text(in), List.of()), new EncodedObject(Encoding.DER, data(in)), text(in));
     }
     private static boolean flag(DataInputStream in) throws IOException {
-        int value = in.readUnsignedByte(); if (value > 1) { throw invalid(); } return value == 1;
+        int value = in.readUnsignedByte();
+        if (value > 1) {
+            throw invalid();
+        }
+        return value == 1;
     }
-    private static void text(DataOutputStream out, String value) throws IOException { data(out, value.getBytes(StandardCharsets.UTF_8)); }
+    private static void text(DataOutputStream out, String value) throws IOException {
+        data(out, value.getBytes(StandardCharsets.UTF_8));
+    }
     private static String text(DataInputStream in) throws IOException {
-        byte[] bytes = data(in); String text = new String(bytes, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(bytes, text.getBytes(StandardCharsets.UTF_8))) { throw invalid(); }
+        byte[] bytes = data(in);
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        if (!java.util.Arrays.equals(bytes, text.getBytes(StandardCharsets.UTF_8))) {
+            throw invalid();
+        }
         return text;
     }
     private static void data(DataOutputStream out, byte[] value) throws IOException {
-        if (value.length == 0 || value.length > MAXIMUM_BYTES) { throw invalid(); }
-        if ((long) out.size() + Integer.BYTES + value.length > MAXIMUM_BYTES) { throw invalid(); }
-        out.writeInt(value.length); out.write(value);
+        if (value.length == 0 || value.length > MAXIMUM_BYTES) {
+            throw invalid();
+        }
+        if ((long) out.size() + Integer.BYTES + value.length > MAXIMUM_BYTES) {
+            throw invalid();
+        }
+        out.writeInt(value.length);
+        out.write(value);
     }
     private static byte[] data(DataInputStream in) throws IOException {
-        int length = in.readInt(); if (length < 1 || length > MAXIMUM_BYTES || length > in.available()) { throw invalid(); }
+        int length = in.readInt();
+        if (length < 1 || length > MAXIMUM_BYTES || length > in.available()) {
+            throw invalid();
+        }
         return in.readNBytes(length);
     }
-    private static IllegalArgumentException invalid() { return new IllegalArgumentException("Malformed issuer binding"); }
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("Malformed issuer binding");
+    }
 }

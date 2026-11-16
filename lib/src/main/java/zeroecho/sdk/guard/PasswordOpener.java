@@ -54,6 +54,7 @@ public final class PasswordOpener implements RecipientOpener {
      * Creates an opener with explicit decoded-input limits.
      *
      * @param limits PBKDF2 safety limits
+     * @throws NullPointerException if {@code limits} is null
      */
     public PasswordOpener(Pbkdf2Limits limits) {
         this.limits = java.util.Objects.requireNonNull(limits, "limits must not be null");

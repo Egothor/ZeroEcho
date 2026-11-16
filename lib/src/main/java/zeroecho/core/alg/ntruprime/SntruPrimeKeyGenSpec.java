@@ -74,17 +74,29 @@ public final class SntruPrimeKeyGenSpec implements AlgorithmKeySpec, Describable
      * Enumeration of supported SNTRU Prime parameter sets.
      */
     public enum Variant {
-        /** Variant with ~128-bit classical security. */
+        /**
+         * Variant with ~128-bit classical security.
+         */
         SNTRUP653,
-        /** Variant with ~192-bit classical security. */
+        /**
+         * Variant with ~192-bit classical security.
+         */
         SNTRUP761,
-        /** Variant with ~256-bit classical security. */
+        /**
+         * Variant with ~256-bit classical security.
+         */
         SNTRUP857,
-        /** Variant beyond 256-bit with larger parameters. */
+        /**
+         * Variant beyond 256-bit with larger parameters.
+         */
         SNTRUP953,
-        /** Variant beyond 256-bit with even larger parameters. */
+        /**
+         * Variant beyond 256-bit with even larger parameters.
+         */
         SNTRUP1013,
-        /** Largest standardized variant, with very high security margins. */
+        /**
+         * Largest standardized variant, with very high security margins.
+         */
         SNTRUP1277
     }
 

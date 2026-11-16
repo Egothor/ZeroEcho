@@ -50,22 +50,59 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlStore;
 
-/** Strict v1 manifest and fixed-slot codec; all mutations belong to the coordinator. */
+/**
+ * Strict v1 manifest and fixed-slot codec; all mutations belong to the coordinator.
+ */
 final class CmpTransactionCodec {
     private static final int MAX_SLOT_INDEX_TEXT_LENGTH = 20;
+    /**
+     * Maximum retained CMP response bytes per fixed response slot.
+     */
     /* default */ static final int SLOT_BYTES = 262_144;
+    /**
+     * Maximum fixed response-slot count reserved by one CMP manifest.
+     */
     /* default */ static final int MAXIMUM_SLOTS = 254;
     private static final int VERSION = 1;
     private CmpTransactionCodec() { }
 
+    /**
+     * Derives the domain-separated retained CMP transaction identity.
+     *
+     * @param realm trusted owning realm
+     * @param label endpoint label
+     * @param transaction original protocol transaction identity
+     * @return {@code cmp:} identity followed by canonical SHA-256
+     */
     /* default */ static String id(RealmId realm, String label, String transaction) {
         return "cmp:" + EnrollmentTransactionCodec.sha256(bytes(out -> {
             out.writeUTF("zeroecho.cmp-transaction.v1"); out.writeUTF(realm.value()); out.writeUTF(label); out.writeUTF(transaction);
         }));
     }
+    /**
+     * Computes the fixed slot count needed for the frozen response-byte budget.
+     *
+     * @param value retained transaction manifest
+     * @return positive number of reserved response slots
+     */
     /* default */ static int slots(CmpTransaction value) { return (value.frozen().maximumResponseBytes() - 1) / SLOT_BYTES + 1; }
+    /**
+     * Derives the stable control-record identity of a response slot.
+     *
+     * @param id owning CMP transaction identity
+     * @param index zero-based response slot index; caller validates the range
+     * @return transaction identity followed by the decimal slot index
+     */
     /* default */ static String slotId(String id, int index) { return id + ":" + index; }
 
+    /**
+     * Computes the metadata, response and framing byte reservation for one frozen transaction.
+     *
+     * @param value retained transaction manifest and response-byte budget
+     * @return total reserved byte count
+     * @throws IllegalArgumentException if manifest metadata exceeds its allowed bound
+     * @throws ArithmeticException if reservation arithmetic overflows
+     */
     /* default */ static long reservation(CmpTransaction value) {
         // Fixed mutable fields (link, digests, nonces, deadline) fit within 4096 bytes.
         CmpTransaction blank = new CmpTransaction(value.id(), 1, value.frozen(), Optional.empty(), Optional.empty());
@@ -77,11 +114,23 @@ final class CmpTransactionCodec {
         return Math.addExact(metadata, Math.addExact(value.frozen().maximumResponseBytes(), Math.multiplyExact(512L, slots(value))));
     }
 
+    /**
+     * Wraps a canonical manifest payload in its private committed protocol record.
+     *
+     * @param value validated CMP transaction manifest
+     * @return namespace-bound record with canonical payload SHA-256
+     */
     /* default */ static ServerControlStore.ProtocolRecord record(CmpTransaction value) {
         byte[] payload = encode(value);
         return new ServerControlStore.ProtocolRecord(ServerControlStore.CMP_TRANSACTION, value.id(), hash(payload), payload);
     }
 
+    /**
+     * Encodes the complete version-one manifest and optional retained response coordinates.
+     *
+     * @param value validated immutable transaction manifest
+     * @return newly allocated canonical binary manifest bytes
+     */
     /* default */ static byte[] encode(CmpTransaction value) {
         return bytes(out -> {
             out.writeInt(VERSION); out.writeUTF(value.id()); out.writeLong(value.revision());
@@ -105,6 +154,14 @@ final class CmpTransactionCodec {
         });
     }
 
+    /**
+     * Decodes a committed manifest and verifies canonical framing, identity and reservation bounds.
+     *
+     * @param record private retained CMP manifest record
+     * @return validated canonical transaction manifest
+     * @throws IllegalArgumentException if namespace, commitment, version, identity, fields or bounds are
+     *         invalid
+     */
     /* default */ static CmpTransaction decode(ServerControlStore.ProtocolRecord record) {
         byte[] payload = record.payload();
         if (!ServerControlStore.CMP_TRANSACTION.equals(record.namespace()) || !hash(payload).equals(record.commitment())) {
@@ -133,6 +190,12 @@ final class CmpTransactionCodec {
         } catch (IOException | IllegalArgumentException failure) { throw invalid(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
 
+    /**
+     * Builds initial compare-and-set mutations for a manifest and every empty fixed response slot.
+     *
+     * @param value newly reserved CMP transaction manifest
+     * @return immutable manifest-first mutation list, all requiring absence of prior records
+     */
     /* default */ static List<ServerControlStore.ProtocolMutation> create(CmpTransaction value) {
         List<ServerControlStore.ProtocolMutation> mutations = new ArrayList<>(slots(value) + 1);
         mutations.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty()));
@@ -143,6 +206,16 @@ final class CmpTransactionCodec {
         return List.copyOf(mutations);
     }
 
+    /**
+     * Builds an atomic manifest/slot replacement for an exact committed protocol response.
+     *
+     * @param control durable server-control source of current response slots
+     * @param prior exact prior transaction manifest
+     * @param next replacement manifest carrying the response length and SHA-256
+     * @param response complete protected response bytes
+     * @return immutable compare-and-set mutations guarded by prior manifest and slot commitments
+     * @throws IllegalArgumentException if response commitment, length or retained slot ownership differs
+     */
     /* default */ static List<ServerControlStore.ProtocolMutation> response(ServerControlStore control, CmpTransaction prior,
             CmpTransaction next, byte[] response) {
         if (response.length != next.response().orElseThrow().length() || !hash(response).equals(next.response().orElseThrow().responseSha256())) {
@@ -160,6 +233,14 @@ final class CmpTransactionCodec {
         return List.copyOf(mutations);
     }
 
+    /**
+     * Reassembles retained fixed slots and verifies exact response length and SHA-256.
+     *
+     * @param control durable server-control source of retained response slots
+     * @param value manifest binding the exact expected response
+     * @return newly allocated complete response bytes, empty before response creation
+     * @throws IllegalArgumentException if a slot is absent, has another owner, length or commitment
+     */
     /* default */ static byte[] response(ServerControlStore control, CmpTransaction value) {
         int length = value.response().map(CmpTransaction.Response::length).orElse(0);
         byte[] result = new byte[length];
@@ -179,6 +260,13 @@ final class CmpTransactionCodec {
         return result;
     }
 
+    /**
+     * Requires a response slot to belong to a retained manifest within its frozen slot range.
+     *
+     * @param control durable manifest authority
+     * @param record response-slot record to validate
+     * @throws IllegalArgumentException if slot identity, manifest, index, payload or commitment is invalid
+     */
     /* default */ static void requireOwnedSlot(ServerControlStore control, ServerControlStore.ProtocolRecord record) {
         int separator = record.recordId().lastIndexOf(':');
         if (separator <= 0) {
@@ -244,9 +332,14 @@ final class CmpTransactionCodec {
         } catch (IOException failure) { throw invalid(); } // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
     }
     private static IllegalStateException invalid() { return new IllegalStateException("CMP retained state is invalid"); }
-    /** Rejects encoded transaction growth before the persistent record limit is exceeded. */
+    /**
+     * Rejects encoded transaction growth before the persistent record limit is exceeded.
+     */
     private static final class BoundedBytes extends ByteArrayOutputStream {
         // Preserves ByteArrayOutputStream synchronization while enforcing the encoded-size bound.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized void write(int value) {
             if (count == EnrollmentTransactionCodec.MAXIMUM_BYTES) {
@@ -255,6 +348,9 @@ final class CmpTransactionCodec {
             super.write(value);
         }
         // Preserves ByteArrayOutputStream synchronization while enforcing the encoded-size bound.
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         @Override public synchronized void write(byte[] values, int offset, int length) {
             if (length > EnrollmentTransactionCodec.MAXIMUM_BYTES - count) {
@@ -263,7 +359,9 @@ final class CmpTransactionCodec {
             super.write(values, offset, length);
         }
     }
-    /** Encodes one canonical record into an owned output buffer. */
+    /**
+     * Encodes one canonical record into an owned output buffer.
+     */
     @FunctionalInterface private interface Encoder {
         /**
          * Writes the canonical binary representation.

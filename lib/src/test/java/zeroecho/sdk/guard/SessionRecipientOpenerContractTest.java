@@ -52,8 +52,14 @@ import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
+/**
+ * Contract and regression tests for session recipient opener contract.
+ */
 class SessionRecipientOpenerContractTest {
 
+    /**
+     * Public API exposes only reusable session openers.
+     */
     @Test
     void publicApiExposesOnlyReusableSessionOpeners() {
         System.out.println("publicApiExposesOnlyReusableSessionOpeners");
@@ -69,6 +75,11 @@ class SessionRecipientOpenerContractTest {
         System.out.println("publicApiExposesOnlyReusableSessionOpeners...ok");
     }
 
+    /**
+     * Session openers ignore unrelated entry families.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void sessionOpenersIgnoreUnrelatedEntryFamilies() throws Exception {
         System.out.println("sessionOpenersIgnoreUnrelatedEntryFamilies");
@@ -84,6 +95,11 @@ class SessionRecipientOpenerContractTest {
         System.out.println("sessionOpenersIgnoreUnrelatedEntryFamilies...ok");
     }
 
+    /**
+     * Custom reusable opener scans every entry and closes once.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void customReusableOpenerScansEveryEntryAndClosesOnce() throws Exception {
         System.out.println("customReusableOpenerScansEveryEntryAndClosesOnce");

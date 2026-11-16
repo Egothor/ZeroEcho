@@ -127,7 +127,9 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  * @see RsaSignatureContext
  */
 public interface TagEngine<T> {
-    /** Logger shared by default tag-engine diagnostics. */
+    /**
+     * Logger shared by default tag-engine diagnostics.
+     */
     Logger LOG = Logger.getLogger(TagEngine.class.getName());
 
     /**

@@ -75,6 +75,9 @@ public final class StdoutAuditSink implements AuditSink {
         LOG.info("initialized");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void record(AuditEvent event) {
         Objects.requireNonNull(event, "event");

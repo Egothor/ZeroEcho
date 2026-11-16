@@ -43,8 +43,17 @@ import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Trusted-context fixtures exercise the real durable gate; they do not claim live issuer resolution or issuance. */
+/**
+ * Trusted-context fixtures exercise the real durable gate; they do not claim live issuer resolution or issuance.
+ */
 class HybridSdkAdmissionServiceTest {
+    /**
+     * Checks malformed proofs/original-wire mismatch cannot create approvals, while exact accepted admission survives restart and later challenge expiry.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void validatesBeforeApprovalAndRetainsOneConsumedReceiptAcrossRestartAndExpiry(@TempDir Path directory) throws Exception {
         var config=PkiAdminBootstrapTest.configuration(directory);
         PkiAdminBootstrap.bootstrap(config,"administrator","approver","trusted-proxy");
@@ -93,6 +102,13 @@ class HybridSdkAdmissionServiceTest {
         }
     }
 
+    /**
+     * Checks invalid original proof, absent validated identity, denied/changed context and expired challenge fail before durable admission.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void rejectsInvalidOriginalProofMissingIdentityChangedContextAndExpiredChallengesBeforeAdmission(@TempDir Path directory)throws Exception {
         var config=PkiAdminBootstrapTest.configuration(directory);PkiAdminBootstrap.bootstrap(config,"administrator","approver","trusted-proxy");
         var clock=new TestClock();var keys=keys();
@@ -128,6 +144,13 @@ class HybridSdkAdmissionServiceTest {
         }
     }
 
+    /**
+     * Checks atomic intent consumption under concurrent replay and lost acknowledgement without generating another approval.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void concurrentRetriesConsumeOnceAndAnAcknowledgementLossReconcilesWithoutAnotherApproval(@TempDir Path directory)throws Exception {
         var config=PkiAdminBootstrapTest.configuration(directory);PkiAdminBootstrap.bootstrap(config,"administrator","approver","trusted-proxy");
         var clock=new TestClock();var keys=keys();
@@ -201,6 +224,13 @@ class HybridSdkAdmissionServiceTest {
         }
     }
 
+    /**
+     * Checks golden ordinary version-one encoding remains stable while unknown SDK versions, absent resolver capability and oversized intents are rejected.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void ordinaryCodecRemainsVersionOneAndUnknownSdkVersionsAndOversizedIntentsAreRejected(@TempDir Path directory)throws Exception {
         var config=PkiAdminBootstrapTest.configuration(directory);PkiAdminBootstrap.bootstrap(config,"administrator","approver","trusted-proxy");
         var clock=new TestClock();var keys=keys();
@@ -295,8 +325,17 @@ class HybridSdkAdmissionServiceTest {
     private static final class TestClock extends Clock {
         private Instant now=Instant.parse("2026-11-14T12:00:00Z");
         void advance(long seconds){now=now.plusSeconds(seconds);}
+        /**
+         * {@inheritDoc}
+         */
         @Override public ZoneId getZone(){return ZoneOffset.UTC;}
+        /**
+         * {@inheritDoc}
+         */
         @Override public Clock withZone(ZoneId zone){return this;}
+        /**
+         * {@inheritDoc}
+         */
         @Override public Instant instant(){return now;}
     }
 }

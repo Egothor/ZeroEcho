@@ -37,8 +37,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
-/** Request subject keys have no server private-key reference; legacy managed constructors remain explicit. */
+/**
+ * Request subject keys have no server private-key reference; legacy managed constructors remain explicit.
+ */
 final class HybridCertificateModeTest {
+    /**
+     * Separates managed and requested subject keys without placeholder references.
+     */
     @Test void separatesManagedAndRequestedSubjectKeysWithoutPlaceholderReferences() {
         var requested = HybridCertificateMode.AltSignature.requested("ML-DSA-87");
         assertEquals(HybridCertificateMode.AlternativeSubjectKeySource.REQUEST, requested.subjectKeySource());

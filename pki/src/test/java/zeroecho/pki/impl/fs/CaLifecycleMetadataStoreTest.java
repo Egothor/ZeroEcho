@@ -46,8 +46,16 @@ import zeroecho.pki.api.ca.*;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.testkit.IssuerBindingFixture;
 
-/** Durable root-candidate registration, fenced activation, snapshot and reopen semantics. */
+/**
+ * Durable root-candidate registration, fenced activation, snapshot and reopen semantics.
+ */
 final class CaLifecycleMetadataStoreTest {
+    /**
+     * Candidate is pending until one fenced acknowledged activation and survives snapshots.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void candidateIsPendingUntilOneFencedAcknowledgedActivationAndSurvivesSnapshots(@TempDir Path root) throws Exception {
         PkiId authority;
         RootTrustAnchorTransition transition;
@@ -192,7 +200,9 @@ final class CaLifecycleMetadataStoreTest {
         return issuerId;
     }
 
-    /** Forces one real metadata CAS loss without changing the logical head or fabricating an outcome. */
+    /**
+     * Forces one real metadata CAS loss without changing the logical head or fabricating an outcome.
+     */
     private static final class HeadConflictMetadata implements zeroecho.pki.spi.store.TransactionalMetadataStore {
         private final zeroecho.pki.spi.store.TransactionalMetadataStore delegate;
         private final zeroecho.pki.spi.store.MetadataKey head;

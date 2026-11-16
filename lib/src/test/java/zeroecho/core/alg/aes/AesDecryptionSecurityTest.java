@@ -59,11 +59,19 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spi.ContextAware;
 
+/**
+ * Contract and regression tests for AES decryption security.
+ */
 class AesDecryptionSecurityTest {
     private static final SecretKey KEY = new SecretKeySpec(repeated((byte) 0x11, 16), "AES");
     private static final SecretKey WRONG_KEY = new SecretKeySpec(repeated((byte) 0x22, 16), "AES");
     private static final AtomicInteger CONTEXT_IDS = new AtomicInteger();
 
+    /**
+     * Checks authenticated AES-GCM decryption against wrong keys and ciphertext tampering.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void gcmTamperMatrix() throws Exception {
         System.out.println("gcmTamperMatrix");
@@ -96,6 +104,11 @@ class AesDecryptionSecurityTest {
         System.out.println("gcmTamperMatrix...ok");
     }
 
+    /**
+     * Checks AES-CTR decryption behavior under wrong keys and ciphertext changes.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void ctrTamperMatrix() throws Exception {
         System.out.println("ctrTamperMatrix");
@@ -122,6 +135,11 @@ class AesDecryptionSecurityTest {
         System.out.println("ctrTamperMatrix...ok");
     }
 
+    /**
+     * Checks block-aligned AES-CBC decryption and malformed ciphertext without padding.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cbcNoPaddingMatrix() throws Exception {
         System.out.println("cbcNoPaddingMatrix");
@@ -143,6 +161,11 @@ class AesDecryptionSecurityTest {
         System.out.println("cbcNoPaddingMatrix...ok");
     }
 
+    /**
+     * Checks AES-CBC padded decryption against wrong keys and malformed ciphertext.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cbcPkcsPaddingMatrix() throws Exception {
         System.out.println("cbcPkcsPaddingMatrix");

@@ -44,13 +44,16 @@ import java.util.Arrays;
  * @param bytes non-empty suite-defined response bytes
  */
 public record KeyPossessionProofResponse(byte[] bytes) {
-    /** Global maximum response length in bytes. */
+    /**
+     * Global maximum response length in bytes.
+     */
     public static final int MAXIMUM_BYTES = 16_384;
 
     /**
      * Validates and defensively owns the response.
      *
      * @throws IllegalArgumentException if the payload is null, empty, or exceeds 16384 bytes
+     * @param bytes non-empty suite-defined response bytes
      */
     public KeyPossessionProofResponse {
         if (bytes == null || bytes.length == 0 || bytes.length > MAXIMUM_BYTES) {
@@ -69,20 +72,30 @@ public record KeyPossessionProofResponse(byte[] bytes) {
         return bytes.clone();
     }
 
-    /** Compares proof response bytes by content. */
+    /**
+     * Compares proof response bytes by content.
+     * @param other {@inheritDoc}
+     * @return {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof KeyPossessionProofResponse candidate
                 && Arrays.equals(bytes, candidate.bytes);
     }
 
-    /** Returns a content-based hash code. */
+    /**
+     * Returns a content-based hash code.
+     * @return {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return Arrays.hashCode(bytes);
     }
 
-    /** Returns a redacted structural description. */
+    /**
+     * Returns a redacted structural description.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "KeyPossessionProofResponse[bytes=<" + bytes.length + " bytes>]";

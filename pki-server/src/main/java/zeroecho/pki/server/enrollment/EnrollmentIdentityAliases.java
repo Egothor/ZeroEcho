@@ -67,6 +67,7 @@ public final class EnrollmentIdentityAliases {
      * Proxy transport mappings can never contribute end-client aliases.
      * @param realmId exact realm
      * @param authentication immutable authentication configuration
+     * @throws NullPointerException if any of {@code realmId}, {@code authentication} is null
      */
     public EnrollmentIdentityAliases(RealmId realmId, PkiServerConfiguration.Authentication authentication) {
         this.realmId = Objects.requireNonNull(realmId, "realmId");
@@ -82,6 +83,7 @@ public final class EnrollmentIdentityAliases {
      * @param evidence verified requester evidence for this realm
      * @return immutable realm-bound exclusion snapshot, including disabled aliases
      * @throws IllegalArgumentException if the evidence belongs to another realm
+     * @throws NullPointerException if {@code evidence} is null
      */
     public Snapshot knownAliases(CertificateIdentityEvidence evidence) {
         Objects.requireNonNull(evidence, "evidence");
@@ -105,12 +107,19 @@ public final class EnrollmentIdentityAliases {
      * compared; certificate-only mappings cannot reveal this relationship.
      * @param identity independently validated mathematical account key
      * @return every configured key alias in this realm, including disabled aliases
+     * @throws NullPointerException if {@code identity} is null
      */
     public Snapshot knownKeyAliases(zeroecho.pkix.PublicKeyIdentity identity) {
         Objects.requireNonNull(identity, "identity");
         return knownKeyHashes(identity.equivalentSubjectPublicKeyInfoSha256());
     }
 
+    /**
+     * Collects configured principal aliases whose mapped public-key hash matches the supplied set.
+     *
+     * @param hashes equivalent canonical/legacy SubjectPublicKeyInfo SHA-256 values
+     * @return immutable sorted alias snapshot bound to this realm
+     */
     /* default */ Snapshot knownKeyHashes(Set<String> hashes) {
         SortedSet<String> aliases = new TreeSet<>();
         for (PkiServerConfiguration.ClientCertificateMapping mapping : mappings) {
@@ -128,7 +137,14 @@ public final class EnrollmentIdentityAliases {
      * @param principalIds exclusion-only principal names
      */
     public record Snapshot(RealmId realmId, Set<String> principalIds) {
-        /** Validates and snapshots the bounded alias set in O(A log A) time and O(A) memory. */
+        /**
+         * Validates and snapshots the bounded alias set in O(A log A) time and O(A) memory.
+         * @param realmId exact realm owning these principal names
+         * @param principalIds exclusion-only principal names
+         * @throws NullPointerException if any of {@code realmId}, {@code principalIds} is null
+         * @throws IllegalArgumentException if the alias snapshot exceeds 20,000 entries or an alias principal
+         *         identity is noncanonical
+         */
         public Snapshot {
             Objects.requireNonNull(realmId, "realmId");
             Objects.requireNonNull(principalIds, "principalIds");
@@ -149,6 +165,7 @@ public final class EnrollmentIdentityAliases {
          * @param current current configuration aliases for the same realm
          * @return immutable union
          * @throws IllegalArgumentException if realms differ or the union exceeds its bound
+         * @throws NullPointerException if {@code current} is null
          */
         public Snapshot union(Snapshot current) {
             Objects.requireNonNull(current, "current");
@@ -160,7 +177,11 @@ public final class EnrollmentIdentityAliases {
             return new Snapshot(realmId, union);
         }
 
-        /** @return redacted diagnostic description */
+        /**
+         * Returns a diagnostic representation with sensitive identity and custody details redacted.
+         *
+         * @return redacted diagnostic description
+         */
         @Override public String toString() { return "EnrollmentIdentityAliases.Snapshot[redacted]"; }
     }
 }

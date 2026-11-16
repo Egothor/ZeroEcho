@@ -47,7 +47,9 @@ import java.util.OptionalLong;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 
-/** Strict streaming codec for one structural metadata-log frame. */
+/**
+ * Strict streaming codec for one structural metadata-log frame.
+ */
 final class MetadataFrameCodec {
 
     private static final int FRAME_MAGIC = 0x5A454D46;
@@ -65,6 +67,13 @@ final class MetadataFrameCodec {
 
     private final OptionalLong maximumPayloadLength;
 
+    /**
+     * Creates a frame codec with the supplied optional payload bound. A present bound must be nonnegative.
+     *
+     * @param maximumPayloadLength optional inclusive payload-byte limit; empty selects no configured limit
+     * @throws NullPointerException if maximumPayloadLength is null
+     * @throws IllegalArgumentException if the configured limit is negative
+     */
     /* default */ MetadataFrameCodec(OptionalLong maximumPayloadLength) {
         this.maximumPayloadLength = Objects.requireNonNull(maximumPayloadLength, "maximumPayloadLength");
         if (maximumPayloadLength.isPresent() && maximumPayloadLength.getAsLong() < 0L) {
@@ -72,6 +81,10 @@ final class MetadataFrameCodec {
         }
     }
 
+    /**
+     * Creates a frame codec without a configured payload-length limit.
+     *
+     */
     /* default */ MetadataFrameCodec() {
         this(OptionalLong.empty());
     }
@@ -80,6 +93,16 @@ final class MetadataFrameCodec {
      * The authenticated header is validated before payloadLength is used for
      * positioning or allocation. A tampered length is therefore corruption, not
      * an apparently incomplete tail selected by unauthenticated input.
+     */
+    /**
+     * Reads and authenticates the frame at the specified offset using bounded transfer storage. End of input, an incomplete tail and corrupt framing are represented by the returned result; the borrowed channel remains open.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param frameOffset nonnegative byte offset of the frame header
+     * @return classification and authenticated record metadata
+     * @throws IOException if the channel cannot be read or positioned
+     * @throws NullPointerException if channel is null
+     * @throws IllegalArgumentException if frameOffset is negative
      */
     /* default */ ReadResult read(SeekableByteChannel channel, long frameOffset) throws IOException {
         Objects.requireNonNull(channel, "channel");
@@ -198,6 +221,21 @@ final class MetadataFrameCodec {
      * Failed writes may leave a partial frame at the channel's current position.
      * Truncation and rollback belong to the later log writer, not this codec.
      * Payload processing uses one fixed buffer, so auxiliary memory is O(1).
+     */
+    /**
+     * Writes one authenticated frame at the current channel position, streaming and closing the opened content stream. The channel remains open; a failed write can leave a partial suffix for the owning log writer to roll back.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param frameType encoded frame discriminator
+     * @param transactionToken canonical transaction token to encode
+     * @param sequence nonnegative frame sequence
+     * @param declaredPayloadLength exact payload length in bytes
+     * @param content repeatable payload source
+     * @param cancellation cooperative cancellation signal
+     * @return coordinates and commitment of the written frame
+     * @throws IOException if payload length differs, cancellation fails, or content/channel I/O cannot complete
+     * @throws NullPointerException if channel, frameType, transactionToken, content or cancellation is null
+     * @throws IllegalArgumentException if the token is not 32 lowercase hexadecimal characters, the sequence is negative or the declared payload violates its configured bound
      */
     /* default */ FrameMetadata write(
             SeekableByteChannel channel,
@@ -357,13 +395,37 @@ final class MetadataFrameCodec {
      * while preserving the closed current-version type set.
      */
     /* default */ enum FrameType {
+        /**
+         * Store identity and format header frame.
+         */
         STORE_HEADER(1),
+        /**
+         * Transaction issuance frame.
+         */
         TRANSACTION_ISSUED(2),
+        /**
+         * Create-mutation frame.
+         */
         MUTATION_CREATE(3),
+        /**
+         * Replacement-mutation frame.
+         */
         MUTATION_REPLACE(4),
+        /**
+         * Delete-mutation frame.
+         */
         MUTATION_DELETE(5),
+        /**
+         * Committed transaction terminal frame.
+         */
         TERMINAL_COMMITTED(6),
+        /**
+         * Noncommitted transaction terminal frame.
+         */
         TERMINAL_NOT_COMMITTED(7),
+        /**
+         * Recovery restart and continuity frame.
+         */
         RECOVERY_RESTART(8);
 
         private final byte wireCode;
@@ -391,12 +453,36 @@ final class MetadataFrameCodec {
      * public SPI while preserving the exhaustive structural outcomes.
      */
     /* default */ enum ReadClassification {
+        /**
+         * No bytes remain for another frame or record.
+         */
         END_OF_INPUT,
+        /**
+         * The input ends with a partial frame or record.
+         */
         INCOMPLETE_TAIL,
+        /**
+         * A complete frame with valid framing and checksum was decoded.
+         */
         COMPLETE_FRAME,
+        /**
+         * A complete candidate frame fails structural or integrity validation.
+         */
         CORRUPT_FRAME
     }
 
+    /**
+     * Bounded framing coordinates for one decoded metadata-log frame; payload bytes remain in the source file.
+     *
+     * @param frameType closed metadata frame discriminator
+     * @param transactionToken exact transaction token encoded by the frame
+     * @param sequence exact persisted record sequence
+     * @param frameOffset zero-based byte offset of the encoded frame
+     * @param payloadOffset zero-based byte offset of the frame payload
+     * @param payloadLength exact encoded mutation payload length in bytes
+     * @param payloadDigestOffset zero-based byte offset of the payload integrity digest
+     * @param frameEndOffset exclusive byte offset immediately after the frame
+     */
     /* default */ record FrameMetadata(
             FrameType frameType,
             String transactionToken,
@@ -407,14 +493,41 @@ final class MetadataFrameCodec {
             long payloadDigestOffset,
             long frameEndOffset) {
 
+        /**
+         * Creates the bounded framing coordinates for one decoded metadata-log frame; payload bytes remain in the source file.
+         *
+         * @param frameType closed metadata frame discriminator
+         * @param transactionToken exact transaction token encoded by the frame
+         * @param sequence exact persisted record sequence
+         * @param frameOffset zero-based byte offset of the encoded frame
+         * @param payloadOffset zero-based byte offset of the frame payload
+         * @param payloadLength exact encoded mutation payload length in bytes
+         * @param payloadDigestOffset zero-based byte offset of the payload integrity digest
+         * @param frameEndOffset exclusive byte offset immediately after the frame
+         * @throws NullPointerException if {@code frameType} is null; or if {@code transactionToken} is null
+         */
         FrameMetadata {
             Objects.requireNonNull(frameType, "frameType");
             Objects.requireNonNull(transactionToken, "transactionToken");
         }
     }
 
+    /**
+     * Classification and optional framing metadata from one metadata-log read attempt.
+     *
+     * @param classification closed structural classification of the read attempt
+     * @param metadata decoded framing metadata when a complete frame was available
+     */
     /* default */ record ReadResult(ReadClassification classification, FrameMetadata metadata) {
 
+        /**
+         * Creates the classification and optional framing metadata from one metadata-log read attempt.
+         *
+         * @param classification closed structural classification of the read attempt
+         * @param metadata decoded framing metadata when a complete frame was available
+         * @throws NullPointerException if {@code classification} is null
+         * @throws IllegalArgumentException if {@code ((classification == ReadClassification.COMPLETE_FRAME) != (metadata != null))}
+         */
         ReadResult {
             Objects.requireNonNull(classification, "classification");
             if ((classification == ReadClassification.COMPLETE_FRAME) != (metadata != null)) {

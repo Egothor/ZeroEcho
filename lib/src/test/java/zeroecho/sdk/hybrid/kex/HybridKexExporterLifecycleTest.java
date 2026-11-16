@@ -43,8 +43,16 @@ import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for hybrid kex exporter lifecycle.
+ */
 class HybridKexExporterLifecycleTest {
 
+    /**
+     * Constructor owns defensive copies.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void constructorOwnsDefensiveCopies() throws Exception {
         System.out.println("constructorOwnsDefensiveCopies");
@@ -62,6 +70,11 @@ class HybridKexExporterLifecycleTest {
         System.out.println("constructorOwnsDefensiveCopies...ok");
     }
 
+    /**
+     * Destruction clears secrets and rejects further use.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void destructionClearsSecretsAndRejectsFurtherUse() throws Exception {
         System.out.println("destructionClearsSecretsAndRejectsFurtherUse");
@@ -82,6 +95,9 @@ class HybridKexExporterLifecycleTest {
         System.out.println("destructionClearsSecretsAndRejectsFurtherUse...ok");
     }
 
+    /**
+     * Successful export does not destroy exporter.
+     */
     @Test
     void successfulExportDoesNotDestroyExporter() {
         System.out.println("successfulExportDoesNotDestroyExporter");

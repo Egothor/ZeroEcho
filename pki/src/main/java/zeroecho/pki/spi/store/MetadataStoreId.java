@@ -43,7 +43,12 @@ import java.util.Objects;
  * @param value 32 lowercase hexadecimal characters
  */
 public record MetadataStoreId(String value) {
-    /** Validates the canonical identity. */
+    /**
+     * Validates the canonical identity.
+     * @param value 32 lowercase hexadecimal characters
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if value is not exactly 32 lowercase hexadecimal characters
+     */
     public MetadataStoreId {
         Objects.requireNonNull(value, "value");
         if (!value.matches("[0-9a-f]{32}")) {
@@ -52,7 +57,10 @@ public record MetadataStoreId(String value) {
         }
     }
 
-    /** Returns the canonical identity. */
+    /**
+     * Returns the canonical identity.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return value;

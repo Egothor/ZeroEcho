@@ -29,13 +29,25 @@ import zeroecho.pki.application.PkiSigningOperation;
 final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolver {
     private final ServerRealmContext realm;
 
+    /**
+     * Binds SDK issuer resolution to one borrowed authoritative realm context.
+     *
+     * @param realm realm-owned authorization and signing services
+     * @throws NullPointerException if realm is null
+     */
     HybridSdkIssuerResolver(ServerRealmContext realm) { this.realm=java.util.Objects.requireNonNull(realm); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public HybridSdkAdmissionService.Context resolve(ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, ParsedHybridSdkRequest subject) {
         return resolve(request,envelope,subject,Optional.empty());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public HybridSdkAdmissionService.Context revalidate(ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
         return resolve(request,envelope,subject,Optional.of(frozenValidity(retainedTarget)));
@@ -55,6 +67,16 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
         return new HybridSdkAdmissionService.Context(admission,target(admission,envelope,preview));
     }
 
+    /**
+     * Recomputes the exact SDK issuance preview while preserving the retained absolute validity.
+     *
+     * @param request trusted authenticated issuance request
+     * @param subject parsed original hybrid certificate request
+     * @param retainedTarget exact retained kind-seven semantic target
+     * @return authoritative issuance preview with frozen validity
+     * @throws UnsupportedOperationException if the issuance operation is unsupported
+     * @throws IllegalArgumentException if request identity or retained target validity is invalid
+     */
     SdkIssuancePreview preview(ServerOperationGateway.Request request, ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
         var operation=issue(request);
         requireRequestId(operation,subject);
@@ -62,6 +84,13 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
                 Optional.of(frozenValidity(retainedTarget)),CancellationSignal.NONE);
     }
 
+    /**
+     * Extracts only the supported end-entity issuance-family signing operation.
+     *
+     * @param request authenticated administrative signing request
+     * @return issue, renew, reissue or replace operation
+     * @throws UnsupportedOperationException if the operation is outside the SDK issuance family
+     */
     static PkiSigningOperation issue(ServerOperationGateway.Request request) {
         if(request.operation() instanceof AdministrativeOperation.Signing signing
                 && (signing.operation() instanceof PkiSigningOperation.IssueCredential
@@ -77,6 +106,12 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
         if(id.isPresent()&&!id.orElseThrow().equals(subject.primary().requestId()))throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS");
     }
 
+    /**
+     * Projects the trusted administrative principal and operation into domain access coordinates.
+     *
+     * @param request authenticated administrative request
+     * @return access context with the exact operation name as purpose
+     */
     static AccessContext access(ServerOperationGateway.Request request) {
         return new AccessContext(new Principal("ADMIN_PRINCIPAL",request.principalId()),new Purpose(request.operation().name()),Optional.empty(),Optional.empty());
     }
@@ -101,6 +136,13 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
         return new HybridSdkFrame(7,fields);
     }
 
+    /**
+     * Recovers the exact absolute validity encoded into a retained semantic target.
+     *
+     * @param retainedTarget exact kind-seven SDK target frame
+     * @return retained not-before and not-after instants without rebasing to the current clock
+     * @throws IllegalArgumentException if frame kind, subject value or timestamp syntax is invalid
+     */
     static Validity frozenValidity(HybridSdkFrame retainedTarget) {
         if(retainedTarget.kind()!=7)throw new IllegalArgumentException("SDK_TARGET_INVALID");
         var fields=HybridSdkValue.decode(retainedTarget.field(15)).objectFields();

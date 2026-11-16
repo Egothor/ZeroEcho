@@ -62,13 +62,19 @@ package zeroecho.pki.api.profile;
  */
 public enum IssuanceApprovalRequirement {
 
-    /** Issuance proceeds without any administrative approval. */
+    /**
+     * Issuance proceeds without any administrative approval.
+     */
     NONE,
 
-    /** Issuance requires exactly one attributable administrative approval. */
+    /**
+     * Issuance requires exactly one attributable administrative approval.
+     */
     SINGLE,
 
-    /** Issuance requires a multi-party (M-of-N) approval threshold. */
+    /**
+     * Issuance requires a multi-party (M-of-N) approval threshold.
+     */
     THRESHOLD;
 
     /**

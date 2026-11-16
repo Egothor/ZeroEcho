@@ -66,6 +66,10 @@ public record CtJournalVerificationResult(
      *                                  if {@code checkedTo} is less than {@code checkedFrom},
      *                                  or if {@code intact} is {@code true} but {@code brokenAtSequences}
      *                                  is non-empty
+     * @param checkedFrom inclusive first sequence number checked
+     * @param checkedTo inclusive last sequence number checked
+     * @param intact {@code true} if all entries in the range have valid hash chains
+     * @param brokenAtSequences sequence numbers at which chain violations were found; empty when {@code intact} is {@code true}
      */
     public CtJournalVerificationResult {
         Objects.requireNonNull(brokenAtSequences, "brokenAtSequences");

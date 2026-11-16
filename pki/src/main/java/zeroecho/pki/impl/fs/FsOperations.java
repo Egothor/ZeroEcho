@@ -85,6 +85,7 @@ final class FsOperations {
      *
      * @param dir directory path
      * @throws IOException if directory cannot be created
+     * @throws NullPointerException if dir is null
      */
     /* default */ static void ensureDir(final Path dir) throws IOException {
         Objects.requireNonNull(dir, "dir");
@@ -113,6 +114,7 @@ final class FsOperations {
      * @param target destination file
      * @param data   bytes to write
      * @throws IOException if writing fails
+     * @throws NullPointerException if target or data is null
      */
     /* default */ static void writeAtomic(final Path target, final byte[] data) throws IOException {
         Objects.requireNonNull(target, "target");
@@ -153,6 +155,8 @@ final class FsOperations {
      * @param target target file
      * @param bufferBytes positive transfer-buffer size
      * @throws IOException if streaming or atomic publication fails
+     * @throws IllegalArgumentException if bufferBytes is not positive
+     * @throws NullPointerException if source or target is null
      */
     /* default */ static void copyAtomic(final Path source, final Path target, final int bufferBytes)
             throws IOException {
@@ -216,6 +220,7 @@ final class FsOperations {
      * @throws IOException                  on a pre-commit persistence failure
      * @throws DurabilityUncertainException after a committed move whose directory
      *                                      force failed
+     * @throws NullPointerException if target or data is null
      */
     // The original directory-force cause is replaced by a marker that cannot expose
     // a filesystem path or operating-system diagnostic.
@@ -259,6 +264,7 @@ final class FsOperations {
      * @throws IOException                  on persistence failure
      * @throws DurabilityUncertainException after an atomic move whose directory
      *                                      force failed
+     * @throws NullPointerException if target or data is null
      */
     // The OS failure is deliberately replaced by the cause-free durability state.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -316,6 +322,7 @@ final class FsOperations {
      * @param target destination file
      * @param data   bytes to write
      * @throws IOException if writing fails
+     * @throws NullPointerException if target or data is null
      */
     /* default */ static void writeNew(final Path target, final byte[] data) throws IOException {
         Objects.requireNonNull(target, "target");
@@ -341,6 +348,7 @@ final class FsOperations {
      * @param path file path
      * @return file bytes
      * @throws IOException on read failure
+     * @throws NullPointerException if path is null
      */
     /* default */ static byte[] readAll(final Path path) throws IOException {
         Objects.requireNonNull(path, "path");
@@ -353,6 +361,7 @@ final class FsOperations {
      * @param path file path
      * @return input stream
      * @throws IOException on failure
+     * @throws NullPointerException if path is null
      */
     /* default */ static InputStream newInputStream(final Path path) throws IOException {
         Objects.requireNonNull(path, "path");
@@ -370,6 +379,7 @@ final class FsOperations {
      * @param path file path
      * @return output stream
      * @throws IOException on failure
+     * @throws NullPointerException if path is null
      */
     /* default */ static OutputStream newOutputStream(final Path path) throws IOException {
         Objects.requireNonNull(path, "path");

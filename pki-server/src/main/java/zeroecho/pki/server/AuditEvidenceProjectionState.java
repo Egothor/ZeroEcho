@@ -62,13 +62,23 @@ import java.util.Optional;
  */
 record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optional<Instant> nextEligible) {
 
+    /**
+     * Maximum retained consecutive failure count before retry-backoff counting saturates.
+     */
     /* default */ static final int MAXIMUM_FAILURE_COUNT = 31;
 
     private static final int MAGIC = 0x5A454150;
     private static final int VERSION = 1;
     private static final int MAXIMUM_PAYLOAD_BYTES = 256;
 
-    /** Validates one immutable cursor snapshot. */
+    /**
+     * Validates one immutable cursor snapshot.
+     * @param lastSequence last durably projected sequence, {@code -1} before the first entry
+     * @param failureCount consecutive failure count for backoff
+     * @param nextEligible next eligible retry time, present exactly when {@code failureCount > 0}
+     * @throws NullPointerException if {@code nextEligible} is null
+     * @throws IllegalArgumentException if the cursor or retry-count/eligibility invariant is invalid
+     */
     AuditEvidenceProjectionState {
         nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         if (lastSequence < -1L || failureCount < 0 || failureCount > MAXIMUM_FAILURE_COUNT
@@ -77,18 +87,45 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
         }
     }
 
-    /** One decoded cursor paired with its control-record CAS commitment. */
+    /**
+     * Decoded evidence-delivery cursor paired with its exact compare-and-set commitment.
+     *
+     * @param state validated non-authoritative delivery cursor
+     * @param recordCommitment lowercase SHA-256 of the retained cursor payload
+     */
     /* default */ record Loaded(AuditEvidenceProjectionState state, String recordCommitment) {
+        /**
+         * Validates the loaded cursor and compare-and-set commitment.
+         *
+         * @param state decoded delivery cursor; must not be null
+         * @param recordCommitment canonical lowercase SHA-256 of the retained payload
+         * @throws NullPointerException if state is null
+         * @throws IllegalArgumentException if the commitment is invalid
+         */
         Loaded {
             Objects.requireNonNull(state, "state");
             requireDigest(recordCommitment);
         }
     }
 
+    /**
+     * Creates the cursor before any success evidence has been projected.
+     *
+     * @return sequence minus one with no failure or retry delay
+     */
     /* default */ static AuditEvidenceProjectionState initial() {
         return new AuditEvidenceProjectionState(-1L, 0, Optional.empty());
     }
 
+    /**
+     * Loads and verifies the exact retained cursor for one evidence family.
+     *
+     * @param control realm-owned durable control store
+     * @param recordId stable family cursor identity
+     * @return verified cursor and CAS commitment, or empty before initial persistence
+     * @throws NullPointerException if control or record identity is null
+     * @throws IllegalArgumentException if retained payload, identity or commitment is invalid
+     */
     /* default */ static Optional<Loaded> load(ServerControlStore control, String recordId) {
         Objects.requireNonNull(control, "control");
         Objects.requireNonNull(recordId, "recordId");
@@ -102,6 +139,16 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
                 });
     }
 
+    /**
+     * Publishes replacement cursor state guarded by the exact previous payload commitment.
+     *
+     * @param control realm-owned durable control store
+     * @param recordId stable family cursor identity
+     * @param current previously loaded cursor, or empty for initial creation
+     * @param next replacement cursor state
+     * @return replacement state paired with its persisted CAS commitment
+     * @throws NullPointerException if a required argument is null
+     */
     /* default */ static Loaded persist(ServerControlStore control, String recordId, Optional<Loaded> current,
             AuditEvidenceProjectionState next) {
         Objects.requireNonNull(control, "control");
@@ -116,6 +163,13 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
         return new Loaded(next, commitment);
     }
 
+    /**
+     * Advances to a strictly later projected sequence and clears retry-backoff state.
+     *
+     * @param sequence newly projected sequence, strictly greater than the retained sequence
+     * @return replacement cursor without failures or retry delay
+     * @throws IllegalArgumentException if the sequence does not advance
+     */
     /* default */ AuditEvidenceProjectionState advance(long sequence) {
         if (sequence <= lastSequence) {
             throw new IllegalArgumentException("Audit evidence projection cursor must advance");
@@ -123,6 +177,13 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
         return new AuditEvidenceProjectionState(sequence, 0, Optional.empty());
     }
 
+    /**
+     * Retains the delivery position while recording the next eligible retry time.
+     *
+     * @param eligible absolute retry eligibility instant
+     * @return replacement cursor with a saturating increment of the failure count
+     * @throws NullPointerException if the retry instant is null
+     */
     /* default */ AuditEvidenceProjectionState fail(Instant eligible) {
         int nextFailureCount = Math.min(MAXIMUM_FAILURE_COUNT, failureCount + 1);
         return new AuditEvidenceProjectionState(lastSequence, nextFailureCount,

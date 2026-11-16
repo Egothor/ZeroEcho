@@ -83,6 +83,8 @@ class PkiDemoTest {
      * {@code backendId = "zeroecho-lib"}, a canonical algorithm identity, and an
      * environment variable that unlocks the pre-populated signing keyring. Then call
      * {@code session.localSigning()} to obtain the sequential caller-thread executor.
+     * @param storeRoot isolated temporary store directory injected by JUnit
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void sessionBootstrapAndConfigurationValidation(@TempDir Path storeRoot) throws Exception {
@@ -134,6 +136,8 @@ class PkiDemoTest {
      *
      * <p>This sample opens an empty store so every list returns zero entries, but the
      * algorithm-binding registry is always populated from the built-in standard bindings.
+     * @param storeRoot isolated temporary store directory injected by JUnit
+     * @throws Exception if fixture setup, invocation, or cleanup fails
      */
     @Test
     void listingOperations(@TempDir Path storeRoot) throws Exception {

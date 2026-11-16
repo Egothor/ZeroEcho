@@ -40,15 +40,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
 
-/** Closed server-control result with explicit one-time-sensitive handling. */
+/**
+ * Closed server-control result with explicit one-time-sensitive handling.
+ */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.ControlStatementBraces" })
 public sealed interface ServerControlOperationOutcome permits ServerControlOperationOutcome.Ordinary,
         ServerControlOperationOutcome.OneTimeSensitive {
-    /** Response handling classification. */
+    /**
+     * Response handling classification.
+     */
     enum Classification {
-        /** Replayable result containing no one-time secret. */
+        /**
+         * Replayable result containing no one-time secret.
+         */
         ORDINARY,
-        /** Result carrying a secret that may be consumed exactly once. */
+        /**
+         * Result carrying a secret that may be consumed exactly once.
+         */
         ONE_TIME_SENSITIVE
     }
     /**
@@ -64,12 +72,21 @@ public sealed interface ServerControlOperationOutcome permits ServerControlOpera
      * @param outcome transport-neutral PKI operation outcome
      */
     record Ordinary(PkiOperationOutcome outcome) implements ServerControlOperationOutcome {
-        /** Validates the required outcome. */
+        /**
+         * Validates the required outcome.
+         * @param outcome transport-neutral PKI operation outcome
+         * @throws NullPointerException if {@code outcome} is null
+         */
         public Ordinary { Objects.requireNonNull(outcome, "outcome"); }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Classification classification() { return Classification.ORDINARY; }
     }
 
-    /** Single-consumption capability delivery result, never a PKI operation value. */
+    /**
+     * Single-consumption capability delivery result, never a PKI operation value.
+     */
     final class OneTimeSensitive implements ServerControlOperationOutcome {
         private final PkiOperationResult safeResult;
         private final byte[] token;
@@ -81,12 +98,16 @@ public sealed interface ServerControlOperationOutcome permits ServerControlOpera
          * @param safeResult non-secret result metadata
          * @param token exactly 32 capability-token bytes; defensively copied
          * @throws IllegalArgumentException if the token length is not 32 bytes
+         * @throws NullPointerException if any of {@code safeResult}, {@code token} is null
          */
         public OneTimeSensitive(PkiOperationResult safeResult, byte[] token) {
             this.safeResult = Objects.requireNonNull(safeResult, "safeResult");
             this.token = Objects.requireNonNull(token, "token").clone();
             if (token.length != 32) throw new IllegalArgumentException("Capability token length is invalid");
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Classification classification() { return Classification.ONE_TIME_SENSITIVE; }
         /**
          * Returns safe non-secret metadata.

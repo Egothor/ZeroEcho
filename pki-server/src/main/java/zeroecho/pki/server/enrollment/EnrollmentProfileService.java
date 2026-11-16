@@ -79,6 +79,7 @@ public final class EnrollmentProfileService {
      * Opens and validates the realm's durable registry.
      * @param control open realm-owned server-control store
      * @throws IllegalStateException if a stored profile is corrupt or unsupported
+     * @throws NullPointerException if {@code control} is null
      */
     public EnrollmentProfileService(ServerControlStore control) {
         this.control = Objects.requireNonNull(control, "control");
@@ -112,6 +113,7 @@ public final class EnrollmentProfileService {
      * Checks registration identity and finite encoding without changing metadata.
      * @param profile exact proposed policy
      * @throws IllegalStateException if the identity already exists
+     * @throws NullPointerException if {@code profile} is null
      */
     public void validateRegistration(EnrollmentProfile profile) {
         Objects.requireNonNull(profile,"profile");record(profile,1);
@@ -155,6 +157,7 @@ public final class EnrollmentProfileService {
      * @throws IllegalArgumentException if no profile with the given id exists
      * @throws IllegalStateException if an active endpoint would become incompatible,
      *         a concurrent change conflicts, or persistence fails
+     * @throws NullPointerException if {@code profile} is null
      */
     public EnrollmentProfile update(EnrollmentProfile profile) {
         Objects.requireNonNull(profile, "profile");
@@ -165,6 +168,7 @@ public final class EnrollmentProfileService {
      * Looks up the current profile by identifier.
      * @param id non-null identifier
      * @return the observed profile, or empty if absent
+     * @throws NullPointerException if {@code id} is null
      */
     public Optional<EnrollmentProfile> find(String id) {
         return control.protocolRecord(ServerControlStore.ENROLLMENT_PROFILE,
@@ -209,6 +213,7 @@ public final class EnrollmentProfileService {
      * @param authorityId selected authority
      * @param active whether the profile must be active
      * @return exact compatible profile
+     * @throws IllegalStateException if the selected enrollment profile binding is unavailable
      */
     public static EnrollmentProfile requireBinding(ServerControlStore control, String id, String certificateProfileId,
             String authorityId, boolean active) {
@@ -245,6 +250,7 @@ public final class EnrollmentProfileService {
      * @return the durably committed profile
      * @throws IllegalArgumentException if no profile with the given id exists
      * @throws IllegalStateException if a concurrent change conflicts or persistence fails
+     * @throws NullPointerException if any of {@code id}, {@code state} is null
      */
     public EnrollmentProfile setState(String id, EnrollmentProfileState state) { // NOPMD LinguisticNaming - Public atomic state transition returns the stored immutable profile; preserve consumer API.
         Objects.requireNonNull(id, "id");
@@ -259,6 +265,7 @@ public final class EnrollmentProfileService {
      * @param profile exact proposed policy
      * @return lowercase SHA-256 commitment, independent of its storage revision
      * @throws IllegalArgumentException if the profile exceeds the finite encoding bounds
+     * @throws NullPointerException if {@code profile} is null
      */
     public static String commitment(EnrollmentProfile profile) {
         return sha256(encode(Objects.requireNonNull(profile, "profile"), 1));

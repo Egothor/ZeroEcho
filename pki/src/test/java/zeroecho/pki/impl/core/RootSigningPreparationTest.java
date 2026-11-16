@@ -91,7 +91,16 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.RootCreationFixture;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for root signing preparation.
+ */
 final class RootSigningPreparationTest {
+    /**
+     * Preflight rejects bad subject with typed reason without staging or signing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void preflightRejectsBadSubjectWithTypedReasonWithoutStagingOrSigning(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -120,6 +129,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Alternative signature preflight never signs.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void alternativeSignaturePreflightNeverSigns(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -154,6 +169,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Freezes canonical subject profile SPKI and narrowed validity without publishing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void freezesCanonicalSubjectProfileSpkiAndNarrowedValidityWithoutPublishing(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -200,6 +221,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Invalid profile subject attributes and key reject before any staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidProfileSubjectAttributesAndKeyRejectBeforeAnyStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -226,6 +253,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Rejects invalid public key source encoding and canonical DER before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsInvalidPublicKeySourceEncodingAndCanonicalDerBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -257,6 +290,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Exact bindings capacity validity and lifetime reject before staging.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void exactBindingsCapacityValidityAndLifetimeRejectBeforeStaging(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -295,6 +334,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Cancellation discard and failed adoption retire only unowned content.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationDiscardAndFailedAdoptionRetireOnlyUnownedContent(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore actual = open(root)) {
             RootCreationFixture fixture = new RootCreationFixture();
@@ -346,6 +391,12 @@ final class RootSigningPreparationTest {
         }
     }
 
+    /**
+     * Durable signature completes after reopen without another public key lookup or signature.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void durableSignatureCompletesAfterReopenWithoutAnotherPublicKeyLookupOrSignature(@TempDir Path root) throws Exception {
         RootCreationFixture fixture = new RootCreationFixture();
         PkiId operation;

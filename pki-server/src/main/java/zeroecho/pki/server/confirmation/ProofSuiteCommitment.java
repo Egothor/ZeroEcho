@@ -36,13 +36,24 @@ package zeroecho.pki.server.confirmation;
 import java.security.MessageDigest;
 import java.util.Arrays;
 
-/** Immutable SHA-256 commitment to the exact proof-suite configuration. */
+/**
+ * Immutable SHA-256 commitment to the exact proof-suite configuration.
+ */
 final class ProofSuiteCommitment {
 
+    /**
+     * Required SHA-256 commitment length, in bytes.
+     */
     /* default */ static final int LENGTH = 32;
 
     private final byte[] bytes;
 
+    /**
+     * Snapshots the SHA-256 digest of an exact proof-suite configuration.
+     *
+     * @param bytes exactly 32 commitment bytes; copied
+     * @throws IllegalArgumentException if the input is null or has another length
+     */
     /* default */ ProofSuiteCommitment(byte[] bytes) {
         if (bytes == null || bytes.length != LENGTH) {
             throw new IllegalArgumentException("Proof-suite commitment must contain exactly 32 bytes");
@@ -50,19 +61,36 @@ final class ProofSuiteCommitment {
         this.bytes = bytes.clone();
     }
 
+    /**
+     * Copies the immutable proof-suite configuration commitment.
+     *
+     * @return newly allocated 32-byte commitment
+     */
     /* default */ byte[] bytes() {
         return bytes.clone();
     }
 
+    /**
+     * Compares configuration commitments without an early exit on differing bytes.
+     *
+     * @param candidate commitment to compare, or null
+     * @return whether the candidate is non-null and contains the same 32 bytes
+     */
     /* default */ boolean matches(ProofSuiteCommitment candidate) {
         return candidate != null && MessageDigest.isEqual(bytes, candidate.bytes);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object candidate) {
         return candidate instanceof ProofSuiteCommitment other && matches(other);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         return Arrays.hashCode(bytes);

@@ -80,6 +80,9 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
 
     private static final Logger LOG = Logger.getLogger(InMemoryAuditSink.class.getName());
 
+    /**
+     * Default maximum number of audit events retained before oldest-event eviction.
+     */
     /* default */ static final int DEFAULT_MAX_EVENTS = 10_000;
 
     private final int maxEvents;
@@ -115,6 +118,9 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
         LOG.log(Level.INFO, "InMemoryAuditSink initialized; maxEvents={0}", maxEvents);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized void record(AuditEvent event) { // NOPMD
         if (event == null) {
@@ -143,6 +149,13 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
         return List.copyOf(events);
     }
 
+    /**
+     * Finds retained audit events matching the query and returns a bounded ordered snapshot.
+     *
+     * @param query non-null event filters and result limit
+     * @return immutable matches in canonical audit order, bounded by the query limit
+     * @throws IllegalArgumentException if the query is null
+     */
     @Override
     public synchronized List<AuditEvent> search(AuditQuery query) { // NOPMD
         if (query == null) {
@@ -159,6 +172,13 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
         return List.copyOf(out.subList(0, Math.min(out.size(), query.limit())));
     }
 
+    /**
+     * Finds a retained audit event by its deterministic canonical event identity.
+     *
+     * @param eventId non-null exact event identity
+     * @return matching retained event, or an empty optional
+     * @throws IllegalArgumentException if the identity is null
+     */
     @Override
     public synchronized Optional<AuditEvent> getById(PkiId eventId) { // NOPMD
         if (eventId == null) {
@@ -182,6 +202,9 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
         return maxEvents;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public synchronized String toString() { // NOPMD
         return "InMemoryAuditSink[size=" + events.size() + ", maxEvents=" + maxEvents + "]";

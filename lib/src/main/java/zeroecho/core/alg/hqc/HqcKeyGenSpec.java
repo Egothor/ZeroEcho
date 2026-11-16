@@ -80,11 +80,17 @@ public final class HqcKeyGenSpec implements AlgorithmKeySpec, Describable {
      * </p>
      */
     public enum Variant {
-        /** HQC-128 parameter set (128-bit classical security). */
+        /**
+         * HQC-128 parameter set (128-bit classical security).
+         */
         HQC_128,
-        /** HQC-192 parameter set (192-bit classical security). */
+        /**
+         * HQC-192 parameter set (192-bit classical security).
+         */
         HQC_192,
-        /** HQC-256 parameter set (256-bit classical security). */
+        /**
+         * HQC-256 parameter set (256-bit classical security).
+         */
         HQC_256
     }
 

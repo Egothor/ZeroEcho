@@ -78,6 +78,7 @@ public final class HybridKexPolicy {
      *                       or 192)
      * @param minPqcBits     minimum estimated bits for PQC leg (for example 192)
      * @param minOkmBytes    minimum OKM output length in bytes (for example 32)
+     * @throws IllegalArgumentException if a minimum security strength is negative or the minimum output length is below one byte
      */
     public HybridKexPolicy(int minClassicBits, int minPqcBits, int minOkmBytes) {
         if (minClassicBits < 0 || minPqcBits < 0) {

@@ -48,6 +48,8 @@ public record BackupVerificationReport(boolean valid, List<String> issues) {
      * Creates a backup verification report.
      *
      * @throws IllegalArgumentException if {@code issues} is null
+     * @param valid true if the artifact is structurally valid and integrity checks passed
+     * @param issues list of issues found (non-sensitive)
      */
     public BackupVerificationReport {
         if (issues == null) {

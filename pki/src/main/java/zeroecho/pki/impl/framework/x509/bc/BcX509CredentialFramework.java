@@ -176,9 +176,15 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         return FORMAT_ID;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String displayName() { return "X.509"; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SubjectInput subjectInput() {
         return new SubjectInput("Subject — X.509 distinguished name",
@@ -187,6 +193,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
                         "^\\s*(?:[A-Za-z][A-Za-z0-9-]*|(?:[Oo][Ii][Dd]\\.)?[0-9]+(?:\\.[0-9]+)+)\\s*=.*$"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.util.List<CredentialRepresentation> credentialRepresentations(zeroecho.pki.api.Encoding storedEncoding) {
         if (storedEncoding != zeroecho.pki.api.Encoding.DER) throw new IllegalArgumentException("X.509 stored credential must be DER");
@@ -194,6 +203,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
                 new CredentialRepresentation("pem", "PEM", "application/x-pem-file", "pem", zeroecho.pki.api.Encoding.PEM));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.pki.api.EncodedObject exportCredential(zeroecho.pki.api.EncodedObject stored, String representation,
             zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
@@ -223,6 +235,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         return new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.PEM, output.toByteArray());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.util.List<CredentialRepresentation> statusRepresentations(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding) {
         if((type==zeroecho.pki.api.status.StatusObjectType.CRL||type==zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)&&encoding==zeroecho.pki.api.Encoding.DER) {
@@ -232,6 +247,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         return CredentialFramework.super.statusRepresentations(type,encoding);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public zeroecho.core.io.RepeatableContent exportStatusContent(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding,
             zeroecho.core.io.RepeatableContent content,String representation,zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {

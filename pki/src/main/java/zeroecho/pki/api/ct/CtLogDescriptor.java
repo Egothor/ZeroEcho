@@ -58,7 +58,9 @@ public record CtLogDescriptor(
         boolean enabled,
         String description) {
 
-    /** Expected length of a hex-encoded CT log ID (32 bytes × 2 hex chars). */
+    /**
+     * Expected length of a hex-encoded CT log ID (32 bytes × 2 hex chars).
+     */
     public static final int LOG_ID_HEX_LENGTH = 64;
 
     /**
@@ -68,6 +70,11 @@ public record CtLogDescriptor(
      * @throws IllegalArgumentException if {@code logId} is not a 64-character lowercase hex string,
      *                                  if {@code baseUrl} is blank or does not end with {@code /},
      *                                  or if {@code publicKeyDer} is empty
+     * @param logId 64-character lowercase hex string of the SHA-256 of the log's public key
+     * @param baseUrl base URL of the CT log (e.g. {@code "https://ct.googleapis.com/logs/argon2025/"}), must end with {@code /}
+     * @param publicKeyDer DER-encoded EC or RSA public key of the CT log (for SCT verification)
+     * @param enabled whether this log is active for SCT collection
+     * @param description human-readable label for the log
      */
     public CtLogDescriptor {
         Objects.requireNonNull(logId, "logId");

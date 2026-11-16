@@ -33,23 +33,42 @@
  ******************************************************************************/
 package zeroecho.pki.api.confirmation;
 
-/** Closed credential-disclosure policies with stable persistence-independent codes. */
+/**
+ * Closed credential-disclosure policies with stable persistence-independent codes.
+ */
 public enum ConfirmationDisclosurePolicy {
-    /** Anonymous retrieval and public indexing may be permitted. */
+    /**
+     * Anonymous retrieval and public indexing may be permitted.
+     */
     PUBLIC(1),
-    /** Anonymous retrieval requires a separate capability and is not indexed. */
+    /**
+     * Anonymous retrieval requires a separate capability and is not indexed.
+     */
     PUBLIC_UNLISTED(2),
-    /** Retrieval requires an authenticated principal in the configured scope. */
+    /**
+     * Retrieval requires an authenticated principal in the configured scope.
+     */
     AUTHENTICATED(3),
-    /** Retrieval is limited to an owner or specifically authorized administrator. */
+    /**
+     * Retrieval is limited to an owner or specifically authorized administrator.
+     */
     OWNER_ONLY(4),
-    /** Retrieval requires an explicit principal or role grant. */
+    /**
+     * Retrieval requires an explicit principal or role grant.
+     */
     RESTRICTED(5),
-    /** The credential is not exposed through a publication surface. */
+    /**
+     * The credential is not exposed through a publication surface.
+     */
     NOT_PUBLISHED(6);
 
     private final int code;
 
+    /**
+     * Associates a closed policy constant with its stable persisted integer code.
+     *
+     * @param code canonical code assigned by the enum declaration
+     */
     ConfirmationDisclosurePolicy(int code) {
         this.code = code;
     }

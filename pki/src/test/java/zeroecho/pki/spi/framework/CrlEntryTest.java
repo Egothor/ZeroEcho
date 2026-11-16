@@ -44,9 +44,15 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.revocation.RevocationReason;
 
+/**
+ * Contract and regression tests for CRL entry.
+ */
 final class CrlEntryTest {
     private static final Instant TIME = Instant.parse("2026-07-30T12:00:00.987654321Z");
 
+    /**
+     * Accepts every explicit active reason and full positive serial domain.
+     */
     @Test
     void acceptsEveryExplicitActiveReasonAndFullPositiveSerialDomain() {
         BigInteger largestFeasibleX509Serial = BigInteger.ONE.shiftLeft(159).subtract(BigInteger.ONE);
@@ -62,6 +68,9 @@ final class CrlEntryTest {
         }
     }
 
+    /**
+     * Rejects invalid serial time and reason.
+     */
     @Test
     void rejectsInvalidSerialTimeAndReason() {
         assertThrows(IllegalArgumentException.class,

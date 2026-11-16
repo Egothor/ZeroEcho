@@ -76,14 +76,40 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
     private boolean fenced;
     private boolean closing;
     private boolean closed;
-    /** Reports exhausted ciphertext-delivery capacity without exposing artifact identity. */
+    /**
+     * Reports exhausted ciphertext-delivery capacity without exposing artifact identity.
+     */
     /* default */ static final class CapacityUnavailable extends IOException {
         private static final long serialVersionUID = 1L;
+        /**
+         * Creates the safe ciphertext-delivery-capacity failure without an artifact identity.
+         */
         /* default */ CapacityUnavailable() { super("Enrollment ciphertext delivery capacity is exhausted"); }
     }
-    /** Ciphertext durability boundaries exposed to deterministic fault injection. */
-    /* default */ enum Phase { CIPHERTEXT_FORCED, CIPHERTEXT_RENAMED, DIRECTORY_FORCED, BEFORE_DELETE }
-    /** Observes ciphertext publication without changing persistence ordering. */
+    /**
+     * Ciphertext durability boundaries exposed to deterministic fault injection.
+     */
+    /* default */ enum Phase {
+        /**
+         * Temporary ciphertext bytes have been forced to storage.
+         */
+        CIPHERTEXT_FORCED,
+        /**
+         * Ciphertext has been atomically published under its retained name.
+         */
+        CIPHERTEXT_RENAMED,
+        /**
+         * The spool directory has been forced after publication or deletion.
+         */
+        DIRECTORY_FORCED,
+        /**
+         * Expired ciphertext deletion is about to begin.
+         */
+        BEFORE_DELETE
+    }
+    /**
+     * Observes ciphertext publication without changing persistence ordering.
+     */
     /* default */ @FunctionalInterface interface Observer {
         /**
          * Observes one durability boundary.
@@ -93,10 +119,29 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         void at(Phase phase) throws IOException;
     }
 
+    /**
+     * Exclusively opens a pre-existing private ciphertext spool with a bounded borrower count.
+     *
+     * @param configuration ciphertext directory and artifact/generation budgets
+     * @param maximumLeases positive maximum concurrent delivery leases
+     * @throws IOException if private-directory or exclusive-lock prerequisites fail
+     * @throws NullPointerException if configuration is null
+     * @throws IllegalArgumentException if the lease bound is not positive
+     */
     /* default */ EnrollmentKeygenSpool(EnrollmentRuntimeConfiguration.KeygenArtifacts configuration, int maximumLeases) throws IOException {
         this(configuration, maximumLeases, phase -> { });
     }
 
+    /**
+     * Exclusively opens the ciphertext spool with deterministic persistence observation.
+     *
+     * @param configuration ciphertext directory and artifact/generation budgets
+     * @param maximumLeases positive maximum concurrent delivery leases
+     * @param observer publication/deletion durability observer
+     * @throws IOException if private-directory or exclusive-lock prerequisites fail
+     * @throws NullPointerException if configuration or observer is null
+     * @throws IllegalArgumentException if the lease bound is not positive
+     */
     /* default */ EnrollmentKeygenSpool(EnrollmentRuntimeConfiguration.KeygenArtifacts configuration, int maximumLeases, Observer observer) throws IOException {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.observer = Objects.requireNonNull(observer, "observer");
@@ -123,7 +168,16 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
-    /** Publishes one previously reserved, client-encrypted body; no replacement is permitted. */
+    /**
+     * Publishes one previously reserved client-encrypted body without replacing an existing artifact.
+     *
+     * @param id canonical artifact identity
+     * @param ciphertext complete encrypted delivery bytes; not retained in memory
+     * @param digest expected lowercase SHA-256 of the ciphertext
+     * @throws NullPointerException if ciphertext is null
+     * @throws IOException if size/digest, concurrency, ownership or durable publication checks fail
+     * @throws IllegalArgumentException if the artifact identity is noncanonical
+     */
     /* default */ void publish(String id, byte[] ciphertext, String digest) throws IOException {
         Objects.requireNonNull(ciphertext, "ciphertext");
         if (ciphertext.length < 1 || ciphertext.length > configuration.maximumArtifactBytes()
@@ -161,13 +215,31 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
-    /** Validates exact retained bytes with one fixed buffer, without opening a delivery lease. */
+    /**
+     * Verifies exact retained ciphertext length and SHA-256 using one fixed buffer without a delivery lease.
+     *
+     * @param id canonical artifact identity
+     * @param length exact expected ciphertext size, in bytes
+     * @param digest expected ciphertext SHA-256
+     * @throws IOException if the spool is unavailable, file access fails or bytes differ
+     * @throws IllegalArgumentException if the artifact identity is noncanonical
+     */
     /* default */ void verify(String id, long length, String digest) throws IOException {
         synchronized (this) { requireOpen(); } // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
         try (FileChannel input = FileChannel.open(path(id, ".cms"), StandardOpenOption.READ)) { verify(input, length, digest); }
     }
 
-    /** Opens an integrity-checked bounded borrower; close fails until every borrower is released. */
+    /**
+     * Acquires an integrity-checked ciphertext borrower under the configured lease bound.
+     *
+     * @param id canonical artifact identity
+     * @param length exact expected ciphertext size, in bytes
+     * @param digest expected ciphertext SHA-256
+     * @return caller-owned delivery lease, which must be closed
+     * @throws CapacityUnavailable if the borrower bound is exhausted or the artifact is being written
+     * @throws IOException if the spool, file or integrity check is unavailable
+     * @throws IllegalArgumentException if the artifact identity is noncanonical
+     */
     /* default */ Lease acquire(String id, long length, String digest) throws IOException {
         synchronized (this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
             requireOpen();
@@ -188,8 +260,15 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
-    /** Deletes only the files of a durably expired descriptor, preserving active delivery leases. */
     // Checks active writers and leases atomically with ciphertext deletion.
+    /**
+     * Deletes only the files of a durably expired descriptor when no active writer or lease owns them.
+     *
+     * @param id canonical identity already proven expired by the descriptor owner
+     * @return false while an active writer/lease pins the artifact; true after durable deletion
+     * @throws IOException if the spool is unavailable or deletion/directory persistence fails
+     * @throws IllegalArgumentException if the artifact identity is noncanonical
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized boolean deleteExpired(String id) throws IOException {
         requireOpen();
@@ -208,7 +287,14 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         }
     }
 
-    /** Enumerates owned names for startup descriptor validation; never guesses that an unknown file is disposable. */
+    /**
+     * Enumerates bounded owned artifact names for startup descriptor validation.
+     *
+     * <p>Unknown files are rejected rather than guessed disposable.</p>
+     *
+     * @param owner callback validating each canonical artifact identity against durable descriptors
+     * @throws IOException if entry count, file kind, name or directory access is invalid
+     */
     /* default */ void inspectFiles(Consumer<String> owner) throws IOException {
         synchronized (this) { requireOpen(); } // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
         long count = 0;
@@ -233,6 +319,15 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
     }
 
     // Serializes closing/closed state with writer and lease draining before process-lock release.
+    /**
+     * Fences new spool operations and releases the exclusive process lock after all borrowers drain.
+     *
+     * <p>This method does not wait for active writers or leases. Their owners must finish
+     * or close them and retry. A successful close is idempotent; the closing fence remains
+     * set after a failed attempt so no new work can acquire custody.</p>
+     *
+     * @throws IOException if writers or delivery leases remain active, or the process lock/channel cannot close
+     */
     @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     @Override public synchronized void close() throws IOException {
         closing = true;
@@ -247,7 +342,9 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         closed = true;
     }
 
-    /** Keeps one ciphertext artifact alive while its owned delivery stream is open. */
+    /**
+     * Keeps one ciphertext artifact alive while its owned delivery stream is open.
+     */
     /* default */ final class Lease implements AutoCloseable {
         private final String id;
         private final FileChannel channel;
@@ -257,6 +354,12 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
         private Lease(String id, FileChannel channel, long length) { this.id = id; this.channel = channel; this.length = length; }
 
         // Atomically checks the lease's released/opened state before handing off its stream.
+        /**
+         * Opens the lease's single bounded ciphertext stream.
+         *
+         * @return caller-owned stream whose close also releases this lease
+         * @throws IOException if the lease is released, already opened or the retained file cannot be read
+         */
         @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
         /* default */ synchronized InputStream openStream() throws IOException {
             if (released || opened) {
@@ -294,6 +397,9 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
             };
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException {
             synchronized (EnrollmentKeygenSpool.this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
                 synchronized (this) { // NOPMD AvoidSynchronizedStatement - Serializes this lifecycle owner’s state and lease transitions.
@@ -342,6 +448,13 @@ final class EnrollmentKeygenSpool implements AutoCloseable { // NOPMD Cyclomatic
             }
         }
     }
+    /**
+     * Hashes the exact encrypted delivery bytes without changing them.
+     *
+     * @param bytes ciphertext or descriptor bytes
+     * @return lowercase hexadecimal SHA-256
+     * @throws NullPointerException if bytes is null
+     */
     /* default */ static String hash(byte[] bytes) { return HexFormat.of().formatHex(sha256().digest(bytes)); }
     private static MessageDigest sha256() {
         try { return MessageDigest.getInstance("SHA-256"); }

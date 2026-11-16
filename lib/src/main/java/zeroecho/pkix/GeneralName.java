@@ -57,10 +57,16 @@ public sealed interface GeneralName
 
     /**
      * {@code dNSName} (tag 2).
+     *
      * @param value DNS name text
      */
     record DnsName(String value) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param value DNS name text
+         * @throws NullPointerException if {@code value} is null
+         */
         public DnsName {
             Objects.requireNonNull(value, "value");
         }
@@ -68,10 +74,16 @@ public sealed interface GeneralName
 
     /**
      * {@code iPAddress} (tag 7), as a textual IPv4/IPv6 literal.
+     *
      * @param value textual IP address literal
      */
     record IpAddress(String value) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param value textual IP address literal
+         * @throws NullPointerException if {@code value} is null
+         */
         public IpAddress {
             Objects.requireNonNull(value, "value");
         }
@@ -79,10 +91,16 @@ public sealed interface GeneralName
 
     /**
      * {@code rfc822Name} (tag 1), an e-mail address.
+     *
      * @param value mailbox address text
      */
     record Rfc822Name(String value) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param value mailbox address text
+         * @throws NullPointerException if {@code value} is null
+         */
         public Rfc822Name {
             Objects.requireNonNull(value, "value");
         }
@@ -90,10 +108,16 @@ public sealed interface GeneralName
 
     /**
      * {@code uniformResourceIdentifier} (tag 6).
+     *
      * @param value URI text
      */
     record UniformResourceIdentifier(String value) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param value URI text
+         * @throws NullPointerException if {@code value} is null
+         */
         public UniformResourceIdentifier {
             Objects.requireNonNull(value, "value");
         }
@@ -101,10 +125,16 @@ public sealed interface GeneralName
 
     /**
      * {@code directoryName} (tag 4).
+     *
      * @param value distinguished-name principal
      */
     record DirectoryName(X500Principal value) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param value distinguished-name principal
+         * @throws NullPointerException if {@code value} is null
+         */
         public DirectoryName {
             Objects.requireNonNull(value, "value");
         }
@@ -112,10 +142,16 @@ public sealed interface GeneralName
 
     /**
      * {@code registeredID} (tag 8).
+     *
      * @param oid dotted-decimal registered object identifier
      */
     record RegisteredId(String oid) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param oid dotted-decimal registered object identifier
+         * @throws NullPointerException if {@code oid} is null
+         */
         public RegisteredId {
             Objects.requireNonNull(oid, "oid");
         }
@@ -128,7 +164,13 @@ public sealed interface GeneralName
      * @param derValue exact DER of the {@code value} field
      */
     record OtherName(String typeOid, byte[] derValue) implements GeneralName {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains the supplied name components after rejecting null values.
+         *
+         * @param typeOid the {@code type-id} OID
+         * @param derValue exact DER of the {@code value} field
+         * @throws NullPointerException if any of {@code typeOid}, {@code derValue} is null
+         */
         public OtherName {
             Objects.requireNonNull(typeOid, "typeOid");
             Objects.requireNonNull(derValue, "derValue");
@@ -145,17 +187,33 @@ public sealed interface GeneralName
             return derValue.clone();
         }
 
+        /**
+         * Compares the otherName type OID and exact DER value bytes by value.
+         *
+         * @param other object to compare, or null
+         * @return true for a compatible value with equal otherName type OID and exact DER value bytes; false otherwise
+         */
         @Override
         public boolean equals(Object other) {
             return other instanceof OtherName that && typeOid.equals(that.typeOid)
                     && Arrays.equals(derValue, that.derValue);
         }
 
+        /**
+         * Hashes the otherName type OID and exact DER value bytes using the same components as equality.
+         *
+         * @return value-based hash code consistent with equals
+         */
         @Override
         public int hashCode() {
             return Objects.hash(typeOid, Arrays.hashCode(derValue));
         }
 
+        /**
+         * Returns a diagnostic representation containing the otherName type OID, omitting encoded name-value bytes.
+         *
+         * @return otherName type OID, omitting encoded name-value bytes
+         */
         @Override
         public String toString() {
             return "OtherName[typeOid=" + typeOid + ']';

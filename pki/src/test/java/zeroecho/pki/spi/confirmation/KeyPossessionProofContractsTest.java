@@ -53,6 +53,9 @@ import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
 import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
 import zeroecho.pki.api.confirmation.CredentialConfirmationChallenge;
 
+/**
+ * Contract and regression tests for key possession proof contracts.
+ */
 final class KeyPossessionProofContractsTest {
     private static final String SUITE_ID = "zeroecho.signature-pop.v1";
     private static final ConfirmationProofSuiteRef SUITE_REF = new ConfirmationProofSuiteRef(
@@ -60,6 +63,9 @@ final class KeyPossessionProofContractsTest {
     private static final ConfirmationProofSuiteBinding BINDING =
             new ConfirmationProofSuiteBinding(SUITE_REF, 8_192);
 
+    /**
+     * Descriptor requires exact portable and response bounds.
+     */
     @Test
     void descriptorRequiresExactPortableAndResponseBounds() {
         KeyPossessionProofDescriptor descriptor = new KeyPossessionProofDescriptor(BINDING,
@@ -85,6 +91,9 @@ final class KeyPossessionProofContractsTest {
                         KeyPossessionProofResponse.MAXIMUM_BYTES + 1));
     }
 
+    /**
+     * Split credential and challenge contexts own nonce and redact key.
+     */
     @Test
     void splitCredentialAndChallengeContextsOwnNonceAndRedactKey() {
         byte[] nonce = bytes(32, 7);
@@ -116,6 +125,9 @@ final class KeyPossessionProofContractsTest {
                 bytes(32, 1), Instant.ofEpochSecond(100L)).serverAudience().length());
     }
 
+    /**
+     * Split contexts reject every null and bound violation.
+     */
     @Test
     void splitContextsRejectEveryNullAndBoundViolation() {
         assertThrows(NullPointerException.class, () -> new KeyPossessionProofChallengeContext(null,
@@ -161,6 +173,9 @@ final class KeyPossessionProofContractsTest {
                 BINDING, new PkiId("credential"), null));
     }
 
+    /**
+     * Presentation and response own bounded bytes and redact them.
+     */
     @Test
     void presentationAndResponseOwnBoundedBytesAndRedactThem() {
         byte[] presentationInput = bytes(2, 3);
@@ -197,6 +212,9 @@ final class KeyPossessionProofContractsTest {
                 new byte[KeyPossessionProofResponse.MAXIMUM_BYTES + 1]));
     }
 
+    /**
+     * Trusted provider fake uses only immutable bounded contracts.
+     */
     @Test
     void trustedProviderFakeUsesOnlyImmutableBoundedContracts() {
         KeyPossessionProofProvider provider = new FakeProvider();

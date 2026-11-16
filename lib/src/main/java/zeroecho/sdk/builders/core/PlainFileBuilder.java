@@ -90,12 +90,18 @@ public interface PlainFileBuilder extends DataContentBuilder<PlainContent> {
         private DefaultPlainFileBuilder() {
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainFileBuilder url(final URL url) {
             this.urlField = Objects.requireNonNull(url);
             return this;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainContent build(final boolean encrypt) {
             return new PlainFile(urlField);

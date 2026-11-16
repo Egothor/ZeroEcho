@@ -65,7 +65,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
-/** Exclusive-writer durable append-only metadata-log writer. */
+/**
+ * Exclusive-writer durable append-only metadata-log writer.
+ */
 final class DurableMetadataLog implements AutoCloseable {
 
     private static final Logger LOGGER = Logger.getLogger(DurableMetadataLog.class.getName());
@@ -114,14 +116,44 @@ final class DurableMetadataLog implements AutoCloseable {
         this.faultInjector = faultInjector;
     }
 
+    /**
+     * Creates a fresh exclusively locked log and forces its store header and parent namespace.
+     *
+     * @param logPath exact log file path in an existing secured parent directory
+     * @param storeId exact store identity to persist in the new log header
+     * @return owned durable log retaining the sole writer lock; caller must close it
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if secure opening, locking, framing, integrity, tail repair or durability confirmation fails
+     */
     /* default */ static DurableMetadataLog create(Path logPath, MetadataStoreId storeId) throws IOException {
         return create(logPath, storeId, DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Opens an exclusively locked log, repairs its proven incomplete tail and forces a recovery restart marker.
+     *
+     * <p>Recovery abandons unfinished transactions in the new recovery epoch before accepting new work.</p>
+     *
+     * @param logPath exact log file path in an existing secured parent directory
+     * @return owned durable log retaining the sole writer lock; caller must close it
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if secure opening, locking, framing, integrity, tail repair or durability confirmation fails
+     */
     /* default */ static DurableMetadataLog open(Path logPath) throws IOException {
         return open(logPath, DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE);
     }
 
+    /**
+     * Creates a fresh exclusively locked log and forces its store header and parent namespace.
+     *
+     * @param logPath exact log file path in an existing secured parent directory
+     * @param storeId exact store identity to persist in the new log header
+     * @param capabilities filesystem capability and parent durability strategy
+     * @param faults deterministic checked persistence fault injector
+     * @return owned durable log retaining the sole writer lock; caller must close it
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if secure opening, locking, framing, integrity, tail repair or durability confirmation fails
+     */
     /* default */ static DurableMetadataLog create(
             Path logPath,
             MetadataStoreId storeId,
@@ -130,6 +162,18 @@ final class DurableMetadataLog implements AutoCloseable {
         return Lifecycle.create(logPath, storeId, capabilities, faults);
     }
 
+    /**
+     * Opens an exclusively locked log, repairs its proven incomplete tail and forces a recovery restart marker.
+     *
+     * <p>Recovery abandons unfinished transactions in the new recovery epoch before accepting new work.</p>
+     *
+     * @param logPath exact log file path in an existing secured parent directory
+     * @param capabilities filesystem capability and parent durability strategy
+     * @param faults deterministic checked persistence fault injector
+     * @return owned durable log retaining the sole writer lock; caller must close it
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if secure opening, locking, framing, integrity, tail repair or durability confirmation fails
+     */
     /* default */ static DurableMetadataLog open(
             Path logPath,
             CapabilityProfile capabilities,
@@ -137,6 +181,18 @@ final class DurableMetadataLog implements AutoCloseable {
         return Lifecycle.open(logPath, capabilities, faults);
     }
 
+    /**
+     * Replays current metadata state while opening and repairing an exclusively locked durable log.
+     *
+     * <p>Recovery abandons unfinished transactions in the new recovery epoch before accepting new work.</p>
+     *
+     * @param logPath exact log file path in an existing secured parent directory
+     * @param capabilities filesystem capability and parent durability strategy
+     * @param faults deterministic checked persistence fault injector
+     * @return owned log with reconstructed current index and retained terminal outcomes
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if secure opening, locking, framing, integrity, tail repair or durability confirmation fails
+     */
     /* default */ static EngineOpen openEngine(
             Path logPath,
             CapabilityProfile capabilities,
@@ -144,15 +200,38 @@ final class DurableMetadataLog implements AutoCloseable {
         return Lifecycle.openEngine(logPath, capabilities, faults);
     }
 
+    /**
+     * Returns the exact authoritative metadata store identity.
+     *
+     * @return exact authoritative metadata store identity
+     */
     /* default */ MetadataStoreId storeId() {
         return storeId;
     }
 
+    /**
+     * Advances the recovery epoch while classifying writable epoch exhaustion as a capacity failure.
+     *
+     * @param currentEpoch validated current nonnegative recovery epoch
+     * @return next recovery epoch
+     * @throws MetadataStoreException if no writable next recovery epoch can be represented
+     */
     /* default */ static long checkedWritableRecoveryEpoch(long currentEpoch)
             throws MetadataStoreException {
         return Lifecycle.checkedWritableRecoveryEpoch(currentEpoch);
     }
 
+    /**
+     * Predicts exact mutation payload and end offsets from the current serialized file boundary.
+     *
+     * @param payloadLengths ordered nonnegative encoded payload lengths for the intended contiguous mutation batch
+     * @return immutable predicted payload and frame-end byte coordinates
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if this log is closed
+     * @throws IllegalArgumentException if a payload length is negative
+     * @throws ArithmeticException if a predicted byte boundary overflows
+     * @throws IOException if writer authority is invalid, recovery is required or file size cannot be read
+     */
     /* default */ List<MutationLocation> predictMutationLocations(List<Long> payloadLengths)
             throws IOException {
         operationLock.lock();
@@ -178,6 +257,15 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Decodes a bounded mutation descriptor while retaining this log's exact open writer authority.
+     *
+     * @param frame already validated metadata frame locator within this log
+     * @return decoded semantic key, expected revision and borrowed physical value locator
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if this log is closed
+     * @throws IOException if writer authority or mutation framing is invalid or the payload cannot be read
+     */
     /* default */ MetadataMutationPayloadCodec.Descriptor decodeMutation(
             MetadataFrameCodec.FrameMetadata frame) throws IOException {
         operationLock.lock();
@@ -189,6 +277,13 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Appends and forces a fresh transaction identity before exposing it to callers.
+     *
+     * @return new exact store-bound active transaction identity
+     * @throws IllegalStateException if the log is closed or transaction token space is exhausted
+     * @throws IOException if writer authority, issuance append or force fails; append failure fences further writes
+     */
     /* default */ MetadataTransactionId issue() throws IOException {
         operationLock.lock();
         try {
@@ -214,6 +309,20 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Appends one opaque mutation to the transaction's contiguous authenticated frame batch.
+     *
+     * @param transactionId active transaction issued by this exact store
+     * @param type CREATE, REPLACE or DELETE structural mutation frame kind
+     * @param payloadLength exact nonnegative encoded payload length in bytes
+     * @param payload borrowed repeatable mutation content read during the append
+     * @param cancellation cooperative cancellation signal checked during payload transfer
+     * @return exact written frame location; durability is established by its terminal record
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if this log is closed
+     * @throws IllegalArgumentException if the transaction is foreign or inactive, frame kind is invalid or another transaction owns the active batch
+     * @throws IOException if writer authority, payload framing, cancellation or append fails; append failure requires recovery
+     */
     /* default */ MetadataFrameCodec.FrameMetadata appendMutation(
             MetadataTransactionId transactionId,
             MetadataFrameCodec.FrameType type,
@@ -246,6 +355,17 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Appends and forces the transaction's committed terminal record with its exact chain commitment.
+     *
+     * @param transactionId active store-bound transaction owning its contiguous mutation batch
+     * @param revision nonnegative committed metadata revision assigned by the caller
+     * @return retained committed terminal result after the durability barrier
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if this log is closed
+     * @throws IllegalArgumentException if identity, active batch ownership or revision is invalid
+     * @throws IOException if writer authority or terminal append durability fails
+     */
     /* default */ DurableMetadataLogScanner.Terminal commit(
             MetadataTransactionId transactionId, long revision) throws IOException {
         operationLock.lock();
@@ -265,6 +385,17 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Appends and forces a noncommitted terminal result for an issued transaction without mutations.
+     *
+     * @param transactionId active store-bound transaction with no mutation frames
+     * @param failureCode positive stable terminal failure code
+     * @return retained noncommitted terminal result after the durability barrier
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if this log is closed
+     * @throws IllegalArgumentException if identity, active mutation state or failure code is invalid
+     * @throws IOException if writer authority or terminal append durability fails
+     */
     /* default */ DurableMetadataLogScanner.Terminal reject(
             MetadataTransactionId transactionId, int failureCode) throws IOException {
         operationLock.lock();
@@ -287,6 +418,13 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Counts issued transactions that do not yet have a retained terminal outcome.
+     *
+     * @return current active transaction count under the log operation lock
+     * @throws IllegalStateException if this log is closed
+     * @throws IOException if the retained writer lock is no longer valid
+     */
     /* default */ int activeTransactionCount() throws IOException {
         operationLock.lock();
         try {
@@ -297,6 +435,13 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Validates and scans the complete log while holding exact open writer authority.
+     *
+     * @return immutable recovery facts including complete-prefix and incomplete-tail classification
+     * @throws IllegalStateException if this log is closed
+     * @throws IOException if writer authority, structural framing or semantic integrity fails
+     */
     /* default */ DurableMetadataLogScanner.RecoveryResult scan() throws IOException {
         operationLock.lock();
         try {
@@ -442,6 +587,9 @@ final class DurableMetadataLog implements AutoCloseable {
         faultInjector.fail(point);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         operationLock.lock();
@@ -481,7 +629,9 @@ final class DurableMetadataLog implements AutoCloseable {
         return first;
     }
 
-    /** Isolates create/reopen branching from the retained writer authority. */
+    /**
+     * Isolates create/reopen branching from the retained writer authority.
+     */
     private static final class Lifecycle {
         private static DurableMetadataLog create(
                 Path logPath,
@@ -649,7 +799,9 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** O(1) repair of one scanner-authenticated incomplete final tail. */
+    /**
+     * O(1) repair of one scanner-authenticated incomplete final tail.
+     */
     private static final class TailRepair {
         private static DurableMetadataLogScanner.RecoveryResult repair(
                 FileChannel channel,
@@ -706,14 +858,18 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** Live lifecycle of one retained metadata-log writer authority. */
+    /**
+     * Live lifecycle of one retained metadata-log writer authority.
+     */
     private enum State {
         OPEN,
         RECOVERY_REQUIRED,
         CLOSED
     }
 
-    /** O(1) live control state for one transaction. */
+    /**
+     * O(1) live control state for one transaction.
+     */
     private static final class ActiveTransaction {
         private byte[] chainState;
         private long nextSequence = FIRST_TRANSACTION_SEQUENCE;
@@ -723,7 +879,9 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** Caller-visible uncertainty requiring strict scanner classification. */
+    /**
+     * Caller-visible uncertainty requiring strict scanner classification.
+     */
     /* default */ static final class OutcomeUnknownException extends IOException {
         private static final long serialVersionUID = -4335785072683425908L;
 
@@ -732,38 +890,93 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** Deterministic package-private fault boundaries. */
+    /**
+     * Deterministic package-private fault boundaries.
+     */
     /* default */ enum FaultPoint {
+        /**
+         * Fault injection point for appending a transaction issuance record.
+         */
         ISSUANCE_APPEND,
+        /**
+         * Fault injection point for appending a mutation record.
+         */
         MUTATION_APPEND,
+        /**
+         * Fault injection point for appending a transaction terminal record.
+         */
         TERMINAL_APPEND,
+        /**
+         * Fault injection point for forcing file data and metadata.
+         */
         FILE_FORCE,
+        /**
+         * Fault injection point for the uncertainty boundary after the file force.
+         */
         POST_FORCE_UNCERTAINTY,
+        /**
+         * Fault injection point for truncating an incomplete uncommitted tail.
+         */
         TAIL_TRUNCATE,
+        /**
+         * Fault injection point for forcing the repaired tail.
+         */
         TAIL_FORCE,
+        /**
+         * Fault injection point for verifying a repaired tail.
+         */
         TAIL_VERIFY,
+        /**
+         * Fault injection point for appending the recovery restart marker.
+         */
         RECOVERY_RESTART_APPEND
     }
 
-    /** Package-private deterministic fault injector; it is not a production extension point. */
+    /**
+     * Package-private deterministic fault injector; it is not a production extension point.
+     */
     /* default */
     @FunctionalInterface
     interface FaultInjector {
+        /**
+         * No-op injector that never introduces a synthetic failure.
+         */
         FaultInjector NONE = point -> { };
 
-        /** Fails one selected append or durability boundary. */
+        /**
+         * Fails one selected append or durability boundary.
+         * @param point exact deterministic failure boundary being observed
+         * @throws IOException to inject a deterministic failure at the selected persistence boundary
+         */
         void fail(FaultPoint point) throws IOException;
     }
 
-    /** Predicted immutable frame location used before one serialized append batch. */
+    /**
+     * Predicted immutable frame location used before one serialized append batch.
+     * @param payloadOffset zero-based byte offset of the frame payload
+     * @param frameEndOffset exclusive byte offset immediately after the frame
+     */
     /* default */ record MutationLocation(long payloadOffset, long frameEndOffset) {
     }
 
-    /** One-scan engine opening result retaining the reconstructed current state. */
+    /**
+     * One-scan engine opening result retaining the reconstructed current state.
+     * @param log opened durable metadata log; resource ownership transfers with the opening result
+     * @param stateIndex reconstructed current-state index
+     * @param outcomes retained terminal outcomes keyed by exact transaction identity
+     */
     /* default */ record EngineOpen(
             DurableMetadataLog log,
             MetadataStateIndex stateIndex,
             Map<MetadataTransactionId, DurableMetadataLogScanner.Terminal> outcomes) {
+        /**
+         * Creates the one-scan engine opening result retaining the reconstructed current state.
+         *
+         * @param log opened durable metadata log; resource ownership transfers with the opening result
+         * @param stateIndex reconstructed current-state index
+         * @param outcomes retained terminal outcomes keyed by exact transaction identity
+         * @throws NullPointerException if {@code log} is null; or if {@code stateIndex} is null
+         */
         EngineOpen {
             Objects.requireNonNull(log, "log");
             Objects.requireNonNull(stateIndex, "stateIndex");
@@ -771,13 +984,25 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** Package-private capability seam used to verify fail-closed initialization behavior. */
+    /**
+     * Package-private capability seam used to verify fail-closed initialization behavior.
+     */
     /* default */
     interface CapabilityProfile {
-        /** Reports whether owner-only POSIX creation attributes are supported. */
+        /**
+         * Reports whether owner-only POSIX creation attributes are supported.
+         * @param parent existing parent directory whose filesystem capabilities are inspected
+         * @return true when POSIX attribute support is available for the directory
+         * @throws IOException if filesystem capabilities cannot be inspected
+         */
         boolean posixAvailable(Path parent) throws IOException;
 
-        /** Reports whether the filesystem is recognized as local. */
+        /**
+         * Reports whether the filesystem is recognized as local.
+         * @param parent existing parent directory whose filesystem capabilities are inspected
+         * @return true when the directory resides on an accepted local filesystem
+         * @throws IOException if filesystem capabilities cannot be inspected
+         */
         boolean localFileSystem(Path parent) throws IOException;
 
         /**
@@ -796,28 +1021,41 @@ final class DurableMetadataLog implements AutoCloseable {
         void forceParent(Path parent) throws IOException;
     }
 
-    /** Default capability observations for the active Java filesystem provider. */
+    /**
+     * Default capability observations for the active Java filesystem provider.
+     */
     private enum DefaultCapabilityProfile implements CapabilityProfile {
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean posixAvailable(Path parent) throws IOException {
             return Files.getFileStore(parent).supportsFileAttributeView("posix");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean localFileSystem(Path parent) throws IOException {
             String type = Files.getFileStore(parent).type().toLowerCase(Locale.ROOT);
             return LOCAL_FILE_SYSTEMS.contains(type);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void forceParent(Path parent) throws IOException {
             PlatformFs.forceDirectory(parent);
         }
     }
 
-    /** Secure descriptor-relative opening for the trusted store directory profile. */
+    /**
+     * Secure descriptor-relative opening for the trusted store directory profile.
+     */
     private static final class SecureFiles {
 
         private static Path requireParent(Path logPath) throws IOException {
@@ -877,7 +1115,9 @@ final class DurableMetadataLog implements AutoCloseable {
         }
     }
 
-    /** Owns initialization anchors and transfers only the retained log authority. */
+    /**
+     * Owns initialization anchors and transfers only the retained log authority.
+     */
     private static final class Resources {
         private FileChannel channel;
         private FileLock writerLock;

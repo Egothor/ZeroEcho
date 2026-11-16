@@ -45,12 +45,24 @@ import tools.jackson.core.json.JsonFactoryBuilder;
 import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.server.acme.AcmeJwsVerifier;
 
-/** Narrow large-scalar ACME endpoint payload decoder. */
+/**
+ * Narrow large-scalar ACME endpoint payload decoder.
+ */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity",
         "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException" })
 /* default */ final class AcmePayloads {
     private AcmePayloads() { }
 
+    /**
+     * Decodes a JSON object containing exactly one canonical unpadded base64url scalar.
+     *
+     * @param document complete JSON entity bytes
+     * @param requiredField exact permitted property name
+     * @param maximumDocumentBytes maximum JSON entity and decoded scalar size, in bytes
+     * @return newly allocated decoded scalar bytes
+     * @throws AcmeJwsVerifier.AcmeProblem if the document is absent, oversized, malformed,
+     *         contains additional fields or does not use canonical unpadded base64url
+     */
     /* default */ static byte[] requiredBase64Url(byte[] document, String requiredField,
             int maximumDocumentBytes) {
         if (document == null || document.length == 0 || document.length > maximumDocumentBytes) {
@@ -87,6 +99,14 @@ import zeroecho.pki.server.acme.AcmeJwsVerifier;
         }
     }
 
+    /**
+     * Decodes the bounded ACME revocation payload without applying revocation authorization.
+     *
+     * @param document complete JSON entity with certificate and optional integer reason
+     * @param maximumDocumentBytes maximum JSON entity and certificate size, in bytes
+     * @return certificate DER and supplied reason code, defaulting to zero
+     * @throws AcmeJwsVerifier.AcmeProblem if the object shape or certificate encoding is invalid
+     */
     /* default */ static RevocationPayload revocation(byte[] document, int maximumDocumentBytes) {
         if (document == null || document.length == 0 || document.length > maximumDocumentBytes) throw malformed();
         StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(1)
@@ -122,8 +142,26 @@ import zeroecho.pki.server.acme.AcmeJwsVerifier;
         }
     }
 
+    /**
+     * Decoded ACME revocation inputs before domain validation and authorization.
+     *
+     * @param certificateDer decoded certificate bytes; defensively copied
+     * @param reasonCode requested reason code; not range-validated by this carrier
+     */
     /* default */ record RevocationPayload(byte[] certificateDer, int reasonCode) {
+        /**
+         * Snapshots certificate bytes without parsing or authorizing revocation.
+         *
+         * @param certificateDer decoded certificate bytes; copied
+         * @param reasonCode requested revocation reason code
+         * @throws NullPointerException if certificate bytes are null
+         */
         RevocationPayload { certificateDer = certificateDer.clone(); }
+        /**
+         * Copies the certificate bytes supplied in the ACME revocation payload.
+         *
+         * @return caller-owned certificate DER bytes
+         */
         @Override public byte[] certificateDer() { return certificateDer.clone(); }
     }
 

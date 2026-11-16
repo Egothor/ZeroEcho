@@ -33,10 +33,19 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
-/** Strict single decoding for finite ASCII public/admin object identifiers. */
+/**
+ * Strict single decoding for finite ASCII public/admin object identifiers.
+ */
 final class HttpPathIdentifier {
     private HttpPathIdentifier() { }
-    /** Decodes only a single safe identifier; separators, traversal and double encoding remain invalid. */
+    /**
+     * Decodes exactly one bounded ASCII object identifier without permitting separators or double encoding.
+     *
+     * @param raw raw route segment of at most 768 characters
+     * @return decoded identifier of at most 256 safe ASCII characters
+     * @throws IllegalArgumentException if the input is null, empty, oversized or contains
+     *         malformed escapes, separators, traversal syntax or unsupported characters
+     */
     static String decode(String raw) {
         if(raw==null||raw.isEmpty()||raw.length()>768)throw new IllegalArgumentException("Invalid object identifier");
         var decoded=new StringBuilder();

@@ -46,9 +46,15 @@ import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
+/**
+ * Contract and regression tests for full CRL snapshot provenance.
+ */
 final class FullCrlSnapshotProvenanceTest {
     private static final MetadataStoreId SOURCE = new MetadataStoreId("102030405060708090a0b0c0d0e0f001");
 
+    /**
+     * Round trips canonical typed scalars including genesis and maximum revision.
+     */
     @Test void roundTripsCanonicalTypedScalarsIncludingGenesisAndMaximumRevision() {
         for (long revision : new long[] {0, 1, Long.MAX_VALUE}) {
             FullCrlSnapshotProvenance value = new FullCrlSnapshotProvenance(SOURCE, revision, Long.MAX_VALUE,
@@ -62,6 +68,9 @@ final class FullCrlSnapshotProvenanceTest {
         }
     }
 
+    /**
+     * Rejects missing duplicate mistyped negative and noncanonical coordinates.
+     */
     @Test void rejectsMissingDuplicateMistypedNegativeAndNoncanonicalCoordinates() {
         AttributeSet valid = new FullCrlSnapshotProvenance(SOURCE, 0, 32, "a".repeat(64)).attributes();
         for (AttributeId id : valid.ids()) {

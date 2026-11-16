@@ -49,6 +49,11 @@ import org.junit.jupiter.api.Test;
  */
 class IncrementingAdapter extends OutputToInputStreamAdapter {
 
+    /**
+     * Creates the fixture adapter over a borrowed input stream.
+     *
+     * @param previousInput upstream input consumed by the adapter
+     */
     public IncrementingAdapter(InputStream previousInput) {
         super(previousInput);
     }
@@ -66,6 +71,9 @@ class IncrementingAdapter extends OutputToInputStreamAdapter {
     }
 }
 
+/**
+ * Contract and regression tests for output to input stream adapter.
+ */
 @Deprecated
 public class OutputToInputStreamAdapterTest {
 
@@ -85,6 +93,11 @@ public class OutputToInputStreamAdapterTest {
         return new ByteArrayInputStream(baos.toByteArray());
     }
 
+    /**
+     * Checks incremental transformed reads across the output-to-input adapter.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Deprecated
     @Test
     public void testIncrementingAdapter() throws IOException {

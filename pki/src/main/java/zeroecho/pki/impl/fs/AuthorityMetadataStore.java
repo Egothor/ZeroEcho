@@ -70,49 +70,138 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
     private static final Logger LOG = Logger.getLogger(AuthorityMetadataStore.class.getName());
     private static final int MAX_BYTES = AuthorityMetadataCodec.MAX_VALUE_BYTES;
     // Ordinary transactions also publish an outcome and a watermark index row.
+    /**
+     * Maximum mutations fitting both transaction payload and WAL batch limits.
+     */
     /* default */ static final int MAX_BATCH_MUTATIONS = Math.min(SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS,
             SigningWalFrameCodec.MAX_BATCH_FRAMES - 2);
     private final TransactionalMetadataStore metadata;
     private final Consumer<MetadataCommitResult> outcome;
     private final Optional<LineageAuthority> lineageAuthority;
 
+    /**
+     * Resolves exact hybrid signer-tuple authority against one stable metadata snapshot.
+     */
     @FunctionalInterface
     interface LineageAuthority {
+        /**
+         * Resolves exact hybrid signer-tuple evidence against stable authoritative metadata.
+         *
+         * @param snapshot borrowed stable metadata snapshot; this method does not close it
+         * @param generation exact issuer generation being qualified
+         * @param binding validated immutable binding for that generation
+         * @return canonical hybrid signer-tuple commitment
+         * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+         */
         String tuple(MetadataSnapshot snapshot, IssuerGeneration generation,
                 zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException;
     }
 
+    /**
+     * Binds authority metadata operations to the caller-owned transaction store and outcome observer.
+     *
+     * <p>Collaborators are retained without local validation or lifecycle transfer.</p>
+     *
+     * @param metadata borrowed transactional authority store
+     * @param outcome callback observing transaction outcomes without granting commit authority
+     */
     /* default */ AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome) {
         this(metadata, outcome, Optional.empty());
     }
 
+    /**
+     * Binds authority metadata operations to the caller-owned transaction store and outcome observer.
+     *
+     * <p>Collaborators are retained without local validation or lifecycle transfer.</p>
+     *
+     * @param metadata borrowed transactional authority store
+     * @param outcome callback observing transaction outcomes without granting commit authority
+     * @param lineageAuthority optional exact public hybrid-lineage qualification callback
+     */
     AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome, Optional<LineageAuthority> lineageAuthority) {
         this.metadata = metadata;
         this.outcome = outcome;
         this.lineageAuthority = lineageAuthority;
     }
 
+    /**
+     * Reads and decodes one authority metadata value using a newly opened snapshot.
+     *
+     * @param <T> decoded immutable metadata value type
+     * @param key exact authority metadata identity
+     * @param decoder bounded key-aware decoder; must return a non-null value
+     * @return matching decoded value, or an empty optional if absent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws NullPointerException if a required input is null
+     * @throws RuntimeException if the supplied decoder rejects a stored row
+     */
     /* default */ <T> Optional<T> find(MetadataKey key, BiFunction<MetadataKey, byte[], T> decoder) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) { return find(snapshot, key, decoder); }
     }
 
+    /**
+     * Reads and decodes one authority metadata value from the supplied stable snapshot.
+     *
+     * @param <T> decoded immutable metadata value type
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param key exact authority metadata identity
+     * @param decoder bounded key-aware decoder; must return a non-null value
+     * @return matching decoded value, or an empty optional if absent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws NullPointerException if a required input is null
+     * @throws RuntimeException if the supplied decoder rejects a stored row
+     */
     /* default */ static <T> Optional<T> find(MetadataSnapshot snapshot, MetadataKey key, BiFunction<MetadataKey, byte[], T> decoder) throws IOException {
         try (MetadataSnapshot.Record record = snapshot.get(key).orElse(null)) {
             return record == null ? Optional.empty() : Optional.of(decoder.apply(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
         }
     }
 
+    /**
+     * Collects a complete authority namespace using a newly opened snapshot.
+     *
+     * @param <T> decoded immutable metadata value type
+     * @param namespace exact metadata namespace to scan
+     * @param decoder bounded key-aware decoder for each stored row
+     * @return immutable decoded values in metadata traversal order
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws NullPointerException if a required input is null
+     * @throws RuntimeException if the supplied decoder rejects a stored row
+     */
     /* default */ <T> List<T> list(String namespace, BiFunction<MetadataKey, byte[], T> decoder) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) { return list(snapshot, namespace, decoder); }
     }
 
+    /**
+     * Collects a complete authority namespace from the supplied stable snapshot.
+     *
+     * @param <T> decoded immutable metadata value type
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param namespace exact metadata namespace to scan
+     * @param decoder bounded key-aware decoder for each stored row
+     * @return immutable decoded values in metadata traversal order
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws NullPointerException if a required input is null
+     * @throws RuntimeException if the supplied decoder rejects a stored row
+     */
     /* default */ static <T> List<T> list(MetadataSnapshot snapshot, String namespace, BiFunction<MetadataKey, byte[], T> decoder) throws IOException {
         List<T> values = new ArrayList<>();
         visit(snapshot, namespace, decoder, values::add);
         return List.copyOf(values);
     }
 
-    /** Visits one detached decoded payload at a time; retention belongs to the visitor. */
+    /**
+     * Visits one detached decoded payload at a time; retention belongs to the visitor.
+     *
+     * @param <T> decoded immutable metadata type
+     * @param snapshot borrowed stable metadata snapshot; remains caller-owned
+     * @param namespace exact authority metadata namespace to traverse
+     * @param decoder key-aware bounded decoder producing each detached value
+     * @param visitor checked consumer deciding whether to retain each decoded value
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IOException if metadata reading or the checked visitor fails
+     * @throws RuntimeException if the decoder rejects a stored value
+     */
     /* default */ static <T> void visit(MetadataSnapshot snapshot, String namespace, BiFunction<MetadataKey, byte[], T> decoder,
             Visitor<T> visitor) throws IOException {
         try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(namespace), CancellationSignal.NONE)) {
@@ -125,14 +214,32 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
-    /** Checked visitor over decoded authority metadata. */
+    /**
+     * Checked visitor over decoded authority metadata.
+     *
+     * @param <T> decoded immutable authority metadata type
+     */
     /* default */
     @FunctionalInterface
     interface Visitor<T> {
-        /** Consumes one decoded value, propagating storage failures. */
+        /**
+         * Consumes one decoded value, propagating storage failures.
+         *
+         * @param value detached decoded authority metadata value
+         * @throws IOException if checked processing of the value fails
+         */
         void accept(T value) throws IOException;
     }
 
+    /**
+     * Creates one bounded authority row in a dedicated transaction and requires a definite commit.
+     *
+     * @param key previously absent exact authority metadata identity
+     * @param payload bounded complete encoded metadata value
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if staging or commit fails or its durable outcome is unknown
+     * @throws IllegalStateException if the transaction is definitely not committed
+     */
     /* default */ void create(MetadataKey key, byte[] payload) throws IOException {
         try (MetadataTransaction transaction = metadata.beginTransaction()) {
             create(transaction, key, payload);
@@ -140,6 +247,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Atomically creates issuer generation metadata together with its exact context-bound public binding.
+     *
+     * @param generation new immutable issuer generation
+     * @param binding validated public binding whose generation coordinates must match
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if coordinate validation, encoding or atomic persistence fails
+     * @throws IllegalStateException if the transaction is definitely not committed
+     */
     /* default */ void createGeneration(IssuerGeneration generation,
             zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
         requireBinding(generation, binding);
@@ -151,6 +267,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Reads an exact issuer binding and validates it against its retained issuer generation.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param issuerId exact immutable issuer generation identity
+     * @return validated public binding, or an empty optional if absent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     /* default */ static Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> findBinding(MetadataSnapshot snapshot, PkiId issuerId) throws IOException {
         try (var record = snapshot.get(AuthorityMetadataCodec.bindingKey(issuerId)).orElse(null)) {
             return record == null ? Optional.empty() : Optional.of(decodeBinding(snapshot, record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
@@ -185,6 +309,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Persists a CA head, immutable membership and optional history in one transaction.
+     *
+     * @param ca complete validated authority state to persist
+     * @param policy history retention and optional bounded on-write cleanup policy
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if transactional storage fails or the outcome is unknown
+     * @throws IllegalStateException if authority validation fails or persistence is definitely rejected
+     */
     /* default */ void putCa(CaRecord ca, FsHistoryPolicy policy) throws IOException {
         // Each definite retry, if requested by the caller, gets a fresh issued
         // transaction and wall-clock sample. An UNKNOWN attempt is never replayed here.
@@ -204,7 +337,17 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
-    /** Compares and stages against one snapshot; only definite conflicts are a false result. */
+    /**
+     * Compares and stages against one snapshot; only definite conflicts are a false result.
+     *
+     * @param expected exact current CA record required before replacement
+     * @param replacement coherent replacement authority state and immutable membership
+     * @param policy history retention and optional bounded cleanup policy
+     * @return true after a definite commit; false when the expected record differs or persistence reports a definite conflict
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if storage access fails or the transaction outcome is unknown
+     * @throws IllegalStateException if pre-commit authority validation fails or persistence rejects for a nonconflict reason
+     */
     /* default */ boolean replaceCa(CaRecord expected, CaRecord replacement, FsHistoryPolicy policy) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             Optional<CaRecord> current;
@@ -236,7 +379,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         return true;
     }
 
-    /** Only for a fresh, unexposed snapshot target; head publication is last. */
+    /**
+     * Only for a fresh, unexposed snapshot target; head publication is last.
+     *
+     * @param ca complete authoritative CA snapshot whose generations and bindings were already restored
+     * @param policy whether matching immutable history rows are created
+     * @throws NullPointerException if a required argument is null
+     * @throws IOException if authority coordinates differ, base or head already exists, or a staged batch cannot be committed
+     * @throws IllegalStateException if a restore transaction is definitely rejected
+     */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
                   @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
                   void restoreCa(CaRecord ca, FsHistoryPolicy policy) throws IOException {
@@ -275,7 +426,9 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
-    /** At most 30 caller mutations and 2 MiB including exact transaction framing. */
+    /**
+     * At most 30 caller mutations and 2 MiB including exact transaction framing.
+     */
     private final class RestoreBatch implements AutoCloseable {
         private MetadataTransaction transaction;
         private int mutations;
@@ -310,14 +463,40 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() throws IOException { if (transaction != null) { transaction.close(); } }
     }
 
+    /**
+     * Stages coherent CA selection and optional history against one stable original state.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param transaction borrowed transaction receiving staged mutations; the caller commits or aborts it
+     * @param ca replacement authority metadata with exact immutable membership
+     * @param history whether paired authority and lifecycle-head history rows are staged
+     * @param timestamp authoritative history timestamp
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if authority bindings, membership, expected head or staged storage are inconsistent
+     */
     /* default */ static void stageCa(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
             boolean history, Instant timestamp) throws IOException {
         stageCa(snapshot, transaction, ca, history, timestamp, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
+    /**
+     * Stages coherent CA selection and optional history against one stable original state.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param transaction borrowed transaction receiving staged mutations; the caller commits or aborts it
+     * @param ca replacement authority metadata with exact immutable membership
+     * @param history whether paired authority and lifecycle-head history rows are staged
+     * @param timestamp authoritative history timestamp
+     * @param expected exact original lifecycle head required before staging its replacement
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if authority bindings, membership, expected head or staged storage are inconsistent
+     */
     /* default */ static void stageCaFenced(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
             boolean history, Instant timestamp, zeroecho.pki.api.ca.CaHeadSnapshot expected) throws IOException {
         stageCa(snapshot, transaction, ca, history, timestamp, Optional.of(expected), Optional.empty(), Optional.empty());
@@ -372,6 +551,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Stages both ordered and direct lookup rows for one previously absent issuer membership.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param transaction borrowed transaction receiving staged mutations; the caller commits or aborts it
+     * @param member exact authority, issuer generation and ordinal membership coordinates
+     * @throws NullPointerException if a required input is null
+     * @throws IOException if either membership key already exists or staging fails
+     */
     /* default */ static void stageMembership(MetadataSnapshot snapshot, MetadataTransaction transaction,
             AuthorityMetadataCodec.Membership member) throws IOException {
         MetadataKey orderKey = AuthorityMetadataCodec.orderKey(member.caId(), member.ordinal());
@@ -383,6 +571,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         create(transaction, memberKey, payload);
     }
 
+    /**
+     * Reconstructs current CA metadata and verifies its exact lifecycle-head authority.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param id exact logical CA identity
+     * @return validated current CA record, or an empty optional if no head exists
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     /* default */ static Optional<CaRecord> ca(MetadataSnapshot snapshot, PkiId id) throws IOException {
         Optional<AuthorityMetadataCodec.Head> head = find(snapshot, AuthorityMetadataCodec.caKey(id), AuthorityMetadataCodec::head);
         if (head.isEmpty()) { return Optional.empty(); }
@@ -392,6 +588,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         return Optional.of(value);
     }
 
+    /**
+     * Reconstructs a CA record from its immutable base, ordered membership and exact selected generation.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param head validated current or historical authority head
+     * @return complete CA record whose membership and selected path match retained authority
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     /* default */ static CaRecord reconstruct(MetadataSnapshot snapshot, AuthorityMetadataCodec.Head head) throws IOException {
         AuthorityMetadataCodec.Base base = find(snapshot, AuthorityMetadataCodec.baseKey(head.caId()), AuthorityMetadataCodec::base)
                 .orElseThrow(AuthorityMetadataStore::invalid);
@@ -408,6 +612,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                 members, head.generationId(), head.pathId());
     }
 
+    /**
+     * Loads validated issuer generations in the authority's exact retained membership order.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param authority exact logical CA identity
+     * @return immutable ordered generations, or an empty list when no authority head exists
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     /* default */ static List<IssuerGeneration> generations(MetadataSnapshot snapshot, PkiId authority) throws IOException {
         Optional<AuthorityMetadataCodec.Head> current = find(snapshot, AuthorityMetadataCodec.caKey(authority), AuthorityMetadataCodec::head);
         if (current.isEmpty()) { return List.of(); }
@@ -452,6 +664,13 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         return generation;
     }
 
+    /**
+     * Validates all current and historical CA selections, bindings, memberships and root transition receipts.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IllegalStateException if a historical lifecycle head cannot be decoded
+     */
     /* default */ static void validateAll(MetadataSnapshot snapshot) throws IOException {
         visit(snapshot, AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec::generation,
                 generation -> requireGeneration(snapshot, generation.authorityId(), generation.issuerId()));
@@ -532,6 +751,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Requires the exact lifecycle head matching the CA's selected generation, path and binding.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param ca reconstructed authority whose current selection is being checked
+     * @return validated exact lifecycle head including root activation evidence where applicable
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     /* default */ static zeroecho.pki.api.ca.CaHeadSnapshot requireHead(MetadataSnapshot snapshot, CaRecord ca) throws IOException {
         var value = CaLifecycleMetadataCodec.head(snapshot, ca.caId()).orElseThrow(() -> new IOException("Required CA head epoch is missing"));
         var binding = findBinding(snapshot, ca.currentIssuanceIssuerId()).orElseThrow(AuthorityMetadataStore::invalid);
@@ -562,6 +789,14 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Looks up retained hybrid CRL signer lineage for one exact issuer generation.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param issuer exact issuer generation identity
+     * @return decoded lineage evidence, or an empty optional if absent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     */
     static Optional<CrlSignerLineage> lineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
         return find(snapshot, CrlSignerLineageCodec.key(issuer), CrlSignerLineageCodec::decode);
     }
@@ -590,6 +825,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Requires hybrid lineage consistent with exact current and predecessor public signer bindings.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param issuer exact hybrid issuer generation identity
+     * @return validated retained lineage evidence
+     * @throws IOException if required lineage or binding evidence is absent or inconsistent
+     * @throws IllegalArgumentException if the issuer is native-only and has no qualified hybrid lineage
+     */
     static CrlSignerLineage requireLineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
         var binding = findBinding(snapshot, issuer).orElseThrow(AuthorityMetadataStore::invalid);
         if (binding.alternative().isEmpty()) throw new IllegalArgumentException("Native-only issuer has no qualified hybrid CRL lineage");
@@ -620,6 +864,18 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                 && java.util.Arrays.equals(left.signatureAlgorithmIdentifier().bytes(), right.signatureAlgorithmIdentifier().bytes());
     }
 
+    /**
+     * Atomically replaces a matching authority lifecycle head while retaining coherent membership and history.
+     *
+     * @param expected exact original lifecycle head expected by the caller
+     * @param replacement new CA selection preserving the authority identity and lifecycle state
+     * @param history history policy applied while staging the replacement
+     * @return true on a definite commit; false when the expected head or current lifecycle state changed
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the replacement selects a different authority
+     * @throws IOException if validation or storage fails or the transaction outcome is unknown
+     * @throws IllegalStateException if persistence is definitely rejected for a nonconflict reason
+     */
     /* default */ boolean compareAndSetHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement, FsHistoryPolicy history) throws IOException {
         try (var snapshot = metadata.snapshot()) {
             if (!CaLifecycleMetadataCodec.head(snapshot, expected.caId()).filter(expected::equals).isPresent()) { return false; }
@@ -641,6 +897,17 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Atomically registers immutable root transition evidence and candidate membership without activating it.
+     *
+     * @param transition exact approved candidate transition bound to the original lifecycle head
+     * @param history history policy applied to the membership update
+     * @return retained identical transition after successful registration or idempotent reuse
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if an existing or concurrent candidate differs or expected authority state changed
+     * @throws IOException if retained authority evidence is inconsistent or persistence fails
+     * @throws IllegalStateException if persistence is definitely rejected
+     */
     /* default */ zeroecho.pki.api.ca.RootTrustAnchorTransition registerCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition,
             FsHistoryPolicy history) throws IOException {
         try (var snapshot = metadata.snapshot()) {
@@ -675,6 +942,19 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Atomically selects a registered root candidate and persists its immutable activation receipt.
+     *
+     * @param transitionId exact registered root transition identity
+     * @param expected exact original lifecycle head approved for activation
+     * @param activation immutable receipt binding the approved transition, candidate and new epoch
+     * @param history history policy applied to the selection update
+     * @return retained identical activation receipt after a definite commit or idempotent reuse
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if expected state, approved receipt or a concurrent activation differs
+     * @throws IOException if retained authority evidence is inconsistent or persistence fails
+     * @throws IllegalStateException if persistence is definitely rejected
+     */
     /* default */ zeroecho.pki.api.ca.RootTrustAnchorActivation activateCandidate(PkiId transitionId,
             zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation, FsHistoryPolicy history) throws IOException {
         try (var snapshot = metadata.snapshot()) {
@@ -729,6 +1009,17 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                 || !path.orderedCredentialIds().getFirst().equals(candidate.credentialId())) { throw invalid(); }
     }
 
+    /**
+     * Reconstructs the latest retained CA history at or before a requested snapshot time.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param id exact logical CA identity
+     * @param at inclusive upper history timestamp
+     * @param policy whether authority history is enabled
+     * @param strict whether enabled history must contain an entry at or before the requested time
+     * @return historical authority if found, otherwise current authority when fallback is permitted
+     * @throws IOException if history is required but unavailable, metadata is inconsistent or storage fails
+     */
     /* default */ static Optional<CaRecord> caAt(MetadataSnapshot snapshot, PkiId id, Instant at, FsHistoryPolicy policy,
             boolean strict) throws IOException {
         AuthorityMetadataCodec.HistoryEntry latest = null;
@@ -753,6 +1044,17 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         return ca(snapshot, id);
     }
 
+    /**
+     * Loads the exact historical lifecycle head matching an already selected CA snapshot.
+     *
+     * @param snapshot borrowed stable metadata snapshot; this method does not close it
+     * @param selected reconstructed CA selection whose epoch authority is requested
+     * @param at inclusive upper history timestamp
+     * @param policy whether authority history is enabled
+     * @return historical matching epoch, or the validated current head when no historical entry is selected
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IllegalStateException if a historical lifecycle head cannot be decoded
+     */
     /* default */ static zeroecho.pki.api.ca.CaHeadSnapshot headAt(MetadataSnapshot snapshot, CaRecord selected,
             Instant at, FsHistoryPolicy policy) throws IOException {
         AuthorityMetadataCodec.HistoryEntry latest = null;
@@ -777,6 +1079,16 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         return head;
     }
 
+    /**
+     * Deletes one bounded batch of paired history rows strictly older than the cutoff.
+     *
+     * <p>Known cleanup conflicts are tolerated; current authority rows are retained.</p>
+     *
+     * @param id exact logical authority identity
+     * @param cutoff exclusive retention timestamp cutoff
+     * @throws IOException if history cannot be read, staged deletion fails or commit durability is unknown
+     * @throws IllegalStateException if a nonconflict cleanup transaction is definitely rejected
+     */
     /* default */ void prune(PkiId id, Instant cutoff) throws IOException {
         // Separate, bounded best-effort cleanup; never changes the committed current row.
         try (MetadataSnapshot snapshot = metadata.snapshot(); MetadataTransaction transaction = metadata.beginTransaction();
@@ -812,6 +1124,16 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
         }
     }
 
+    /**
+     * Stages creation of one bounded authority row in the caller's transaction.
+     *
+     * @param transaction borrowed transaction receiving staged mutations; the caller commits or aborts it
+     * @param key previously absent exact metadata identity
+     * @param payload bounded complete encoded metadata value
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the encoded value exceeds the transaction payload bound
+     * @throws IOException if the staged mutation cannot be written
+     */
     /* default */ static void create(MetadataTransaction transaction, MetadataKey key, byte[] payload) throws IOException {
         AuthorityMetadataCodec.requireValueSize(payload);
         try (RepeatableContent bytes = new ImmutableByteContent(payload)) { transaction.create(key, bytes, CancellationSignal.NONE); }

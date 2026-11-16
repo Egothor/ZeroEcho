@@ -51,29 +51,51 @@ import zeroecho.pki.api.content.DurableContentReference;
  */
 public interface DomainContinuationStore {
 
-    /** Domain operation reconstructed after signing completes. */
+    /**
+     * Domain operation reconstructed after signing completes.
+     */
     enum Kind {
-        /** Root or intermediate CA command. */
+        /**
+         * Root or intermediate CA command.
+         */
         CA,
-        /** End-entity or intermediate credential issuance. */
+        /**
+         * End-entity or intermediate credential issuance.
+         */
         ISSUANCE,
-        /** CRL or another persisted status object. */
+        /**
+         * CRL or another persisted status object.
+         */
         STATUS,
-        /** Managed private-key possession proof; never certificate or status publication. */
+        /**
+         * Managed private-key possession proof; never certificate or status publication.
+         */
         KEY_PROOF
     }
 
-    /** Durable outer lifecycle. */
+    /**
+     * Durable outer lifecycle.
+     */
     enum State {
-        /** Exact command and signing input are durably linked to live signing. */
+        /**
+         * Exact command and signing input are durably linked to live signing.
+         */
         SIGNING,
-        /** Signature is terminal and publication is being reconciled. */
+        /**
+         * Signature is terminal and publication is being reconciled.
+         */
         PUBLISHING,
-        /** Domain result was published and committed exactly once. */
+        /**
+         * Domain result was published and committed exactly once.
+         */
         COMPLETED,
-        /** Terminal signing or frozen-postcondition failure. */
+        /**
+         * Terminal signing or frozen-postcondition failure.
+         */
         FAILED,
-        /** Original signing deadline elapsed before trustworthy completion. */
+        /**
+         * Original signing deadline elapsed before trustworthy completion.
+         */
         EXPIRED
     }
 
@@ -99,7 +121,24 @@ public interface DomainContinuationStore {
             Instant createdAt, Instant deadline, EncodedObject command, String commandCommitment,
             Optional<DurableContentReference> signingContent, Optional<EncodedObject> result,
             Optional<String> detailCode) {
-        /** Validates and snapshots one continuation. */
+        /**
+         * Validates and snapshots one continuation.
+         * @param operationId same private identifier as the signing record
+         * @param version clean current payload version
+         * @param kind owning domain
+         * @param correlationId optional domain idempotency identity for O(1) restart lookup
+         * @param state lifecycle state
+         * @param revision monotonic CAS revision
+         * @param createdAt operation creation time
+         * @param deadline original absolute signing deadline
+         * @param command exact bounded versioned domain command
+         * @param commandCommitment immutable canonical command commitment
+         * @param signingContent exact durable to-be-signed content while publication is live
+         * @param result optional exact bounded domain result or publication identity
+         * @param detailCode optional safe terminal detail
+         * @throws NullPointerException if operationId, kind, correlationId, state, createdAt, deadline, command, signingContent, result, detailCode is null
+         * @throws IllegalArgumentException if correlation identity, version, revision, deadline, command commitment, bounded binary payloads or terminal result/detail fields violate the continuation invariants
+         */
         public Record {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(kind, "kind");
@@ -151,6 +190,7 @@ public interface DomainContinuationStore {
      * @param kind outer-operation kind
      * @param correlationId stable correlation identity
      * @return record, or empty
+     * @throws NullPointerException if kind, correlationId is null
      */
     default Optional<Record> getDomainContinuation(Kind kind, String correlationId) {
         Objects.requireNonNull(kind, "kind");
@@ -163,6 +203,7 @@ public interface DomainContinuationStore {
      *
      * @param operationId private durable identifier
      * @return record, or empty
+     * @throws NullPointerException if operationId is null
      */
     default Optional<Record> getDomainContinuation(PkiId operationId) {
         Objects.requireNonNull(operationId, "operationId");
@@ -178,6 +219,8 @@ public interface DomainContinuationStore {
      * @param result optional terminal result
      * @param detailCode optional stable non-sensitive detail code
      * @return committed replacement, or empty when the CAS lost
+     * @throws NullPointerException if operationId, target, result, detailCode is null
+     * @throws UnsupportedOperationException always in this default implementation, which does not support domain continuations
      */
     default Optional<Record> transitionDomainContinuation(PkiId operationId, long expectedRevision,
             State target, Optional<EncodedObject> result, Optional<String> detailCode) {

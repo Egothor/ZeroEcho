@@ -56,7 +56,9 @@ import zeroecho.pki.api.revocation.RevocationRecord;
  */
 public interface RevocationTransitionFeed extends AutoCloseable {
 
-    /** Maximum accepted opaque position length. */
+    /**
+     * Maximum accepted opaque position length.
+     */
     int MAXIMUM_POSITION_CHARACTERS = 192;
 
     /**
@@ -71,7 +73,11 @@ public interface RevocationTransitionFeed extends AutoCloseable {
      * @param value bounded URL-safe opaque value
      */
     record Position(String value) {
-        /** Validates and snapshots the immutable position value. */
+        /**
+         * Validates and snapshots the immutable position value.
+         * @param value bounded URL-safe opaque value
+         * @throws IllegalArgumentException if value is null, empty, excessive or contains characters outside the URL-safe opaque-position alphabet
+         */
         public Position {
             if (value == null || value.isEmpty() || value.length() > MAXIMUM_POSITION_CHARACTERS
                     || !value.matches("[A-Za-z0-9_-]+")) {
@@ -79,7 +85,10 @@ public interface RevocationTransitionFeed extends AutoCloseable {
             }
         }
 
-        /** Returns the opaque value. */
+        /**
+         * Returns the opaque value.
+         * @return {@inheritDoc}
+         */
         @Override public String toString() { return value; }
     }
 
@@ -91,7 +100,14 @@ public interface RevocationTransitionFeed extends AutoCloseable {
      * @param transitionCommitment captured chain commitment, including the genesis commitment
      */
     record HighWatermark(MetadataStoreId sourceStoreId, long globalRevision, String transitionCommitment) {
-        /** Validates the immutable captured head. */
+        /**
+         * Validates the immutable captured head.
+         * @param sourceStoreId durable source-store identity
+         * @param globalRevision captured global append revision, zero for an empty log
+         * @param transitionCommitment captured chain commitment, including the genesis commitment
+         * @throws NullPointerException if sourceStoreId is null
+         * @throws IllegalArgumentException if globalRevision is negative or transitionCommitment is null or not 64 lowercase hexadecimal characters
+         */
         public HighWatermark {
             Objects.requireNonNull(sourceStoreId, "sourceStoreId");
             if (globalRevision < 0L || transitionCommitment == null
@@ -112,7 +128,16 @@ public interface RevocationTransitionFeed extends AutoCloseable {
      */
     record Entry(MetadataStoreId sourceStoreId, long globalRevision, String transitionCommitment,
             Position nextPosition, RevocationRecord record) {
-        /** Validates and snapshots one entry. */
+        /**
+         * Validates and snapshots one entry.
+         * @param sourceStoreId durable source-store identity
+         * @param globalRevision contiguous global append revision
+         * @param transitionCommitment exact authenticated transition commitment
+         * @param nextPosition opaque exclusive position immediately after this entry
+         * @param record existing immutable revocation record
+         * @throws NullPointerException if sourceStoreId, nextPosition, record is null
+         * @throws IllegalArgumentException if globalRevision is not positive or transitionCommitment is null or not 64 lowercase hexadecimal characters
+         */
         public Entry {
             Objects.requireNonNull(sourceStoreId, "sourceStoreId");
             if (globalRevision <= 0L || transitionCommitment == null
@@ -163,6 +188,9 @@ public interface RevocationTransitionFeed extends AutoCloseable {
      */
     Entry current();
 
-    /** Closes the feed and its file resource; repeated close is harmless. */
+    /**
+     * Closes the feed and its file resource; repeated close is harmless.
+     * @throws IOException if the feed or its owned file resource cannot be closed
+     */
     @Override void close() throws IOException;
 }

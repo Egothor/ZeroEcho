@@ -82,7 +82,9 @@ import zeroecho.pki.api.hybrid.HybridCertificateMode;
 public final class CertificateProfileDocumentCodec {
     private static final String TWIN_CERTIFICATE = "TWIN_CERTIFICATE";
 
-    /** Maximum accepted encoded document size. */
+    /**
+     * Maximum accepted encoded document size.
+     */
     public static final int MAXIMUM_DOCUMENT_BYTES = 262_144;
 
     private static final int MAXIMUM_DEPTH = 16;
@@ -1410,7 +1412,9 @@ public final class CertificateProfileDocumentCodec {
         return new PkiException(PREFIX + code + " path=" + path);
     }
 
-    /** Mutable state confined to one streaming top-level document parse. */
+    /**
+     * Mutable state confined to one streaming top-level document parse.
+     */
     private static final class DocumentFields {
         private long seen;
         private int schemaVersion;

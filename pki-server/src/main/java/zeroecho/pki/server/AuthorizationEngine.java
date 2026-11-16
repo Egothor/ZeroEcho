@@ -47,27 +47,49 @@ import java.util.Objects;
  */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass" })
 public final class AuthorizationEngine {
-    /** Safe decision codes that reveal no protected-object existence. */
+    /**
+     * Safe decision codes that reveal no protected-object existence.
+     */
     public enum Code {
-        /** A matching allow grant authorized the request. */
+        /**
+         * A matching allow grant authorized the request.
+         */
         ALLOWED,
-        /** No enabled grant matched the principal, action, resource, and relationship. */
+        /**
+         * No enabled grant matched the principal, action, resource, and relationship.
+         */
         NO_MATCHING_GRANT,
-        /** A matching deny grant took precedence. */
+        /**
+         * A matching deny grant took precedence.
+         */
         EXPLICITLY_DENIED,
-        /** The requested resource belongs to another realm. */
+        /**
+         * The requested resource belongs to another realm.
+         */
         OUTSIDE_REALM,
-        /** The authority is not exposed by process policy. */
+        /**
+         * The authority is not exposed by process policy.
+         */
         OUTSIDE_AUTHORITY_SCOPE,
-        /** A matching grant does not permit the requested data view. */
+        /**
+         * A matching grant does not permit the requested data view.
+         */
         INSUFFICIENT_DATA_VIEW,
-        /** A matching conditional grant requires an approval. */
+        /**
+         * A matching conditional grant requires an approval.
+         */
         APPROVAL_REQUIRED,
-        /** Matching grants exist but have expired. */
+        /**
+         * Matching grants exist but have expired.
+         */
         GRANT_EXPIRED,
-        /** The authenticated principal is disabled. */
+        /**
+         * The authenticated principal is disabled.
+         */
         PRINCIPAL_DISABLED,
-        /** Another closed grant condition was not satisfied. */
+        /**
+         * Another closed grant condition was not satisfied.
+         */
         CONDITION_NOT_SATISFIED
     }
 
@@ -89,7 +111,22 @@ public final class AuthorizationEngine {
             Permission.Action action, Permission.Resource resource, Permission.Relationship relationship,
             Permission.DataView dataView, Permission.Context context, List<Permission.Grant> grants,
             java.util.Set<String> breakGlassGrantIds) {
-        /** Validates and snapshots the authorization input. */
+        /**
+         * Validates and snapshots the authorization input.
+         * @param realmId active realm identity
+         * @param exposure process authority-exposure policy
+         * @param principal authenticated or public principal
+         * @param action requested action
+         * @param resource exact target reference
+         * @param relationship established object relationship
+         * @param dataView requested view
+         * @param context safe closed-condition context
+         * @param grants enabled assignments and grants captured for this decision
+         * @param breakGlassGrantIds grant identities originating from active break-glass records
+         * @throws NullPointerException if any of {@code realmId}, {@code exposure}, {@code principal}, {@code
+         *         action}, {@code resource}, {@code relationship}, {@code dataView}, {@code context}, {@code
+         *         grants}, {@code breakGlassGrantIds} is null
+         */
         public Request {
             Objects.requireNonNull(realmId, "realmId");
             Objects.requireNonNull(exposure, "exposure");
@@ -112,7 +149,13 @@ public final class AuthorizationEngine {
      * @param usedBreakGlass whether the allowing grant came from break-glass authority
      */
     public record Decision(Code code, boolean usedBreakGlass) {
-        /** Validates result invariants. */
+        /**
+         * Validates result invariants.
+         * @param code decision code
+         * @param usedBreakGlass whether the allowing grant came from break-glass authority
+         * @throws NullPointerException if {@code code} is null
+         * @throws IllegalArgumentException if a denied decision claims break-glass use
+         */
         public Decision {
             Objects.requireNonNull(code, "code");
             if (code != Code.ALLOWED && usedBreakGlass) {
@@ -136,6 +179,7 @@ public final class AuthorizationEngine {
      * Creates an engine using an injected authoritative decision clock.
      *
      * @param clock injected clock
+     * @throws NullPointerException if {@code clock} is null
      */
     public AuthorizationEngine(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -146,6 +190,7 @@ public final class AuthorizationEngine {
      *
      * @param request complete immutable input
      * @return safe finite decision
+     * @throws NullPointerException if {@code request} is null
      */
     public Decision authorize(Request request) {
         Request exact = Objects.requireNonNull(request, "request");

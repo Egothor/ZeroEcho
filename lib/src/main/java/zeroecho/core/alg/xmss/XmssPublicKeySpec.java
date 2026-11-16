@@ -107,6 +107,11 @@ public final class XmssPublicKeySpec implements AlgorithmKeySpec {
         return new XmssPublicKeySpec(Base64.getDecoder().decode(b64));
     }
 
+    /**
+     * Returns the specification label and encoded-key length without disclosing key bytes.
+     *
+     * @return diagnostic type label and retained encoding length in bytes
+     */
     @Override
     public String toString() {
         return "XmssPublicKeySpec[len=" + x509.length + "]";

@@ -70,6 +70,9 @@ import zeroecho.pki.spi.framework.CrlEntry;
 import zeroecho.pki.spi.framework.CrlEntrySource;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for streaming X.509 CRL tbs writer.
+ */
 class StreamingX509CrlTbsWriterTest {
     private static final Instant NOW = Instant.parse("2026-09-21T12:00:00Z");
     private static final X500Principal NAME = new X500Principal("CN=Issuer");
@@ -77,12 +80,22 @@ class StreamingX509CrlTbsWriterTest {
     private static final byte[] KEY_ID = new byte[] {1, 2, 3, 4, 5};
     private static KeyPair key;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void keys() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         key = generator.generateKeyPair();
     }
 
+    /**
+     * Empty and multiple entries match independent DER and verify against original tbs.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void emptyAndMultipleEntriesMatchIndependentDerAndVerifyAgainstOriginalTbs() throws Exception {
         for (int size : new int[] {0, 1, 4, 128}) {
             Source source = new Source(size);
@@ -119,6 +132,11 @@ class StreamingX509CrlTbsWriterTest {
         }
     }
 
+    /**
+     * Qualified alternative factory matches independent full and delta transcript tlvs.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void qualifiedAlternativeFactoryMatchesIndependentFullAndDeltaTranscriptTlvs() throws Exception {
         Instant update = Instant.parse("2026-01-01T00:00:00Z");
         byte[] issuer = java.util.HexFormat.of().parseHex("300c310a300806035504030c0141");
@@ -148,6 +166,11 @@ class StreamingX509CrlTbsWriterTest {
         }
     }
 
+    /**
+     * Alternative factory bounds the encoded authority key identifier value.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void alternativeFactoryBoundsTheEncodedAuthorityKeyIdentifierValue() throws Exception {
         byte[] name = NAME.getEncoded();
         var alternative = X509AlgorithmIdentifier.absent("2.16.840.1.101.3.4.3.19");
@@ -172,6 +195,11 @@ class StreamingX509CrlTbsWriterTest {
                 new byte[maximumKeyIdentifier.length + 1], NOW, NOW.plusSeconds(3600), Optional.empty()));
     }
 
+    /**
+     * All full reasons and X.509 time boundaries are canonical.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void allFullReasonsAndX509TimeBoundariesAreCanonical() throws Exception {
         for (Instant date : List.of(Instant.parse("1949-12-31T23:59:59Z"), Instant.parse("1950-01-01T00:00:00Z"),
                 Instant.parse("2049-12-31T23:59:59Z"), Instant.parse("2050-01-01T00:00:00Z"))) {
@@ -196,6 +224,11 @@ class StreamingX509CrlTbsWriterTest {
         }
     }
 
+    /**
+     * Long aggregate accounting and lazy second pass do not require aggregate buffers.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void longAggregateAccountingAndLazySecondPassDoNotRequireAggregateBuffers() throws Exception {
         StreamingX509CrlTbsWriter writer = writer(NOW);
         assertTrue(writer.encodedLength(new StreamingX509CrlTbsWriter.Measurement(1L << 33, 1L << 28), BigInteger.ONE) > (1L << 33));
@@ -209,6 +242,11 @@ class StreamingX509CrlTbsWriterTest {
         assertEquals(2, lazy.closes);
     }
 
+    /**
+     * Delta writer includes critical base number and release in exact measured DER.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaWriterIncludesCriticalBaseNumberAndReleaseInExactMeasuredDer() throws Exception {
         Source source = new Source(1);
         source.fixed = new CrlEntry(BigInteger.valueOf(42), NOW.minusSeconds(10), RevocationReason.REMOVE_FROM_CRL);
@@ -234,6 +272,11 @@ class StreamingX509CrlTbsWriterTest {
         assertEquals(2, source.closes);
     }
 
+    /**
+     * Full writer rejects release during both passes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void fullWriterRejectsReleaseDuringBothPasses() throws Exception {
         StreamingX509CrlTbsWriter writer = writer(NOW);
         Source source = new Source(1);
@@ -245,6 +288,11 @@ class StreamingX509CrlTbsWriterTest {
         assertEquals(3, source.closes);
     }
 
+    /**
+     * Rejects count and length divergence and closes each cursor.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsCountAndLengthDivergenceAndClosesEachCursor() throws Exception {
         for (boolean changeCount : new boolean[] {true, false}) {
             Source source = new Source(1);
@@ -258,6 +306,11 @@ class StreamingX509CrlTbsWriterTest {
         }
     }
 
+    /**
+     * Rejects invalid serial time number and cancellation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsInvalidSerialTimeNumberAndCancellation() throws Exception {
         StreamingX509CrlTbsWriter writer = writer(NOW);
         Source source = new Source(1);
@@ -275,6 +328,11 @@ class StreamingX509CrlTbsWriterTest {
         assertEquals(3, source.closes);
     }
 
+    /**
+     * Authority key identifier is defensively captured and shares the extensions sequence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void authorityKeyIdentifierIsDefensivelyCapturedAndSharesTheExtensionsSequence() throws Exception {
         byte[] identifier = KEY_ID.clone();
         StreamingX509CrlTbsWriter writer = new StreamingX509CrlTbsWriter(ALGORITHM, NAME.getEncoded(), identifier, NOW, NOW.plusSeconds(1));

@@ -54,6 +54,9 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 public class HybridKexTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,
@@ -121,6 +124,11 @@ public class HybridKexTest {
         }
     }
 
+    /**
+     * Hybrid x25519 ML-KEM round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_x25519_mlkem_roundtrip() throws Exception {
         logBegin("CLASSIC_AGREEMENT + KEM_ADAPTER", "Xdh/X25519 + ML-KEM(768)", "HKDF-SHA256", "32 bytes");
@@ -187,6 +195,11 @@ public class HybridKexTest {
         logEnd();
     }
 
+    /**
+     * Hybrid x25519 pair-message ML-KEM round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hybrid_x25519_pairmessage_mlkem_roundtrip() throws Exception {
         logBegin("PAIR_MESSAGE + KEM_ADAPTER", "Xdh/X25519 + ML-KEM(768)", "HKDF-SHA256", "32 bytes");

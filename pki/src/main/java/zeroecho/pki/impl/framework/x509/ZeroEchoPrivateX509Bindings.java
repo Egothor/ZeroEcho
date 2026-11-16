@@ -52,10 +52,14 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 
-/** Loads and locks the version-one ZeroEcho-owned private X.509 assignments. */
+/**
+ * Loads and locks the version-one ZeroEcho-owned private X.509 assignments.
+ */
 public final class ZeroEchoPrivateX509Bindings {
 
-    /** Versioned assignment resource. */
+    /**
+     * Versioned assignment resource.
+     */
     public static final String RESOURCE = "/zeroecho/pki/x509/zeroecho-private-bindings-v1.json";
     private static final int MAXIMUM_RESOURCE_BYTES = 64 * 1024;
     private static final Set<String> ROOT_FIELDS = Set.of("schemaVersion", "bindings");
@@ -220,27 +224,42 @@ public final class ZeroEchoPrivateX509Bindings {
             Objects.requireNonNull(binding, "binding");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String id() {
             return binding.bindingId();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public X509AlgorithmRole role() {
             return binding.role() == X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY
                     ? X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM : X509AlgorithmRole.SIGNATURE_ALGORITHM;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String oid() {
             return binding.oid();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String semanticFingerprint() {
             return binding.semanticCommitment();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public SignatureEncoding signatureEncoding() {
             return switch (binding.signatureEncoding()) {
@@ -250,6 +269,9 @@ public final class ZeroEchoPrivateX509Bindings {
             };
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PublicKeyEncoding publicKeyEncoding() {
             return switch (binding.publicKeyEncoding()) {
@@ -261,17 +283,26 @@ public final class ZeroEchoPrivateX509Bindings {
             };
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<X509AlgorithmBinding> bindings() {
             return List.of(binding);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
             return binding.algorithmIdentity().equals(identity)
                     ? Optional.of(X509AlgorithmIdentifier.absent(binding.oid())) : Optional.empty();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AlgorithmIdentity> decode(X509AlgorithmIdentifier identifier) {
             if (!binding.oid().equals(identifier.oid())) {

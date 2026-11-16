@@ -79,17 +79,29 @@ public final class AlgorithmIdentity {
      * Semantic role represented by an identity.
      */
     public enum Kind {
-        /** Message digest. */
+        /**
+         * Message digest.
+         */
         DIGEST,
-        /** Mask-generation function. */
+        /**
+         * Mask-generation function.
+         */
         MASK_GENERATION,
-        /** Signature scheme, independent of a particular key parameter set. */
+        /**
+         * Signature scheme, independent of a particular key parameter set.
+         */
         SIGNATURE,
-        /** Public-key algorithm and its exact key parameter set. */
+        /**
+         * Public-key algorithm and its exact key parameter set.
+         */
         PUBLIC_KEY,
-        /** Key-encapsulation mechanism. */
+        /**
+         * Key-encapsulation mechanism.
+         */
         KEM,
-        /** Key-agreement mechanism. */
+        /**
+         * Key-agreement mechanism.
+         */
         AGREEMENT
     }
 
@@ -107,6 +119,9 @@ public final class AlgorithmIdentity {
          *
          * @throws IllegalArgumentException if either component is not a lowercase
          *                                  canonical identifier
+         * @param namespace namespace owned by the built-in catalog or trusted
+         *                  extension
+         * @param name family name within that namespace
          */
         public Family {
             namespace = requireComponent(namespace, "namespace");
@@ -159,14 +174,22 @@ public final class AlgorithmIdentity {
      * Parameters for an unparameterized family.
      */
     public enum NoParameters implements Parameters {
-        /** Singleton empty-parameter value. */
+        /**
+         * Singleton empty-parameter value.
+         */
         INSTANCE;
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String canonicalForm() {
             return "none";
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Parameters immutableCopy() {
             return this;
@@ -185,6 +208,8 @@ public final class AlgorithmIdentity {
          *
          * @throws IllegalArgumentException if {@code digest} is not a digest
          *                                  identity
+         * @param digest exact digest identity
+         * @throws NullPointerException if {@code digest} is null
          */
         public DigestParameters {
             Objects.requireNonNull(digest, "digest");
@@ -193,12 +218,18 @@ public final class AlgorithmIdentity {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String canonicalForm() {
             return "digest=" + digest.family().namespace() + "." + digest.family().name() + "."
                     + digest.parameters().canonicalForm();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Parameters immutableCopy() {
             return this;
@@ -222,6 +253,12 @@ public final class AlgorithmIdentity {
          *
          * @throws IllegalArgumentException if roles or numeric parameters are
          *                                  contradictory
+         * @param hash message digest identity
+         * @param mask mask-generation identity
+         * @param maskHash mask-generation digest identity
+         * @param saltLength non-negative salt length in bytes
+         * @param trailerField trailer field; PKCS#1 currently defines value {@code 1}
+         * @throws NullPointerException if any of {@code hash}, {@code mask}, {@code maskHash} is null
          */
         public RsaPssParameters {
             Objects.requireNonNull(hash, "hash");
@@ -241,12 +278,18 @@ public final class AlgorithmIdentity {
             }
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String canonicalForm() {
             return "hash=" + shortName(hash) + ",mask=" + shortName(mask) + ",maskhash=" + shortName(maskHash)
                     + ",salt=" + saltLength + ",trailer=" + trailerField;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Parameters immutableCopy() {
             return this;
@@ -264,16 +307,23 @@ public final class AlgorithmIdentity {
          * Creates named parameters.
          *
          * @throws NullPointerException if {@code parameterSet} is {@code null}
+         * @param parameterSet stable namespaced parameter-set identifier
          */
         public NamedParameters {
             Objects.requireNonNull(parameterSet, "parameterSet");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String canonicalForm() {
             return "set=" + parameterSet.namespace() + "." + parameterSet.name();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Parameters immutableCopy() {
             return this;
@@ -301,6 +351,8 @@ public final class AlgorithmIdentity {
      * @param family     stable namespaced family
      * @param parameters validated typed parameters
      * @param codec      immutable canonical parameter codec
+     * @throws NullPointerException if any of {@code kind}, {@code family}, {@code codec}, {@code parameters} is null
+     * @throws IllegalArgumentException if decoding and re-encoding the parameter snapshot does not reproduce its canonical bytes
      */
     public AlgorithmIdentity(Kind kind, Family family, Parameters parameters, AlgorithmIdentityCodec codec) {
         this.kind = Objects.requireNonNull(kind, "kind");
@@ -354,6 +406,7 @@ public final class AlgorithmIdentity {
      * @return exact decoded identity
      * @throws IllegalArgumentException if syntax, version, codec, or canonical
      *                                  round-trip validation fails
+     * @throws NullPointerException if any of {@code canonicalForm}, {@code codecs} is null
      */
     public static AlgorithmIdentity parse(String canonicalForm, Collection<AlgorithmIdentityCodec> codecs) {
         Objects.requireNonNull(canonicalForm, "canonicalForm");
@@ -406,16 +459,32 @@ public final class AlgorithmIdentity {
         return canonicalForm;
     }
 
+    /**
+     * Compares the canonical serialized algorithm identity by value.
+     *
+     * @param other object to compare, or null
+     * @return true for a compatible value with equal canonical serialized algorithm identity; false otherwise
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof AlgorithmIdentity identity && canonicalForm.equals(identity.canonicalForm);
     }
 
+    /**
+     * Hashes the canonical serialized algorithm identity using the same components as equality.
+     *
+     * @return value-based hash code consistent with equals
+     */
     @Override
     public int hashCode() {
         return canonicalForm.hashCode();
     }
 
+    /**
+     * Returns a diagnostic representation containing the complete canonical serialized algorithm identity.
+     *
+     * @return complete canonical serialized algorithm identity
+     */
     @Override
     public String toString() {
         return canonicalForm;
@@ -439,7 +508,9 @@ public final class AlgorithmIdentity {
         return utf8.length + ":" + value;
     }
 
-    /** Strict cursor for the length-prefixed canonical representation. */
+    /**
+     * Strict cursor for the length-prefixed canonical representation.
+     */
     private static final class Cursor {
 
         private final String value;
@@ -496,7 +567,9 @@ public final class AlgorithmIdentity {
         }
     }
 
-    /** Canonical codec for the built-in closed parameter records. */
+    /**
+     * Canonical codec for the built-in closed parameter records.
+     */
     private static final class BuiltInCodec implements AlgorithmIdentityCodec {
 
         @Override

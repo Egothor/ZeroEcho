@@ -51,9 +51,14 @@ import zeroecho.pki.api.signing.SemanticSigningOperation;
  */
 public interface PkiSigningCommands {
     /**
-     * Resolves omitted creation selectors before command commitment or approval.
+     * Resolves creation defaults and canonical managed-responder selection before approval.
+     *
+     * <p>Creation algorithms become explicit before command commitment. A managed
+     * responder selection uses its canonical public-key provisioning binding;
+     * neither normalization generates keys nor accepts an issuance operation.
+     *
      * @param operation caller-selected immutable command
-     * @return creation command with explicit configured default, or unchanged other command
+     * @return normalized creation or responder command, or an unchanged operation of another kind
      * @throws UnsupportedOperationException if creation normalization is unavailable
      */
     default PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
@@ -93,8 +98,10 @@ public interface PkiSigningCommands {
     /**
      * Prepares a command using the existing semantic signing service.
      *
-     * <p>This may stage durable content but does not accept the operation or dispatch
-     * a signing operation. The caller owns the prepared request until it discards
+     * <p>This may stage durable content but does not durably accept the primary
+     * signing operation. Explicitly supported hybrid preparation may produce and
+     * verify an alternative signature according to its semantic-service contract.
+     * The caller owns the prepared request until it discards
      * it or transfers custody through semantic signing acceptance. Existing profile,
      * key, issuer, and content validation remain applicable. Issuance evidence is
      * passed unchanged to end-entity preparation and is not synthesized here.</p>
@@ -117,6 +124,11 @@ public interface PkiSigningCommands {
 
     /**
      * Evaluates a dual-subject SDK request without signing, serial allocation or staging.
+     *
+     * <p>The preview binds the exact requested keys, issuer/profile selection and
+     * effective policy. Supplied absolute validity is retained during revalidation;
+     * a public preview neither consumes a proof nor grants permission to issue.
+     *
      * @param operation selected logical issuer and active profile
      * @param access independently authorized invocation context
      * @param request parsed exact client request; both client keys remain public
@@ -134,6 +146,12 @@ public interface PkiSigningCommands {
 
     /**
      * Revalidates retained dual proof and freezes the same absolute validity before staging.
+     *
+     * <p>Proof lifetime is evaluated at its retained acceptance time. Current permitted
+     * use and the actual selected target are checked before alternative signing;
+     * returned staged content remains caller-owned until acceptance or discard.
+     * This preparation does not durably accept the primary signing operation.
+     *
      * @param operation immutable issuer/profile/request selection
      * @param access separately authenticated and authorized invocation context
      * @param request exact parsed SDK request
@@ -153,31 +171,55 @@ public interface PkiSigningCommands {
 
     /**
      * Purely evaluates only issue, renewal, reissue or replacement SDK operations.
-     * @param operation restricted leaf operation @param access authorized caller
-     * @param request exact parsed client request @param frozenValidity absolute retained bounds, or empty initially
-     * @param cancellation cooperative cancellation @return frozen public subject/issuer/lifecycle coordinates
+     *
+     * <p>The selected lifecycle predecessor and both subject keys contribute to
+     * the public target. No proof is consumed, no serial allocated and no content
+     * staged. The default handles issuance through the narrow overload and rejects
+     * lifecycle operations unless the implementation explicitly supports them.
+     *
+     * @param operation supported immutable leaf operation
+     * @param access authenticated and separately authorized invocation context
+     * @param request exact original parsed dual-subject request
+     * @param frozenValidity absolute retained bounds, or an empty optional initially
+     * @param cancellation cooperative validation cancellation signal
+     * @return frozen public subject, issuer and applicable lifecycle coordinates
      * @throws UnsupportedOperationException for another operation or an unavailable lifecycle service
+     * @throws zeroecho.pki.api.PkiException if predecessor, keys, policy or frozen target is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
-        if (operation instanceof PkiSigningOperation.IssueCredential issue) return previewSdk(issue, access, request, frozenValidity, cancellation);
+        if (operation instanceof PkiSigningOperation.IssueCredential issue) {
+            return previewSdk(issue, access, request, frozenValidity, cancellation);
+        }
         throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
     }
 
     /**
      * Prepares only issue, renewal, reissue or replacement using fresh accepted dual client proof.
-     * @param operation restricted leaf operation @param access authorized caller
-     * @param request exact client request @param approval retained proof and signed target
-     * @param evidence trusted publication evidence @param cancellation cooperative cancellation
+     *
+     * <p>The retained accepted proof must match the current permitted use and exact
+     * frozen target. Hybrid alternative signing can occur during preparation, but
+     * primary durable acceptance remains separate. The default delegates issuance
+     * to the narrow overload and rejects unsupported lifecycle operations.
+     *
+     * @param operation supported immutable leaf operation
+     * @param access authenticated and separately authorized invocation context
+     * @param request exact original parsed dual-subject request
+     * @param approval retained accepted proof and frozen target
+     * @param evidence trusted publication evidence, or an empty optional for embedded use
+     * @param cancellation cooperative pre-acceptance cancellation signal
      * @return caller-owned staged request awaiting acceptance or discard
      * @throws UnsupportedOperationException for another operation or an unavailable lifecycle service
+     * @throws zeroecho.pki.api.PkiException if proof, predecessor, policy, target or staging validation fails
      */
     default PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
-        if (operation instanceof PkiSigningOperation.IssueCredential issue) return prepareSdk(issue, access, request, approval, evidence, cancellation);
+        if (operation instanceof PkiSigningOperation.IssueCredential issue) {
+            return prepareSdk(issue, access, request, approval, evidence, cancellation);
+        }
         throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
     }
 
@@ -200,11 +242,23 @@ public interface PkiSigningCommands {
 
     /**
      * Evaluates an explicitly bound native enrollment target without fabricating authority.
-     * @param operation supported leaf operation @param access authorized invocation
-     * @param request proof-bound original request @param frozenValidity retained absolute validity
+     *
+     * <p>A native target must match the supported operation mapping and original
+     * request kind; the existence of a lifecycle overload does not enable every
+     * carrier/profile combination. The default rejects present native targets and
+     * delegates an empty target to administrative preview. No proof is consumed,
+     * serial allocated, signature produced or content staged by evaluation.
+     *
+     * @param operation supported immutable leaf operation
+     * @param access authenticated and separately authorized invocation context
+     * @param request exact proof-bound original dual-subject request
+     * @param frozenValidity retained absolute validity, or an empty optional initially
      * @param enrollmentTarget trusted native enrollment coordinates, or empty for administrative use
-     * @param cancellation cooperative cancellation @return immutable public preview
+     * @param cancellation cooperative validation cancellation signal
+     * @return immutable public preview including any supported native target
+     * @throws NullPointerException if the enrollment-target optional is null
      * @throws UnsupportedOperationException if enrollment-target evaluation is unavailable
+     * @throws zeroecho.pki.api.PkiException if native request, operation mapping or target coordinates differ
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
@@ -212,7 +266,9 @@ public interface PkiSigningCommands {
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
-        if (enrollmentTarget.isPresent()) throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        if (enrollmentTarget.isPresent()) {
+            throw new UnsupportedOperationException("SDK enrollment preview unavailable");
+        }
         return previewSdk(operation, access, request, frozenValidity, cancellation);
     }
 }

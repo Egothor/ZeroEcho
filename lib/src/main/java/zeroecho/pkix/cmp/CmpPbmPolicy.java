@@ -52,8 +52,15 @@ public record CmpPbmPolicy(int minimumIterations, int maximumIterations,
         int minimumSaltBytes, int maximumSaltBytes, Set<String> digestOids, Set<String> macOids) {
     /**
      * Validates and snapshots the bounded policy.
+     *
      * @throws IllegalArgumentException if a work, salt or algorithm bound is invalid
      * @throws NullPointerException if a set or its member is null
+     * @param minimumIterations positive work floor
+     * @param maximumIterations work ceiling, at most one million
+     * @param minimumSaltBytes salt floor, at least sixteen
+     * @param maximumSaltBytes salt ceiling, at most sixty-four
+     * @param digestOids nonempty allowed standard digest OIDs
+     * @param macOids nonempty allowed standard HMAC OIDs
      */
     public CmpPbmPolicy {
         digestOids = Set.copyOf(digestOids);

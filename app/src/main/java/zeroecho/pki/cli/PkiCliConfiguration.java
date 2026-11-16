@@ -47,7 +47,9 @@ import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Strict versioned CLI configuration loader. */
+/**
+ * Strict versioned CLI configuration loader.
+ */
 final class PkiCliConfiguration {
 
     private static final Set<String> REQUIRED_FIELDS = Set.of("version", "mode", "operatorId", "store", "audit",
@@ -64,6 +66,16 @@ final class PkiCliConfiguration {
     private PkiCliConfiguration() {
     }
 
+    /**
+     * Loads version-one local configuration without opening providers or a PKI session.
+     *
+     * @param path bounded regular configuration file
+     * @return typed configuration with requested providers and optional signing configuration
+     * @throws NullPointerException if the path is null
+     * @throws java.io.IOException if the bounded file read fails
+     * @throws IllegalArgumentException if fields, version/mode, typed values or resulting configuration
+     *     constraints fail
+     */
     /* default */ static LocalPkiSessionConfiguration read(Path path) throws java.io.IOException {
         byte[] document = PkiCliFiles.readRegularFile(path, PkiCliJson.MAXIMUM_DOCUMENT_BYTES);
         PkiOperationValue.ObjectValue root = object(PkiCliJson.parse(document));
@@ -130,6 +142,14 @@ final class PkiCliConfiguration {
         return new ProviderConfig(provider, result);
     }
 
+    /**
+     * Returns a required field without modifying the immutable object.
+     *
+     * @param object typed object
+     * @param name required field name
+     * @return retained typed field value
+     * @throws IllegalArgumentException if the required field is missing
+     */
     /* default */ static PkiOperationValue required(PkiOperationValue.ObjectValue object, String name) {
         PkiOperationValue value = object.fields().get(name);
         if (value == null) {
@@ -138,6 +158,13 @@ final class PkiCliConfiguration {
         return value;
     }
 
+    /**
+     * Requires an object-valued CLI field.
+     *
+     * @param value candidate typed value
+     * @return the original immutable object reference
+     * @throws IllegalArgumentException the supplied value, including null, has the wrong type
+     */
     /* default */ static PkiOperationValue.ObjectValue object(PkiOperationValue value) {
         if (value instanceof PkiOperationValue.ObjectValue object) {
             return object;
@@ -152,6 +179,13 @@ final class PkiCliConfiguration {
         throw new IllegalArgumentException("CLI field has the wrong type");
     }
 
+    /**
+     * Requires a text-valued CLI field without trimming it.
+     *
+     * @param value candidate typed value
+     * @return exact original text
+     * @throws IllegalArgumentException the supplied value, including null, has the wrong type
+     */
     /* default */ static String text(PkiOperationValue value) {
         if (value instanceof PkiOperationValue.Text text) {
             return text.value();
@@ -164,6 +198,13 @@ final class PkiCliConfiguration {
         return value == null ? java.util.Optional.empty() : java.util.Optional.of(text(value));
     }
 
+    /**
+     * Requires a signed integer-valued CLI field.
+     *
+     * @param value candidate typed value
+     * @return exact signed 64-bit value
+     * @throws IllegalArgumentException the supplied value, including null, has the wrong type
+     */
     /* default */ static long integer(PkiOperationValue value) {
         if (value instanceof PkiOperationValue.IntegerValue integer) {
             return integer.value();
@@ -171,6 +212,14 @@ final class PkiCliConfiguration {
         throw new IllegalArgumentException("CLI field has the wrong type");
     }
 
+    /**
+     * Requires equality of the actual and expected field-name sets; values are not inspected.
+     *
+     * @param actual typed field map, borrowed without modification
+     * @param expected closed expected field-name set
+     * @throws NullPointerException if the actual map is null
+     * @throws IllegalArgumentException if field-name sets differ
+     */
     /* default */ static void requireExactFields(Map<String, PkiOperationValue> actual, Set<String> expected) {
         if (!actual.keySet().equals(expected)) {
             throw new IllegalArgumentException("CLI document fields are invalid");

@@ -175,41 +175,65 @@ public final class XmssSignatureContext implements SignatureContext {
         return 4 + n * (1 + p + h);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CryptoAlgorithm algorithm() {
         return delegate.algorithm();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Key key() {
         return delegate.key();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         delegate.close();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public InputStream wrap(InputStream upstream) throws IOException {
         return delegate.wrap(upstream);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int tagLength() {
         return delegate.tagLength();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setExpectedTag(byte[] expected) {
         delegate.setExpectedTag(expected);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setVerificationApproach(VerificationBiPredicate<Signature> strategy) {
         delegate.setVerificationApproach(strategy);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public VerificationBiPredicate<Signature> getVerificationCore() {
         return delegate.getVerificationCore();

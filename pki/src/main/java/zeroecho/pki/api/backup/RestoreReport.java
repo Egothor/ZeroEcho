@@ -52,6 +52,10 @@ public record RestoreReport(PkiId restoreId, boolean success, List<String> warni
      *
      * @throws IllegalArgumentException if {@code restoreId} is null or lists are
      *                                  null
+     * @param restoreId restore identifier
+     * @param success true if restore completed successfully
+     * @param warnings operator-readable warnings (non-sensitive)
+     * @param errors operator-readable errors (non-sensitive)
      */
     public RestoreReport {
         if (restoreId == null) {

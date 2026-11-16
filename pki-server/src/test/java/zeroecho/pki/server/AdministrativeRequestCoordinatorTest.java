@@ -37,15 +37,28 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Exercises retained intent and actual signing across an offline approval and restart. */
+/**
+ * Exercises retained intent and actual signing across an offline approval and restart.
+ */
 class AdministrativeRequestCoordinatorTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks every catalog mutation is assigned an explicitly reviewed retained or dedicated execution boundary.
+     */
     @Test
     void everyMutationHasAnExplicitReviewedDurableOrDedicatedBoundary() {
         AdministrativeRequestCoverage.verify();
     }
 
+    /**
+     * Exercises real durable administrative submission, independent approval and restart continuation without resubmitting from a browser.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void singleSubmissionSurvivesIndependentApprovalAndRestartWithoutBrowserReplay() throws Exception {
         AdministrativeWorkflowFixture.run(directory);

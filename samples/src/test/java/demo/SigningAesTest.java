@@ -60,11 +60,20 @@ import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 
+/**
+ * Executable AES delivery examples comparing sign-then-encrypt and encrypt-then-sign.
+ */
 @Tag("sample")
 class SigningAesTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
     private static final Logger LOG = Logger.getLogger(SigningAesTest.class.getName());
 
+    /**
+     * Generates a 4096-bit RSA signing key pair through the SDK.
+     *
+     * @return fresh RSA key pair
+     * @throws GeneralSecurityException if key generation is unavailable or fails
+     */
     KeyPair generateRsaKeys() throws GeneralSecurityException {
         KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
 
@@ -75,6 +84,13 @@ class SigningAesTest {
         return kp;
     }
 
+    /**
+     * Checks the SDK sign-then-encrypt AES payload round trip.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesRoundStESdkLevelAPI() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundSmarterSdkLevelAPI - Sign then Encrypt");
@@ -142,6 +158,13 @@ class SigningAesTest {
                 new Object[] { Strings.toShortHexString(msg), Strings.toShortHexString(decrypted) });
     }
 
+    /**
+     * Checks the SDK encrypt-then-sign AES payload round trip.
+     *
+     * @throws GeneralSecurityException if fixture setup, invocation, or cleanup fails
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void aesRoundEtSSdkLevelAPI() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundSmarterSdkLevelAPI - Encrypt then Sign");

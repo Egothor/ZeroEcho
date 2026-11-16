@@ -127,6 +127,8 @@ public final class SignatureInteropProfile {
      * @param internalSignatureLength fixed internal signature length in bytes when
      *                                representation conversion requires it; set to
      *                                {@code 0} for identity representations
+     * @throws NullPointerException if any of {@code contextSpec}, {@code signatureRepresentation} is null
+     * @throws IllegalArgumentException if identity representation has a nonzero internal length or a converted representation lacks a positive length
      */
     public SignatureInteropProfile(String requestedAlgorithmId, String keyAlgorithmId, String contextAlgorithmId,
             ContextSpec contextSpec, SignatureRepresentation signatureRepresentation, int internalSignatureLength) {
@@ -197,6 +199,7 @@ public final class SignatureInteropProfile {
      * @return internal signature bytes suitable for ZeroEcho verification contexts
      * @throws IllegalArgumentException if the supplied bytes do not match the
      *                                  expected external representation
+     * @throws NullPointerException if {@code signature} is null
      */
     public byte[] externalToInternalSignature(byte[] signature) {
         Objects.requireNonNull(signature, "signature");
@@ -214,6 +217,7 @@ public final class SignatureInteropProfile {
      * @throws IOException              if DER encoding fails
      * @throws IllegalArgumentException if the supplied bytes do not match the
      *                                  expected internal representation
+     * @throws NullPointerException if {@code signature} is null
      */
     public byte[] internalToExternalSignature(byte[] signature) throws IOException {
         Objects.requireNonNull(signature, "signature");

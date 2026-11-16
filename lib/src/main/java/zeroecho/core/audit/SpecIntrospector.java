@@ -74,6 +74,7 @@ final class SpecIntrospector {
      *
      * <p>
      * Known optional fields include:
+     * </p>
      * <ul>
      * <li>{@code mode} – operation mode (e.g., ENCRYPT, DECRYPT)</li>
      * <li>{@code tagLen} – authentication tag length</li>
@@ -86,7 +87,6 @@ final class SpecIntrospector {
      * <li>{@code infoLen} – KDF info/context length</li>
      * <li>{@code header} – identifier of any associated header codec</li>
      * </ul>
-     * </p>
      *
      * <p>
      * Any field not available on the given spec type is omitted. If reflection

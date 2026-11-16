@@ -39,11 +39,36 @@ import java.util.Objects;
 
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Immutable validated sequential operation plan. */
+/**
+ * Immutable ordered plan with local structural checks and a normalized resolution base.
+ *
+ * <p>Construction copies the step list and makes the base path absolute without
+ * reading the file system. It does not bind operations, validate argument schemas,
+ * ensure unique step identifiers or resolve references; the parser/executor own
+ * those checks. Retained immutable step values are not rebuilt.</p>
+ *
+ * @param version plan format version, currently one
+ * @param failurePolicy sequential execution failure policy
+ * @param steps nonempty ordered step list, copied into an unmodifiable list
+ * @param baseDirectory base for relative inputs, normalized to an absolute path
+ */
 record PkiPlan(int version, FailurePolicy failurePolicy, List<Step> steps, Path baseDirectory) {
 
+    /**
+     * Schema version accepted by the plan parser and emitted by plan producers.
+     */
     /* default */ static final int CURRENT_VERSION = 1;
 
+    /**
+     * Checks the supported version and snapshots required plan coordinates.
+     *
+     * @param version supported plan version
+     * @param failurePolicy requested failure policy
+     * @param steps nonempty ordered steps
+     * @param baseDirectory relative-input resolution base
+     * @throws IllegalArgumentException if the version is unsupported or steps are null/empty
+     * @throws NullPointerException if the policy, base directory or a step is null
+     */
     PkiPlan {
         if (version != CURRENT_VERSION || steps == null || steps.isEmpty()) {
             throw new IllegalArgumentException("Plan version or steps are invalid");
@@ -53,14 +78,39 @@ record PkiPlan(int version, FailurePolicy failurePolicy, List<Step> steps, Path 
         baseDirectory = Objects.requireNonNull(baseDirectory, "baseDirectory").toAbsolutePath().normalize();
     }
 
-    /** Supported sequential failure policies. */
+    /**
+     * Supported sequential failure policies.
+     */
     /* default */ enum FailurePolicy {
+        /**
+         * Stops processing subsequent steps after an execution failure.
+         */
         FAIL_FAST,
+        /**
+         * Continues independent steps while failed dependencies remain unavailable.
+         */
         CONTINUE_INDEPENDENT
     }
 
-    /** One validated ordered plan step. */
+    /**
+     * Ordered step coordinates retained for later registry binding and reference resolution.
+     *
+     * <p>The constructor rejects null components only; blank identities, supported
+     * operations and argument semantics must be checked by the parser/executor.</p>
+     *
+     * @param id step identity
+     * @param operation semantic operation name
+     * @param arguments immutable typed arguments, retained without copying
+     */
     /* default */ record Step(String id, String operation, PkiOperationValue.ObjectValue arguments) {
+        /**
+         * Retains non-null step coordinates without binding or executing an operation.
+         *
+         * @param id step identity
+         * @param operation semantic operation name
+         * @param arguments immutable typed argument object
+         * @throws IllegalArgumentException if any component is null
+         */
         Step {
             if (id == null || operation == null || arguments == null) {
                 throw new IllegalArgumentException("Plan step is incomplete");

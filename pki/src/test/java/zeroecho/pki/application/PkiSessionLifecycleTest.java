@@ -95,8 +95,17 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for PKI session lifecycle.
+ */
 final class PkiSessionLifecycleTest {
 
+    /**
+     * Opens unconfigured services and closes idempotently.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void opensUnconfiguredServicesAndClosesIdempotently(@TempDir Path temporary) throws Exception {
         PkiSession session = PkiSession.open(configuration(temporary));
@@ -133,6 +142,12 @@ final class PkiSessionLifecycleTest {
         assertThrows(IllegalStateException.class, () -> session.openSigningEvidenceFeed(-1L));
     }
 
+    /**
+     * Exposes committed issuance and status evidence with exclusive resume.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exposesCommittedIssuanceAndStatusEvidenceWithExclusiveResume(@TempDir Path temporary) throws Exception {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
@@ -161,6 +176,12 @@ final class PkiSessionLifecycleTest {
         }
     }
 
+    /**
+     * Exposes authoritative status and fences retained evaluations after close.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exposesAuthoritativeStatusAndFencesRetainedEvaluationsAfterClose(@TempDir Path temporary) throws Exception {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
@@ -193,6 +214,12 @@ final class PkiSessionLifecycleTest {
         assertThrows(IllegalStateException.class, () -> evaluation.requireUsable(credential, zeroecho.pki.api.credential.CredentialUse.BUNDLE_DELIVERY));
     }
 
+    /**
+     * Exposes enabled signing evidence through session and preserves exclusive resume.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exposesEnabledSigningEvidenceThroughSessionAndPreservesExclusiveResume(@TempDir Path temporary) throws Exception {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
@@ -244,6 +271,12 @@ final class PkiSessionLifecycleTest {
         }
     }
 
+    /**
+     * Unconfigured session remains signing threadless.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unconfiguredSessionRemainsSigningThreadless(@TempDir Path temporary) throws Exception {
         try (PkiSession session = PkiSession.open(configuration(temporary))) {
@@ -251,6 +284,9 @@ final class PkiSessionLifecycleTest {
         }
     }
 
+    /**
+     * Exposes restored OCSP without legacy signing session surface.
+     */
     @Test
     void exposesRestoredOcspWithoutLegacySigningSessionSurface() {
         Set<String> methods = Arrays.stream(PkiSession.class.getMethods())
@@ -262,6 +298,12 @@ final class PkiSessionLifecycleTest {
                 "reconcileSigning", "registerSigningAdvisoryWake", "signingExecutionMetrics")::contains));
     }
 
+    /**
+     * Configured session owns signing runtime and closes provider.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void configuredSessionOwnsSigningRuntimeAndClosesProvider(@TempDir Path temporary)
             throws Exception {
@@ -283,6 +325,12 @@ final class PkiSessionLifecycleTest {
                 () -> semantic.findByCorrelation(zeroecho.pki.api.signing.SemanticSigningKind.CA, "closed"));
     }
 
+    /**
+     * Configured session dispatches exact nondefault request algorithm.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void configuredSessionDispatchesExactNondefaultRequestAlgorithm(@TempDir Path temporary) throws Exception {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap(1);
@@ -304,6 +352,12 @@ final class PkiSessionLifecycleTest {
         }
     }
 
+    /**
+     * Configured topology routes exact and unmatched keys to dedicated pools.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void configuredTopologyRoutesExactAndUnmatchedKeysToDedicatedPools(
             @TempDir Path temporary) throws Exception {
@@ -331,6 +385,11 @@ final class PkiSessionLifecycleTest {
         assertEquals(1, bootstrap.provider.closes);
     }
 
+    /**
+     * Failed signing composition closes provider and store.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void failedSigningCompositionClosesProviderAndStore(@TempDir Path temporary) {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
@@ -340,6 +399,11 @@ final class PkiSessionLifecycleTest {
         assertThrows(IllegalStateException.class, bootstrap.store::signingNow);
     }
 
+    /**
+     * Invalid duplicate route fails before resource allocation.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void invalidDuplicateRouteFailsBeforeResourceAllocation(@TempDir Path temporary) {
         RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
@@ -350,6 +414,11 @@ final class PkiSessionLifecycleTest {
         assertTrue(bootstrap.store == null);
     }
 
+    /**
+     * Rejects every configuration version except current.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     */
     @Test
     void rejectsEveryConfigurationVersionExceptCurrent(@TempDir Path temporary) {
         ProviderConfig store = new ProviderConfig("fs", Map.of("root", temporary.toString()));

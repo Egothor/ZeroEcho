@@ -59,9 +59,13 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * SLH-DSA hash families (FIPS 205).
      */
     public enum Hash {
-        /** SHA-2 based SLH-DSA parameter sets. */
+        /**
+         * SHA-2 based SLH-DSA parameter sets.
+         */
         SHA2,
-        /** SHAKE based SLH-DSA parameter sets. */
+        /**
+         * SHAKE based SLH-DSA parameter sets.
+         */
         SHAKE
     }
 
@@ -69,16 +73,29 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * Security levels as defined by NIST PQC (L1, L3, L5).
      */
     public enum Security {
-        /** NIST Level 1 (~128-bit security). */
+        /**
+         * NIST Level 1 (~128-bit security).
+         */
         L1_128(128),
-        /** NIST Level 3 (~192-bit security). */
+        /**
+         * NIST Level 3 (~192-bit security).
+         */
         L3_192(192),
-        /** NIST Level 5 (~256-bit security). */
+        /**
+         * NIST Level 5 (~256-bit security).
+         */
         L5_256(256);
 
-        /** Claimed security level in bits. */
+        /**
+         * Claimed security level in bits.
+         */
         public final int bits;
 
+        /**
+         * Retains the security strength associated with this level.
+         *
+         * @param b security strength in bits
+         */
         Security(int b) {
             bits = b;
         }
@@ -93,9 +110,13 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * </p>
      */
     public enum Variant {
-        /** Larger, faster signatures. */
+        /**
+         * Larger, faster signatures.
+         */
         FAST,
-        /** Smaller, slower signatures. */
+        /**
+         * Smaller, slower signatures.
+         */
         SMALL
     }
 
@@ -118,15 +139,25 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * </ul>
      */
     public enum PreHash {
-        /** No pre-hash parameter set (pure SLH-DSA). */
+        /**
+         * No pre-hash parameter set (pure SLH-DSA).
+         */
         NONE,
-        /** Pre-hash with SHA-256 (only for SHA2-128). */
+        /**
+         * Pre-hash with SHA-256 (only for SHA2-128).
+         */
         SHA256,
-        /** Pre-hash with SHA-512 (only for SHA2-192/256). */
+        /**
+         * Pre-hash with SHA-512 (only for SHA2-192/256).
+         */
         SHA512,
-        /** Pre-hash with SHAKE128 (only for SHAKE-128). */
+        /**
+         * Pre-hash with SHAKE128 (only for SHAKE-128).
+         */
         SHAKE128,
-        /** Pre-hash with SHAKE256 (only for SHAKE-192/256). */
+        /**
+         * Pre-hash with SHAKE256 (only for SHAKE-192/256).
+         */
         SHAKE256
     }
 

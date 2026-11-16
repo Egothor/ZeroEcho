@@ -44,10 +44,26 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
-/** Real initial-state migration tests, including old numbered grants and fail-closed incomplete stores. */
+/**
+ * Real initial-state migration tests, including old numbered grants and fail-closed incomplete stores.
+ */
 class PkiCertificateAccessTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
+    /**
+     * Checks idempotent provisioning of exact certificate-content capabilities without granting root approval authority.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void provisionsOnlyExactContentCapabilitiesIdempotentlyWithoutRootApproval() throws Exception { exercise(directory); }
+    /**
+     * Runs exact certificate-access migration against retained original-bootstrap fixtures.
+     *
+     * @param root isolated durable realm/control fixture root
+     * @throws Exception if bootstrap fixture creation, migration, restart or assertions fail
+     */
     static void exercise(Path root)throws Exception {
         var configuration=AdministrativeWorkflowFixture.configuration(root,false);
         legacy(configuration);
@@ -104,6 +120,12 @@ class PkiCertificateAccessTest {
             return Map.of("bootstrap-admin",realm.directGrants("bootstrap-admin"),"bootstrap-approver",realm.directGrants("bootstrap-approver"),"trusted-proxy",realm.directGrants("trusted-proxy"));
         }
     }
+    /**
+     * Creates the reviewed historical grant catalog without newer explicit certificate-content capabilities.
+     *
+     * @param configuration original bootstrap configuration and durable state locations
+     * @throws Exception if legacy realm initialization, grant persistence or reservation creation fails
+     */
     static void legacy(PkiServerConfiguration configuration)throws Exception {
         var scope=new Permission.Scope(configuration.realm().realmId(),Optional.empty(),Optional.empty(),Optional.empty());
         try(var realm=ServerRealmContext.open(configuration.realm(),PkiSessionRuntimeDependencies.none())) {
@@ -126,6 +148,11 @@ class PkiCertificateAccessTest {
         return new Permission.Grant(id,principal,Permission.Effect.ALLOW,action,type,scope,Permission.Relationship.ANY,view,java.util.Set.of(),Optional.empty(),true);
     }
     private static void check(boolean result,String message) {if(!result)throw new AssertionError(message);}
-    /** Runs the real migration fixture without asserting that external JUnit dependencies executed. */
+    /**
+     * Runs the real certificate-access migration fixture directly in a fresh temporary directory.
+     *
+     * @param args unused direct-run arguments
+     * @throws Exception if fixture setup, migration or cleanup fails
+     */
     public static void main(String[] args)throws Exception {exercise(Files.createTempDirectory("zeroecho-certificate-access-"));}
 }

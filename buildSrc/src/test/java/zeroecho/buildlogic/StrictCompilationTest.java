@@ -57,16 +57,35 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+/**
+ * Build-logic tests for warning-free compilation across every Java source set.
+ */
 class StrictCompilationTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path directory;
 
+    /**
+     * Checks warning-free compilation for every configured Java source set.
+     * @param taskName Gradle compilation task identifying the Java source set under test
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = { "compileJava", "compileTestJava", "compileAuxiliaryJava" })
     void acceptsWarningFreeSourceForEveryJavaSourceSet(String taskName) throws Exception {
         assertTrue(compile(taskName, "final class Fixture { String value() { return \"ok\"; } }").successful());
     }
 
+    /**
+     * Checks that each enabled compiler warning category fails every configured Java source set.
+     * @param taskName Gradle compilation task identifying the Java source set under test
+     * @param category enabled compiler warning category exercised by the fixture
+     * @param diagnosticCode expected compiler diagnostic code identifying the warning
+     * @param source Java source deliberately triggering the selected warning
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest(name = "{0} rejects {1}")
     @MethodSource("warningSources")
     void rejectsAllWarningCategoriesForEveryJavaSourceSet(String taskName, String category, String diagnosticCode, String source)

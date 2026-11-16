@@ -51,13 +51,30 @@ import zeroecho.pki.api.attr.AttributeSet;
  *
  */
 public sealed interface CaRolloverCommand {
-    /** {@return CA entity identifier} */
+    /**
+     * Identifies the authority whose credential will be rolled over.
+     *
+     * @return the logical CA identifier
+     */
     PkiId caId();
-    /** {@return optional requested validity; policy may override or deny it} */
+    /**
+     * Returns the requested validity before authoritative policy is applied.
+     *
+     * @return the requested bounds, or an empty optional when policy selects them;
+     *         policy may override or deny a supplied request
+     */
     Optional<Validity> requestedValidity();
-    /** {@return immutable universal attributes} */
+    /**
+     * Returns the universal attributes carried by the rollover request.
+     *
+     * @return immutable attributes, possibly empty
+     */
     AttributeSet attributes();
-    /** @return exact expected original selected head, absent only before normalization */
+    /**
+     * Returns the selected head against which execution must be checked.
+     *
+     * @return the exact original head, present after normalization and otherwise possibly empty
+     */
     Optional<CaHeadSnapshot> expectedHead();
 
     /**
@@ -70,10 +87,15 @@ public sealed interface CaRolloverCommand {
      * @param attributes immutable universal attributes, possibly empty
      * @param expectedHead optional expected original selected head
      */
-    record Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes, Optional<CaHeadSnapshot> expectedHead) implements CaRolloverCommand {
+    record Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes,
+            Optional<CaHeadSnapshot> expectedHead) implements CaRolloverCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if a component is null or the CA identifier is invalid
+         * @param caId root CA identifier, strict UTF-8 at most 4,096 bytes
+         * @param requestedValidity optional requested validity
+         * @param attributes immutable universal attributes, possibly empty
+         * @param expectedHead optional expected original selected head
          */
         public Root {
             CaCommandInputs.identifier(caId);
@@ -82,14 +104,29 @@ public sealed interface CaRolloverCommand {
             CaCommandInputs.required(expectedHead);
         }
         /**
-         * Preserves same-key rollover inputs before head normalization.
-         * @param caId authority @param requestedValidity requested bounds @param attributes immutable attributes
+         * Creates a same-key root rollover before capturing the expected head.
+         *
+         * <p>The empty expected-head optional must be normalized from authoritative
+         * state before approval. This constructor performs only local structural checks;
+         * it neither authorizes rollover nor obtains the required fresh self-signature.
+         *
+         * @param caId root authority identifier using bounded strict UTF-8
+         * @param requestedValidity requested bounds, or an empty optional; must not be null
+         * @param attributes immutable universal attributes, possibly empty; must not be null
+         * @throws IllegalArgumentException if a component is null or the CA identifier is invalid
          */
         public Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes) {
             this(caId, requestedValidity, attributes, Optional.empty());
         }
-        /** {@return a diagnostic representation without command coordinates or attributes} */
-        @Override public String toString() { return "CaRolloverCommand.Root[redacted]"; }
+        /**
+         * Returns a diagnostic label without disclosing rollover coordinates or attributes.
+         *
+         * @return the fixed redacted root-rollover label
+         */
+        @Override
+        public String toString() {
+            return "CaRolloverCommand.Root[redacted]";
+        }
     }
 
     /**
@@ -108,25 +145,47 @@ public sealed interface CaRolloverCommand {
         /**
          * Validates local structure without resolving authority state.
          * @throws IllegalArgumentException if any component is null, bounded text is invalid
+         * @param caId intermediate CA identifier, strict UTF-8 at most 4,096 bytes
+         * @param issuerCaId issuer CA identifier, strict UTF-8 at most 4,096 bytes
+         * @param keyRef expected current key, strict UTF-8 at most 1,048,576 bytes
+         * @param requestedValidity optional requested validity
+         * @param attributes immutable universal attributes, possibly empty
+         * @param expectedHead optional expected original selected head
          */
         public Intermediate {
             CaCommandInputs.identifier(caId);
             CaCommandInputs.identifier(issuerCaId);
             CaCommandInputs.key(keyRef);
-                CaCommandInputs.required(requestedValidity);
+            CaCommandInputs.required(requestedValidity);
             CaCommandInputs.required(attributes);
             CaCommandInputs.required(expectedHead);
         }
         /**
-         * Preserves existing same-key intermediate rollover before head normalization.
-         * @param caId subject authority @param issuerCaId parent authority @param keyRef expected subject key
-         * @param requestedValidity requested bounds @param attributes immutable attributes
+         * Creates a same-key intermediate rollover before capturing the expected subject head.
+         *
+         * <p>The workflow must subsequently match the expected key to authoritative
+         * subject state, normalize the head, authorize both authorities' use and obtain
+         * the fresh subject-key proof. Construction does not perform those operations.
+         *
+         * @param caId intermediate authority identifier using bounded strict UTF-8
+         * @param issuerCaId independently selected parent authority identifier
+         * @param keyRef expected current managed subject-key reference
+         * @param requestedValidity requested bounds, or an empty optional; must not be null
+         * @param attributes immutable universal attributes, possibly empty; must not be null
+         * @throws IllegalArgumentException if a component is null or a bounded coordinate is invalid
          */
         public Intermediate(PkiId caId, PkiId issuerCaId, KeyRef keyRef,
                 Optional<Validity> requestedValidity, AttributeSet attributes) {
             this(caId, issuerCaId, keyRef, requestedValidity, attributes, Optional.empty());
         }
-        /** {@return a diagnostic representation without command coordinates or attributes} */
-        @Override public String toString() { return "CaRolloverCommand.Intermediate[redacted]"; }
+        /**
+         * Returns a diagnostic label without disclosing rollover coordinates or attributes.
+         *
+         * @return the fixed redacted intermediate-rollover label
+         */
+        @Override
+        public String toString() {
+            return "CaRolloverCommand.Intermediate[redacted]";
+        }
     }
 }

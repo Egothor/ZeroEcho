@@ -62,18 +62,29 @@ import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Strict narrow ACME flattened-JWS verifier supporting only ES256. */
-@SuppressWarnings("PMD")
+/**
+ * Strict narrow ACME flattened-JWS verifier supporting only ES256.
+ */
 public final class AcmeJwsVerifier {
-    /** Creates a stateless strict ACME JWS verifier. */
+    /**
+     * Creates a stateless strict ACME JWS verifier.
+     */
     public AcmeJwsVerifier() {
         // Stateless.
     }
 
-    /** Required protected-header account-key mode. */
+    /**
+     * Required protected-header account-key mode.
+     */
     public enum KeyMode {
-        /** Protected header carries a new-account JSON Web Key. */ JWK,
-        /** Protected header carries an existing-account key identifier. */ KID
+        /**
+         * Protected header carries a new-account JSON Web Key.
+         */
+        JWK,
+        /**
+         * Protected header carries an existing-account key identifier.
+         */
+        KID
     }
 
     /**
@@ -87,14 +98,24 @@ public final class AcmeJwsVerifier {
      */
     public record AccountKey(String accountId, String kid, String keyThumbprint,
             PublicKey publicKey, String recordCommitment) {
-        /** Validates finite account authority metadata. */
+        /**
+         * Validates finite account authority metadata.
+         * @param accountId stable account identifier
+         * @param kid exact account key identifier
+         * @param keyThumbprint SHA-256 account-key thumbprint
+         * @param publicKey verified account public key
+         * @param recordCommitment expected durable account-record commitment
+         * @throws NullPointerException if any of {@code kid}, {@code publicKey} is null
+         */
         public AccountKey {
             requireId(accountId); Objects.requireNonNull(kid, "kid"); digest(keyThumbprint);
             Objects.requireNonNull(publicKey, "publicKey"); digest(recordCommitment);
         }
     }
 
-    /** Account lookup used only after strict KID framing. */
+    /**
+     * Account lookup used only after strict KID framing.
+     */
     @FunctionalInterface
     public interface AccountKeyResolver {
         /**
@@ -116,7 +137,14 @@ public final class AcmeJwsVerifier {
      */
     public record Verified(byte[] payload, String keyThumbprint, Optional<AccountKey> account,
             PublicKey publicKey) {
-        /** Defensively snapshots verified payload. */
+        /**
+         * Defensively snapshots verified payload.
+         * @param payload verified endpoint payload
+         * @param keyThumbprint authenticated signing-key thumbprint
+         * @param account resolved account for KID mode
+         * @param publicKey authenticated signing public key
+         * @throws NullPointerException if any of {@code payload}, {@code account}, {@code publicKey} is null
+         */
         public Verified {
             payload = Objects.requireNonNull(payload, "payload").clone(); digest(keyThumbprint);
             account = Objects.requireNonNull(account, "account"); Objects.requireNonNull(publicKey, "publicKey");
@@ -140,6 +168,7 @@ public final class AcmeJwsVerifier {
      * @param maximumDocumentBytes positive encoded-document bound in bytes
      * @param expectedUrl exact externally visible endpoint URL
      * @return untrusted KID routing hint
+     * @throws NullPointerException if {@code expectedUrl} is null
      */
     public String kidRoutingHint(byte[] document, int maximumDocumentBytes, URI expectedUrl) {
         Objects.requireNonNull(expectedUrl, "expectedUrl");
@@ -171,6 +200,10 @@ public final class AcmeJwsVerifier {
      * @param nonces one-use replay-nonce service
      * @param accounts exact account-key resolver
      * @return verified payload and signing authority
+     * @throws NullPointerException if any of {@code expectedUrl}, {@code keyMode}, {@code nonces}, {@code
+     *         accounts} is null
+     * @throws AcmeProblem if JWS framing, protected fields, nonce, key selection or signature verification is
+     *         invalid
      */
     public Verified verify(byte[] document, int maximumDocumentBytes, URI expectedUrl,
             String nonceScope, KeyMode keyMode, AcmeNonceService nonces,
@@ -216,6 +249,9 @@ public final class AcmeJwsVerifier {
      * @param expectedAccountKid exact existing-account KID
      * @param oldKeyThumbprint authenticated old account-key thumbprint
      * @return verified payload and replacement-key authority
+     * @throws NullPointerException if any of {@code expectedUrl}, {@code expectedAccountKid} is null
+     * @throws AcmeProblem if inner-JWS framing, account binding, replacement key or signature verification is
+     *         invalid
      */
     public Verified verifyKeyChange(byte[] document, int maximumDocumentBytes, URI expectedUrl,
             String expectedAccountKid, String oldKeyThumbprint) {
@@ -260,10 +296,14 @@ public final class AcmeJwsVerifier {
         }
     }
 
-    /** Safe finite protocol failure, never carrying provider or parser details. */
+    /**
+     * Safe finite protocol failure, never carrying provider or parser details.
+     */
     public static final class AcmeProblem extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
-        /** Stable RFC-style problem suffix. */
+        /**
+         * Stable RFC-style problem suffix.
+         */
         private final String type;
         /**
          * Creates a safe ACME problem classification.

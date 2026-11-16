@@ -45,7 +45,13 @@ import zeroecho.pki.api.backup.BackupArtifact;
 import zeroecho.pki.api.backup.RestoreRequest;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for store backed backup service.
+ */
 class StoreBackedBackupServiceTest {
+    /**
+     * Restore never delegates to custom store.
+     */
     @Test
     void restoreNeverDelegatesToCustomStore() {
         PkiStore store = (PkiStore) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),

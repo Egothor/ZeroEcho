@@ -99,7 +99,15 @@ import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for filesystem backup.
+ */
 class FilesystemBackupTest {
+    /**
+     * Historical unsupported alternative profiles remain readable and backed up.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void historicalUnsupportedAlternativeProfilesRemainReadableAndBackedUp() throws Exception {
         try (FilesystemPkiStore store = open("legacy-alt")) {
             for (String id : List.of("intermediate-ca", "server-tls")) {
@@ -150,6 +158,9 @@ class FilesystemBackupTest {
             }
         }
     }
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path temporary;
     private static final Instant NOW = Instant.parse("2026-10-04T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -162,6 +173,11 @@ class FilesystemBackupTest {
         return new BackupRequest("test", FilesystemPkiStoreTest.TestObjects.emptyAttributes());
     }
 
+    /**
+     * Logical snapshot preserves records revocations and file times across reopen.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void logicalSnapshotPreservesRecordsRevocationsAndFileTimesAcrossReopen() throws Exception {
         try (FilesystemPkiStore store = open("source")) {
             Credential credential = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "41", "profile");
@@ -197,6 +213,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Fresh checkpoint preserves signing cas CRL counters and retained outcomes.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void freshCheckpointPreservesSigningCasCrlCountersAndRetainedOutcomes() throws Exception {
         try (FilesystemPkiStore store = open("coordinates")) {
             CaRecord ca = FilesystemPkiStoreTest.TestObjects.minimalCaRecord(store, "backup-ca", CaState.ACTIVE);
@@ -264,6 +285,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Primary artifact exceeds four mi b without reading archive into array.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void primaryArtifactExceedsFourMiBWithoutReadingArchiveIntoArray() throws Exception {
         try (FilesystemPkiStore store = open("large")) {
             Credential template = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "42", "profile");
@@ -292,6 +318,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Rejects traversal absolute aliases and only version before extraction.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsTraversalAbsoluteAliasesAndOnlyVersionBeforeExtraction() throws Exception {
         try (FilesystemPkiStore store = open("paths")) {
             Path outside = temporary.resolve("sentinel");
@@ -307,6 +338,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Rejects central local forgery links duplicates and truncation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsCentralLocalForgeryLinksDuplicatesAndTruncation() throws Exception {
         try (FilesystemPkiStore store = open("structure")) {
             BackupArtifact artifact = store.createBackup(request());
@@ -347,6 +383,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Rejects recommitted corruption missing state and misbound domain records.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsRecommittedCorruptionMissingStateAndMisboundDomainRecords() throws Exception {
         try (FilesystemPkiStore store = open("semantic")) {
             store.putPolicyTrace(new PolicyTrace(new PkiId("correct"), List.of()));
@@ -371,6 +412,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Detects manifest digest length versions and noncanonical instant.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void detectsManifestDigestLengthVersionsAndNoncanonicalInstant() throws Exception {
         try (FilesystemPkiStore store = open("manifest")) {
             BackupArtifact artifact = store.createBackup(request());
@@ -398,6 +444,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Bounded ingestion rejects lying length digest partial I/O and entry budgets.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void boundedIngestionRejectsLyingLengthDigestPartialIoAndEntryBudgets() throws Exception {
         try (FilesystemPkiStore store = open("bounds")) {
             BackupArtifact artifact = store.createBackup(request());
@@ -438,6 +489,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Failed force and cleanup are explicit and source remains usable.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void failedForceAndCleanupAreExplicitAndSourceRemainsUsable() throws Exception {
         try (FilesystemPkiStore store = open("failures")) {
             FsBackupFiles.OBSERVER.set((phase, path) -> {
@@ -463,6 +519,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Rejects actual expansion beyond forged size and enforces configured limits.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void rejectsActualExpansionBeyondForgedSizeAndEnforcesConfiguredLimits() throws Exception {
         try (FilesystemPkiStore store = open("limits")) {
             byte[] bomb = zip(Map.of(FsBackupFiles.MANIFEST, new byte[8192]));
@@ -493,6 +554,11 @@ class FilesystemBackupTest {
         }
     }
 
+    /**
+     * Close rejects new admission and waits for an admitted snapshot.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void closeRejectsNewAdmissionAndWaitsForAnAdmittedSnapshot() throws Exception {
         FilesystemPkiStore store = open("closing");
         CountDownLatch frozen = new CountDownLatch(1), release = new CountDownLatch(1);
@@ -530,6 +596,11 @@ class FilesystemBackupTest {
         assertWorkEmpty("closing");
     }
 
+    /**
+     * Freeze blocks whole revocation and escaped sink publication.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void freezeBlocksWholeRevocationAndEscapedSinkPublication() throws Exception {
         try (FilesystemPkiStore store = open("concurrency")) {
             Credential credential = FilesystemPkiStoreTest.TestObjects.minimalCredential(store, "43", "profile");

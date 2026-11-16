@@ -49,7 +49,15 @@ import zeroecho.core.alg.xmss.XmssKeyGenSpec;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.sdk.ZeroEchoSession;
 
+/**
+ * Contract and regression tests for stateful key generation failure.
+ */
 class StatefulKeyGenerationFailureTest {
+    /**
+     * Checked provider failure remains checked and unwrapped.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void checkedProviderFailureRemainsCheckedAndUnwrapped() throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();

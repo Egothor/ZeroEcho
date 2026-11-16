@@ -116,6 +116,7 @@ public final class PkiApplication {
      * </p>
      *
      * @param args command-line arguments (never logged)
+     * @throws NullPointerException if {@code args} is null
      */
     public static void main(String[] args) {
         Objects.requireNonNull(args, "args");
@@ -216,6 +217,9 @@ public final class PkiApplication {
             this.asyncBus = Objects.requireNonNull(asyncBus, "asyncBus");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void run() {
             Instant now = Instant.now();
@@ -261,6 +265,9 @@ public final class PkiApplication {
             this.latch = Objects.requireNonNull(latch, "latch");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void run() {
             Logger shutdownLogger = Logger.getLogger(PkiApplication.class.getName());
@@ -298,6 +305,9 @@ public final class PkiApplication {
      */
     private static final class SweepThreadFactory implements ThreadFactory {
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Thread newThread(Runnable r) {
             Thread t = new Thread(r, "zeroecho-pki-async-sweep");

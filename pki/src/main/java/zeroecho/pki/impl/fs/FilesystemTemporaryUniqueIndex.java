@@ -53,7 +53,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 
-/** File-backed exact set using fixed-length, self-verifying physical keys. */
+/**
+ * File-backed exact set using fixed-length, self-verifying physical keys.
+ */
 final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
 
     private static final int MAX_VALUE_BYTES = 640;
@@ -75,19 +77,44 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         this.domain = domain.clone();
     }
 
+    /**
+     * Creates a general-purpose temporary exact-membership index with its own digest domain.
+     *
+     * @param directory dedicated store-owned temporary directory; closure removes its entries and directory
+     * @return owned temporary index; caller closes it after the bounded operation
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static FilesystemTemporaryUniqueIndex general(Path directory) {
         return new FilesystemTemporaryUniqueIndex(directory, GENERAL_DOMAIN);
     }
 
+    /**
+     * Creates a temporary exact content-owner index with its separate digest domain.
+     *
+     * @param directory dedicated store-owned temporary directory; closure removes its entries and directory
+     * @return owned temporary index; caller closes it after the bounded operation
+     * @throws NullPointerException if a required input is null
+     */
     /* default */ static FilesystemTemporaryUniqueIndex owners(Path directory) {
         return new FilesystemTemporaryUniqueIndex(directory, OWNER_DOMAIN);
     }
 
+    /**
+     * Computes the domain-separated physical index key for an exact canonical content owner.
+     *
+     * @param owner immutable durable content owner identity
+     * @return lowercase digest key derived from canonical UTF-8 owner coordinates
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     /* default */ static String ownerKey(DurableContentOwner owner) {
         Objects.requireNonNull(owner, "owner");
         return key(OWNER_DOMAIN, owner.canonicalForm().getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean add(byte[] value) throws IOException {
         requireValue(value);
@@ -106,6 +133,9 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean contains(byte[] value) throws IOException {
         requireValue(value);
@@ -123,6 +153,9 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean remove(byte[] value) throws IOException {
         requireValue(value);
@@ -141,6 +174,9 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateNamespace() throws IOException {
         requireOpen();
@@ -169,6 +205,9 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() throws IOException {
         lock.lock();

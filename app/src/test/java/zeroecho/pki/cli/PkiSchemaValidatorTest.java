@@ -50,7 +50,15 @@ import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationValue;
 
+/**
+ * Contract coverage for bundled operation schemas and required argument fields.
+ */
 class PkiSchemaValidatorTest {
+    /**
+     * Loads all identities from the bundled schema catalogue and enforces required fields.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test void bundledRootArrayLoadsEveryIdentityAndEnforcesRequiredFields() throws Exception {
         Method load = PkiSchemaValidator.class.getDeclaredMethod("loadSchema");
         load.setAccessible(true);

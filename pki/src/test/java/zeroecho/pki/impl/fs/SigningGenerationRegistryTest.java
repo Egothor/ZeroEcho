@@ -44,8 +44,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for signing generation registry.
+ */
 final class SigningGenerationRegistryTest {
 
+    /**
+     * Current references and snapshot pins both delay reclaim.
+     */
     @Test
     void currentReferencesAndSnapshotPinsBothDelayReclaim() {
         SigningGenerationRegistry registry = published(1L);
@@ -67,6 +73,9 @@ final class SigningGenerationRegistryTest {
         assertThrows(IllegalStateException.class, () -> registry.pinSnapshot(List.of(1L)));
     }
 
+    /**
+     * Failed claim requeues and completion removes lifetime state.
+     */
     @Test
     void failedClaimRequeuesAndCompletionRemovesLifetimeState() {
         SigningGenerationRegistry registry = published(2L, 1L);
@@ -85,6 +94,9 @@ final class SigningGenerationRegistryTest {
         assertEquals(0, registry.statistics().reclaimable());
     }
 
+    /**
+     * Invalid transitions and accounting fail without partial acquisition.
+     */
     @Test
     void invalidTransitionsAndAccountingFailWithoutPartialAcquisition() {
         SigningGenerationRegistry registry = published(1L);
@@ -105,6 +117,11 @@ final class SigningGenerationRegistryTest {
         registry.reclaimCompleted(action);
     }
 
+    /**
+     * Supersede versus snapshot pin is serialized without reclaim while pinned.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void supersedeVersusSnapshotPinIsSerializedWithoutReclaimWhilePinned() throws Exception {
         SigningGenerationRegistry registry = published(1L);
@@ -139,6 +156,9 @@ final class SigningGenerationRegistryTest {
         }
     }
 
+    /**
+     * Rollback token and close are idempotent.
+     */
     @Test
     void rollbackTokenAndCloseAreIdempotent() {
         SigningGenerationRegistry registry = published(1L);
@@ -158,6 +178,9 @@ final class SigningGenerationRegistryTest {
         assertThrows(IllegalStateException.class, () -> registry.create(2L));
     }
 
+    /**
+     * Owner buckets reject cross owner release without changing any bucket.
+     */
     @Test
     void ownerBucketsRejectCrossOwnerReleaseWithoutChangingAnyBucket() {
         SigningGenerationRegistry registry = published(1L);
@@ -191,6 +214,9 @@ final class SigningGenerationRegistryTest {
         registry.close();
     }
 
+    /**
+     * Owner batch release prevalidates every generation before mutation.
+     */
     @Test
     void ownerBatchReleasePrevalidatesEveryGenerationBeforeMutation() {
         SigningGenerationRegistry registry = published(1L, 2L);
@@ -206,6 +232,9 @@ final class SigningGenerationRegistryTest {
         registry.close();
     }
 
+    /**
+     * Close rejects temporary recovery ownership until rollback completes.
+     */
     @Test
     void closeRejectsTemporaryRecoveryOwnershipUntilRollbackCompletes() {
         SigningGenerationRegistry registry = published(1L);
@@ -223,6 +252,9 @@ final class SigningGenerationRegistryTest {
         registry.close();
     }
 
+    /**
+     * Reclaim requires every owner bucket and pins to be empty.
+     */
     @Test
     void reclaimRequiresEveryOwnerBucketAndPinsToBeEmpty() {
         SigningGenerationRegistry registry = published(1L);

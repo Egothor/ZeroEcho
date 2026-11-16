@@ -45,11 +45,26 @@ import java.util.regex.Pattern;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
 
-/** Canonical immutable signature input for credential key-possession proof v1. */
+/**
+ * Canonical bounded signature input for credential key-possession proof version one.
+ *
+ * <p>Construction snapshots the challenge into an owned encoding, and accessors
+ * return copies. {@link #clear()} explicitly erases that encoding; instances must
+ * not be used for signing after erasure. Callers serialize use and erasure.</p>
+ */
 final class CanonicalProofTranscript {
 
+    /**
+     * Version written into the canonical credential-possession transcript.
+     */
     /* default */ static final int VERSION = 1;
+    /**
+     * Domain-separation purpose bound into every credential-possession proof.
+     */
     /* default */ static final String PURPOSE = "credential-key-possession-confirmation";
+    /**
+     * Maximum accepted canonical transcript size, in bytes.
+     */
     /* default */ static final int MAXIMUM_ENCODED_BYTES = 2_048;
 
     private static final byte[] MAGIC = { 'Z', 'E', 'P', 'P' };
@@ -63,6 +78,22 @@ final class CanonicalProofTranscript {
     private final Instant expiresAt;
     private final byte[] encoded;
 
+    /**
+     * Builds the canonical, domain-separated signing input for one credential challenge.
+     *
+     * <p>The challenge bytes are encoded immediately and are not retained. The encoded
+     * buffer can subsequently be erased with {@link #clear()}.</p>
+     *
+     * @param realmId trusted confirmation realm; must not be null
+     * @param serverAudience nonempty UTF-8 audience of at most 512 bytes, without control characters
+     * @param credentialId canonical {@code x509:} identity followed by 64 lowercase hexadecimal digits
+     * @param descriptor exact proof-suite profile; must not be null
+     * @param randomChallenge challenge with exactly the suite's configured byte length
+     * @param expiresAt whole-second UTC expiry from the epoch through year 9999
+     * @throws NullPointerException if a required reference other than the challenge is null
+     * @throws IllegalArgumentException if an identity, audience, challenge or expiry is invalid,
+     *         or the encoded transcript exceeds the size limit
+     */
     /* default */ CanonicalProofTranscript(ConfirmationRealmBinding realmId,
             String serverAudience, PkiId credentialId,
             ProofSuiteDescriptor descriptor, byte[] randomChallenge, Instant expiresAt) {
@@ -80,18 +111,39 @@ final class CanonicalProofTranscript {
         this.encoded = encode(realmId, audience, credentialId, descriptor, randomChallenge, this.expiresAt);
     }
 
+    /**
+     * Returns the exact suite profile committed by this transcript.
+     *
+     * @return retained non-null suite descriptor
+     */
     /* default */ ProofSuiteDescriptor descriptor() {
         return descriptor;
     }
 
+    /**
+     * Returns the absolute proof expiry committed into the signing input.
+     *
+     * @return whole-second UTC expiry
+     */
     /* default */ Instant expiresAt() {
         return expiresAt;
     }
 
+    /**
+     * Copies the current canonical signing-input buffer.
+     *
+     * @return caller-owned bytes; all bytes are zero after {@link #clear()}
+     */
     /* default */ byte[] encoded() {
         return encoded.clone();
     }
 
+    /**
+     * Erases the retained signing-input buffer in place.
+     *
+     * <p>Previously returned copies remain the caller's responsibility. This instance
+     * must not be reused for signing after erasure.</p>
+     */
     /* default */ void clear() {
         Arrays.fill(encoded, (byte) 0);
     }

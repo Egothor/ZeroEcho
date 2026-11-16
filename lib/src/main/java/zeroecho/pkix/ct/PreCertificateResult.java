@@ -54,7 +54,14 @@ import java.util.Objects;
  */
 public record PreCertificateResult(byte[] preCertDer, List<byte[]> chainDer) {
 
-    /** Validates and defensively copies all contents. */
+    /**
+     * Validates and defensively copies all contents.
+     *
+     * @param preCertDer DER-encoded pre-certificate (signed by the issuing CA key)
+     * @param chainDer DER-encoded issuer chain in submission order (issuer first, root last)
+     * @throws NullPointerException if the precertificate, chain list, or a chain encoding is null
+     * @throws IllegalArgumentException if the precertificate encoding is empty
+     */
     public PreCertificateResult {
         Objects.requireNonNull(preCertDer, "preCertDer");
         Objects.requireNonNull(chainDer, "chainDer");

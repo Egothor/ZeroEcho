@@ -45,7 +45,9 @@ import zeroecho.pkix.crl.CrlReason;
  */
 public sealed interface CertStatus permits CertStatus.Good, CertStatus.Revoked, CertStatus.Unknown {
 
-    /** The certificate is not revoked. */
+    /**
+     * The certificate is not revoked.
+     */
     record Good() implements CertStatus {
     }
 
@@ -56,14 +58,22 @@ public sealed interface CertStatus permits CertStatus.Good, CertStatus.Revoked, 
      * @param reason the revocation reason, if present
      */
     record Revoked(Instant revocationTime, Optional<CrlReason> reason) implements CertStatus {
-        /** Canonicalizing constructor. */
+        /**
+         * Retains validated components and defensively copies mutable inputs.
+         *
+         * @param revocationTime the revocation time
+         * @param reason the revocation reason, if present
+         * @throws NullPointerException if any of {@code revocationTime}, {@code reason} is null
+         */
         public Revoked {
             Objects.requireNonNull(revocationTime, "revocationTime");
             Objects.requireNonNull(reason, "reason");
         }
     }
 
-    /** The responder does not know the status of the requested certificate. */
+    /**
+     * The responder does not know the status of the requested certificate.
+     */
     record Unknown() implements CertStatus {
     }
 

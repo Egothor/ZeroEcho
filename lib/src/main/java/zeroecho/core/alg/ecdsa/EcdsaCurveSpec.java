@@ -73,11 +73,17 @@ import zeroecho.core.spec.ContextSpec;
  * @since 1.0
  */
 public enum EcdsaCurveSpec implements ContextSpec, AlgorithmKeySpec, Describable {
-    /** NIST P-256 (secp256r1), SHA-256 binding, 64-byte signatures. */
+    /**
+     * NIST P-256 (secp256r1), SHA-256 binding, 64-byte signatures.
+     */
     P256("secp256r1", "SHA256withECDSAinP1363Format", 64),
-    /** NIST P-384 (secp384r1), SHA-384 binding, 96-byte signatures. */
+    /**
+     * NIST P-384 (secp384r1), SHA-384 binding, 96-byte signatures.
+     */
     P384("secp384r1", "SHA384withECDSAinP1363Format", 96),
-    /** NIST P-521 (secp521r1), SHA-512 binding, 132-byte signatures. */
+    /**
+     * NIST P-521 (secp521r1), SHA-512 binding, 132-byte signatures.
+     */
     P512("secp521r1", "SHA512withECDSAinP1363Format", 132);
 
     private final String curveName;

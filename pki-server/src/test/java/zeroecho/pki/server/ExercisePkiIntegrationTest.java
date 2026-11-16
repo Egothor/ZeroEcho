@@ -80,6 +80,13 @@ import zeroecho.pki.server.http.TestTlsProvider;
  */
 @EnabledIfEnvironmentVariable(named="ZEROECHO_EXERCISE_INTEGRATION", matches="true")
 class ExercisePkiIntegrationTest {
+    /**
+     * Runs the external operator client against HTTPS and checks certificate verification, protected client keys and retained request checkpoints.
+     *
+     * @param directory isolated JUnit-managed root for filesystem fixtures
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void operatorScriptCreatesConfirmsRevokesAndCryptographicallyChecksRealArtifacts(@TempDir Path directory) throws Exception {
         Path repository=Path.of("").toAbsolutePath();
@@ -204,11 +211,24 @@ class ExercisePkiIntegrationTest {
         };
     }
 
+    /**
+     * Creates an independent random unlock password for an isolated qualification fixture.
+     *
+     * @return unpadded base64url encoding of 32 fresh random bytes
+     */
     static String randomPassword() {
         byte[] bytes=new byte[32];new SecureRandom().nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
+    /**
+     * Loads the fixture server identity and trust store into an independent TLS client context.
+     *
+     * @param root owned qualification environment root
+     * @param password fixture PKCS #12 unlock password
+     * @return initialized TLS context with fixture identity and trust anchors
+     * @throws Exception if fixture stores cannot be read/unlocked or TLS initialization fails
+     */
     static SSLContext tlsContext(Path root,String password) throws Exception {
         KeyStore identity=KeyStore.getInstance("PKCS12");
         try(var in=Files.newInputStream(root.resolve("tls/server/server-identity.p12"))){identity.load(in,password.toCharArray());}
@@ -219,6 +239,15 @@ class ExercisePkiIntegrationTest {
         var context=SSLContext.getInstance("TLS");context.init(keys.getKeyManagers(),trusted.getTrustManagers(),new SecureRandom());return context;
     }
 
+    /**
+     * Runs the external qualification client with explicit standard input and bounded process lifetime.
+     *
+     * @param builder fully configured client process command/environment
+     * @param input caller-supplied client input bytes, written before its standard input closes
+     * @param log destination for combined process diagnostics
+     * @throws Exception if process start, input writing, waiting or diagnostic retention fails
+     * @throws AssertionError if the client exceeds its deadline or exits unsuccessfully
+     */
     static void run(ProcessBuilder builder,byte[] input,Path log) throws Exception {
         Process process=builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
         try(OutputStream in=process.getOutputStream()){in.write(input);}

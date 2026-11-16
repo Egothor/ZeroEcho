@@ -49,7 +49,13 @@ import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 
+/**
+ * Contract and regression tests for X.509 metadata snapshot.
+ */
 class X509MetadataSnapshotTest {
+    /**
+     * Every descriptor alias resolves the same exact encoding.
+     */
     @Test
     void everyDescriptorAliasResolvesTheSameExactEncoding() {
         X509BindingCatalog catalog = StandardX509Bindings.catalog();
@@ -67,6 +73,9 @@ class X509MetadataSnapshotTest {
         assertThrows(UnsupportedOperationException.class, () -> StandardX509Bindings.descriptors().add(null));
     }
 
+    /**
+     * Extension metadata is snapshotted once across lookups and merges.
+     */
     @Test
     void extensionMetadataIsSnapshottedOnceAcrossLookupsAndMerges() {
         AtomicInteger calls = new AtomicInteger();
@@ -85,6 +94,9 @@ class X509MetadataSnapshotTest {
         assertEquals(List.of(), extension.rules().getFirst().bindings());
     }
 
+    /**
+     * Fixed hit still checks extension ambiguity in either merge order.
+     */
     @Test
     void fixedHitStillChecksExtensionAmbiguityInEitherMergeOrder() {
         X509BindingCatalog extension = X509BindingCatalog.extension(List.of(
@@ -97,6 +109,9 @@ class X509MetadataSnapshotTest {
         }
     }
 
+    /**
+     * Descriptor aliases cannot shadow another rule or descriptor.
+     */
     @Test
     void descriptorAliasesCannotShadowAnotherRuleOrDescriptor() {
         X509AlgorithmBinding binding = StandardX509Bindings.descriptors().getFirst();
@@ -106,6 +121,9 @@ class X509MetadataSnapshotTest {
                 () -> StandardX509Bindings.catalog().merge(List.of(extension)));
     }
 
+    /**
+     * Parameterized fallback and unknown inputs retain their contracts.
+     */
     @Test
     void parameterizedFallbackAndUnknownInputsRetainTheirContracts() {
         X509BindingCatalog catalog = StandardX509Bindings.catalog();
@@ -121,6 +139,9 @@ class X509MetadataSnapshotTest {
                 BootstrapAlgorithmIdentities.ED448_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
     }
 
+    /**
+     * Private only descriptors stay explicit only.
+     */
     @Test
     void privateOnlyDescriptorsStayExplicitOnly() {
         X509AlgorithmBinding binding = new X509AlgorithmBinding("example.private-alias",

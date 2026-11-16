@@ -165,6 +165,9 @@ public final class SphincsPlusAlgorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(SphincsPlusPrivateKeySpec.class, new SphincsPlusPrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

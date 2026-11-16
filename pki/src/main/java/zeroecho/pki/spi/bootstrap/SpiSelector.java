@@ -97,6 +97,7 @@ public final class SpiSelector {
      * @return selected provider (never {@code null})
      * @throws IllegalStateException if no providers exist, selection is ambiguous,
      *                               or id not found
+     * @throws NullPointerException if service, idAccessor is null
      */
     public static <T> T select(Class<T> service, String requestedId, ProviderId<T> idAccessor) {
         Objects.requireNonNull(service, "service");

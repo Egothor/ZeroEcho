@@ -55,12 +55,17 @@ import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole;
 
-/** Structural codec tests use public synthetic SPKIs, without claiming cryptographic proof validity. */
+/**
+ * Structural codec tests use public synthetic SPKIs, without claiming cryptographic proof validity.
+ */
 class OcspResponderCertificateCommandTest {
     private static final PkiId PARENT = id('0');
     private static final byte[] PRIMARY = HexFormat.of().parseHex("302a300506032b6570032100" + "00".repeat(32));
     private static final byte[] ALTERNATIVE = alternate();
 
+    /**
+     * Round trips both exact descriptors and rejects role target and version substitution.
+     */
     @Test void roundTripsBothExactDescriptorsAndRejectsRoleTargetAndVersionSubstitution() {
         var fields = base();
         var parentFields = new ArrayList<>(fields); parentFields.add("123");

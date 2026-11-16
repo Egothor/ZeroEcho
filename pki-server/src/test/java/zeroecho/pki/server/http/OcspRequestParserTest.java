@@ -65,8 +65,15 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.application.OcspResponseService;
 
-/** Strict OCSP DER and GET request framing coverage. */
+/**
+ * Strict OCSP DER and GET request framing coverage.
+ */
 class OcspRequestParserTest {
+    /**
+     * Builds real SHA-1/SHA-256 CertIDs and checks ordered parsing, exact nonce bytes and canonical GET round-trip.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void parsesCanonicalSha1Sha256AndExactNonce() throws Exception {
         System.out.println("parsesCanonicalSha1Sha256AndExactNonce");
@@ -94,6 +101,11 @@ class OcspRequestParserTest {
         System.out.println("parsesCanonicalSha1Sha256AndExactNonce...ok");
     }
 
+    /**
+     * Checks identical decoded CertID semantics for absent and explicit-NULL SHA-256 parameters while enforcing the configured hash allow-list.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void acceptsSha256AbsentAndOpenSslNullParametersWithIdenticalCertId() throws Exception {
         X509CertificateHolder issuer = certificate();
@@ -118,6 +130,11 @@ class OcspRequestParserTest {
                 nullBuilder.build().getEncoded(), 1, Set.of(OcspResponseService.CertIdHash.SHA1), 32));
     }
 
+    /**
+     * Rejects a SHA-256 AlgorithmIdentifier with integer parameters and an unknown digest OID.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsSha256NonNullParametersAndUnknownHashOid() throws Exception {
         for (AlgorithmIdentifier algorithm : java.util.List.of(
@@ -135,6 +152,11 @@ class OcspRequestParserTest {
         }
     }
 
+    /**
+     * Checks rejection of unknown critical extensions, zero entry bounds, padded/oversized GET encodings and trailing DER bytes.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsAlternateGetEncodingBoundsAndUnknownCriticalExtension() throws Exception {
         System.out.println("rejectsAlternateGetEncodingBoundsAndUnknownCriticalExtension");
@@ -160,6 +182,11 @@ class OcspRequestParserTest {
         System.out.println("rejectsAlternateGetEncodingBoundsAndUnknownCriticalExtension...ok");
     }
 
+    /**
+     * Builds an actual RSA-signed OCSP request and checks that signer metadata is retained only under explicit certificate-count/byte bounds.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void retainsExactSignedRequestAndRequiresExplicitSignerBounds() throws Exception {
         System.out.println("retainsExactSignedRequestAndRequiresExplicitSignerBounds");

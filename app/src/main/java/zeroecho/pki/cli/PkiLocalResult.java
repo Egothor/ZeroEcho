@@ -39,7 +39,20 @@ import java.util.Optional;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.application.PkiOperationOutcome;
 
+/**
+ * Carries a local execution outcome together with its durable signing-operation identity.
+ *
+ * @param outcome non-null completed, pending, or failed backend outcome
+ * @param operationId non-null optional identity retained for inspection or completion
+ */
 record PkiLocalResult(PkiOperationOutcome outcome, Optional<PkiId> operationId) {
+    /**
+     * Retains the outcome and optional operation identity without copying or executing work.
+     *
+     * @param outcome non-null backend outcome
+     * @param operationId non-null optional durable identity
+     * @throws NullPointerException if either component is null
+     */
     PkiLocalResult {
         Objects.requireNonNull(outcome, "outcome");
         Objects.requireNonNull(operationId, "operationId");

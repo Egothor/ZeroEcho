@@ -49,8 +49,13 @@ import zeroecho.pki.server.enrollment.EnrollmentProfileService;
 import zeroecho.pki.server.enrollment.EnrollmentProfileState;
 import zeroecho.pki.server.enrollment.EnrollmentSubjectPattern;
 
-/** Bounded subject grammar and canonical enrollment policy validation. */
+/**
+ * Bounded subject grammar and canonical enrollment policy validation.
+ */
 class EnrollmentPolicyValidationTest {
+    /**
+     * Checks whole-subject literal/wildcard matching, empty wildcard input and overlap behavior without regex backtracking.
+     */
     @Test
     void matchesLiteralAndWildcardSegmentsWithoutBacktracking() {
         assertTrue(EnrollmentSubjectPattern.compile("^CN=.*example.*,O=Egothor$").matches("CN=device.example.test,O=Egothor"));
@@ -64,6 +69,9 @@ class EnrollmentPolicyValidationTest {
         assertFalse(EnrollmentSubjectPattern.compile(".*" + "a".repeat(250) + "b.*").matches("a".repeat(4096)));
     }
 
+    /**
+     * Checks the finite subject grammar rejects unsupported regex constructs and subjects longer than 4,096 characters.
+     */
     @Test
     void rejectsUnboundedOrUnsupportedRegexGrammar() {
         for (String pattern : List.of("", "(a+)+", "CN=[a-z]*", "CN=.+", "CN=foo|bar",
@@ -77,6 +85,9 @@ class EnrollmentPolicyValidationTest {
         assertThrows(IllegalArgumentException.class, () -> EnrollmentSubjectPattern.compile(".*").matches("x".repeat(4097)));
     }
 
+    /**
+     * Checks equivalent DNS suffix order/case normalizes into equal policy values and commitments.
+     */
     @Test
     void normalizesDnsSuffixOrderAndCaseForStablePolicyCommitment() {
         EnrollmentProfile first = profile("certificate", Set.of("authority-b", "authority-a"),
@@ -88,6 +99,9 @@ class EnrollmentPolicyValidationTest {
         assertEquals(EnrollmentProfileService.commitment(first), EnrollmentProfileService.commitment(second));
     }
 
+    /**
+     * Checks malformed identities, subject patterns and invalid/duplicate normalized DNS suffixes fail profile construction.
+     */
     @Test
     void rejectsInvalidIdsPatternsAndDomainSuffixesAtConstruction() {
         for (String id : List.of("", " ", "with space", "x".repeat(257))) {

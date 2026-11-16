@@ -67,6 +67,14 @@ public record CaImportCommand(PkiId targetAuthorityId, FormatId formatId, Subjec
      * Creates a CA import command.
      *
      * @throws IllegalArgumentException if any component is null, bounded text is invalid or proof id is malformed
+     * @param targetAuthorityId exact import target, strict UTF-8 at most 4,096 bytes
+     * @param formatId credential format id
+     * @param subjectRef normalized CA subject reference
+     * @param profileId nonblank strict UTF-8 profile id, at most 256 bytes
+     * @param keyRef managed key reference, strict UTF-8 at most 1,048,576 bytes
+     * @param proofId retained proof submission id, strict UTF-8 at most 4,096 bytes
+     * @param existingCaCredential existing CA credential payload (certificate-like)
+     * @param attributes universal attributes (may be empty but not null)
      */
     public CaImportCommand {
         CaCommandInputs.identifier(targetAuthorityId);
@@ -79,6 +87,9 @@ public record CaImportCommand(PkiId targetAuthorityId, FormatId formatId, Subjec
         CaCommandInputs.required(attributes);
     }
 
-    /** Returns a diagnostic representation without command coordinates, content or attributes. */
+    /**
+     * Returns a diagnostic representation without command coordinates, content or attributes.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "CaImportCommand[redacted]"; }
 }

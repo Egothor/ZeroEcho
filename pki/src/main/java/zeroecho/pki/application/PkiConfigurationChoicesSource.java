@@ -43,7 +43,9 @@ import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.publication.PublicationTarget;
 
-/** Read-only runtime configuration metadata; implementations expose no provider options or key material. */
+/**
+ * Read-only runtime configuration metadata; implementations expose no provider options or key material.
+ */
 @FunctionalInterface
 public interface PkiConfigurationChoicesSource {
     /**
@@ -75,7 +77,18 @@ public interface PkiConfigurationChoicesSource {
                             value -> value, value -> new FormatMetadata(value.value(), CredentialFramework.SubjectInput.generic()))));
         }
 
-        /** Snapshots the immutable non-secret metadata. */
+        /**
+         * Snapshots the immutable non-secret metadata.
+         * @param formats configured credential formats
+         * @param signingProviders configured runtime signing provider identifiers
+         * @param publicationTargets configured runtime publication destinations
+         * @param keys sorted distinct key references, at most the requested limit
+         * @param nextCursor last returned key reference when another key is known
+         * @param algorithms signature algorithms supported by the configured signing provider
+         * @param formatMetadata safe presentation metadata supplied by each configured framework
+         * @throws NullPointerException if nextCursor is null or a supplied collection contains a null member
+         * @throws IllegalArgumentException if formatMetadata does not describe exactly the configured formats
+         */
         public Choices {
             formats = List.copyOf(formats);
             signingProviders = List.copyOf(signingProviders);
@@ -96,7 +109,13 @@ public interface PkiConfigurationChoicesSource {
      * @param subjectInput format-owned subject input guidance
      */
     record FormatMetadata(String displayName, CredentialFramework.SubjectInput subjectInput) {
-        /** Validates bounded names and required subject guidance. */
+        /**
+         * Validates bounded names and required subject guidance.
+         * @param displayName user-facing format name
+         * @param subjectInput format-owned subject input guidance
+         * @throws NullPointerException if displayName, subjectInput is null
+         * @throws IllegalArgumentException if displayName is blank or exceeds 128 characters
+         */
         public FormatMetadata {
             Objects.requireNonNull(displayName, "displayName");
             Objects.requireNonNull(subjectInput, "subjectInput");

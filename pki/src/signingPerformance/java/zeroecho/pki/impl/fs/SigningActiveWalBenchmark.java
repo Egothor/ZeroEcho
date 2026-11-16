@@ -52,7 +52,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-/** Opt-in open-loop characterization of the production-unwired active WAL. */
+/**
+ * Opt-in open-loop characterization of the active-WAL writer used by the signing ledger.
+ */
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
         "PMD.CommentRequired", "PMD.DoNotUseThreads", "PMD.SystemPrintln",
         "PMD.UseObjectForClearerAPI", "PMD.AvoidCatchingGenericException" })
@@ -64,7 +66,12 @@ public final class SigningActiveWalBenchmark {
         // entry point
     }
 
-    /** Runs one diagnostic or acceptance-shape characterization. */
+    /**
+     * Runs one diagnostic or acceptance-shape characterization.
+     *
+     * @param arguments closed --name=value options selecting the benchmark scenario and report paths
+     * @throws Exception if fixture preparation, measurement, filesystem access, or evidence validation fails
+     */
     public static void main(String[] arguments) throws Exception {
         Configuration configuration = Configuration.parse(arguments);
         Result result = run(configuration);
@@ -78,6 +85,16 @@ public final class SigningActiveWalBenchmark {
         System.out.println(json);
     }
 
+    /**
+     * Runs warm-up and a bounded open-loop arrival window against the active WAL.
+     *
+     * <p>The benchmark recreates active-wal-benchmark.zew in its work directory.
+     * The caller must supply a disposable benchmark-owned location.</p>
+     *
+     * @param configuration validated benchmark scenario, limits, paths, and output metadata
+     * @return measured result and production evidence; this method does not write the report
+     * @throws Exception if benchmark setup, filesystem access, measurement, or evidence validation fails
+     */
     /* default */ static Result run(Configuration configuration) throws Exception {
         Files.createDirectories(configuration.workRoot());
         Path walPath = configuration.workRoot().resolve("active-wal-benchmark.zew");
@@ -195,6 +212,16 @@ public final class SigningActiveWalBenchmark {
         return 0L;
     }
 
+    /**
+     * Explicit scenario configuration retained with the benchmark report.
+     *
+     * @param warmupSeconds unmeasured warm-up duration, in seconds
+     * @param durationSeconds measured arrival-window duration, in seconds
+     * @param rate scheduled open-loop submissions per second
+     * @param fakeForce whether force is simulated for a diagnostic run instead of exercising durable storage
+     * @param output JSON report destination outside the benchmark work image
+     * @param workRoot benchmark-owned work directory; freshness requirements are enforced by the selected runner
+     */
     /* default */ record Configuration(int warmupSeconds, int durationSeconds, int rate,
             boolean fakeForce, Path output, Path workRoot) {
         private static Configuration parse(String[] arguments) {
@@ -228,6 +255,21 @@ public final class SigningActiveWalBenchmark {
         }
     }
 
+    /**
+     * Measured timing and validated evidence returned by this benchmark run.
+     *
+     * @param scheduled total requests scheduled during the measurement window
+     * @param admitted requests admitted into the bounded WAL queue
+     * @param rejected requests rejected before admission because capacity was unavailable
+     * @param maximumBacklog largest observed number of pending acknowledgements
+     * @param latency scheduled-arrival-to-acknowledgement latency summary
+     * @param wal production writer counter deltas for the measurement window
+     * @param forceCalls number of force calls observed by the benchmark operations
+     * @param heapGrowthBytes nonnegative observed used-heap growth, in bytes
+     * @param gcCollections observed garbage-collection count delta
+     * @param gcTimeMillis observed garbage-collection time delta, in milliseconds
+     * @param submissionThreadAllocatedBytes observed submission-thread allocation delta, in bytes
+     */
     /* default */ record Result(long scheduled, long admitted, long rejected,
             int maximumBacklog, LatencySummary latency, WalMetrics wal,
             long forceCalls, long heapGrowthBytes, long gcCollections, long gcTimeMillis,
@@ -239,6 +281,12 @@ public final class SigningActiveWalBenchmark {
                     allocatedBytes);
         }
 
+        /**
+         * Serializes the measured result and its exact scenario/evidence coordinates as JSON.
+         *
+         * @param configuration validated benchmark scenario, limits, paths, and output metadata
+         * @return complete JSON report without an acceptance verdict
+         */
         /* default */ String toJson(Configuration configuration) {
             return "{\"schema\":\"zeroecho-active-wal-characterization-v1\""
                     + ",\"warmupSeconds\":" + configuration.warmupSeconds()
@@ -281,6 +329,13 @@ public final class SigningActiveWalBenchmark {
             SigningActiveWal.Acknowledgement acknowledgement) {
     }
 
+    /**
+     * Bounded scheduled-arrival latency percentile summary.
+     *
+     * @param p50 median latency in nanoseconds
+     * @param p95 95th-percentile latency in nanoseconds
+     * @param p99 99th-percentile latency in nanoseconds
+     */
     /* default */ record LatencySummary(long p50, long p95, long p99) {
     }
 

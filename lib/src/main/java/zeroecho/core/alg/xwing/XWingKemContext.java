@@ -125,16 +125,25 @@ public final class XWingKemContext implements KemContext {
         this.encapsulate = false;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CryptoAlgorithm algorithm() {
         return algorithm;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Key key() {
         return key;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         // empty

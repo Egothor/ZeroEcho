@@ -38,44 +38,98 @@ import java.util.Objects;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 
 /**
- * Frozen public native enrollment target, without authentication authority.
- * @param version contract version 1 @param protocol genuine native protocol
- * @param endpointId configured endpoint @param sourceRevision frozen source revision
- * @param endpointCommitment native source commitment @param enrollmentPolicyId enrollment policy
- * @param enrollmentPolicyVersion positive policy version @param enrollmentPolicyCommitment native policy commitment
- * @param operation ISSUE, RENEW or REPLACE @param requestKind exact original request syntax
- * @param transactionIdSha256 native lowercase SHA256 coordinate
- * @param authenticationContextSha512 sha512-prefixed F6 commitment
+ * Captures the public native-enrollment coordinates bound into an SDK issuance target.
+ *
+ * <p>These immutable values identify the retained endpoint, policy, request and
+ * authentication-context commitments. They do not authenticate a caller or authorize
+ * enrollment. CMP requests use CRMF; the other supported carriers use PKCS#10.
+ *
+ * @param version contract version, which must be 1
+ * @param protocol native carrier: {@code ACME}, {@code EST}, {@code SCEP} or {@code CMP}
+ * @param endpointId configured endpoint identifier, between 1 and 8,192 characters
+ * @param sourceRevision frozen, nonnegative endpoint-source revision
+ * @param endpointCommitment native endpoint-source commitment, between 1 and 8,192 characters
+ * @param enrollmentPolicyId retained policy identifier, between 1 and 8,192 characters
+ * @param enrollmentPolicyVersion positive retained policy version
+ * @param enrollmentPolicyCommitment native policy commitment, between 1 and 8,192 characters
+ * @param operation requested lifecycle action: {@code ISSUE}, {@code RENEW} or {@code REPLACE}
+ * @param requestKind original request syntax; must not be {@code null}
+ * @param transactionIdSha256 native transaction commitment as 64 lowercase hexadecimal characters
+ * @param authenticationContextSha512 F6 commitment as {@code sha512:} followed by
+ *        128 lowercase hexadecimal characters
  */
 public record SdkEnrollmentTarget(int version, String protocol, String endpointId, long sourceRevision,
         String endpointCommitment, String enrollmentPolicyId, long enrollmentPolicyVersion,
         String enrollmentPolicyCommitment, String operation, X509EnrollmentPayload.Kind requestKind,
         String transactionIdSha256, String authenticationContextSha512) {
-    /** Validates the closed version and finite public coordinates; grants no admission. */
+    /**
+     * Validates the closed carrier, request-kind and commitment representation.
+     *
+     * <p>Validation is local and performs no endpoint lookup or enrollment admission.
+     * The four endpoint and policy text coordinates are required and bounded; their
+     * interpretation remains the responsibility of the native enrollment workflow.
+     *
+     * @throws NullPointerException if the protocol, operation or request kind is null
+     * @throws IllegalArgumentException if a version, revision, carrier, action, text
+     *         bound, commitment or carrier/request-kind combination is invalid
+     * @param version contract version, which must be 1
+     * @param protocol native carrier: {@code ACME}, {@code EST}, {@code SCEP} or {@code CMP}
+     * @param endpointId configured endpoint identifier, between 1 and 8,192 characters
+     * @param sourceRevision frozen, nonnegative endpoint-source revision
+     * @param endpointCommitment native endpoint-source commitment, between 1 and 8,192 characters
+     * @param enrollmentPolicyId retained policy identifier, between 1 and 8,192 characters
+     * @param enrollmentPolicyVersion positive retained policy version
+     * @param enrollmentPolicyCommitment native policy commitment, between 1 and 8,192 characters
+     * @param operation requested lifecycle action: {@code ISSUE}, {@code RENEW} or {@code REPLACE}
+     * @param requestKind original request syntax; must not be {@code null}
+     * @param transactionIdSha256 native transaction commitment as 64 lowercase hexadecimal characters
+     * @param authenticationContextSha512 F6 commitment as {@code sha512:} followed by 128 lowercase hexadecimal characters
+     */
     public SdkEnrollmentTarget {
-        if (version != 1 || sourceRevision < 0 || enrollmentPolicyVersion <= 0) throw invalid();
+        if (version != 1 || sourceRevision < 0 || enrollmentPolicyVersion <= 0) {
+            throw invalid();
+        }
         if (!java.util.Set.of("ACME", "EST", "SCEP", "CMP").contains(protocol)
-                || !java.util.Set.of("ISSUE", "RENEW", "REPLACE").contains(operation)) throw invalid();
-        for (String value : new String[]{endpointId, endpointCommitment, enrollmentPolicyId, enrollmentPolicyCommitment}) {
-            if (value == null || value.isEmpty() || value.length() > 8192) throw invalid();
+                || !java.util.Set.of("ISSUE", "RENEW", "REPLACE").contains(operation)) {
+            throw invalid();
+        }
+        for (String value : new String[] {endpointId, endpointCommitment, enrollmentPolicyId, enrollmentPolicyCommitment}) {
+            if (value == null || value.isEmpty() || value.length() > 8192) {
+                throw invalid();
+            }
         }
         Objects.requireNonNull(requestKind, "requestKind");
         if (transactionIdSha256 == null || !transactionIdSha256.matches("[0-9a-f]{64}")
-                || authenticationContextSha512 == null || !authenticationContextSha512.matches("sha512:[0-9a-f]{128}")) throw invalid();
-        if ((protocol.equals("CMP")) != (requestKind == X509EnrollmentPayload.Kind.CRMF)) throw invalid();
+                || authenticationContextSha512 == null || !authenticationContextSha512.matches("sha512:[0-9a-f]{128}")) {
+            throw invalid();
+        }
+        if ((protocol.equals("CMP")) != (requestKind == X509EnrollmentPayload.Kind.CRMF)) {
+            throw invalid();
+        }
     }
-    /** @return the closed canonical enrollment object for F7 field 17 */
+    /**
+     * Builds the canonical enrollment member used in F7 field 17.
+     *
+     * <p>The returned value contains the frozen public coordinates and introduces no
+     * authentication authority. The surrounding SDK target supplies the wrapper version.
+     *
+     * @return a new canonical SDK object containing this enrollment target
+     */
     public HybridSdkValue value() {
         return HybridSdkValue.object(Map.ofEntries(
-                Map.entry("protocol", HybridSdkValue.text(protocol)), Map.entry("endpointId", HybridSdkValue.text(endpointId)),
+                Map.entry("protocol", HybridSdkValue.text(protocol)),
+                Map.entry("endpointId", HybridSdkValue.text(endpointId)),
                 Map.entry("sourceRevision", HybridSdkValue.integer(sourceRevision)),
                 Map.entry("endpointCommitment", HybridSdkValue.text(endpointCommitment)),
                 Map.entry("enrollmentPolicyId", HybridSdkValue.text(enrollmentPolicyId)),
                 Map.entry("enrollmentPolicyVersion", HybridSdkValue.integer(enrollmentPolicyVersion)),
                 Map.entry("enrollmentPolicyCommitment", HybridSdkValue.text(enrollmentPolicyCommitment)),
-                Map.entry("operation", HybridSdkValue.text(operation)), Map.entry("requestKind", HybridSdkValue.text(requestKind.name())),
+                Map.entry("operation", HybridSdkValue.text(operation)),
+                Map.entry("requestKind", HybridSdkValue.text(requestKind.name())),
                 Map.entry("transactionIdSha256", HybridSdkValue.text(transactionIdSha256)),
                 Map.entry("authenticationContextSha512", HybridSdkValue.text(authenticationContextSha512))));
     }
-    private static IllegalArgumentException invalid() { return new IllegalArgumentException("SDK_ENROLLMENT_TARGET_INVALID"); }
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("SDK_ENROLLMENT_TARGET_INVALID");
+    }
 }

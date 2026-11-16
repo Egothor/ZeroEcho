@@ -68,6 +68,9 @@ public final class MldsaLargeDataTest {
     private static final String INDENT = "...";
     private static final int MAX_HEX_BYTES = 32;
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         // Optional: enable BC if you use BC-only modes in KEM payloads (EAX/OCB/CCM,

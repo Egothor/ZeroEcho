@@ -55,6 +55,12 @@ import zeroecho.pki.server.RealmId;
  * Immutable durable enrollment state. Original request and private material remain
  * in their domain stores; this record contains only bounded references and policy
  * commitments. Diagnostic rendering deliberately excludes identity information.
+ *
+ * <p>Construction checks consistency of supplied immutable evidence. It does not
+ * authenticate requesters/administrators, verify SDK signatures, reserve capacity
+ * or commit a signing receipt. The owning coordinator establishes those facts
+ * and retains their exact replay/recovery links.</p>
+ *
  * @param id stable replay identity, independent of endpoint revision
  * @param revision monotonic positive mutation revision
  * @param intent immutable admitted request and policy snapshot
@@ -67,6 +73,7 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
         List<Decision> decisions, Optional<SigningAcceptanceReceipt> receipt, Optional<PkiId> credentialId) {
     /**
      * Immutable retained SDK acceptance reference; construction grants no enrollment authority.
+     *
      * @param intentId canonical server intent identity
      * @param proofCommitment complete F3 SHA-512 commitment
      * @param authenticationContextSha512 exact F6 SHA-512 commitment
@@ -75,7 +82,18 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
      */
     public record SdkProofReference(String intentId, String proofCommitment, String authenticationContextSha512,
             String targetSha512, Instant acceptedAt) {
-        /** Rejects noncanonical coordinates without reading any credential or store. */
+        /**
+         * Checks canonical digest coordinates without verifying proofs, current freshness or a retained
+         * receipt.
+         *
+         * @param intentId canonical server intent identity
+         * @param proofCommitment complete F3 SHA-512 commitment
+         * @param authenticationContextSha512 exact F6 SHA-512 commitment
+         * @param targetSha512 exact F7 SHA-512 commitment
+         * @param acceptedAt trusted acceptance time, independent of later approval delay
+         * @throws NullPointerException if acceptedAt is null
+         * @throws IllegalArgumentException if the intent identity or a prefixed SHA-512 commitment is malformed
+         */
         public SdkProofReference {
             if (intentId == null || !intentId.matches("[0-9a-f]{64}")) throw invalid();
             for (String value : new String[] {proofCommitment, authenticationContextSha512, targetSha512}) {
@@ -83,41 +101,103 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
             }
             Objects.requireNonNull(acceptedAt, "acceptedAt");
         }
-        /** @return redacted immutable reference description */
+        /**
+         * Returns redacted immutable reference description.
+         *
+         * @return redacted immutable reference description
+         */
         @Override public String toString() { return "EnrollmentTransaction.SdkProofReference[redacted]"; }
     }
 
     private static final int MAX_LEGACY_KEY_COMMITMENTS = 3;
-    /** Protocol family determines admission and recovery binding semantics. */
+    /**
+     * Protocol family determines admission and recovery binding semantics.
+     */
     public enum Protocol {
-        /** Authenticated HTTPS enrollment. */ EST,
-        /** CMS-protected certificate enrollment. */ SCEP,
-        /** Protected PKI messages. */ CMP,
-        /** Account-authorized automated certificate enrollment. */ ACME
+        /**
+         * Authenticated HTTPS enrollment.
+         */
+        EST,
+        /**
+         * CMS-protected certificate enrollment.
+         */
+        SCEP,
+        /**
+         * Protected PKI messages.
+         */
+        CMP,
+        /**
+         * Account-authorized automated certificate enrollment.
+         */
+        ACME
     }
-    /** Existing enrollment operation kinds with separate replay domains. */
+    /**
+     * Existing enrollment operation kinds with separate replay domains.
+     */
     public enum Operation {
-        /** Issue a credential for a proved request. */ ISSUE,
-        /** Renew the exact authoritative predecessor identity. */ RENEW,
-        /** Replace a CMP predecessor using the original signed CRMF request. */ REPLACE,
-        /** Issue for an attached server-generated encrypted delivery artifact. */ SERVER_KEYGEN
+        /**
+         * Issue a credential for a proved request.
+         */
+        ISSUE,
+        /**
+         * Renew the exact authoritative predecessor identity.
+         */
+        RENEW,
+        /**
+         * Replace a CMP predecessor using the original signed CRMF request.
+         */
+        REPLACE,
+        /**
+         * Issue for an attached server-generated encrypted delivery artifact.
+         */
+        SERVER_KEYGEN
     }
-    /** Durable states; uncertain or accepted work never silently expires. */
+    /**
+     * Durable states; uncertain or accepted work never silently expires.
+     */
     public enum State {
-        /** Awaiting independent administrative votes. */ PENDING,
-        /** Policy permits a fresh dispatch claim. */ APPROVED,
-        /** An administrator rejected the request. */ REJECTED,
-        /** Unaccepted request passed its admission deadline. */ EXPIRED,
-        /** Durable admission owns the exact prepared receipt. */ DISPATCHING,
-        /** Signing authority accepted this exact operation. */ ACCEPTED,
-        /** Credential was persisted and its binding verified. */ ISSUED,
-        /** Acceptance or reconciliation requires authoritative recovery. */ UNCERTAIN,
-        /** Accepted operation terminated without a credential. */ FAILED
+        /**
+         * Awaiting independent administrative votes.
+         */
+        PENDING,
+        /**
+         * Policy permits a fresh dispatch claim.
+         */
+        APPROVED,
+        /**
+         * An administrator rejected the request.
+         */
+        REJECTED,
+        /**
+         * Unaccepted request passed its admission deadline.
+         */
+        EXPIRED,
+        /**
+         * Durable admission owns the exact prepared receipt.
+         */
+        DISPATCHING,
+        /**
+         * Signing authority accepted this exact operation.
+         */
+        ACCEPTED,
+        /**
+         * Credential was persisted and its binding verified.
+         */
+        ISSUED,
+        /**
+         * Acceptance or reconciliation requires authoritative recovery.
+         */
+        UNCERTAIN,
+        /**
+         * Accepted operation terminated without a credential.
+         */
+        FAILED
     }
 
     /**
      * Frozen endpoint identity. The replay namespace uses label; recordId and
      * revision are immutable admission preconditions, never replay-key inputs.
+     *
      * @param protocol wire protocol
      * @param label stable configured endpoint label or ACME directory alias
      * @param recordId exact persisted endpoint/directory identity
@@ -129,7 +209,21 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
      */
     public record Source(Protocol protocol, String label, String recordId, long revision, String commitment,
             String enrollmentProfileId, String enrollmentCommitment, Optional<String> credentialId) {
-        /** Validates bounded identifiers and immutable selection commitments. */
+        /**
+         * Checks bounded source identities, commitments and protocol-specific credential-reference presence.
+         *
+         * @param protocol wire protocol
+         * @param label stable configured endpoint label or ACME directory alias
+         * @param recordId exact persisted endpoint/directory identity
+         * @param revision positive revision
+         * @param commitment complete endpoint record commitment
+         * @param enrollmentProfileId explicit enrollment policy identity
+         * @param enrollmentCommitment complete enrollment policy commitment
+         * @param credentialId selected immutable protocol credential set, where required
+         * @throws NullPointerException if protocol or the credential-reference container is null
+         * @throws IllegalArgumentException if identifiers/digests/revision or protocol credential selection
+         *     shape is invalid
+         */
         public Source {
             Objects.requireNonNull(protocol, "protocol"); id(label); id(recordId); id(enrollmentProfileId);
             digest(commitment); digest(enrollmentCommitment);
@@ -142,7 +236,11 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
                 throw invalid();
             }
         }
-        /** @return redacted snapshot description */
+        /**
+         * Returns redacted snapshot description.
+         *
+         * @return redacted snapshot description
+         */
         @Override public String toString() { return "EnrollmentTransaction.Source[redacted]"; }
     }
 
@@ -150,6 +248,7 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
      * Authenticated protocol actor, distinct from an administrative principal.
      * Construction asserts no authentication; protocol adapters supply verified
      * evidence. PBM identities supply explicit configured owner aliases.
+     *
      * @param type protocol actor classification
      * @param actorId stable protocol identity, account ID or configured PBM identity
      * @param authentication exact verified mechanism
@@ -161,7 +260,21 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
     public record Requester(IssuanceExecutionEvidence.ActorType type, String actorId,
             IssuanceExecutionEvidence.Authentication authentication, Optional<CertificateIdentityEvidence> certificate,
             Optional<String> canonicalKeySha256, Set<String> legacySpkiSha256, EnrollmentIdentityAliases.Snapshot aliases) {
-        /** Rejects mechanism confusion and incomplete credential evidence. */
+        /**
+         * Copies legacy-key aliases and checks actor/mechanism/evidence correspondence without authenticating
+         * an actor.
+         *
+         * @param type protocol actor classification
+         * @param actorId stable protocol identity, account ID or configured PBM identity
+         * @param authentication exact verified mechanism
+         * @param certificate verified certificate evidence for certificate-authenticated protocols
+         * @param canonicalKeySha256 verified mathematical requester key; absent for PBM
+         * @param legacySpkiSha256 supported equivalent SPKI hashes for alias exclusion
+         * @param aliases frozen realm-scoped administrative exclusions
+         * @throws NullPointerException if a required enum, container, alias snapshot or set element is null
+         * @throws IllegalArgumentException if actor mechanism, digest syntax, legacy alias count or
+         *     certificate/realm/key correspondence is invalid
+         */
         public Requester {
             Objects.requireNonNull(type, "type"); id(actorId); Objects.requireNonNull(authentication, "authentication");
             Objects.requireNonNull(certificate, "certificate"); Objects.requireNonNull(canonicalKeySha256, "canonicalKeySha256");
@@ -192,12 +305,17 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
                 }
             }
         }
-        /** @return redacted requester description */
+        /**
+         * Returns redacted requester description.
+         *
+         * @return redacted requester description
+         */
         @Override public String toString() { return "EnrollmentTransaction.Requester[redacted]"; }
     }
 
     /**
      * Frozen verified original request reference and complete issuance selection.
+     *
      * @param realmId exact realm
      * @param source endpoint and credential selection
      * @param requester original authenticated actor
@@ -230,14 +348,31 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
             Instant createdAt, Instant expiresAt, Optional<SdkProofReference> sdkProof) {
         /**
          * Creates an ordinary intent retaining the version-two representation.
-         * @param realmId owning realm @param source frozen endpoint @param requester genuine native actor
-         * @param transactionId replay coordinate @param operation native operation @param requestId stored request
-         * @param requestKind typed syntax @param requestSha256 original digest @param requestBytes original size
-         * @param authorityId selected authority @param profile certificate profile @param issuerId selected generation
-         * @param pathId selected path @param pathCommitment exact path digest @param validity optional validity
-         * @param predecessorId lifecycle predecessor @param predecessorSha256 exact predecessor digest
-         * @param approvalCategory required approval @param approvalPolicy frozen policy @param artifact keygen binding
-         * @param createdAt admission time @param expiresAt dispatch deadline
+         *
+         * @param realmId owning realm
+         * @param source frozen endpoint
+         * @param requester genuine native actor
+         * @param transactionId replay coordinate
+         * @param operation native operation
+         * @param requestId stored request
+         * @param requestKind typed syntax
+         * @param requestSha256 original digest
+         * @param requestBytes original size
+         * @param authorityId selected authority
+         * @param profile certificate profile
+         * @param issuerId selected generation
+         * @param pathId selected path
+         * @param pathCommitment exact path digest
+         * @param validity optional validity
+         * @param predecessorId lifecycle predecessor
+         * @param predecessorSha256 exact predecessor digest
+         * @param approvalCategory required approval
+         * @param approvalPolicy frozen policy
+         * @param artifact keygen binding
+         * @param createdAt admission time
+         * @param expiresAt dispatch deadline
+         * @throws NullPointerException if a required object or optional container is null
+         * @throws IllegalArgumentException if delegated correspondence or operation constraints fail
          */
         public Intent(RealmId realmId, Source source, Requester requester, String transactionId, Operation operation,
                 PkiId requestId, X509EnrollmentPayload.Kind requestKind, String requestSha256, int requestBytes,
@@ -251,15 +386,48 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
         }
         /**
          * Copies this immutable policy with an explicit retained SDK proof reference.
+         *
          * @param proof exact optional SDK reference
-         * @return complete copied intent
+         * @return new immutable intent with the supplied SDK proof reference
+         * @throws NullPointerException if the proof container is null
+         * @throws IllegalArgumentException if SDK proof is incompatible with artifact/server-keygen work
          */
         public Intent withSdkProof(Optional<SdkProofReference> proof) {
             return new Intent(realmId, source, requester, transactionId, operation, requestId, requestKind, requestSha256, requestBytes,
                     authorityId, profile, issuerId, pathId, pathCommitment, validity, predecessorId, predecessorSha256,
                     approvalCategory, approvalPolicy, artifact, createdAt, expiresAt, proof);
         }
-        /** Validates complete, bounded, internally consistent admission references. */
+        /**
+         * Checks internally consistent frozen request/policy references without reading or admitting stored
+         * objects.
+         *
+         * @param realmId exact realm
+         * @param source endpoint and credential selection
+         * @param requester original authenticated actor
+         * @param transactionId protocol transaction commitment, never secret/raw nonce data
+         * @param operation requested operation kind
+         * @param requestId exact immutable domain request reference
+         * @param requestKind original syntax
+         * @param requestSha256 exact original DER SHA-256
+         * @param requestBytes original request size charged to retained capacity
+         * @param authorityId logical issuing authority
+         * @param profile frozen exact certificate profile
+         * @param issuerId selected issuer generation
+         * @param pathId selected chain path
+         * @param pathCommitment exact selected chain commitment
+         * @param validity requested validity override
+         * @param predecessorId renewal or replacement predecessor, absent for issuance
+         * @param predecessorSha256 exact predecessor digest, present for lifecycle operations
+         * @param approvalCategory effective issuance approval category
+         * @param approvalPolicy complete frozen approval policy when required
+         * @param artifact immutable encrypted delivery binding for attached server-keygen work
+         * @param createdAt admission time
+         * @param expiresAt deadline for a fresh dispatch claim
+         * @param sdkProof retained fresh dual-client proof reference, absent for ordinary enrollment
+         * @throws NullPointerException if a required object or optional container is null
+         * @throws IllegalArgumentException if identifiers/digests, request size, time order, actor/protocol,
+         *     predecessor, approval or artifact/SDK operation shape is invalid
+         */
         public Intent {
             Objects.requireNonNull(sdkProof, "sdkProof");
             if (sdkProof.isPresent() && (artifact.isPresent() || operation == Operation.SERVER_KEYGEN)) throw invalid();
@@ -308,31 +476,50 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
                 throw invalid();
             }
         }
-        /** @return redacted intent description */
+        /**
+         * Returns redacted intent description.
+         *
+         * @return redacted intent description
+         */
         @Override public String toString() { return "EnrollmentTransaction.Intent[redacted]"; }
     }
 
     /**
      * Frozen client-encrypted key delivery, included in issuance and approval commitments.
+     *
      * @param artifactId stable generation descriptor identity
      * @param generationCommitment complete original template and generation-policy commitment
      * @param ciphertextSha256 exact encrypted body commitment
      * @param ciphertextBytes bounded encrypted body length
      */
     public record ArtifactBinding(String artifactId, String generationCommitment, String ciphertextSha256, long ciphertextBytes) {
-        /** Validates bounded immutable references; grants no delivery permission. */
+        /**
+         * Checks encrypted-delivery reference digests and byte bounds without reading or granting delivery.
+         *
+         * @param artifactId stable generation descriptor identity
+         * @param generationCommitment complete original template and generation-policy commitment
+         * @param ciphertextSha256 exact encrypted body commitment
+         * @param ciphertextBytes bounded encrypted body length
+         * @throws IllegalArgumentException if a digest is malformed or ciphertext length is outside 1 through
+         *     16777216 bytes
+         */
         public ArtifactBinding {
             digest(artifactId); digest(generationCommitment); digest(ciphertextSha256);
             if (ciphertextBytes < 1 || ciphertextBytes > 16_777_216) {
                 throw invalid();
             }
         }
-        /** @return redacted artifact description */
+        /**
+         * Returns redacted artifact description.
+         *
+         * @return redacted artifact description
+         */
         @Override public String toString() { return "EnrollmentTransaction.ArtifactBinding[redacted]"; }
     }
 
     /**
      * One verified independent administrative decision.
+     *
      * @param principalId registered administrator
      * @param evidence trusted actual end-client credential evidence
      * @param choice approval or terminal rejection
@@ -341,7 +528,18 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
      */
     public record Decision(String principalId, CertificateIdentityEvidence evidence, ApprovalService.Choice choice,
             String justification, Instant decidedAt) {
-        /** Validates bounded immutable decision evidence. */
+        /**
+         * Checks administrative decision coordinates without verifying a live principal or credential.
+         *
+         * @param principalId registered administrator
+         * @param evidence trusted actual end-client credential evidence
+         * @param choice approval or terminal rejection
+         * @param justification bounded operator justification
+         * @param decidedAt authoritative decision time
+         * @throws NullPointerException if evidence, choice or decidedAt is null
+         * @throws IllegalArgumentException if principal identity is invalid or justification is null or longer
+         *     than 2048 characters
+         */
         public Decision {
             id(principalId); Objects.requireNonNull(evidence, "evidence"); Objects.requireNonNull(choice, "choice");
             Objects.requireNonNull(decidedAt, "decidedAt");
@@ -349,11 +547,28 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
                 throw invalid();
             }
         }
-        /** @return redacted decision description */
+        /**
+         * Returns redacted decision description.
+         *
+         * @return redacted decision description
+         */
         @Override public String toString() { return "EnrollmentTransaction.Decision[redacted]"; }
     }
 
-    /** Validates state-dependent references and unique principal/key votes. */
+    /**
+     * Copies decisions and checks state-dependent receipts, independent votes and threshold consistency.
+     *
+     * @param id stable replay identity, independent of endpoint revision
+     * @param revision monotonic positive mutation revision
+     * @param intent immutable admitted request and policy snapshot
+     * @param state durable workflow state
+     * @param decisions verified administrative decisions
+     * @param receipt prepared signing receipt persisted before acceptance
+     * @param credentialId completed credential, present only for ISSUED
+     * @throws NullPointerException if intent, state, a container/list or a decision element is null
+     * @throws IllegalArgumentException if identities/revision/counts, receipt/credential state, artifact
+     *     binding or independent decision/threshold constraints fail
+     */
     public EnrollmentTransaction {
         if (intent != null && intent.operation() == Operation.SERVER_KEYGEN != intent.artifact().isPresent()) {
             throw invalid();
@@ -399,18 +614,45 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
         }
     }
 
-    /** Returns the complete immutable intent commitment used by issuance and approval.
-     * @return SHA-256 intent commitment */
+    /**
+     * Returns the complete immutable intent commitment used by issuance and approval.
+     *
+     * @return SHA-256 intent commitment
+     */
     public String intentCommitment() { return EnrollmentTransactionCodec.intentCommitment(intent); }
-    /** Returns the complete versioned persisted record commitment.
-     * @return SHA-256 record commitment */
+    /**
+     * Returns the complete versioned persisted record commitment.
+     *
+     * @return SHA-256 record commitment
+     */
     public String commitment() { return EnrollmentTransactionCodec.record(this).commitment(); }
-    /** @return redacted workflow description */
+    /**
+     * Returns redacted workflow description.
+     *
+     * @return redacted workflow description
+     */
     @Override public String toString() { return "EnrollmentTransaction[state=" + state + ", redacted]"; }
 
+    /**
+     * Requires a canonical bounded enrollment transaction coordinate.
+     *
+     * @param value identity text to validate without normalization
+     * @throws IllegalArgumentException if identity is null, empty, oversized or noncanonical
+     */
     /* default */ static void id(String value) { EnrollmentEndpoint.requireProfileId(value); }
+    /**
+     * Requires a lowercase hexadecimal SHA-256 commitment.
+     *
+     * @param value exact 64-character digest text
+     * @throws IllegalArgumentException if the value is null or has another syntax
+     */
     /* default */ static void digest(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) {
         throw invalid();
     } }
+    /**
+     * Creates the safe fixed-classification exception for invalid enrollment state.
+     *
+     * @return fresh exception without private payload or provider diagnostics
+     */
     /* default */ static IllegalArgumentException invalid() { return new IllegalArgumentException("Enrollment transaction is invalid"); }
 }

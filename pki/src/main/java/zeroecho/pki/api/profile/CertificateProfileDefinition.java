@@ -75,7 +75,9 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
         CertificatePolicy certificatePolicy, X509AlgorithmBindingPolicy algorithmBindingPolicy,
         Optional<CredentialConfirmationPolicy> confirmationPolicy, HybridCertificateMode hybridMode) {
 
-    /** Current certificate-profile document schema version. */
+    /**
+     * Current certificate-profile document schema version.
+     */
     public static final int SCHEMA_VERSION = 5;
 
     /**
@@ -178,6 +180,18 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
      *
      * @throws IllegalArgumentException if a required value is absent or the profile
      *                                  version is not positive
+     * @param certificateType kind of certificate governed by the profile
+     * @param profileId stable profile identifier
+     * @param profileVersion positive configuration version
+     * @param formatId framework/format identifier
+     * @param displayName human-readable profile name
+     * @param maximumValidity positive maximum validity
+     * @param approvalRequirement multi-party approval requirement for issuance
+     * @param subjectPolicy complete subject policy
+     * @param certificatePolicy closed certificate-specific policy variant
+     * @param algorithmBindingPolicy explicit X.509 representation policy
+     * @param confirmationPolicy exact leaf confirmation policy; absent for CA profiles
+     * @param hybridMode hybrid certificate mode; {@link HybridCertificateMode.None} for standard profiles
      */
     public CertificateProfileDefinition {
         if (certificateType == null) {

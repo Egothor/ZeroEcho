@@ -45,8 +45,16 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for pack7 l stream writer.
+ */
 class Pack7LStreamWriterTest {
 
+    /**
+     * Checks a packed-length writer when the complete payload arrives in one write.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testSingleWriteCompletePayload() throws IOException {
         System.out.println("testSingleWriteCompletePayload");
@@ -71,6 +79,11 @@ class Pack7LStreamWriterTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks continuation when a packed-length prefix and payload arrive separately.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testPartialLengthPrefixThenPayload() throws IOException {
         System.out.println("testPartialLengthPrefixThenPayload");
@@ -99,6 +112,11 @@ class Pack7LStreamWriterTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that bytes beyond the framed payload are not forwarded.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testExtraDataTruncated() throws IOException {
         System.out.println("testExtraDataTruncated");
@@ -127,6 +145,11 @@ class Pack7LStreamWriterTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks payload framing across multiple input chunks.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testChunkedPayload() throws IOException {
         System.out.println("testChunkedPayload");
@@ -154,6 +177,11 @@ class Pack7LStreamWriterTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks repeated chunked writes through the complete framing lifecycle.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testChunkedPayloadCycle() throws IOException {
         System.out.println("testChunkedPayloadCycle");
@@ -193,6 +221,11 @@ class Pack7LStreamWriterTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks that a write reports only the accepted framed payload bytes.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void testWriteReturnsPartialIfTooMuchProvided() throws IOException {
         System.out.println("testWriteReturnsPartialIfTooMuchProvided");

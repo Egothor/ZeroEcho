@@ -67,13 +67,22 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 import zeroecho.pki.spi.confirmation.KeyPossessionProofVerification;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for key possession proof provider composition.
+ */
 final class KeyPossessionProofProviderCompositionTest {
     private static final Clock CLOCK = Clock.fixed(Instant.EPOCH, ZoneOffset.UTC);
     private static final String COMMITMENT = "1".repeat(64);
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Composes empty and order independent immutable lookup without calling descriptors.
+     */
     @Test
     void composesEmptyAndOrderIndependentImmutableLookupWithoutCallingDescriptors() {
         KeyPossessionProofProviderComposition empty =
@@ -98,6 +107,9 @@ final class KeyPossessionProofProviderCompositionTest {
         assertEquals(0, descriptorCalls.get());
     }
 
+    /**
+     * Runtime dependencies and composition defensively copy source list.
+     */
     @Test
     void runtimeDependenciesAndCompositionDefensivelyCopySourceList() {
         TestProvider provider = new TestProvider("copy.v1", new AtomicInteger());
@@ -116,6 +128,9 @@ final class KeyPossessionProofProviderCompositionTest {
                 .keyPossessionProofProviders().contains(provider));
     }
 
+    /**
+     * Rejects null duplicate invalid and failing provider identities.
+     */
     @Test
     void rejectsNullDuplicateInvalidAndFailingProviderIdentities() {
         TestProvider duplicate = new TestProvider("duplicate.v1", new AtomicInteger());
@@ -135,6 +150,9 @@ final class KeyPossessionProofProviderCompositionTest {
         assertEquals("suite-id-failure", failure.getMessage());
     }
 
+    /**
+     * Invalid provider fails before session opens store or service.
+     */
     @Test
     void invalidProviderFailsBeforeSessionOpensStoreOrService() {
         AtomicInteger storesOpened = new AtomicInteger();
@@ -150,6 +168,9 @@ final class KeyPossessionProofProviderCompositionTest {
         assertEquals(0, storesOpened.get());
     }
 
+    /**
+     * Proof policy requires an exact descriptor before store open.
+     */
     @Test
     void proofPolicyRequiresAnExactDescriptorBeforeStoreOpen() {
         CredentialConfirmationProofRuntimePolicy policy = proofPolicy("proof.v1", COMMITMENT, 4_096);
@@ -192,6 +213,11 @@ final class KeyPossessionProofProviderCompositionTest {
         assertEquals(0, storesOpened.get());
     }
 
+    /**
+     * Exact proof policy and descriptor open one usable session.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactProofPolicyAndDescriptorOpenOneUsableSession() throws Exception {
         CredentialConfirmationProofRuntimePolicy policy = proofPolicy("proof.v1", COMMITMENT, 4_096);

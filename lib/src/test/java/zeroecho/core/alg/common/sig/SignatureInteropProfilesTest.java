@@ -55,6 +55,9 @@ import zeroecho.core.alg.rsa.RsaSigSpec;
  */
 public final class SignatureInteropProfilesTest {
 
+    /**
+     * Resolve SHA-256 with RSA returns pkcs1v15 SHA-256.
+     */
     @Test
     public void resolveSha256WithRsa_returnsPkcs1v15Sha256() {
         System.out.println("resolveSha256WithRsa_returnsPkcs1v15Sha256");
@@ -75,6 +78,11 @@ public final class SignatureInteropProfilesTest {
         System.out.println("resolveSha256WithRsa_returnsPkcs1v15Sha256...ok");
     }
 
+    /**
+     * Resolve SHA-256 with ECDSA round trips DER and p1363.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void resolveSha256WithEcdsa_roundTripsDerAndP1363() throws Exception {
         System.out.println("resolveSha256WithEcdsa_roundTripsDerAndP1363");
@@ -118,6 +126,11 @@ public final class SignatureInteropProfilesTest {
         System.out.println("resolveSha256WithEcdsa_roundTripsDerAndP1363...ok");
     }
 
+    /**
+     * ECDSA DER conversion rejects every non canonical integer shape.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     public void ecdsaDerConversionRejectsEveryNonCanonicalIntegerShape() throws Exception {
         System.out.println("ecdsaDerConversionRejectsEveryNonCanonicalIntegerShape");

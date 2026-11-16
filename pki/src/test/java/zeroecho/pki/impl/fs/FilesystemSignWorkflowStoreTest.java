@@ -91,7 +91,9 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.SigningTransitionRecorder;
 
-/** Clean-format atomic signing acceptance and lifecycle persistence coverage. */
+/**
+ * Clean-format atomic signing acceptance and lifecycle persistence coverage.
+ */
 @SuppressWarnings({ "PMD.UnitTestContainsTooManyAsserts",
         "PMD.UnitTestAssertionsShouldIncludeMessage" })
 final class FilesystemSignWorkflowStoreTest {
@@ -101,6 +103,12 @@ final class FilesystemSignWorkflowStoreTest {
             Optional.empty(), Optional.empty());
     private static final KeyRef KEY = new KeyRef("test-key");
 
+    /**
+     * Acceptance persists separate immutable envelope intent and candidate binding across restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptancePersistsSeparateImmutableEnvelopeIntentAndCandidateBindingAcrossRestart(
             @TempDir Path root) throws Exception {
@@ -140,6 +148,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Recovery streams maximum envelopes into exact due tuples.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryStreamsMaximumEnvelopesIntoExactDueTuples(@TempDir Path root)
             throws Exception {
@@ -185,30 +199,60 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Reopen rejects missing signing candidate binding without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsMissingSigningCandidateBindingWithoutMutation(@TempDir Path root)
             throws Exception {
         assertRecoveredGraphRejected(root, RecoveredGraphCorruption.MISSING_BINDING);
     }
 
+    /**
+     * Reopen rejects missing outer continuation without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsMissingOuterContinuationWithoutMutation(@TempDir Path root)
             throws Exception {
         assertRecoveredGraphRejected(root, RecoveredGraphCorruption.MISSING_CONTINUATION);
     }
 
+    /**
+     * Reopen rejects missing outer correlation without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsMissingOuterCorrelationWithoutMutation(@TempDir Path root)
             throws Exception {
         assertRecoveredGraphRejected(root, RecoveredGraphCorruption.MISSING_CORRELATION);
     }
 
+    /**
+     * Reopen rejects mismatched outer correlation target without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsMismatchedOuterCorrelationTargetWithoutMutation(@TempDir Path root)
             throws Exception {
         assertRecoveredGraphRejected(root, RecoveredGraphCorruption.MISMATCHED_TARGET);
     }
 
+    /**
+     * Reopen rejects every outer recovery field mismatch without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsEveryOuterRecoveryFieldMismatchWithoutMutation(@TempDir Path root)
             throws Exception {
@@ -220,6 +264,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Successful recovery cleans every abandoned staged candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void successfulRecoveryCleansEveryAbandonedStagedCandidate(@TempDir Path root)
             throws Exception {
@@ -242,6 +292,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Malformed manifest and WAL parser failures are cause free and redacted.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedManifestAndWalParserFailuresAreCauseFreeAndRedacted(
             @TempDir Path temporary) throws Exception {
@@ -281,6 +337,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Malformed orphan checkpoint is cause free and redacted.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedOrphanCheckpointIsCauseFreeAndRedacted(@TempDir Path root)
             throws Exception {
@@ -310,6 +372,12 @@ final class FilesystemSignWorkflowStoreTest {
         assertEquals(before, fileImages(root));
     }
 
+    /**
+     * Orphan checkpoint operational read failure remains causeful.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void orphanCheckpointOperationalReadFailureRemainsCauseful(@TempDir Path root)
             throws Exception {
@@ -339,6 +407,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Valid envelope operational read failure remains causeful.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validEnvelopeOperationalReadFailureRemainsCauseful(@TempDir Path root)
             throws Exception {
@@ -367,6 +441,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Valid envelope operational attribute read failure remains causeful.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validEnvelopeOperationalAttributeReadFailureRemainsCauseful(@TempDir Path root)
             throws Exception {
@@ -395,6 +475,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Passive WAL operational open failure remains causeful and releases ownership.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void passiveWalOperationalOpenFailureRemainsCausefulAndReleasesOwnership(
             @TempDir Path root) throws Exception {
@@ -433,6 +519,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Metadata symlink and non directory are cause free and redacted.
+     *
+     * @param temporary isolated temporary test directory supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void metadataSymlinkAndNonDirectoryAreCauseFreeAndRedacted(
             @TempDir Path temporary) throws Exception {
@@ -472,6 +564,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Reopen rejects every state envelope identity mismatch without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsEveryStateEnvelopeIdentityMismatchWithoutMutation(@TempDir Path root)
             throws Exception {
@@ -483,6 +581,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Reopen rejects every candidate binding mismatch without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsEveryCandidateBindingMismatchWithoutMutation(@TempDir Path root)
             throws Exception {
@@ -495,6 +599,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Reopen rejects every reverse signing graph orphan without mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenRejectsEveryReverseSigningGraphOrphanWithoutMutation(@TempDir Path root)
             throws Exception {
@@ -507,6 +617,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Concurrent same command accepts once and attaches all racers even at capacity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentSameCommandAcceptsOnceAndAttachesAllRacersEvenAtCapacity(
             @TempDir Path root) throws Exception {
@@ -539,6 +655,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Concurrent candidate claim has one winner and loser never deletes winner content.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentCandidateClaimHasOneWinnerAndLoserNeverDeletesWinnerContent(
             @TempDir Path root) throws Exception {
@@ -577,6 +699,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Malformed acceptance cannot reclaim candidate while valid acceptance claims it.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedAcceptanceCannotReclaimCandidateWhileValidAcceptanceClaimsIt(
             @TempDir Path root) throws Exception {
@@ -625,6 +753,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Identity conflict and attachment are resolved before full capacity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void identityConflictAndAttachmentAreResolvedBeforeFullCapacity(
             @TempDir Path root) throws Exception {
@@ -653,6 +787,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Outer terminal controls capacity release and acceptance publishes exact correlation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void outerTerminalControlsCapacityReleaseAndAcceptancePublishesExactCorrelation(
             @TempDir Path root) throws Exception {
@@ -700,6 +840,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Expiry atomically terminalizes required outer before releasing content and capacity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void expiryAtomicallyTerminalizesRequiredOuterBeforeReleasingContentAndCapacity(
             @TempDir Path root) throws Exception {
@@ -722,6 +868,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Malformed outer is rejected before acceptance and its candidate is reclaimed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void malformedOuterIsRejectedBeforeAcceptanceAndItsCandidateIsReclaimed(
             @TempDir Path root) throws Exception {
@@ -741,6 +893,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Canonical commitment valid outer with wrong kind is rejected and reclaimed.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void canonicalCommitmentValidOuterWithWrongKindIsRejectedAndReclaimed(
             @TempDir Path root) throws Exception {
@@ -762,6 +920,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Transition recorder uses read only snapshot and keeps first observed durable state.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void transitionRecorderUsesReadOnlySnapshotAndKeepsFirstObservedDurableState(
             @TempDir Path root) throws Exception {
@@ -786,6 +950,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Acceptance and mutable transition report isolated WAL and codec evidence.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptanceAndMutableTransitionReportIsolatedWalAndCodecEvidence(
             @TempDir Path root) throws Exception {
@@ -880,6 +1050,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Cancellation reopen and retirement preserve state pointer and identity binding.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationReopenAndRetirementPreserveStatePointerAndIdentityBinding(
             @TempDir Path root) throws Exception {
@@ -922,6 +1098,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Current marker is published and unsupported root is rejected without further mutation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void currentMarkerIsPublishedAndUnsupportedRootIsRejectedWithoutFurtherMutation(
             @TempDir Path root) throws Exception {
@@ -944,6 +1126,11 @@ final class FilesystemSignWorkflowStoreTest {
                 "unsupported preflight must complete before cleanup or recovery mutation");
     }
 
+    /**
+     * Codec separates envelope state and binding schemas.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void codecSeparatesEnvelopeStateAndBindingSchemas() throws Exception {
         byte[] envelopeBytes;
@@ -976,6 +1163,12 @@ final class FilesystemSignWorkflowStoreTest {
         assertNotEquals(Arrays.toString(envelopeBytes), Arrays.toString(bindingBytes));
     }
 
+    /**
+     * Leased prefix does not fill bounded due page and expired lease reclaims after restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void leasedPrefixDoesNotFillBoundedDuePageAndExpiredLeaseReclaimsAfterRestart(
             @TempDir Path root) throws Exception {
@@ -1022,6 +1215,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Lightweight due pages preserve cursor and stable high watermark.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void lightweightDuePagesPreserveCursorAndStableHighWatermark(@TempDir Path root)
             throws Exception {
@@ -1080,6 +1279,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Dispatch claim is durable before provider hook observes operation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void dispatchClaimIsDurableBeforeProviderHookObservesOperation(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1102,6 +1307,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Provider binding mismatch blocks every provider call.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void providerBindingMismatchBlocksEveryProviderCall(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1122,6 +1333,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Stale provider claim cannot invoke provider after lease reclaim.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void staleProviderClaimCannotInvokeProviderAfterLeaseReclaim(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1148,6 +1365,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Deferred dispatch is valid not due until retry and then reclaimable across restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void deferredDispatchIsValidNotDueUntilRetryAndThenReclaimableAcrossRestart(@TempDir Path root)
             throws Exception {
@@ -1193,6 +1416,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Claim and renew lease clamp to workflow deadline.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void claimAndRenewLeaseClampToWorkflowDeadline(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW.plusSeconds(29));
@@ -1222,6 +1451,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Forged caller envelope cannot reach provider.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void forgedCallerEnvelopeCannotReachProvider(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1264,6 +1499,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Cancellation before dispatch terminalizes without provider step.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationBeforeDispatchTerminalizesWithoutProviderStep(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1285,6 +1526,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Succeeded outer continuation local failure backoff is strict and durable.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void succeededOuterContinuationLocalFailureBackoffIsStrictAndDurable(
             @TempDir Path root) throws Exception {
@@ -1394,6 +1641,12 @@ final class FilesystemSignWorkflowStoreTest {
         }
     }
 
+    /**
+     * Retirement preserves typed terminal evidence across reopen.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void retirementPreservesTypedTerminalEvidenceAcrossReopen(@TempDir Path root)
             throws Exception {

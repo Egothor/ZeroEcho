@@ -407,7 +407,9 @@ public final class RsaSignatureContext implements SignatureContext {
      * </ul>
      */
     private final class Stream extends AbstractPassthroughInputStream {
-        /** Cached signature for trailer emission in SIGN mode. */
+        /**
+         * Cached signature for trailer emission in SIGN mode.
+         */
         private byte[] signature;
 
         /* default */ final VerificationBiPredicate<Signature> verifier;

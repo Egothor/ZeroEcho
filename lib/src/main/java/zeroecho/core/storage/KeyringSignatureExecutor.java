@@ -84,11 +84,17 @@ public final class KeyringSignatureExecutor {
      * Stable, non-sensitive failure categories.
      */
     public enum FailureCode {
-        /** A requested key entry is absent or has the wrong entry kind. */
+        /**
+         * A requested key entry is absent or has the wrong entry kind.
+         */
         KEY_UNAVAILABLE,
-        /** The identity is incompatible, or a stored LMS/XMSS key cannot safely sign. */
+        /**
+         * The identity is incompatible, or a stored LMS/XMSS key cannot safely sign.
+         */
         ALGORITHM_MISMATCH,
-        /** Cryptographic-provider execution failed. */
+        /**
+         * Cryptographic-provider execution failed.
+         */
         PROVIDER_FAILURE
     }
 
@@ -97,7 +103,9 @@ public final class KeyringSignatureExecutor {
      */
     public static final class Failure extends GeneralSecurityException {
         private static final long serialVersionUID = 1L;
-        /** Stable redacted failure category. */
+        /**
+         * Stable redacted failure category.
+         */
         private final FailureCode code;
 
         private Failure(FailureCode code) {
@@ -371,7 +379,9 @@ public final class KeyringSignatureExecutor {
         return value;
     }
 
-    /** Content reader that marks caller-owned I/O and enforces read checkpoints. */
+    /**
+     * Content reader that marks caller-owned I/O and enforces read checkpoints.
+     */
     private static final class ProgressCheckedInputStream extends FilterInputStream {
         private final CancellationSignal cancellation;
         private boolean readsAborted;
@@ -442,7 +452,9 @@ public final class KeyringSignatureExecutor {
         }
     }
 
-    /** Internal marker retaining a caller-owned content failure until cleanup ends. */
+    /**
+     * Internal marker retaining a caller-owned content failure until cleanup ends.
+     */
     private static final class ContentBoundaryIOException extends IOException {
         private static final long serialVersionUID = 1L;
         private final IOException original;
@@ -453,12 +465,16 @@ public final class KeyringSignatureExecutor {
         }
     }
 
-    /** Exhaustive outcomes of provider signing execution. */
+    /**
+     * Exhaustive outcomes of provider signing execution.
+     */
     private enum ExecutionKind {
         SUCCESS, CONTENT_FAILURE, CANCELLED, PROVIDER_FAILURE
     }
 
-    /** Phase result that carries either owned signature bytes or one safe failure. */
+    /**
+     * Phase result that carries either owned signature bytes or one safe failure.
+     */
     private static final class ExecutionResult {
         private final ExecutionKind kind;
         private final byte[] signature;

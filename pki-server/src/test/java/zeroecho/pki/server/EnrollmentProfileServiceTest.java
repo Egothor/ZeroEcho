@@ -57,10 +57,20 @@ import zeroecho.pki.server.enrollment.EnrollmentProfile;
 import zeroecho.pki.server.enrollment.EnrollmentProfileService;
 import zeroecho.pki.server.enrollment.EnrollmentProfileState;
 
-/** Durable enrollment policy and complete approval-binding regression coverage. */
+/**
+ * Durable enrollment policy and complete approval-binding regression coverage.
+ */
 class EnrollmentProfileServiceTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks enrollment-profile creation, duplicate/missing-target rejection, state changes and bounded listing survive restart.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void persistsCreateUpdateAndStateAcrossRestart() throws Exception {
         Path log;
@@ -88,6 +98,11 @@ class EnrollmentProfileServiceTest {
         }
     }
 
+    /**
+     * Checks retained CAS commitment changes across intervening revisions even when profile content later returns to its original value.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void staleCommitmentCannotOverwriteAnInterveningUpdateEvenAfterPolicyReturns() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -105,6 +120,11 @@ class EnrollmentProfileServiceTest {
         }
     }
 
+    /**
+     * Checks unsupported, corrupted, mismatched-identity and noncanonical profile records prevent service startup.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsUnsupportedVersionCorruptionIdentityMismatchAndNoncanonicalPayloadAtStartup() throws Exception {
         for (int variant = 0; variant < 8; variant++) {
@@ -147,6 +167,11 @@ class EnrollmentProfileServiceTest {
         }
     }
 
+    /**
+     * Checks invalid Unicode, oversized metadata and incorrect commitments are rejected without persisting a usable profile.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void rejectsIncorrectCommitmentAndOversizedOrInvalidUnicodeBeforePersistence() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
@@ -166,6 +191,11 @@ class EnrollmentProfileServiceTest {
         }
     }
 
+    /**
+     * Checks changing any committed profile coordinate invalidates the corresponding approval claim.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void approvalCannotBeReusedAfterSubstitutingAnyProfileField() throws Exception {
         List<EnrollmentProfile> substitutions = List.of(

@@ -92,12 +92,18 @@ public interface PlainBytesBuilder extends DataContentBuilder<PlainContent> {
         private DefaultPlainBytesBuilder() {
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainBytesBuilder bytes(final byte[] bytes) {
             this.bytesField = Objects.requireNonNull(bytes, "bytes must not be null");
             return this;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public PlainContent build(final boolean encrypt) {
             if (bytesField == null) {

@@ -57,14 +57,43 @@ import java.util.Optional;
 public record EnrollmentKeygenArtifact(String id, long revision, EnrollmentTransaction.Intent template,
         String algorithm, int maximumKeySizeBits, long maximumCiphertextBytes, int maximumGeneratedRequestBytes,
         Instant deliveryDeadline, State state, Optional<EnrollmentTransaction.ArtifactBinding> artifact, boolean bytesReleased) {
-    /** Durable phases distinguish an interrupted generation from an attached enrollment. */
+    /**
+     * Durable phases distinguish an interrupted generation from an attached enrollment.
+     */
     public enum State {
-        /** Capacity and exact template are retained; no signing is authorized. */ GENERATING,
-        /** Exact generated request, encrypted body and enrollment are atomically linked. */ ATTACHED,
-        /** Attached delivery ended durably; original enrollment replay remains authoritative. */ EXPIRED,
-        /** Unattached generation ended durably and will never be regenerated. */ FAILED
+        /**
+         * Capacity and exact template are retained; no signing is authorized.
+         */
+        GENERATING,
+        /**
+         * Exact generated request, encrypted body and enrollment are atomically linked.
+         */
+        ATTACHED,
+        /**
+         * Attached delivery ended durably; original enrollment replay remains authoritative.
+         */
+        EXPIRED,
+        /**
+         * Unattached generation ended durably and will never be regenerated.
+         */
+        FAILED
     }
-    /** Validates the closed persistent grammar and all immutable linkage fields. */
+    /**
+     * Validates the closed persistent grammar and all immutable linkage fields.
+     * @param id stable replay-derived artifact identity
+     * @param revision positive mutation revision
+     * @param template exact original verified template and complete frozen policy
+     * @param algorithm selected permitted key-generation algorithm
+     * @param maximumKeySizeBits original endpoint generation bound
+     * @param maximumCiphertextBytes reserved ciphertext capacity
+     * @param maximumGeneratedRequestBytes reserved generated CSR capacity
+     * @param deliveryDeadline fixed recipient-validity-capped delivery deadline
+     * @param state authoritative generation/delivery phase
+     * @param artifact exact attached ciphertext, absent until atomic enrollment attachment
+     * @param bytesReleased true only after durable deletion permits releasing byte capacity
+     * @throws NullPointerException if any of {@code template}, {@code deliveryDeadline}, {@code state}, {@code
+     *         artifact} is null
+     */
     public EnrollmentKeygenArtifact {
         EnrollmentTransaction.digest(id);
         Objects.requireNonNull(template, "template"); Objects.requireNonNull(deliveryDeadline, "deliveryDeadline");
@@ -93,15 +122,25 @@ public record EnrollmentKeygenArtifact(String id, long revision, EnrollmentTrans
             }
         }
     }
-    /** {@return complete revision-sensitive record commitment} */
+    /**
+     * {@return complete revision-sensitive record commitment}
+     */
     public String commitment() { return EnrollmentKeygenCodec.record(this).commitment(); }
-    /** {@return immutable reservation commitment included in the generated issuance intent} */
+    /**
+     * {@return immutable reservation commitment included in the generated issuance intent}
+     */
     public String generationCommitment() {
         return EnrollmentKeygenCodec.generationCommitment(template, algorithm, maximumKeySizeBits,
                 maximumCiphertextBytes, maximumGeneratedRequestBytes, deliveryDeadline);
     }
-    /** {@return exact linked enrollment identity, whether delivery remains available or expired} */
+    /**
+     * {@return exact linked enrollment identity, whether delivery remains available or expired}
+     */
     public String enrollmentId() { return "enrollment:" + id; }
-    /** @return redacted descriptor description */
+    /**
+     * Returns a diagnostic representation with sensitive identity and custody details redacted.
+     *
+     * @return redacted descriptor description
+     */
     @Override public String toString() { return "EnrollmentKeygenArtifact[redacted]"; }
 }

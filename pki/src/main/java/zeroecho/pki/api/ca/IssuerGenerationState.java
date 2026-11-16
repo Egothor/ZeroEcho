@@ -33,14 +33,24 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-/** Durable lifecycle state of one concrete CA issuer generation. */
+/**
+ * Durable lifecycle state of one concrete CA issuer generation.
+ */
 public enum IssuerGenerationState {
-    /** Available for explicitly selected issuance. */
+    /**
+     * Available for explicitly selected issuance.
+     */
     ACTIVE,
-    /** Retained for validation but unavailable for new issuance. */
+    /**
+     * Retained for validation but unavailable for new issuance.
+     */
     RETIRED,
-    /** Known or suspected compromised generation. */
+    /**
+     * Known or suspected compromised generation.
+     */
     COMPROMISED,
-    /** Administratively disabled generation. */
+    /**
+     * Administratively disabled generation.
+     */
     DISABLED
 }

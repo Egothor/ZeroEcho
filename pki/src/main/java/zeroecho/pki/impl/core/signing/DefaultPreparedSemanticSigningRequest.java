@@ -39,17 +39,33 @@ import java.util.Objects;
 import zeroecho.pki.api.signing.PreparedSemanticSigningRequest;
 import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
 
-/** Opaque semantic view over the existing signing preparation's sole custody state. */
+/**
+ * Opaque semantic view over the existing signing preparation's sole custody state.
+ */
 public final class DefaultPreparedSemanticSigningRequest implements PreparedSemanticSigningRequest {
     private final DefaultPreparedSigningRequest prepared;
     private final DefaultSemanticSigningService owner;
 
+    /**
+     * Creates a semantic view sharing the prepared request's sole custody state.
+     *
+     * @param prepared underlying prepared request; must not be null
+     * @param owner semantic service owning this view; must not be null
+     * @throws NullPointerException if either argument is null
+     */
     /* default */ DefaultPreparedSemanticSigningRequest(DefaultPreparedSigningRequest prepared,
             DefaultSemanticSigningService owner) {
         this.prepared = Objects.requireNonNull(prepared, "prepared");
         this.owner = Objects.requireNonNull(owner, "owner");
     }
 
+    /**
+     * Returns the underlying prepared request only to its owning semantic service.
+     *
+     * @param expectedOwner expected service identity token
+     * @return underlying prepared request, without transferring or consuming custody
+     * @throws IllegalArgumentException if expectedOwner is not the identical owner
+     */
     /* default */ // Identity comparison preserves ownership tokens or prevents Throwable self-suppression; value equality is incorrect here.
                   @SuppressWarnings({ "PMD.CompareObjectsWithEquals" })
                   DefaultPreparedSigningRequest unwrap(DefaultSemanticSigningService expectedOwner) {
@@ -59,8 +75,14 @@ public final class DefaultPreparedSemanticSigningRequest implements PreparedSema
         return prepared;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public SigningAcceptanceReceipt receipt() { return prepared.receipt(); }
 
-    /** Returns a representation that omits prepared operation data. */
+    /**
+     * Returns a representation that omits prepared operation data.
+     * @return {@inheritDoc}
+     */
     @Override public String toString() { return "PreparedSemanticSigningRequest[redacted]"; }
 }

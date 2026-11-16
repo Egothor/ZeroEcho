@@ -55,6 +55,19 @@ public final class BuiltInCertificateProfileTemplate {
     private final byte[] canonicalSha256;
     private final String resourceName;
 
+    /**
+     * Captures an immutable provisioning definition and independent canonical byte snapshots.
+     *
+     * <p>The caller must supply JSON and a matching digest produced by the profile loader;
+     * this constructor checks their structure but does not recompute the digest.</p>
+     *
+     * @param definition already validated immutable profile definition
+     * @param canonicalJson nonempty canonical profile JSON; copied defensively
+     * @param canonicalSha256 32-byte SHA-256 digest of that JSON; copied defensively
+     * @param resourceName nonblank source resource name retained for provenance
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if the JSON is empty, the digest length is not 32 bytes or the resource name is blank
+     */
     /* default */ BuiltInCertificateProfileTemplate(CertificateProfileDefinition definition, byte[] canonicalJson,
             byte[] canonicalSha256, String resourceName) {
         this.definition = Objects.requireNonNull(definition, "definition");
@@ -108,6 +121,9 @@ public final class BuiltInCertificateProfileTemplate {
         return resourceName;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof BuiltInCertificateProfileTemplate template
@@ -116,6 +132,9 @@ public final class BuiltInCertificateProfileTemplate {
                 && resourceName.equals(template.resourceName);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int hashCode() {
         int result = Objects.hash(definition, resourceName);
@@ -123,6 +142,9 @@ public final class BuiltInCertificateProfileTemplate {
         return 31 * result + Arrays.hashCode(canonicalSha256);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String toString() {
         return "BuiltInCertificateProfileTemplate[profileId=" + definition.profileId() + ", profileVersion="

@@ -76,7 +76,9 @@ import zeroecho.pki.application.PkiOperationValue.Text;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.server.http.StrictJson;
 
-/** Opt-in gate for actual packaged server, nginx, SPA and remote CLI artifacts. */
+/**
+ * Opt-in gate for actual packaged server, nginx, SPA and remote CLI artifacts.
+ */
 @Tag("packaged-integration")
 class PackagedIntegrationTest {
     private static final String PASSWORD = PackagedIntegrationTls.PASSWORD;
@@ -86,6 +88,11 @@ class PackagedIntegrationTest {
     private int commandIndex;
     private String baseUrl;
 
+    /**
+     * Checks deployed client authentication, durable approval and receipt recovery while asserting each administrative mutation is submitted once.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void packagedDeploymentPreservesAuthenticationApprovalAndSubmitOnceReceipts() throws Exception {
         root = Path.of(System.getProperty("packaged.repository")).toRealPath();

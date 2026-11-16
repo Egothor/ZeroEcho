@@ -156,6 +156,9 @@ import zeroecho.pkix.ExtendedKeyUsage;
 import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.Pkix;
 
+/**
+ * Contract and regression tests for end entity signing lifecycle.
+ */
 final class EndEntitySigningLifecycleTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00.123456789Z");
     private static final PkiId CA = new PkiId("ca:integration");
@@ -171,6 +174,11 @@ final class EndEntitySigningLifecycleTest {
     private static KeyPair replacementLeafKey;
     private static byte[] csr;
 
+    /**
+     * Generates the real signing and verification key material shared by the test cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll
     static void generateKeys() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -183,6 +191,12 @@ final class EndEntitySigningLifecycleTest {
                 .publicKey(leafKey.getPublic()).build(Pkix.signer(leafKey.getPrivate(), X509_SIGNATURE)).encoded();
     }
 
+    /**
+     * Issuance evidence survives publication feed and restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void issuanceEvidenceSurvivesPublicationFeedAndRestart(@TempDir Path root) throws Exception {
         for (String variant : List.of("administrative", "acme", "embedded")) {
@@ -245,6 +259,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Real reactive issuance completes with normalized time and frozen selections.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void realReactiveIssuanceCompletesWithNormalizedTimeAndFrozenSelections(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -304,6 +324,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Cancellation expiry denial and invalid issuer signature publish no credential.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationExpiryDenialAndInvalidIssuerSignaturePublishNoCredential(@TempDir Path root) throws Exception {
         for (Mode mode : List.of(Mode.CANCEL, Mode.EXPIRE, Mode.DENY, Mode.WRONG_KEY)) {
@@ -338,6 +364,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Unknown acceptance uses receipt and ordinary preparation creates a new identity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownAcceptanceUsesReceiptAndOrdinaryPreparationCreatesANewIdentity(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -380,6 +412,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Restart after credential commit resumes publication without duplicate or resigning.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void restartAfterCredentialCommitResumesPublicationWithoutDuplicateOrResigning(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -436,6 +474,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Correlated renewal retains predecessor and frozen selection across uncertain acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedRenewalRetainsPredecessorAndFrozenSelectionAcrossUncertainAcceptance(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -511,6 +555,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Correlated crmf replacement retains exact old certificate and new key across uncertain acceptance.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedCrmfReplacementRetainsExactOldCertificateAndNewKeyAcrossUncertainAcceptance(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -604,6 +654,12 @@ final class EndEntitySigningLifecycleTest {
                         new org.bouncycastle.asn1.DERBitString(signer.getSignature()))), null).getEncoded();
     }
 
+    /**
+     * Reactive lifecycle completes with real signatures and frozen identity.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reactiveLifecycleCompletesWithRealSignaturesAndFrozenIdentity(@TempDir Path root) throws Exception {
         for (LifecycleCase lifecycle : LifecycleCase.values()) {
@@ -663,6 +719,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Lifecycle cancellation expiry denial and invalid signature have no publication effects.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void lifecycleCancellationExpiryDenialAndInvalidSignatureHaveNoPublicationEffects(@TempDir Path root) throws Exception {
         for (LifecycleCase lifecycle : LifecycleCase.values()) {
@@ -696,6 +758,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Lifecycle restart resumes supersession without another signature or credential.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void lifecycleRestartResumesSupersessionWithoutAnotherSignatureOrCredential(@TempDir Path root) throws Exception {
         for (LifecycleCase lifecycle : LifecycleCase.values()) {
@@ -821,6 +889,12 @@ final class EndEntitySigningLifecycleTest {
 
     private enum LifecycleCase { RENEW, REPLACE_SAME_KEY, REPLACE_NEW_KEY, REISSUE }
 
+    /**
+     * Correlated preparation crash leaves no admission and recovery cleans candidate.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPreparationCrashLeavesNoAdmissionAndRecoveryCleansCandidate(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -860,6 +934,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Crmf uncertain acceptance completes and replays after restart.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void crmfUncertainAcceptanceCompletesAndReplaysAfterRestart(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -923,6 +1003,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Correlated accepted before reply replays frozen selection across restart and retention.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedAcceptedBeforeReplyReplaysFrozenSelectionAcrossRestartAndRetention(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -989,6 +1075,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Correlated publication restart preserves one signature and credential.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedPublicationRestartPreservesOneSignatureAndCredential(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1041,6 +1133,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Concurrent correlated real issuance publishes exactly once.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentCorrelatedRealIssuancePublishesExactlyOnce(@TempDir Path root) throws Exception {
         for (boolean changedCsr : List.of(false, true)) {
@@ -1091,6 +1189,12 @@ final class EndEntitySigningLifecycleTest {
         }
     }
 
+    /**
+     * Correlated terminal failures replay across restart without publication.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void correlatedTerminalFailuresReplayAcrossRestartWithoutPublication(@TempDir Path root) throws Exception {
         for (Mode mode : List.of(Mode.CANCEL, Mode.EXPIRE, Mode.DENY, Mode.WRONG_KEY)) {

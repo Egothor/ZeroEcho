@@ -67,13 +67,30 @@ import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Strict bounded-memory codec for one authenticated revocation transition. */
+/**
+ * Strict bounded-memory codec for one authenticated revocation transition.
+ */
 final class RevocationTransitionFrameCodec {
 
+    /**
+     * Fixed encoded preamble length in bytes.
+     */
     /* default */ static final int PREAMBLE_BYTES = 56;
+    /**
+     * Fixed encoded header length in bytes.
+     */
     /* default */ static final int HEADER_BYTES = 88;
+    /**
+     * Encoded SHA-256 commitment length in bytes.
+     */
     /* default */ static final int COMMITMENT_BYTES = 32;
+    /**
+     * Inclusive maximum encoded component length in bytes.
+     */
     /* default */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
+    /**
+     * Scratch buffer capacity in bytes for bounded streaming reads.
+     */
     /* default */ static final int READ_SCRATCH_BYTES = 16 * 1024;
 
     private static final int PREAMBLE_MAGIC = 0x5A455250;
@@ -96,6 +113,14 @@ final class RevocationTransitionFrameCodec {
     private static final byte[] INITIAL_CHAIN_DOMAIN = "ZeroEcho revocation log initial chain v1"
             .getBytes(StandardCharsets.US_ASCII);
 
+    /**
+     * Writes the store-bound authenticated preamble at the current position of the borrowed channel, without forcing or closing it.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param storeId exact authoritative store identity
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or storeId is null
+     */
     /* default */ void writePreamble(SeekableByteChannel channel, MetadataStoreId storeId) throws IOException {
         Objects.requireNonNull(channel, "channel");
         Objects.requireNonNull(storeId, "storeId");
@@ -115,6 +140,14 @@ final class RevocationTransitionFrameCodec {
         return preamble.array();
     }
 
+    /**
+     * Reads and authenticates the preamble from offset zero of the borrowed channel, rejecting incomplete, corrupt or unsupported framing.
+     *
+     * @param channel borrowed channel, which remains open
+     * @return authenticated store identity
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel is null
+     */
     /* default */ MetadataStoreId readPreamble(SeekableByteChannel channel) throws IOException {
         Objects.requireNonNull(channel, "channel");
         channel.position(0L);
@@ -144,6 +177,16 @@ final class RevocationTransitionFrameCodec {
         return new MetadataStoreId(LOWERCASE_HEX.formatHex(rawStoreId));
     }
 
+    /**
+     * Appends one validated, authenticated transition at the current channel position. The returned record captures its byte boundaries and chain commitment; forcing remains the caller's responsibility.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param data validated transition data to append
+     * @return coordinates and commitment of the written frame
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or data is null
+     * @throws IllegalArgumentException if transition fields, component bounds or chain coordinates are invalid
+     */
     /* default */ CompleteRecord write(SeekableByteChannel channel, TransitionData data) throws IOException {
         Objects.requireNonNull(channel, "channel");
         Objects.requireNonNull(data, "data");
@@ -163,13 +206,33 @@ final class RevocationTransitionFrameCodec {
         return new CompleteRecord(data, recordOffset, recordEnd, commitment);
     }
 
+    /**
+     * Reads one authenticated transition from the specified offset. The result distinguishes a complete record, end of input, an incomplete tail and corruption; the borrowed channel remains open.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param recordOffset byte offset of the next record
+     * @return classification and authenticated record metadata
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or supplied scratch is null
+     * @throws IllegalStateException if the supplied scratch is closed or already in use
+     */
     /* default */ ReadResult read(SeekableByteChannel channel, long recordOffset) throws IOException {
         try (DecodeScratch scratch = new DecodeScratch()) {
             return read(channel, recordOffset, scratch);
         }
     }
 
-    /** Reads one frame with caller-owned, exclusively used decode scratch. */
+    /**
+     * Reads one authenticated transition from the specified offset. The result distinguishes a complete record, end of input, an incomplete tail and corruption; the borrowed channel remains open. Scratch is borrowed exclusively and released before return, including on failure.
+     *
+     * @param channel borrowed channel, which remains open
+     * @param recordOffset byte offset of the next record
+     * @param scratch caller-owned decode scratch used exclusively during this call
+     * @return classification and authenticated record metadata
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws NullPointerException if channel or supplied scratch is null
+     * @throws IllegalStateException if the supplied scratch is closed or already in use
+     */
     /* default */ ReadResult read(SeekableByteChannel channel, long recordOffset, DecodeScratch scratch)
             throws IOException {
         Objects.requireNonNull(scratch, "scratch");
@@ -236,6 +299,13 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
+    /**
+     * Derives the domain-separated initial revocation-chain commitment for the exact store identity.
+     *
+     * @param storeId exact authoritative store identity
+     * @return store-bound initial chain commitment
+     * @throws NullPointerException if storeId is null
+     */
     /* default */ static Commitment initialCommitment(MetadataStoreId storeId) {
         Objects.requireNonNull(storeId, "storeId");
         MessageDigest digest = newSha256();
@@ -273,8 +343,18 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Immutable lowercase hexadecimal SHA-256 commitment. */
+    /**
+     * Immutable lowercase hexadecimal SHA-256 commitment.
+     * @param value canonical lowercase hexadecimal SHA-256 commitment
+     */
     /* default */ record Commitment(String value) {
+        /**
+         * Creates an immutable lowercase hexadecimal SHA-256 commitment.
+         *
+         * @param value canonical lowercase hexadecimal SHA-256 commitment
+         * @throws NullPointerException if {@code value} is null
+         * @throws IllegalArgumentException if {@code (!value.matches("[0-9a-f]{64}"))}
+         */
         Commitment {
             Objects.requireNonNull(value, "value");
             if (!value.matches("[0-9a-f]{64}")) {
@@ -288,7 +368,15 @@ final class RevocationTransitionFrameCodec {
 
     }
 
-    /** Finite semantic input for one transition record. */
+    /**
+     * Finite semantic input for one transition record.
+     * @param globalRevision authoritative global revocation revision
+     * @param previousGlobalCommitment global revocation commitment immediately before this transition
+     * @param credentialId exact credential identity
+     * @param previousCredentialGlobalRevision global revision of the credential's prior transition, or empty if none
+     * @param previousCredentialCommitment commitment of the credential's prior transition, or empty if none
+     * @param transition immutable revocation transition retained for the credential
+     */
     /* default */ @SuppressWarnings("PMD.LongVariable")
     record TransitionData(
             long globalRevision,
@@ -297,6 +385,17 @@ final class RevocationTransitionFrameCodec {
             OptionalLong previousCredentialGlobalRevision,
             Optional<Commitment> previousCredentialCommitment,
             RevocationTransition transition) {
+        /**
+         * Creates the finite semantic input for one transition record.
+         *
+         * @param globalRevision authoritative global revocation revision
+         * @param previousGlobalCommitment global revocation commitment immediately before this transition
+         * @param credentialId exact credential identity
+         * @param previousCredentialGlobalRevision global revision of the credential's prior transition, or empty if none
+         * @param previousCredentialCommitment commitment of the credential's prior transition, or empty if none
+         * @param transition immutable revocation transition retained for the credential
+         * @throws NullPointerException if {@code previousGlobalCommitment} is null; or if {@code credentialId} is null; or if {@code previousCredentialGlobalRevision} is null; or if {@code previousCredentialCommitment} is null; or if {@code transition} is null
+         */
         TransitionData {
             Objects.requireNonNull(previousGlobalCommitment, "previousGlobalCommitment");
             Objects.requireNonNull(credentialId, "credentialId");
@@ -305,6 +404,9 @@ final class RevocationTransitionFrameCodec {
             Objects.requireNonNull(transition, "transition");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public boolean equals(Object candidate) {
             if (this == candidate) {
@@ -321,6 +423,9 @@ final class RevocationTransitionFrameCodec {
                     && transitionsEqual(transition, other.transition);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public int hashCode() {
             return Objects.hash(globalRevision, previousGlobalCommitment, credentialId,
@@ -329,9 +434,25 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** One fully authenticated record and its durable byte boundaries. */
+    /**
+     * One fully authenticated record and its durable byte boundaries.
+     * @param data validated finite transition fields
+     * @param recordOffset zero-based byte offset of the encoded record
+     * @param recordEnd exclusive byte offset immediately after the record
+     * @param commitment integrity commitment of the exact encoded artifact
+     */
     /* default */ record CompleteRecord(
             TransitionData data, long recordOffset, long recordEnd, Commitment commitment) {
+        /**
+         * Creates one fully authenticated record and its durable byte boundaries.
+         *
+         * @param data validated finite transition fields
+         * @param recordOffset zero-based byte offset of the encoded record
+         * @param recordEnd exclusive byte offset immediately after the record
+         * @param commitment integrity commitment of the exact encoded artifact
+         * @throws NullPointerException if {@code data} is null; or if {@code commitment} is null
+         * @throws IllegalArgumentException if {@code (recordOffset < PREAMBLE_BYTES || recordEnd <= recordOffset)}
+         */
         CompleteRecord {
             Objects.requireNonNull(data, "data");
             Objects.requireNonNull(commitment, "commitment");
@@ -341,16 +462,42 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Structural scanner classifications independent of semantic log ordering. */
+    /**
+     * Structural scanner classifications independent of semantic log ordering.
+     */
     /* default */ enum Classification {
+        /**
+         * No bytes remain for another frame or record.
+         */
         END_OF_INPUT,
+        /**
+         * The input ends with a partial frame or record.
+         */
         INCOMPLETE_TAIL,
+        /**
+         * A complete record with valid framing and integrity was decoded.
+         */
         COMPLETE_RECORD,
+        /**
+         * A candidate record fails structural or integrity validation.
+         */
         CORRUPT_RECORD
     }
 
-    /** Strict structural result containing a record only for complete input. */
+    /**
+     * Strict structural result containing a record only for complete input.
+     * @param classification closed structural classification of the read attempt
+     * @param record complete validated record, or empty for incomplete or invalid input
+     */
     /* default */ record ReadResult(Classification classification, Optional<CompleteRecord> record) {
+        /**
+         * Creates the strict structural result containing a record only for complete input.
+         *
+         * @param classification closed structural classification of the read attempt
+         * @param record complete validated record, or empty for incomplete or invalid input
+         * @throws NullPointerException if {@code classification} is null; or if {@code record} is null
+         * @throws IllegalArgumentException if {@code (classification == Classification.COMPLETE_RECORD != record.isPresent())}
+         */
         ReadResult {
             Objects.requireNonNull(classification, "classification");
             Objects.requireNonNull(record, "record");
@@ -376,11 +523,15 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Authenticated fixed-header fields trusted before any payload positioning. */
+    /**
+     * Authenticated fixed-header fields trusted before any payload positioning.
+     */
     private record Header(long globalRevision, Commitment previousGlobalCommitment, long payloadLength) {
     }
 
-    /** One canonical attribute captured once before any record byte is written. */
+    /**
+     * One canonical attribute captured once before any record byte is written.
+     */
     private record PlannedAttribute(byte[] encodedId, List<AttributeValue> values) {
         private PlannedAttribute {
             Objects.requireNonNull(encodedId, "encodedId");
@@ -389,7 +540,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Bounded canonical payload plan; it retains finite values, never encoded record chunks. */
+    /**
+     * Bounded canonical payload plan; it retains finite values, never encoded record chunks.
+     */
     private record PayloadPlan(long length, List<PlannedAttribute> attributes) {
         private static PayloadPlan create(TransitionData data) throws IOException {
             List<PlannedAttribute> attributes = captureAttributes(data.transition().attributes());
@@ -518,7 +671,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Writes canonical fields while incrementally committing every payload byte. */
+    /**
+     * Writes canonical fields while incrementally committing every payload byte.
+     */
     private static final class DigestingWriter {
         private final SeekableByteChannel channel;
         private final DigestOutputStream digest;
@@ -567,7 +722,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Reads only the authenticated payload region and commits bytes incrementally. */
+    /**
+     * Reads only the authenticated payload region and commits bytes incrementally.
+     */
     private static final class BoundedReader {
         private final SeekableByteChannel channel;
         private final DigestOutputStream digest;
@@ -658,7 +815,11 @@ final class RevocationTransitionFrameCodec {
         private byte[] transfer = new byte[READ_SCRATCH_BYTES];
         private boolean acquired;
 
-        /** Returns the exact fixed capacity without exposing mutable storage. */
+        /**
+         * Reports the fixed transfer-buffer capacity of this decode scratch.
+         *
+         * @return scratch transfer capacity in bytes
+         */
         /* default */ int capacity() {
             requireOpen();
             return transfer.length;
@@ -677,7 +838,10 @@ final class RevocationTransitionFrameCodec {
             acquired = false;
         }
 
-        /** Drops the reusable storage; repeated close is harmless. */
+        /**
+         * Drops the reusable storage; repeated close is harmless.
+         * @throws IllegalStateException if decode scratch is currently acquired
+         */
         @Override public void close() {
             if (acquired) {
                 throw new IllegalStateException("Revocation decode scratch is in use");
@@ -692,16 +856,24 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Encodes one primitive into the reusable fixed-width scratch buffer. */
+    /**
+     * Encodes one primitive into the reusable fixed-width scratch buffer.
+     */
     @FunctionalInterface
     private interface PrimitiveEncoder {
-        /** Encodes one fixed-width primitive into the reusable buffer. */
+        /**
+         * Encodes one fixed-width primitive into the reusable buffer.
+         */
         void encode(ByteBuffer buffer);
     }
 
-    /** One canonical decoded attribute and the bytes used for order validation. */
+    /**
+     * One canonical decoded attribute and the bytes used for order validation.
+     */
     private record DecodedAttribute(byte[] encodedId, AttributeId id, List<AttributeValue> values) {
-        /** Retains one bounded component and one immutable semantic entry. */
+        /**
+         * Retains one bounded component and one immutable semantic entry.
+         */
         private DecodedAttribute {
             Objects.requireNonNull(encodedId, "encodedId");
             Objects.requireNonNull(id, "id");
@@ -709,7 +881,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Map-backed decode input keeps transition snapshot construction linear in attribute count. */
+    /**
+     * Map-backed decode input keeps transition snapshot construction linear in attribute count.
+     */
     private static final class DecodedAttributeSet implements AttributeSet {
         private final Map<AttributeId, List<AttributeValue>> attributes;
 
@@ -717,17 +891,26 @@ final class RevocationTransitionFrameCodec {
             this.attributes = Map.copyOf(attributes);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Set<AttributeId> ids() {
             return attributes.keySet();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<AttributeValue> get(AttributeId id) {
             List<AttributeValue> values = getAll(id);
             return values.isEmpty() ? Optional.empty() : Optional.of(values.get(0));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<AttributeValue> getAll(AttributeId id) {
             Objects.requireNonNull(id, "id");
@@ -735,7 +918,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Structural record reader that authenticates boundaries before semantic decoding. */
+    /**
+     * Structural record reader that authenticates boundaries before semantic decoding.
+     */
     private static final class WireOperations {
         private static ReadResult read(SeekableByteChannel channel, long recordOffset, byte[] transfer)
                 throws IOException {
@@ -832,7 +1017,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Strict semantic payload handling isolated from structural frame authentication. */
+    /**
+     * Strict semantic payload handling isolated from structural frame authentication.
+     */
     private static final class SemanticOperations {
         private static TransitionData decodePayload(Header header, BoundedReader reader) throws IOException {
             if (reader.readShort() != SEMANTIC_VERSION || reader.readShort() != RESERVED_FLAGS) {
@@ -1012,7 +1199,9 @@ final class RevocationTransitionFrameCodec {
 
     }
 
-    /** Semantic equality for immutable decoded transition metadata. */
+    /**
+     * Semantic equality for immutable decoded transition metadata.
+     */
     private static final class SemanticEquality {
         private static boolean transitionsEqual(
                 RevocationTransition first, RevocationTransition second) {
@@ -1090,7 +1279,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Closed stable numeric codes for revocation state and reason values. */
+    /**
+     * Closed stable numeric codes for revocation state and reason values.
+     */
     private static final class ValueCodes {
         private static RevocationState decodeState(int code) {
             return switch (code) {
@@ -1145,7 +1336,9 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
-    /** Optional same-credential history link decoded from one payload. */
+    /**
+     * Optional same-credential history link decoded from one payload.
+     */
     private record CredentialLink(
             OptionalLong globalRevision, Optional<Commitment> commitment) {
     }
@@ -1158,10 +1351,25 @@ final class RevocationTransitionFrameCodec {
         return SemanticOperations.encodeReason(reason);
     }
 
+    /**
+     * Tests transition value equality, including the encoded values of byte-bearing attributes.
+     *
+     * @param first first value or inclusive sequence coordinate
+     * @param second second value to compare
+     * @return true when the transition values are equal
+     * @throws NullPointerException if either transition is null
+     */
     /* default */ static boolean transitionsEqual(RevocationTransition first, RevocationTransition second) {
         return SemanticEquality.transitionsEqual(first, second);
     }
 
+    /**
+     * Computes the transition value hash consistently with the codec's transition equality.
+     *
+     * @param transition transition whose value hash is required
+     * @return transition value hash
+     * @throws NullPointerException if transition is null
+     */
     /* default */ static int transitionHash(RevocationTransition transition) {
         return SemanticEquality.transitionHash(transition);
     }

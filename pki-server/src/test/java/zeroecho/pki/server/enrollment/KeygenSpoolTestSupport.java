@@ -37,7 +37,9 @@ package zeroecho.pki.server.enrollment;
 import java.io.IOException;
 import static org.mockito.Mockito.when;
 
-/** Package-local custody bridge for server-level coordinator persistence fixtures. */
+/**
+ * Package-local custody bridge for server-level coordinator persistence fixtures.
+ */
 public final class KeygenSpoolTestSupport {
     private KeygenSpoolTestSupport() { }
     /**
@@ -46,6 +48,8 @@ public final class KeygenSpoolTestSupport {
      * @param configuration explicit artifact limits and directory
      * @return owned spool to close with the fixture
      * @throws IOException if exclusive storage cannot be opened
+     * @throws NullPointerException if runtime or configuration is null
+     * @throws java.util.NoSuchElementException if key-generation artifact storage is not configured
      */
     public static AutoCloseable install(EnrollmentRuntime runtime, EnrollmentRuntimeConfiguration configuration) throws IOException {
         EnrollmentKeygenSpool spool = new EnrollmentKeygenSpool(configuration.keygenArtifacts().orElseThrow(),
@@ -54,14 +58,24 @@ public final class KeygenSpoolTestSupport {
         return spool;
     }
 
-    /** @param value workflow state to persist in corruption/recovery fixtures
-     * @return canonical control record */
+    /**
+     * Encodes workflow state for durable corruption and recovery fixtures.
+     *
+     * @param value workflow state to persist; must not be null
+     * @return canonical control record
+     * @throws NullPointerException if value is null
+     */
     public static zeroecho.pki.server.ServerControlStore.ProtocolRecord record(EnrollmentTransaction value) {
         return EnrollmentTransactionCodec.record(value);
     }
 
-    /** @param value descriptor to persist in corruption/recovery fixtures
-     * @return canonical control record */
+    /**
+     * Encodes an encrypted key-generation artifact descriptor for persistence fixtures.
+     *
+     * @param value descriptor to persist; must not be null
+     * @return canonical control record
+     * @throws NullPointerException if value is null
+     */
     public static zeroecho.pki.server.ServerControlStore.ProtocolRecord record(EnrollmentKeygenArtifact value) {
         return EnrollmentKeygenCodec.record(value);
     }

@@ -53,9 +53,15 @@ import zeroecho.core.alg.hmac.HmacAlgorithm;
 import zeroecho.core.alg.rsa.RsaAlgorithm;
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 
+/**
+ * Contract and regression tests for parameter descriptor.
+ */
 class ParameterDescriptorTest {
     private static final SecurityLevel LEVEL = SecurityLevel.classical(112);
 
+    /**
+     * Rejects invalid maps before calling delegate and applies defaults.
+     */
     @Test
     void rejectsInvalidMapsBeforeCallingDelegateAndAppliesDefaults() {
         AtomicInteger calls = new AtomicInteger();
@@ -93,6 +99,9 @@ class ParameterDescriptorTest {
         assertEquals(1, calls.get());
     }
 
+    /**
+     * Validates metadata and legacy constructor without changing record shape.
+     */
     @Test
     void validatesMetadataAndLegacyConstructorWithoutChangingRecordShape() {
         assertEquals(4, TemplateParameter.class.getRecordComponents().length);
@@ -115,6 +124,9 @@ class ParameterDescriptorTest {
                 ParameterConstraint.ValueKind.INTEGER, true, 512, List.of(), 1024L, null, 1, 0));
     }
 
+    /**
+     * Built in templates declare executable constraints.
+     */
     @Test
     void builtInTemplatesDeclareExecutableConstraints() {
         ParameterSetDescriptor.Template<?> rsa = (ParameterSetDescriptor.Template<?>) new RsaAlgorithm()

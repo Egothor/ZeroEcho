@@ -50,9 +50,20 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+/**
+ * Publication assembly tests for complete module output and source/destination isolation.
+ */
 class AssembleDocumentationSiteTest {
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks complete documentation assembly while preserving individual module outputs.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void assemblesEveryModuleAndReplacesOnlyTheCombinedOutput() throws Exception {
         AssembleDocumentationSite task = fixture();
@@ -76,6 +87,11 @@ class AssembleDocumentationSiteTest {
         assertFalse(Files.exists(directory.resolve("mkdocs/javadoc")));
     }
 
+    /**
+     * Rejects a module missing its index before replacing an existing publication.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void missingModuleIndexFailsBeforeTouchingAnExistingPublication() throws Exception {
         AssembleDocumentationSite task = fixture();
@@ -89,6 +105,11 @@ class AssembleDocumentationSiteTest {
         assertEquals("MkDocs landing", Files.readString(directory.resolve("mkdocs/index.html")));
     }
 
+    /**
+     * Rejects collisions with reserved documentation content before copying module output.
+     * @param collision reserved documentation path used to create the input collision
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = { "javadoc", "CNAME" })
     void rejectsReservedMkDocsContentInsteadOfOverwritingIt(String collision) throws Exception {
@@ -99,6 +120,11 @@ class AssembleDocumentationSiteTest {
         assertEquals("owned by MkDocs", Files.readString(directory.resolve("mkdocs/" + collision)));
     }
 
+    /**
+     * Rejects a documentation destination nested inside a source directory.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsAnOutputInsideItsInput() throws Exception {
         AssembleDocumentationSite task = fixture();
@@ -108,6 +134,11 @@ class AssembleDocumentationSiteTest {
         assertFalse(Files.exists(directory.resolve("mkdocs/combined")));
     }
 
+    /**
+     * Rejects physical source/destination overlap through symlinks before modifying input.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsPhysicalOverlapThroughASymlinkBeforeChangingInput() throws Exception {
         AssembleDocumentationSite task = fixture();
@@ -125,6 +156,11 @@ class AssembleDocumentationSiteTest {
         assertFalse(Files.exists(directory.resolve("mkdocs/combined")));
     }
 
+    /**
+     * Rejects module names that cannot safely form documentation URL segments.
+     * @param name unsafe module URL segment supplied by the parameterized test source
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest
     @ValueSource(strings = { "../lib", "", "with space", "/absolute" })
     void rejectsUnsafeModuleUrlSegments(String name) throws Exception {

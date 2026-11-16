@@ -76,15 +76,26 @@ import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiResourceScopeResolver;
 
+/**
+ * Checks administrative publication admission against authoritative credential, owner and confirmation coordinates.
+ */
 class AdminCredentialPublicationEnrollmentTest {
     private static final String ACTOR = "publication-admin";
     private static final String OWNER = "certificate-owner";
     private static final PkiId CREDENTIAL_ID = new PkiId("credential-admin-enrollment");
     private static final PkiId PUBLICATION_ID = new PkiId("publication-delayed-result");
 
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Checks authorized publication enrollment binds exact authoritative scope/owner, replays identically and preserves pending confirmation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void authorizedEnrollmentUsesExactScopeExplicitOwnerAndReplaysExactly() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -118,6 +129,11 @@ class AdminCredentialPublicationEnrollmentTest {
         }
     }
 
+    /**
+     * Checks owner-only enrollment rejects absent or unknown owners without initializing confirmation or inferring the actor as owner.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void ownerOnlyRequiresExistingExplicitOwnerAndNeverSubstitutesActor() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -135,6 +151,11 @@ class AdminCredentialPublicationEnrollmentTest {
         }
     }
 
+    /**
+     * Checks public enrollment keeps both owner categories absent and confirmation not required.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void publicEnrollmentPreservesOptionalOwnerAbsence() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -153,6 +174,11 @@ class AdminCredentialPublicationEnrollmentTest {
         }
     }
 
+    /**
+     * Checks issue/read permissions or a mismatched profile cannot initialize publication/confirmation state.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void issueAndReadPermissionsOrWrongProfileScopeCannotEnroll() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
@@ -173,6 +199,11 @@ class AdminCredentialPublicationEnrollmentTest {
         }
     }
 
+    /**
+     * Checks observing delayed issuance dispatches only the read operation without publication registration or inferred ownership.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void delayedIssuancePollingNeverEnrollsOrAcquiresOwnership() throws Exception {
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {

@@ -85,21 +85,37 @@ public final class SaberKeyGenSpec implements AlgorithmKeySpec, Describable {
          * LightSaber KEM, round-3, targeting ~128-bit security with smallest footprint.
          */
         LIGHTSABERKEM128R3,
-        /** Saber KEM, round-3, baseline 128-bit security parameter set. */
+        /**
+         * Saber KEM, round-3, baseline 128-bit security parameter set.
+         */
         SABERKEM128R3,
-        /** FireSaber KEM, round-3, strong 128-bit security with larger parameters. */
+        /**
+         * FireSaber KEM, round-3, strong 128-bit security with larger parameters.
+         */
         FIRESABERKEM128R3,
-        /** LightSaber KEM, round-3, targeting ~192-bit security. */
+        /**
+         * LightSaber KEM, round-3, targeting ~192-bit security.
+         */
         LIGHTSABERKEM192R3,
-        /** Saber KEM, round-3, baseline 192-bit security parameter set. */
+        /**
+         * Saber KEM, round-3, baseline 192-bit security parameter set.
+         */
         SABERKEM192R3,
-        /** FireSaber KEM, round-3, strong 192-bit security with larger parameters. */
+        /**
+         * FireSaber KEM, round-3, strong 192-bit security with larger parameters.
+         */
         FIRESABERKEM192R3,
-        /** LightSaber KEM, round-3, targeting ~256-bit security. */
+        /**
+         * LightSaber KEM, round-3, targeting ~256-bit security.
+         */
         LIGHTSABERKEM256R3,
-        /** Saber KEM, round-3, baseline 256-bit security parameter set. */
+        /**
+         * Saber KEM, round-3, baseline 256-bit security parameter set.
+         */
         SABERKEM256R3,
-        /** FireSaber KEM, round-3, strong 256-bit security with larger parameters. */
+        /**
+         * FireSaber KEM, round-3, strong 256-bit security with larger parameters.
+         */
         FIRESABERKEM256R3
     }
 

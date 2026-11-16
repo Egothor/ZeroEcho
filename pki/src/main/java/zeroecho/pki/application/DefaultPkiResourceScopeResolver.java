@@ -44,16 +44,28 @@ import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Store-backed scope resolver that exposes identifiers only. */
+/**
+ * Store-backed scope resolver that exposes identifiers only.
+ */
 final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver {
     private final PkiStore store;
     private final Runnable openCheck;
 
+    /**
+     * Binds identifier-only authorization scope lookup to the session store.
+     *
+     * @param store borrowed authoritative metadata store
+     * @param openCheck session lifecycle guard
+     * @throws NullPointerException if an argument is null
+     */
     /* default */ DefaultPkiResourceScopeResolver(PkiStore store, Runnable openCheck) {
         this.store = Objects.requireNonNull(store, "store");
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialScope> credentialScope(PkiId credentialId) {
         openCheck.run();
@@ -65,6 +77,9 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialScope> credentialReadScope(PkiId credentialId) {
         openCheck.run();
@@ -76,6 +91,9 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
                         }));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PkiId> statusObjectAuthority(PkiId statusObjectId) {
         openCheck.run();
@@ -83,6 +101,9 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
                 .map(StatusObject::issuerCaId);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CredentialScope> holdCredentialScope(PkiId credentialId) {
         openCheck.run();
@@ -94,6 +115,9 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
                         }));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PkiId> publicationAuthority(PkiId publicationId) {
         openCheck.run();

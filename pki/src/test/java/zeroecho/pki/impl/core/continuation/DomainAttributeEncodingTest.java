@@ -51,7 +51,13 @@ import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
+/**
+ * Contract and regression tests for domain attribute encoding.
+ */
 final class DomainAttributeEncodingTest {
+    /**
+     * Shared large values reject during bounded preflight.
+     */
     @Test void sharedLargeValuesRejectDuringBoundedPreflight() {
         AttributeId id = new AttributeId("urn:test:large");
         AttributeValue shared = new AttributeValue.StringValue("x".repeat(131_072));
@@ -72,6 +78,9 @@ final class DomainAttributeEncodingTest {
         assertEquals(6, reads.get());
     }
 
+    /**
+     * Exact closed values round trip canonically.
+     */
     @Test
     void exactClosedValuesRoundTripCanonically() {
         AttributeId binary = new AttributeId("urn:test:binary");
@@ -98,6 +107,9 @@ final class DomainAttributeEncodingTest {
         assertEquals(List.of(), decoded.getAll(new AttributeId("urn:test:empty")));
     }
 
+    /**
+     * Rejects non canonical boolean and instant encodings.
+     */
     @Test
     void rejectsNonCanonicalBooleanAndInstantEncodings() {
         assertThrows(IllegalArgumentException.class,

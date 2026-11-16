@@ -44,22 +44,38 @@ import zeroecho.pki.api.PkiId;
  * @param issues immutable, non-sensitive diagnostic codes
  */
 public record RestoreStatus(PkiId restoreId, State state, List<String> issues) {
-    /** Validates identity and takes an immutable copy of the issue codes. */
+    /**
+     * Validates identity and takes an immutable copy of the issue codes.
+     * @param restoreId stable restore identity
+     * @param state acknowledged progress or explicit publication uncertainty
+     * @param issues immutable, non-sensitive diagnostic codes
+     * @throws NullPointerException if restoreId, state or issues is null, or an issues entry is null
+     */
     public RestoreStatus {
         Objects.requireNonNull(restoreId, "restoreId");
         Objects.requireNonNull(state, "state");
         issues = List.copyOf(issues);
     }
 
-    /** Observable restore outcomes. */
+    /**
+     * Observable restore outcomes.
+     */
     public enum State {
-        /** Prepared durably; closing and reopening the store is required. */
+        /**
+         * Prepared durably; closing and reopening the store is required.
+         */
         STAGED,
-        /** Replacement was opened, recovered and closed successfully before publication. */
+        /**
+         * Replacement was opened, recovered and closed successfully before publication.
+         */
         ACTIVATED,
-        /** Replacement was rejected or cold activation was rolled back. */
+        /**
+         * Replacement was rejected or cold activation was rolled back.
+         */
         FAILED,
-        /** Publication was not acknowledged; cold reconciliation must determine its outcome. */
+        /**
+         * Publication was not acknowledged; cold reconciliation must determine its outcome.
+         */
         UNCERTAIN
     }
 }

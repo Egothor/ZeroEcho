@@ -54,11 +54,22 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.io.Util;
 
+/**
+ * EXIF framing tests for payload limits, truncation, capacity, and caller-output isolation.
+ */
 class JpegExifEmbedderLengthTest {
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Checks exact decoding of valid payload lengths at framing boundaries.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void validPackedPayloadBoundariesDecodeExactly() throws Exception {
         System.out.println("validPackedPayloadBoundariesDecodeExactly");
@@ -75,6 +86,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects malformed packed lengths and truncated payloads without accepting partial data.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void malformedPackedLengthsAndTruncationFailClosed() throws Exception {
         System.out.println("malformedPackedLengthsAndTruncationFailClosed");
@@ -122,6 +138,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Embeds and extracts a payload through real JPEG EXIF processing.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void realJpegRoundTripPreservesPayload() throws Exception {
         System.out.println("realJpegRoundTripPreservesPayload");
@@ -146,6 +167,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects an oversized embedded payload before writing caller-visible output.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void embeddingRejectsOverCapacityBeforeOutput() throws Exception {
         System.out.println("embeddingRejectsOverCapacityBeforeOutput");
@@ -164,6 +190,9 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks EXIF slot validation through each supported construction path.
+     */
     @Test
     void allConstructionPathsRequireValidSlots() {
         System.out.println("allConstructionPathsRequireValidSlots");
@@ -178,6 +207,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Checks malformed EXIF payload boundaries without emitting partial output.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void parsedExifPayloadBoundariesFailWithoutOutput() throws Exception {
         System.out.println("parsedExifPayloadBoundariesFailWithoutOutput");
@@ -192,6 +226,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Rejects hostile EXIF slot values without exposing partial decoded data.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void hostileExifSlotsFailClosedWithoutPartialOutput() throws Exception {
         System.out.println("hostileExifSlotsFailClosedWithoutPartialOutput");
@@ -212,6 +251,11 @@ class JpegExifEmbedderLengthTest {
         System.out.println("...ok");
     }
 
+    /**
+     * Enforces both configured capacity and the absolute payload bound before writing output.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void configuredCapacityAndMaximumAreEnforcedBeforeCallerOutput() throws Exception {
         System.out.println("configuredCapacityAndMaximumAreEnforcedBeforeCallerOutput");

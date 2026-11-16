@@ -77,10 +77,14 @@ public final class SctVerifier {
 
     private static final Logger LOG = Logger.getLogger(SctVerifier.class.getName());
 
-    /** Maximum allowed clock skew between a CT log and the local clock. */
+    /**
+     * Maximum allowed clock skew between a CT log and the local clock.
+     */
     public static final int MAX_FUTURE_DRIFT_MINUTES = 10;
 
-    /** Prevents instantiation; all methods are static. */
+    /**
+     * Prevents instantiation; all methods are static.
+     */
     private SctVerifier() {
         // utility class
     }

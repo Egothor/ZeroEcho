@@ -136,6 +136,9 @@ public final class Ed25519Algorithm extends AbstractCryptoAlgorithm {
         registerPrivateKeyImporter(Ed25519PrivateKeySpec.class, new Ed25519PrivateKeyBuilder());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ParameterSetDescriptor<? extends zeroecho.core.spec.AlgorithmKeySpec>> parameterSets() {
         return PARAMETER_SETS;

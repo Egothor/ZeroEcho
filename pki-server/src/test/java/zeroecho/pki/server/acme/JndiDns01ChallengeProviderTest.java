@@ -55,10 +55,17 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Exercises the public DNS provider through actual loopback UDP and the JDK JNDI DNS adapter. */
+/**
+ * Exercises the public DNS provider through actual loopback UDP and the JDK JNDI DNS adapter.
+ */
 class JndiDns01ChallengeProviderTest {
     private static final String AUTHORIZATION="A".repeat(43)+"."+"B".repeat(43);
 
+    /**
+     * Uses a loopback UDP DNS responder to check real JNDI TXT lookup and successful unquoted proof validation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void actualJndiUnquotedSingleTxtValidates() throws Exception {
         try(var dns=new Dns(List.of(List.of(expected())))) {
             var result=validate(dns,43,1);
@@ -67,6 +74,11 @@ class JndiDns01ChallengeProviderTest {
         }
     }
 
+    /**
+     * Checks that the TXT presentation parser joins two canonical quoted chunks into the original proof digest.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void existingQuotedMultipleChunksRetainTheirCanonicalMeaning() throws Exception {
         String expected=expected();
         var parser=JndiDns01ChallengeProvider.class.getDeclaredMethod("txt",String.class);
@@ -74,10 +86,21 @@ class JndiDns01ChallengeProviderTest {
         assertEquals(expected,parser.invoke(null,"\""+expected.substring(0,20)+"\" \""+expected.substring(20)+"\""));
     }
 
+    /**
+     * Supplies mismatched, blank, whitespace, escape, quote and non-ASCII DNS TXT presentations.
+     *
+     * @return stream of invalid or nonmatching decoded TXT values
+     */
     static Stream<String> invalidPresentations() {
         return Stream.of("not-the-proof","", "abc def", "abc\tdef", "abc\ndef", "abc\\def", "abc\"def", "é");
     }
 
+    /**
+     * Checks actual JNDI responses containing unsupported TXT presentation or a nonmatching proof.
+     *
+     * @param text invalid or mismatched DNS TXT presentation supplied by the method source
+     * @throws Exception if loopback DNS fixture setup or execution fails
+     */
     @ParameterizedTest @MethodSource("invalidPresentations")
     void invalidOrMismatchedDnsTextNeverValidates(String text) throws Exception {
         try(var dns=new Dns(List.of(List.of(text)))) {
@@ -85,6 +108,11 @@ class JndiDns01ChallengeProviderTest {
         }
     }
 
+    /**
+     * Checks that a TXT proof one byte above the configured 43-byte limit fails with the safe DNS classification.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void decodedRecordByteBoundStillApplies() throws Exception {
         try(var dns=new Dns(List.of(List.of(expected()+"x")))) {
             var result=validate(dns,43,1);
@@ -92,6 +120,11 @@ class JndiDns01ChallengeProviderTest {
         }
     }
 
+    /**
+     * Checks that two TXT records exceed a one-record policy even when one record contains the exact proof.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test void recordCountBoundStillAppliesEvenWhenOneValueMatches() throws Exception {
         try(var dns=new Dns(List.of(List.of(expected()),List.of("x".repeat(43))))) {
             var result=validate(dns,43,1);
@@ -143,6 +176,9 @@ class JndiDns01ChallengeProviderTest {
             },"test-jndi-dns");
             worker.setDaemon(true);worker.start();
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() {socket.close();try {worker.join(1000);}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}assertFalse(worker.isAlive());}
     }
 }

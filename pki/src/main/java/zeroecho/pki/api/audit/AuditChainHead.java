@@ -53,7 +53,9 @@ package zeroecho.pki.api.audit;
  */
 public record AuditChainHead(long sequence, String recordHash) {
 
-    /** Chain seed used before the first record and as the empty-log head hash. */
+    /**
+     * Chain seed used before the first record and as the empty-log head hash.
+     */
     public static final String GENESIS_RECORD_HASH =
             "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -62,6 +64,8 @@ public record AuditChainHead(long sequence, String recordHash) {
      *
      * @throws IllegalArgumentException if the sequence is below {@code -1} or the
      *                                  record hash is not lowercase 64-hex
+     * @param sequence highest record sequence covered by this head; {@code -1} for an empty log
+     * @param recordHash lowercase 64-hex record hash closing the chain, or {@link #GENESIS_RECORD_HASH} for an empty log
      */
     public AuditChainHead {
         if (sequence < -1L) {

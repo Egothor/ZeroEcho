@@ -57,22 +57,31 @@ import zeroecho.pki.spi.ProviderConfig;
  * Passwords are resolved into short-lived character arrays, cleared after JSSE
  * initialization, and never returned or logged.</p>
  */
-@SuppressWarnings("PMD")
 public final class Pkcs12TlsProvider implements PkiServerTlsProvider {
-    /** Stable explicit provider identity. */
+    /**
+     * Stable explicit provider identity.
+     */
     public static final String ID = "jsse-pkcs12";
     private static final Set<String> KEYS = Set.of("keyStore", "keyStorePasswordEnvironment",
             "trustStore", "trustStorePasswordEnvironment");
 
-    /** Creates the stateless PKCS#12 TLS provider. */
+    /**
+     * Creates the stateless PKCS#12 TLS provider.
+     */
     public Pkcs12TlsProvider() {
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return ID;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SSLContext create(ProviderConfig configuration) throws Exception {
         ProviderConfig exact = Objects.requireNonNull(configuration, "configuration");

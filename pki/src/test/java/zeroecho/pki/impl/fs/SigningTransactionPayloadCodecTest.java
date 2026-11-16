@@ -47,7 +47,15 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 
+/**
+ * Contract and regression tests for signing transaction payload codec.
+ */
 final class SigningTransactionPayloadCodecTest {
+    /**
+     * Round trips one atomic multi key transaction.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundTripsOneAtomicMultiKeyTransaction() throws Exception {
         List<SigningTransactionPayloadCodec.Mutation> mutations = List.of(
@@ -69,6 +77,11 @@ final class SigningTransactionPayloadCodecTest {
         assertArrayEquals(new byte[] { 2, 3 }, decoded.mutations().get(1).content());
     }
 
+    /**
+     * Round trips direct commit with folded watermark.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundTripsDirectCommitWithFoldedWatermark() throws Exception {
         SigningTransactionPayloadCodec.Mutation mutation = new SigningTransactionPayloadCodec.Mutation(
@@ -83,6 +96,9 @@ final class SigningTransactionPayloadCodecTest {
         assertArrayEquals(new byte[] { 4, 5 }, decoded.mutations().getFirst().content());
     }
 
+    /**
+     * Direct commit rejects non canonical shapes at encode and decode.
+     */
     @Test
     void directCommitRejectsNonCanonicalShapesAtEncodeAndDecode() {
         MetadataKey key = new MetadataKey("io.zeroecho.test", "canonical");
@@ -107,6 +123,9 @@ final class SigningTransactionPayloadCodecTest {
                         rawMutation(1, -1L, key, 0)), -2L)));
     }
 
+    /**
+     * Enforces mutation and payload bounds and rejects truncation.
+     */
     @Test
     void enforcesMutationAndPayloadBoundsAndRejectsTruncation() {
         List<SigningTransactionPayloadCodec.Mutation> mutations = new ArrayList<>();
@@ -127,6 +146,11 @@ final class SigningTransactionPayloadCodecTest {
                 () -> SigningTransactionPayloadCodec.decode(new byte[] { 1, 2, 3 }));
     }
 
+    /**
+     * Round trips retained outcome and watermark frames.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void roundTripsRetainedOutcomeAndWatermarkFrames() throws Exception {
         assertEquals(MetadataCommitResult.FailureCategory.CONFLICT,
@@ -139,6 +163,9 @@ final class SigningTransactionPayloadCodecTest {
                         SigningTransactionPayloadCodec.acknowledge()).kind());
     }
 
+    /**
+     * Accepts exact two mib payload and accounts detached bytes.
+     */
     @Test
     void acceptsExactTwoMibPayloadAndAccountsDetachedBytes() {
         MetadataKey key = new MetadataKey("io.zeroecho.test", "exact-limit");
@@ -156,6 +183,9 @@ final class SigningTransactionPayloadCodecTest {
                 SigningTransactionPayloadCodec.retainedMutationBytes(List.of(exact)));
     }
 
+    /**
+     * Sizing and encoding do not defensively copy mutation content.
+     */
     @Test
     void sizingAndEncodingDoNotDefensivelyCopyMutationContent() {
         SigningTransactionPayloadCodec.Mutation mutation =

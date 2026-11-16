@@ -58,18 +58,52 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.testkit.IntermediateCreationFixture;
 import zeroecho.pki.testkit.IntermediateIssuanceFixture;
 
-/** Mandatory inventory regression: actual filesystem pages work without the optional search index. */
+/**
+ * Mandatory inventory regression: actual filesystem pages work without the optional search index.
+ */
 class CredentialInventoryTest {
+    /**
+     * Pages ca and leaf metadata before authorization limit without search.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void pagesCaAndLeafMetadataBeforeAuthorizationLimitWithoutSearch(@TempDir Path root) throws Exception { exercise(root); }
+    /**
+     * Requires a fixture invariant without relying on enabled JVM assertions.
+     *
+     * @param condition condition that must hold for the fixture assertion to succeed
+     * @param message diagnostic attached to a failed fixture assertion
+     * @throws AssertionError if the required condition is false
+     */
     static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
+    /**
+     * Requires successful operation completion and extracts its structured fields.
+     *
+     * @param value typed operation outcome or structured inventory result to inspect
+     * @return copied structured operation result fields
+     * @throws AssertionError if the operation did not complete successfully
+     */
     static PkiOperationValue.ObjectValue result(PkiOperationOutcome value) {
         check(value instanceof PkiOperationOutcome.Completed, "Inventory failed: " + value);
         return new PkiOperationValue.ObjectValue(((PkiOperationOutcome.Completed) value).result().fields());
     }
+    /**
+     * Extracts ordered credential identities from the structured inventory result.
+     *
+     * @param value typed operation outcome or structured inventory result to inspect
+     * @return immutable list of credential identifiers in result order
+     */
     static List<String> ids(PkiOperationValue.ObjectValue value) {
         return ((PkiOperationValue.ListValue) value.fields().get("credentials")).values().stream()
                 .map(row -> ((PkiOperationValue.Text) ((PkiOperationValue.ObjectValue) row).fields().get("credentialId")).value()).toList();
     }
+    /**
+     * Runs the complete actual-store scenario and its persisted-state assertions in the supplied root.
+     *
+     * @param root filesystem root retaining the test store and keyring artifacts
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     static void exercise(Path root) throws Exception {
         try (var store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), IntermediateCreationFixture.CLOCK)) {
             var fixture = new IntermediateIssuanceFixture(); fixture.initialize(store);
@@ -146,5 +180,11 @@ class CredentialInventoryTest {
         }
         System.out.println("PASS no-H2 credential.list CA+leaf+opaque metadata, keyset pages, auth-before-limit, cancellation, CA/leaf canonical scope; advanced search stays disabled");
     }
+    /**
+     * Runs the standalone fixture scenario using a newly created temporary directory.
+     *
+     * @param args unused console arguments; the fixture creates its own temporary root
+     * @throws Exception if fixture construction, execution, or cleanup fails
+     */
     public static void main(String[] args) throws Exception { exercise(Files.createTempDirectory("zeroecho-inventory-")); }
 }

@@ -102,6 +102,9 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for full CRL entry source.
+ */
 class FullCrlEntrySourceTest {
     private static final Instant NOW = Instant.parse("2026-09-20T12:00:00.750Z");
     private static final Instant TRANSITION = NOW.minusSeconds(10);
@@ -115,6 +118,11 @@ class FullCrlEntrySourceTest {
     private static byte[] foreignNameDer;
     private static byte[] foreignKeyDer;
 
+    /**
+     * Builds the real issuer certificate material shared by the CRL preparation cases.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @BeforeAll static void certificates() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -126,6 +134,11 @@ class FullCrlEntrySourceTest {
         foreignKeyDer = certificate("CN=Issuer", 4, foreignKey, true);
     }
 
+    /**
+     * Two independent passes share one snapshot despite later mutation and filter by name and SPKI.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void twoIndependentPassesShareOneSnapshotDespiteLaterMutationAndFilterByNameAndSpki() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("first", "10", fixture.first, RevocationState.HELD, Optional.empty(), TRANSITION);
@@ -170,6 +183,11 @@ class FullCrlEntrySourceTest {
         assertEquals(1, fixture.snapshots.getFirst().closes);
     }
 
+    /**
+     * Clear is omitted while permanent reasons and full positive serial are preserved.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void clearIsOmittedWhilePermanentReasonsAndFullPositiveSerialArePreserved() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("clear", "1", fixture.first, RevocationState.CLEAR, Optional.empty(), TRANSITION);
@@ -189,6 +207,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Delta uses global cutoff includes clear and freezes later appends.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaUsesGlobalCutoffIncludesClearAndFreezesLaterAppends() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("old-held", "1", fixture.first, RevocationState.HELD, Optional.empty(), TRANSITION);
@@ -217,6 +240,11 @@ class FullCrlEntrySourceTest {
         assertEquals(1, fixture.snapshots.getFirst().closes);
     }
 
+    /**
+     * Delta still validates malformed rows before its cutoff.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void deltaStillValidatesMalformedRowsBeforeItsCutoff() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("old-malformed", "not-a-serial", fixture.first, RevocationState.CLEAR, Optional.empty(), TRANSITION);
@@ -227,6 +255,11 @@ class FullCrlEntrySourceTest {
         assertEquals(1, fixture.prefixChecks);
     }
 
+    /**
+     * Remove reason is corruption in every current state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void removeReasonIsCorruptionInEveryCurrentState() throws Exception {
         for (RevocationState state : RevocationState.values()) {
             Fixture fixture = new Fixture();
@@ -235,6 +268,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Orphan same scope generation absent from frozen authority is rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void orphanSameScopeGenerationAbsentFromFrozenAuthorityIsRejected() throws Exception {
         Fixture fixture = new Fixture();
         PkiId orphan = fixture.issuer("orphan", "CN=Issuer", 2, rolloverDer, fixture.prepared.authorityId());
@@ -244,6 +282,11 @@ class FullCrlEntrySourceTest {
         assertEquals(0, fixture.authorityReads);
     }
 
+    /**
+     * Live authority removal does not change either frozen pass.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void liveAuthorityRemovalDoesNotChangeEitherFrozenPass() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("leaf", "7", fixture.rollover, RevocationState.HELD, Optional.empty(), TRANSITION);
@@ -266,6 +309,11 @@ class FullCrlEntrySourceTest {
         assertEquals(0, fixture.authorityReads);
     }
 
+    /**
+     * Newly added live generation cannot enter frozen membership.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void newlyAddedLiveGenerationCannotEnterFrozenMembership() throws Exception {
         Fixture fixture = new Fixture();
         CaRecord frozen = fixture.prepared.authority();
@@ -285,6 +333,11 @@ class FullCrlEntrySourceTest {
         assertEquals(0, fixture.authorityReads);
     }
 
+    /**
+     * Invalid reasons and future transitions fail closed before any entry.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void invalidReasonsAndFutureTransitionsFailClosedBeforeAnyEntry() throws Exception {
         for (RevocationTransition transition : List.of(
                 new RevocationTransition(1, RevocationState.PERMANENTLY_REVOKED, TRANSITION, Optional.empty(), new SimpleAttributeSet()),
@@ -300,6 +353,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Noncanonical and out of range serials fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void noncanonicalAndOutOfRangeSerialsFailClosed() throws Exception {
         for (String invalid : List.of("0", "-1", "+1", "01", "1.0", "1 ", "١", "9".repeat(49),
                 BigInteger.ONE.shiftLeft(159).toString())) {
@@ -309,6 +367,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Missing or mismatched credential generation and issuer are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void missingOrMismatchedCredentialGenerationAndIssuerAreRejected() throws Exception {
         for (int fault = 0; fault < 6; fault++) {
             Fixture fixture = new Fixture();
@@ -328,6 +391,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Corrupt issuer content metadata and generation commitment are rejected.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void corruptIssuerContentMetadataAndGenerationCommitmentAreRejected() throws Exception {
         for (int fault = 0; fault < 5; fault++) {
             Fixture fixture = new Fixture();
@@ -351,6 +419,11 @@ class FullCrlEntrySourceTest {
         }
     }
 
+    /**
+     * Same scope cannot move to another authority and prepared issuer cannot change.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sameScopeCannotMoveToAnotherAuthorityAndPreparedIssuerCannotChange() throws Exception {
         Fixture fixture = new Fixture();
         PkiId alien = fixture.issuer("alien", "CN=Issuer", 2, rolloverDer, new PkiId("ca:alien"));
@@ -365,6 +438,11 @@ class FullCrlEntrySourceTest {
         assertRejected(changed);
     }
 
+    /**
+     * Cancellation propagates to underlying cursor and invalidates the pass.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void cancellationPropagatesToUnderlyingCursorAndInvalidatesThePass() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("leaf", "7", fixture.first, RevocationState.HELD, Optional.empty(), TRANSITION);
@@ -385,6 +463,11 @@ class FullCrlEntrySourceTest {
         assertTrue(beforeOpen.snapshots.isEmpty());
     }
 
+    /**
+     * Source and cursor close are idempotent and reject further use.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void sourceAndCursorCloseAreIdempotentAndRejectFurtherUse() throws Exception {
         Fixture fixture = new Fixture();
         fixture.record("leaf", "7", fixture.first, RevocationState.HELD, Optional.empty(), TRANSITION);

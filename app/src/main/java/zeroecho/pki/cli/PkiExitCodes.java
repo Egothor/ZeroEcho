@@ -35,23 +35,66 @@ package zeroecho.pki.cli;
 
 import zeroecho.pki.application.PkiOperationFailure;
 
-/** Stable process exit-code mapping for the PKI command family. */
+/**
+ * Stable process exit-code mapping for the PKI command family.
+ */
 final class PkiExitCodes {
 
+    /**
+     * Successful execution without a reported plan or step failure.
+     */
     /* default */ static final int SUCCESS = 0;
+    /**
+     * Invalid command-line invocation or argument syntax.
+     */
     /* default */ static final int INVALID_INVOCATION = 2;
+    /**
+     * Configuration could not be accepted or initialized.
+     */
     /* default */ static final int CONFIGURATION_FAILURE = 3;
+    /**
+     * Validation or policy rejection, including unsuccessful execution without a mapped failure.
+     */
     /* default */ static final int VALIDATION_OR_POLICY = 4;
+    /**
+     * Missing object or conflicting authoritative state.
+     */
     /* default */ static final int NOT_FOUND_OR_CONFLICT = 5;
+    /**
+     * Reported durable recovery requirement.
+     */
     /* default */ static final int RECOVERY_REQUIRED = 6;
+    /**
+     * External effect could not be classified definitively.
+     */
     /* default */ static final int EXTERNAL_OUTCOME_UNKNOWN = 7;
+    /**
+     * Resource failure or temporary overload.
+     */
     /* default */ static final int RESOURCE_FAILURE = 8;
+    /**
+     * Unexpected internal failure.
+     */
     /* default */ static final int INTERNAL_FAILURE = 9;
+    /**
+     * Cancellation or interruption represented by the CLI cancellation status.
+     */
     /* default */ static final int CANCELLED = 130;
 
     private PkiExitCodes() {
     }
 
+    /**
+     * Aggregates plan and failed-step classifications using the greatest numeric exit code.
+     *
+     * <p>This is numeric precedence, not a temporal choice of the first failure.
+     * Cancellation therefore dominates lower codes. If no failure maps to a nonzero
+     * code but the execution did not succeed, validation/policy status is returned.</p>
+     *
+     * @param execution complete retained plan execution
+     * @return mapped process status, or zero only for successful execution
+     * @throws NullPointerException if the execution is null
+     */
     /* default */ static int from(PkiPlanExecution execution) {
         int result = execution.planFailure().map(PkiExitCodes::from).orElse(SUCCESS);
         for (PkiPlanExecution.StepResult step : execution.steps()) {

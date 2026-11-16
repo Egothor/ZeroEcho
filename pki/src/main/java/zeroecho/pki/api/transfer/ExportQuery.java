@@ -58,6 +58,11 @@ public record ExportQuery(Optional<PkiId> issuerCaId, Optional<SubjectRef> subje
      * Creates an export query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param issuerCaId optional issuer CA filter
+     * @param subjectRef optional subject filter
+     * @param issuedAfter optional lower bound for issuance time (implementation-defined)
+     * @param issuedBefore optional upper bound for issuance time (implementation-defined)
+     * @param status optional credential status filter
      */
     public ExportQuery {
         if (issuerCaId == null || subjectRef == null || issuedAfter == null || issuedBefore == null || status == null) {

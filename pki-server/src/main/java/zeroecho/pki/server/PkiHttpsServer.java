@@ -62,19 +62,30 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
  * idempotent close. HTTP handlers never construct sessions or execute operations
  * outside {@link ServerOperationGateway}.</p>
  */
-@SuppressWarnings("PMD")
 public final class PkiHttpsServer implements AutoCloseable {
-    /** Closed process lifecycle. */
+    /**
+     * Closed process lifecycle.
+     */
     public enum State {
-        /** Constructed but not yet starting. */
+        /**
+         * Constructed but not yet starting.
+         */
         NEW,
-        /** Initializing realm and listener resources. */
+        /**
+         * Initializing realm and listener resources.
+         */
         STARTING,
-        /** Accepting requests. */
+        /**
+         * Accepting requests.
+         */
         READY,
-        /** Rejecting new work while owned resources drain. */
+        /**
+         * Rejecting new work while owned resources drain.
+         */
         QUIESCING,
-        /** Fully closed; listener addresses and realm access are unavailable. */
+        /**
+         * Fully closed; listener addresses and realm access are unavailable.
+         */
         TERMINATED
     }
 
@@ -96,6 +107,23 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final AtomicBoolean authenticatorClosed = new AtomicBoolean();
     private final AtomicBoolean publicAuthenticatorClosed = new AtomicBoolean();
 
+    /**
+     * Adopts the successfully composed listener, worker and realm lifecycle owners.
+     *
+     * @param configuration immutable validated server configuration
+     * @param realm recovered realm context adopted by this owner
+     * @param authenticator administrative transport authenticator
+     * @param transport administrative HTTPS transport
+     * @param publicAuthenticator optional public-listener transport authenticator
+     * @param publicTransport optional public-repository HTTPS transport
+     * @param acmeTransport optional ACME HTTPS transport
+     * @param estTransport optional EST HTTPS transport
+     * @param scepTransport optional SCEP HTTPS transport
+     * @param cmpTransport optional CMP HTTPS transport
+     * @param auditProjection optional audit-projection daemon owner
+     * @param statusSchedule status-schedule daemon owner
+     * @param state shared startup/readiness lifecycle state
+     */
     PkiHttpsServer(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, PkiHttpsTransport transport,
             Optional<PkiServerAuthenticator> publicAuthenticator,
@@ -135,6 +163,20 @@ public final class PkiHttpsServer implements AutoCloseable {
                 Thread.currentThread().getContextClassLoader());
     }
 
+    /**
+     * Starts the configured server with explicit runtime sources and no backup/enrollment companion.
+     *
+     * @param configuration validated immutable server configuration
+     * @param runtimeDependencies process-local unlock and provider capabilities
+     * @param clock authoritative lifecycle, audit and deadline clock
+     * @param random secure transport and challenge entropy source
+     * @param loader provider-discovery class loader
+     * @return ready server owning all successfully opened resources
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
+     *         invalid
+     * @throws IllegalStateException if recovery, provider initialization or listener startup fails
+     */
     static PkiHttpsServer start(PkiServerConfiguration configuration,
             PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
             ClassLoader loader) {
@@ -147,6 +189,7 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @param runtimeDependencies process-local PKI capabilities
      * @param transfer optional separately validated transfer settings
      * @return fully ready server lifecycle owner
+     * @throws NullPointerException if {@code transfer} is null
      */
     public static PkiHttpsServer start(PkiServerConfiguration configuration,
             PkiSessionRuntimeDependencies runtimeDependencies, Optional<BackupTransferConfiguration> transfer) {
@@ -154,6 +197,21 @@ public final class PkiHttpsServer implements AutoCloseable {
                 Thread.currentThread().getContextClassLoader(), Objects.requireNonNull(transfer));
     }
 
+    /**
+     * Starts the configured server with an optional independently budgeted backup spool.
+     *
+     * @param transfer optional validated durable transfer configuration
+     * @param configuration validated immutable server configuration
+     * @param runtimeDependencies process-local unlock and provider capabilities
+     * @param clock authoritative lifecycle, audit and deadline clock
+     * @param random secure transport and challenge entropy source
+     * @param loader provider-discovery class loader
+     * @return ready server owning all successfully opened resources
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
+     *         invalid
+     * @throws IllegalStateException if recovery, provider initialization or listener startup fails
+     */
     static PkiHttpsServer start(PkiServerConfiguration configuration,
             PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
             ClassLoader loader, Optional<BackupTransferConfiguration> transfer) {
@@ -175,6 +233,24 @@ public final class PkiHttpsServer implements AutoCloseable {
                 Thread.currentThread().getContextClassLoader(), transfer, enrollment);
     }
 
+    /**
+     * Recovers the realm and starts all configured listeners/workers under one retryable lifecycle owner.
+     *
+     * <p>Startup failure closes resources already acquired before propagating the failure.</p>
+     *
+     * @param transfer optional independently budgeted durable backup-transfer companion
+     * @param enrollment enrollment custody companion required by enabled enrollment listeners
+     * @param configuration validated immutable server configuration
+     * @param runtimeDependencies process-local unlock and provider capabilities
+     * @param clock authoritative lifecycle, audit and deadline clock
+     * @param random secure transport and challenge entropy source
+     * @param loader provider-discovery class loader
+     * @return ready server owning all successfully opened resources
+     * @throws NullPointerException if a required collaborator is null
+     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
+     *         invalid
+     * @throws IllegalStateException if recovery, provider initialization or listener startup fails
+     */
     static PkiHttpsServer start(PkiServerConfiguration configuration,
             PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
             ClassLoader loader, Optional<BackupTransferConfiguration> transfer,
@@ -427,6 +503,12 @@ public final class PkiHttpsServer implements AutoCloseable {
         closeFromServerWorker(PkiHttpsTransport.currentThreadIsServerWorker());
     }
 
+    /**
+     * Quiesces and closes owned listeners, workers and realm through the retryable close gate.
+     *
+     * @param workerThread whether closure originates on an owned server worker
+     * @throws java.io.IOException if checked shutdown or resource closure fails
+     */
     void closeFromServerWorker(boolean workerThread) throws java.io.IOException {
         closeGate.close(workerThread, this::quiesceForClose, this::closeAttempt);
     }

@@ -44,13 +44,21 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingRule;
 import zeroecho.pki.spi.algorithm.X509AlgorithmBindingProvider;
 
-/** Deterministic deployer binding provider used only by service-loading tests. */
+/**
+ * Deterministic deployer binding provider used only by service-loading tests.
+ */
 public final class TestX509AlgorithmBindingProvider implements X509AlgorithmBindingProvider {
-    /** Stable provider identity. */
+    /**
+     * Stable provider identity.
+     */
     public static final String ID = "test.deployer.bindings";
-    /** Deployer-owned PEN test root. */
+    /**
+     * Deployer-owned PEN test root.
+     */
     public static final String PEN_ROOT = "1.3.6.1.4.1.55555.42";
-    /** Egothor deployment-local test root. */
+    /**
+     * Egothor deployment-local test root.
+     */
     public static final String EGOTHOR_ROOT = "1.3.6.1.4.1.31424.1.2.4242";
 
     private static final X509AlgorithmBinding CERTIFICATE = binding("test.ed25519.certificate.v1",
@@ -58,21 +66,33 @@ public final class TestX509AlgorithmBindingProvider implements X509AlgorithmBind
     private static final X509AlgorithmBinding CRL = binding("test.ed25519.crl.v1",
             X509AlgorithmBinding.Role.CRL_SIGNATURE, EGOTHOR_ROOT + ".1");
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String providerId() {
         return ID;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String bindingSetVersion() {
         return "test-bindings-v1";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<X509AlgorithmBinding> bindings() {
         return List.of(CERTIFICATE, CRL);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<X509BindingRule> rules() {
         return List.of(new Rule(CERTIFICATE), new Rule(CRL));

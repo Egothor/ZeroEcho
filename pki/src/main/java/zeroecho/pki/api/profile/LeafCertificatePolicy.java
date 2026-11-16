@@ -59,6 +59,17 @@ public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternat
 
     /**
      * Validates and constructs the policy.
+     * @param subjectAlternativeNamePolicy SAN policy
+     * @param keyUsages exact key-usage set
+     * @param extendedKeyUsages exact extended-key-usage set
+     * @param keyUsageCritical key-usage criticality
+     * @param extendedKeyUsageCritical extended-key-usage criticality
+     * @param basicConstraintsCritical BasicConstraints criticality
+     * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho key algorithm identifiers
+     * @throws IllegalArgumentException if a policy value is null, supported subject-key selection is empty or
+     *     invalid, or encipherOnly/decipherOnly appears without keyAgreement
+     * @throws NullPointerException if keyUsages, extendedKeyUsages or allowedSubjectKeyAlgorithmIds contains a
+     *     null entry
      */
     public LeafCertificatePolicy {
         if (subjectAlternativeNamePolicy == null || keyUsages == null || extendedKeyUsages == null

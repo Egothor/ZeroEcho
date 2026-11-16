@@ -36,7 +36,9 @@ package zeroecho.pki.server;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** Freezes the reviewed classification of every mutating catalog entry. */
+/**
+ * Freezes the reviewed classification of every mutating catalog entry.
+ */
 final class AdministrativeRequestCoverage {
     private AdministrativeRequestCoverage() { }
     private static final Set<String> MUTATIONS = Set.of(
@@ -137,6 +139,11 @@ final class AdministrativeRequestCoverage {
             "security.approval.request",
             "security.disclosure.capability.issue");
 
+    /**
+     * Checks every catalog mutation and conditional transition has an explicitly reviewed durable boundary.
+     *
+     * @throws AssertionError if catalog membership or reviewed conditional-operation classification drifts
+     */
     static void verify() {
         var descriptors=new OperationSecurityDescriptors().descriptors().values();
         var actual=descriptors.stream().filter(OperationSecurityDescriptors.Descriptor::mutating)

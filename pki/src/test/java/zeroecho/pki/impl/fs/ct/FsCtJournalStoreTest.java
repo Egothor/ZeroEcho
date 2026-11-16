@@ -61,14 +61,24 @@ import zeroecho.pki.spi.ct.CtJournalException;
 import zeroecho.pki.spi.ct.CtJournalStore;
 import zeroecho.pki.spi.ct.CtJournalVerificationResult;
 
-/** Unit tests for {@link FsCtJournalStore}. */
+/**
+ * Unit tests for {@link FsCtJournalStore}.
+ */
 class FsCtJournalStoreTest {
 
     private static final Instant T0 = Instant.parse("2026-09-01T00:00:00Z");
     private static final String AUTHORITY = "cn=Test CA";
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir Path dir;
 
+    /**
+     * Queued append rechecks closed state after acquiring lock.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void queuedAppendRechecksClosedStateAfterAcquiringLock() throws Exception {
@@ -95,6 +105,11 @@ class FsCtJournalStoreTest {
         }
     }
 
+    /**
+     * Close waits for active read operation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     @Timeout(10)
     void closeWaitsForActiveReadOperation() throws Exception {
@@ -142,7 +157,11 @@ class FsCtJournalStoreTest {
                 new byte[CtJournalEntry.HASH_BYTES]);
     }
 
-    /** Empty journal reports sequence number 0 and index is rebuilt correctly on reopen. */
+    /**
+     * Empty journal reports sequence number 0 and index is rebuilt correctly on reopen.
+     *
+     * @throws CtJournalException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void emptyJournal_sequenceIsZero() throws CtJournalException {
         try (CtJournalStore store = FsCtJournalStoreFactory.open(dir.resolve("ct"))) {
@@ -150,7 +169,11 @@ class FsCtJournalStoreTest {
         }
     }
 
-    /** Appended entry is durable: survives store close and reopen. */
+    /**
+     * Appended entry is durable: survives store close and reopen.
+     *
+     * @throws CtJournalException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void appendAndReopen_entryIsDurable() throws CtJournalException {
         Path journalDir = dir.resolve("ct");
@@ -172,7 +195,11 @@ class FsCtJournalStoreTest {
         }
     }
 
-    /** Chain of three entries verifies intact end-to-end. */
+    /**
+     * Chain of three entries verifies intact end-to-end.
+     *
+     * @throws CtJournalException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void chainOfThree_verifyIntact() throws CtJournalException {
         Path journalDir = dir.resolve("ct");
@@ -191,7 +218,11 @@ class FsCtJournalStoreTest {
         }
     }
 
-    /** Appending with wrong sequence number throws CtJournalException. */
+    /**
+     * Appending with wrong sequence number throws CtJournalException.
+     *
+     * @throws CtJournalException if fixture setup, execution, or cleanup fails
+     */
     @Test
     void appendWrongSequence_throwsException() throws CtJournalException {
         try (CtJournalStore store = FsCtJournalStoreFactory.open(dir.resolve("ct"))) {
@@ -202,7 +233,11 @@ class FsCtJournalStoreTest {
         }
     }
 
-    /** Tampered record is detected by verify(). */
+    /**
+     * Tampered record is detected by verify().
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void tamperedEntry_verifyReportsBreak() throws Exception {
         Path journalDir = dir.resolve("ct");

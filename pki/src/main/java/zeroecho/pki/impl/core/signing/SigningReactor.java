@@ -108,6 +108,7 @@ public final class SigningReactor implements AutoCloseable {
      * @param provider shared configured signing provider
      * @param topology final validated routing topology
      * @param outerDriver idempotent outer-terminal continuation
+     * @throws NullPointerException if store, topology is null or a supplied collection contains a null member
      */
     public SigningReactor(PkiStore store, SigningProvider provider,
             SigningTopology topology, SigningStepExecutor.OuterTerminalDriver outerDriver) {
@@ -138,7 +139,10 @@ public final class SigningReactor implements AutoCloseable {
         scanner = daemon("zeroecho-signing-topology-scanner", this::coordinate);
     }
 
-    /** Starts the scanner and every configured lane exactly once. */
+    /**
+     * Starts the scanner and every configured lane exactly once.
+     * @throws IllegalStateException if the reactor has already left its initial lifecycle state
+     */
     public void start() {
         synchronized (monitor) {
             if (lifecycle != Lifecycle.NEW) {
@@ -153,7 +157,9 @@ public final class SigningReactor implements AutoCloseable {
         }
     }
 
-    /** Rejects acceptance after the reactor begins quiescing. */
+    /**
+     * Rejects acceptance after the reactor begins quiescing.
+     */
     public void requireAccepting() {
         acceptanceGate.lock();
         try {
@@ -171,6 +177,7 @@ public final class SigningReactor implements AutoCloseable {
      * @param command exact immutable acceptance command
      * @param transferCustody atomic prepared-candidate custody transfer
      * @return durable acceptance disposition
+     * @throws NullPointerException if command, transferCustody is null
      */
     public SignWorkflowStore.AcceptanceResult acceptSign(
             SignWorkflowStore.AcceptanceCommand command, Runnable transferCustody) {
@@ -191,6 +198,7 @@ public final class SigningReactor implements AutoCloseable {
      * @param claim durable scheduled authorization
      * @param transferCustody candidate custody transfer
      * @return authoritative acceptance disposition
+     * @throws NullPointerException if command, claim, transferCustody is null
      */
     public SignWorkflowStore.AcceptanceResult acceptScheduledSign(SignWorkflowStore.AcceptanceCommand command,
             zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
@@ -204,7 +212,9 @@ public final class SigningReactor implements AutoCloseable {
         } finally { releaseAcceptancePermit(); }
     }
 
-    /** Coalesces a nonblocking durable-work notification. */
+    /**
+     * Coalesces a nonblocking durable-work notification.
+     */
     public void wake() {
         synchronized (monitor) {
             if (lifecycle == Lifecycle.RUNNING || lifecycle == Lifecycle.NEW) {
@@ -225,6 +235,7 @@ public final class SigningReactor implements AutoCloseable {
      * @throws IllegalArgumentException if the retained operation uses ordinary mode
      * @throws PkiException if waiting is cancelled or interrupted; interruption is preserved
      * @throws SigningExecutionException if the reactor is shutting down
+     * @throws NullPointerException if operationId, waitCancellation is null
      */
     // Interruptions retain the interrupt flag and expose a fixed cause-free diagnostic; other failures propagate unchanged.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -311,15 +322,27 @@ public final class SigningReactor implements AutoCloseable {
         }
     }
 
-    /** Pending decisions contain only scalar timing metadata, never a workflow. */
+    /**
+     * Pending decisions contain only scalar timing metadata, never a workflow.
+     */
     private record ObservationRead(boolean ready, Optional<Workflow> result, long delayNanos) { }
 
+    /**
+     * Returns the exact retained operation-identifier count under the reactor monitor.
+     *
+     * @return number of operation identifiers currently retained for scheduling or observation
+     */
     /* default */ int retainedIdentifierCount() {
         synchronized (monitor) {
             return retained.size();
         }
     }
 
+    /**
+     * Returns a snapshot of threads owned by the reactor without changing their lifecycle.
+     *
+     * @return immutable list containing the scanner followed by worker lanes
+     */
     /* default */ List<Thread> ownedThreads() {
         List<Thread> result = new ArrayList<>(lanes.size() + 1);
         result.add(scanner);
@@ -332,6 +355,7 @@ public final class SigningReactor implements AutoCloseable {
      * waits for all owned threads under one common deadline. A timeout leaves the
      * reactor quiescing so a later close can retry without closing borrowed
      * dependencies.
+     * @throws IllegalStateException if accepted work or owned threads do not drain within the close bound, or a signing claim permit remains owned
      */
     @Override public void close() {
         long startedAt = System.nanoTime();
@@ -679,7 +703,9 @@ public final class SigningReactor implements AutoCloseable {
         return !thread.isAlive();
     }
 
-    /** One isolated routing pool and its fixed lane ownership. */
+    /**
+     * One isolated routing pool and its fixed lane ownership.
+     */
     private final class LanePool {
         private final AuthorityFairQueue queue;
 

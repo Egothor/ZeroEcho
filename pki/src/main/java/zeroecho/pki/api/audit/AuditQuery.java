@@ -64,13 +64,24 @@ public record AuditQuery(Optional<String> category, Optional<String> action, Opt
         Optional<Instant> before, Optional<PkiId> objectId, Optional<String> principalName,
         Map<String, String> requiredDetails, int limit) {
 
-    /** Hard upper bound enforced on every audit search result. */
+    /**
+     * Hard upper bound enforced on every audit search result.
+     */
     public static final int MAXIMUM_LIMIT = 10_000;
 
     /**
      * Creates a bounded audit query.
      *
      * @throws IllegalArgumentException if any optional container is null
+     * @param category optional category filter
+     * @param action optional action filter
+     * @param after optional lower bound for event time
+     * @param before optional upper bound for event time
+     * @param objectId optional object id filter
+     * @param principalName optional principal name filter
+     * @param requiredDetails detail key/value pairs that must all be present
+     * @param limit maximum number of events returned (bounded)
+     * @throws NullPointerException if requiredDetails or any detail key or value is null
      */
     public AuditQuery {
         if (category == null || action == null || after == null || before == null || objectId == null
@@ -93,6 +104,7 @@ public record AuditQuery(Optional<String> category, Optional<String> action, Opt
      * @param before        optional upper bound for event time
      * @param objectId      optional object id filter
      * @param principalName optional principal name filter
+     * @throws IllegalArgumentException if any optional filter container is null
      */
     public AuditQuery(Optional<String> category, Optional<String> action, Optional<Instant> after,
             Optional<Instant> before, Optional<PkiId> objectId, Optional<String> principalName) {

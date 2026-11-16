@@ -46,7 +46,13 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 
+/**
+ * Contract and regression tests for block geometry.
+ */
 class BlockGeometryTest {
+    /**
+     * Rejects invalid RSA block geometry and accepts valid boundary sizes.
+     */
     @Test
     void geometryValidation() {
         System.out.println("geometryValidation");
@@ -63,6 +69,9 @@ class BlockGeometryTest {
         System.out.println("geometryValidation...ok");
     }
 
+    /**
+     * Checks equality, hashing, and diagnostics for equivalent block geometries.
+     */
     @Test
     void valueSemantics() {
         System.out.println("valueSemantics");
@@ -81,6 +90,11 @@ class BlockGeometryTest {
         System.out.println("valueSemantics...ok");
     }
 
+    /**
+     * Exercises the configured block geometry through a real RSA encryption path.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void actualRsaPath() throws Exception {
         System.out.println("actualRsaPath");

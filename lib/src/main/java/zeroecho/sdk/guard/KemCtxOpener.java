@@ -68,6 +68,9 @@ public final class KemCtxOpener implements RecipientOpener {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] tryOpen(String entryId, byte[] entryBlob, UnlockMaterial material)
             throws GeneralSecurityException, IOException {

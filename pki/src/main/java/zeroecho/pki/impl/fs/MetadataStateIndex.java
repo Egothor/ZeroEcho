@@ -51,7 +51,9 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
-/** Atomic current-record index reconstructed from committed mutation descriptors. */
+/**
+ * Atomic current-record index reconstructed from committed mutation descriptors.
+ */
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class MetadataStateIndex {
     private static final long INITIAL_STORE_REVISION = 0L;
@@ -74,10 +76,20 @@ final class MetadataStateIndex {
     private long storeRevision = INITIAL_STORE_REVISION;
     private long snapshotCopyCount;
 
+    /**
+     * Creates an isolated builder for one sequential committed-state replay.
+     *
+     * @return new unfinished builder with revision zero and no current records
+     */
     /* default */ static RecoveryBuilder recoveryBuilder() {
         return new RecoveryBuilder();
     }
 
+    /**
+     * Reads the exact current committed revision under the index read lock.
+     *
+     * @return current authoritative store revision
+     */
     /* default */ long storeRevision() {
         readLock.lock();
         try {
@@ -87,6 +99,13 @@ final class MetadataStateIndex {
         }
     }
 
+    /**
+     * Looks up one exact current metadata descriptor under the read lock.
+     *
+     * @param key canonical non-null metadata identity
+     * @return current descriptor, or an empty optional if absent
+     * @throws NullPointerException if a required collaborator is null
+     */
     /* default */ Optional<CurrentRecord> lookup(MetadataKey key) {
         Objects.requireNonNull(key, "key");
         readLock.lock();
@@ -104,6 +123,11 @@ final class MetadataStateIndex {
      * without any lock — the decrement is always safe because the generation object outlives
      * every SnapshotView that references it.
      */
+    /**
+     * Pins the exact current map identity without copying its entries.
+     *
+     * @return immutable map view and release callback; invoke the callback exactly once after readers finish
+     */
     /* default */ SnapshotView snapshot() {
         readLock.lock();
         try {
@@ -117,6 +141,11 @@ final class MetadataStateIndex {
         }
     }
 
+    /**
+     * Detaches all current physical value descriptors in metadata key order.
+     *
+     * @return immutable list of current descriptors
+     */
     /* default */ List<CurrentRecord> records() {
         readLock.lock();
         try {
@@ -126,6 +155,11 @@ final class MetadataStateIndex {
         }
     }
 
+    /**
+     * Returns the number of full-map copies required by publication while prior snapshots were pinned.
+     *
+     * @return accumulated copy-on-publication map-copy count
+     */
     /* default */ long snapshotCopyCount() {
         readLock.lock();
         try {
@@ -141,12 +175,27 @@ final class MetadataStateIndex {
      * CREATE and REPLACE record revisions are the authoritative committed store
      * revision, never an independently incremented per-record counter.
      */
+    /**
+     * Validates and publishes a complete next-revision mutation batch.
+     *
+     * @param committedStoreRevision exact next contiguous authoritative store revision
+     * @param mutations ordered bounded descriptors with distinct canonical identities and exact expected revisions
+     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or record bounds are invalid
+     */
     /* default */ void applyCommitted(
             long committedStoreRevision,
             List<MetadataMutationPayloadCodec.Descriptor> mutations) throws MetadataStoreException {
         publish(prepare(committedStoreRevision, mutations));
     }
 
+    /**
+     * Validates a next-revision mutation batch against the exact current state without publishing it.
+     *
+     * @param committedStoreRevision exact next contiguous authoritative store revision
+     * @param mutations ordered bounded descriptors with distinct canonical identities and exact expected revisions
+     * @return isolated update bound to its exact base token and revision
+     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or record bounds are invalid
+     */
     /* default */ PreparedUpdate prepare(
             long committedStoreRevision,
             List<MetadataMutationPayloadCodec.Descriptor> mutations) throws MetadataStoreException {
@@ -172,6 +221,15 @@ final class MetadataStateIndex {
         }
     }
 
+    /**
+     * Publishes an update only while its exact prepared base token and revision still match.
+     *
+     * <p>A pinned previous map is copied before modification; otherwise its unpinned map can be reused.</p>
+     *
+     * @param update validated isolated candidate prepared against this index
+     * @throws NullPointerException if a required collaborator is null
+     * @throws MetadataStoreException if its original state token or revision no longer matches
+     */
     /* default */ void publish(PreparedUpdate update) throws MetadataStoreException {
         Objects.requireNonNull(update, "update");
         writeLock.lock();
@@ -410,13 +468,24 @@ final class MetadataStateIndex {
                 MetadataCommitResult.FailureCategory.INTEGRITY_FAILURE, message, cause);
     }
 
-    /** Replay-only unpublished reducer avoiding one full state copy per commit. */
+    /**
+     * Replay-only unpublished reducer avoiding one full state copy per commit.
+     */
     /* default */ static final class RecoveryBuilder {
         private final NavigableMap<MetadataKey, CurrentRecord> records = new TreeMap<>();
         private long revision = INITIAL_STORE_REVISION;
         private long discardedDescriptors;
         private boolean finished;
 
+        /**
+         * Applies one validated contiguous committed batch to the isolated recovery map.
+         *
+         * @param committedRevision exact next contiguous recovered store revision
+         * @param descriptors bounded validated physical mutation descriptors
+         * @throws IllegalStateException if the builder was already finished
+         * @throws MetadataStoreException if revision, descriptors or expected record state are invalid
+         * @throws ArithmeticException if the discarded-descriptor counter overflows
+         */
         /* default */ void applyCommitted(
                 long committedRevision,
                 List<MetadataMutationPayloadCodec.Descriptor> descriptors)
@@ -442,6 +511,12 @@ final class MetadataStateIndex {
             discardedDescriptors = Math.addExact(discardedDescriptors, validated.size());
         }
 
+        /**
+         * Transfers the reconstructed map into a current-state index exactly once.
+         *
+         * @return new index owning the recovered map and exact committed revision
+         * @throws IllegalStateException if the builder was already finished
+         */
         /* default */ MetadataStateIndex finish() {
             requireUnfinished();
             finished = true;
@@ -452,14 +527,29 @@ final class MetadataStateIndex {
             return result;
         }
 
+        /**
+         * Returns the full-map copy counter exposed by recovery diagnostics.
+         *
+         * @return zero, because the builder installs reconstructed state without full-map copies
+         */
         /* default */ long fullMapCopyCount() {
             return 0L;
         }
 
+        /**
+         * Reports whether the isolated recovered map was installed in its final index.
+         *
+         * @return one after finish, otherwise zero
+         */
         /* default */ long finalInstallCount() {
             return finished ? 1L : 0L;
         }
 
+        /**
+         * Returns the number of superseded mutation descriptors discarded during reconstruction.
+         *
+         * @return number of superseded mutation descriptors discarded during reconstruction
+         */
         /* default */ long discardedDescriptorCount() {
             return discardedDescriptors;
         }
@@ -494,7 +584,9 @@ final class MetadataStateIndex {
         }
     }
 
-    /** One version of the current index together with its live snapshot reference count. */
+    /**
+     * One version of the current index together with its live snapshot reference count.
+     */
     private static final class Generation {
         /* default */ final NavigableMap<MetadataKey, CurrentRecord> records;
         /*
@@ -519,32 +611,76 @@ final class MetadataStateIndex {
     private record ValueRegion(long offset, long length) {
     }
 
-    /** Identity-semantic base token changed after every successful publication. */
+    /**
+     * Identity-semantic base token changed after every successful publication.
+     */
     private static final class StateToken {
     }
 
-    /** Isolated immutable state candidate bound to one exact current-state identity. */
+    /**
+     * Isolated immutable state candidate bound to one exact current-state identity.
+     * @param baseToken opaque identity of the current state from which preparation began
+     * @param baseRevision authoritative revision from which the update was prepared
+     * @param targetRevision revision assigned if the prepared update commits
+     * @param mutations ordered immutable mutation descriptors
+     */
     /* default */ record PreparedUpdate(
             Object baseToken,
             long baseRevision,
             long targetRevision,
             List<ValidatedMutation> mutations) {
+        /**
+         * Creates the isolated immutable state candidate bound to one exact current-state identity.
+         *
+         * @param baseToken opaque identity of the current state from which preparation began
+         * @param baseRevision authoritative revision from which the update was prepared
+         * @param targetRevision revision assigned if the prepared update commits
+         * @param mutations ordered immutable mutation descriptors
+         * @throws NullPointerException if {@code baseToken} is null
+         */
         PreparedUpdate {
             Objects.requireNonNull(baseToken, "baseToken");
             mutations = List.copyOf(mutations);
         }
     }
 
-    /** Pinned immutable map identity released when its snapshot closes. */
+    /**
+     * Pinned immutable map identity released when its snapshot closes.
+     * @param records captured immutable current records keyed by exact metadata identity
+     * @param release callback releasing the captured snapshot pin
+     */
     /* default */ record SnapshotView(NavigableMap<MetadataKey, CurrentRecord> records, Runnable release) {
+        /**
+         * Creates the pinned immutable map identity released when its snapshot closes.
+         *
+         * @param records captured immutable current records keyed by exact metadata identity
+         * @param release callback releasing the captured snapshot pin
+         * @throws NullPointerException if {@code records} is null; or if {@code release} is null
+         */
         SnapshotView {
             Objects.requireNonNull(records, "records");
             Objects.requireNonNull(release, "release");
         }
     }
 
-    /** Immutable current value location and its authoritative committed revision. */
+    /**
+     * Immutable current value location and its authoritative committed revision.
+     * @param key exact logical metadata identity
+     * @param revision authoritative metadata revision
+     * @param valueOffset zero-based byte offset of the stored value
+     * @param valueLength encoded value length in bytes
+     */
     /* default */ record CurrentRecord(MetadataKey key, long revision, long valueOffset, long valueLength) {
+        /**
+         * Creates an immutable current value location and its authoritative committed revision.
+         *
+         * @param key exact logical metadata identity
+         * @param revision authoritative metadata revision
+         * @param valueOffset zero-based byte offset of the stored value
+         * @param valueLength encoded value length in bytes
+         * @throws NullPointerException if {@code key} is null
+         * @throws IllegalArgumentException if {@code (revision <= INITIAL_STORE_REVISION)}; or if {@code (valueOffset < MINIMUM_VALUE_POSITION || valueLength < MINIMUM_VALUE_POSITION)}
+         */
         CurrentRecord {
             Objects.requireNonNull(key, "key");
             if (revision <= INITIAL_STORE_REVISION) {

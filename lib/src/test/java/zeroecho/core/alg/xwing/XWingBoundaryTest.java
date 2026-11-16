@@ -53,7 +53,13 @@ import zeroecho.core.context.KemContext;
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.sdk.ZeroEchoSession;
 
+/**
+ * Contract and regression tests for x wing boundary.
+ */
 class XWingBoundaryTest {
+    /**
+     * Internal key exports cannot mutate retained material.
+     */
     @Test
     void internalKeyExportsCannotMutateRetainedMaterial() {
         byte[] seed = new byte[XWingPrivateKeySpec.SEED_LENGTH];
@@ -68,6 +74,11 @@ class XWingBoundaryTest {
         assertThrows(IllegalStateException.class, privateKey::rawSeed);
     }
 
+    /**
+     * Decapsulates independent draft known answer.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void decapsulatesIndependentDraftKnownAnswer() throws Exception {
         Properties vector = new Properties();
@@ -88,6 +99,9 @@ class XWingBoundaryTest {
         key.destroy();
     }
 
+    /**
+     * Rejects invalid encoding lengths including persisted inputs.
+     */
     @Test
     void rejectsInvalidEncodingLengthsIncludingPersistedInputs() {
         assertThrows(NullPointerException.class, () -> new XWingPublicKeySpec(null));
@@ -116,6 +130,9 @@ class XWingBoundaryTest {
                 PairSeq.of("seed.b64", "A".repeat(100_000))));
     }
 
+    /**
+     * Rejects foreign keys before creating context.
+     */
     @Test
     void rejectsForeignKeysBeforeCreatingContext() {
         XWingAlgorithm algorithm = new XWingAlgorithm();
@@ -136,6 +153,11 @@ class XWingBoundaryTest {
         assertThrows(NullPointerException.class, () -> new XWingKemContext(null, foreignPublic));
     }
 
+    /**
+     * Rejects truncated and extended ciphertexts.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsTruncatedAndExtendedCiphertexts() throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();

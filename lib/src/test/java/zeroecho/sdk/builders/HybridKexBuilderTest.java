@@ -73,6 +73,9 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  */
 class HybridKexBuilderTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     static void setup() {
         try {
@@ -82,6 +85,11 @@ class HybridKexBuilderTest {
         }
     }
 
+    /**
+     * Build initiator responder classic agreement round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorResponderClassicAgreementRoundTrip() throws Exception {
         System.out.println("buildInitiatorResponderClassicAgreementRoundTrip");
@@ -134,6 +142,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorResponderClassicAgreementRoundTrip...ok");
     }
 
+    /**
+     * Build initiator responder pair message round trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorResponderPairMessageRoundTrip() throws Exception {
         System.out.println("buildInitiatorResponderPairMessageRoundTrip");
@@ -185,6 +198,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorResponderPairMessageRoundTrip...ok");
     }
 
+    /**
+     * Build initiator without profile fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorWithoutProfileFails() throws Exception {
         System.out.println("buildInitiatorWithoutProfileFails");
@@ -208,6 +226,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorWithoutProfileFails...ok");
     }
 
+    /**
+     * Build initiator without classic mode fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorWithoutClassicModeFails() throws Exception {
         System.out.println("buildInitiatorWithoutClassicModeFails");
@@ -227,6 +250,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorWithoutClassicModeFails...ok");
     }
 
+    /**
+     * Build initiator classic agreement without peer public fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorClassicAgreementWithoutPeerPublicFails() throws Exception {
         System.out.println("buildInitiatorClassicAgreementWithoutPeerPublicFails");
@@ -249,6 +277,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorClassicAgreementWithoutPeerPublicFails...ok");
     }
 
+    /**
+     * Build responder pair message without key pair fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildResponderPairMessageWithoutKeyPairFails() throws Exception {
         System.out.println("buildResponderPairMessageWithoutKeyPairFails");
@@ -269,6 +302,11 @@ class HybridKexBuilderTest {
         System.out.println("buildResponderPairMessageWithoutKeyPairFails...ok");
     }
 
+    /**
+     * Build initiator without PQC peer public fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorWithoutPqcPeerPublicFails() throws Exception {
         System.out.println("buildInitiatorWithoutPqcPeerPublicFails");
@@ -291,6 +329,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorWithoutPqcPeerPublicFails...ok");
     }
 
+    /**
+     * Build responder without PQC private fails.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildResponderWithoutPqcPrivateFails() throws Exception {
         System.out.println("buildResponderWithoutPqcPrivateFails");
@@ -313,6 +356,11 @@ class HybridKexBuilderTest {
         System.out.println("buildResponderWithoutPqcPrivateFails...ok");
     }
 
+    /**
+     * Build initiator rejects policy when OKM too short.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void buildInitiatorRejectsPolicyWhenOkmTooShort() throws Exception {
         System.out.println("buildInitiatorRejectsPolicyWhenOkmTooShort");
@@ -340,6 +388,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorRejectsPolicyWhenOkmTooShort...ok");
     }
 
+    /**
+     * Policy failure closes both constructed legs.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void policyFailureClosesBothConstructedLegs() throws Exception {
         System.out.println("policyFailureClosesBothConstructedLegs");
@@ -368,6 +421,11 @@ class HybridKexBuilderTest {
         System.out.println("policyFailureClosesBothConstructedLegs...ok");
     }
 
+    /**
+     * Second leg policy failure closes first factory leg.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void secondLegPolicyFailureClosesFirstFactoryLeg() throws Exception {
         System.out.println("secondLegPolicyFailureClosesFirstFactoryLeg");
@@ -399,6 +457,11 @@ class HybridKexBuilderTest {
         System.out.println("secondLegPolicyFailureClosesFirstFactoryLeg...ok");
     }
 
+    /**
+     * Invalid factory input is rejected before context allocation.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void invalidFactoryInputIsRejectedBeforeContextAllocation() throws Exception {
         System.out.println("invalidFactoryInputIsRejectedBeforeContextAllocation");
@@ -423,6 +486,11 @@ class HybridKexBuilderTest {
         System.out.println("invalidFactoryInputIsRejectedBeforeContextAllocation...ok");
     }
 
+    /**
+     * Switching classic mode clears conflicting state and builds pair message.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void switchingClassicModeClearsConflictingStateAndBuildsPairMessage() throws Exception {
         System.out.println("switchingClassicModeClearsConflictingStateAndBuildsPairMessage");
@@ -458,6 +526,11 @@ class HybridKexBuilderTest {
         System.out.println("switchingClassicModeClearsConflictingStateAndBuildsPairMessage...ok");
     }
 
+    /**
+     * Transcript changes derived secret.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void transcriptChangesDerivedSecret() throws Exception {
         System.out.println("transcriptChangesDerivedSecret");

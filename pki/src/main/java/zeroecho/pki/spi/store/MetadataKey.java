@@ -60,19 +60,34 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     private static final int MAXIMUM_CANONICAL_CHARACTERS = 4364;
     private static final int MINIMUM_KEY_BYTE = 0x21;
     private static final int MAXIMUM_KEY_BYTE = 0x7e;
-    /** Maximum canonical namespace length in UTF-8 bytes. */
+    /**
+     * Maximum canonical namespace length in UTF-8 bytes.
+     */
     public static final int MAXIMUM_NAMESPACE_UTF8_BYTES = 255;
-    /** Maximum exact logical-key length in UTF-8 bytes. */
+    /**
+     * Maximum exact logical-key length in UTF-8 bytes.
+     */
     public static final int MAXIMUM_KEY_UTF8_BYTES = 4096;
     private static final String RESERVED_ROOT = "zeroecho";
     private static final String RESERVED_PREFIX = RESERVED_ROOT + ".";
 
-    /** Validates both identity components. */
+    /**
+     * Validates both identity components.
+     * @param namespace canonical extension namespace
+     * @param key exact logical key
+     */
     public MetadataKey {
         validateNamespace(namespace);
         validateKey(key, false);
     }
 
+    /**
+     * Checks an extension namespace's canonical syntax and reserved-domain restriction.
+     *
+     * @param value lowercase dot-separated namespace, bounded to 255 UTF-8 bytes
+     * @throws NullPointerException if the namespace is null
+     * @throws IllegalArgumentException if its syntax or byte bound is invalid, or it is in the reserved zeroecho domain
+     */
     /* package */ static void validateNamespace(String value) {
         Objects.requireNonNull(value, "namespace");
         if (value.length() > MAXIMUM_NAMESPACE_UTF8_BYTES) {
@@ -87,6 +102,14 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
         requireUtf8Limit(value, MAXIMUM_NAMESPACE_UTF8_BYTES, "Metadata namespace");
     }
 
+    /**
+     * Checks the canonical visible-ASCII logical key representation.
+     *
+     * @param value key text, bounded to 4,096 bytes and excluding slash and backslash
+     * @param emptyAllowed whether an empty value may represent a range boundary
+     * @throws NullPointerException if the key is null
+     * @throws IllegalArgumentException if its length, emptiness or character alphabet is invalid
+     */
     /* package */ static void validateKey(String value, boolean emptyAllowed) {
         Objects.requireNonNull(value, "key");
         if (value.length() > MAXIMUM_KEY_UTF8_BYTES) {
@@ -107,6 +130,13 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
         }
     }
 
+    /**
+     * Checks a nonempty canonical key component using the same rules as stored keys.
+     *
+     * @param value nonempty visible-ASCII key text, excluding slash and backslash
+     * @throws NullPointerException if the key is null
+     * @throws IllegalArgumentException if the key violates the alphabet or 4,096-byte bound
+     */
     /* package */ static void validateKeyComponent(String value) {
         validateKey(value, false);
     }
@@ -114,6 +144,14 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     /*
      * Package-private because ranges share the exact unsigned canonical-key
      * ordering without widening this implementation detail into public API.
+     */
+    /**
+     * Compares exact key components using unsigned UTF-8 byte order.
+     *
+     * @param first left component, already validated by the caller
+     * @param second right component, already validated by the caller
+     * @return a negative value, zero or a positive value when the first component sorts before, equals or sorts after the second
+     * @throws NullPointerException if either component is null
      */
     /* package */ static int compareKeyComponents(String first, String second) {
         return Arrays.compareUnsigned(first.getBytes(StandardCharsets.UTF_8),
@@ -123,6 +161,13 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     /*
      * An ordering boundary may contain a byte forbidden in a stored key. It is
      * compared only and never accepted as semantic record identity.
+     */
+    /**
+     * Checks a nonempty visible-ASCII range boundary without applying stored-key exclusions.
+     *
+     * @param value ordering boundary; slash and backslash are permitted
+     * @throws NullPointerException if the boundary is null
+     * @throws IllegalArgumentException if it is empty or contains a character outside the visible-ASCII range
      */
     /* package */ static void validateOrderingBoundary(String value) {
         Objects.requireNonNull(value, "ordering boundary");
@@ -138,7 +183,9 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int compareTo(MetadataKey other) {
         Objects.requireNonNull(other, "other");
@@ -172,7 +219,10 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
         return CANONICAL_VERSION_PREFIX + namespaceLength + ':' + keyLength + ':' + namespace + key;
     }
 
-    /** Returns the canonical serialized representation. */
+    /**
+     * Returns the canonical serialized representation.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return canonical();
@@ -181,6 +231,16 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     /*
      * Package-private because only KeyRange constructs ordering boundaries.
      * The scan is O(p) time and the returned boundary uses O(p) memory.
+     */
+    /**
+     * Finds the smallest exclusive upper boundary for a canonical key prefix.
+     *
+     * <p>The caller supplies a validated visible-ASCII prefix. Calculation takes linear
+     * time and auxiliary space in its length and does not accept the result as stored identity.</p>
+     *
+     * @param prefix canonical key prefix whose matching range is being bounded
+     * @return the incremented and truncated prefix, or an empty optional if no successor exists within the key alphabet
+     * @throws NullPointerException if the prefix is null
      */
     /* package */ static Optional<String> prefixSuccessor(String prefix) {
         byte[] value = prefix.getBytes(StandardCharsets.UTF_8);
@@ -205,7 +265,9 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
         }
     }
 
-    /** Strict current-version textual framing isolated from semantic identity rules. */
+    /**
+     * Strict current-version textual framing isolated from semantic identity rules.
+     */
     private static final class CanonicalCodec {
         private static MetadataKey parse(String encoded) {
             Objects.requireNonNull(encoded, "encoded");

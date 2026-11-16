@@ -49,12 +49,23 @@ import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Exact issuer-generation and chain-path composition shared by PKI services. */
+/**
+ * Exact issuer-generation and chain-path composition shared by PKI services.
+ */
 final class IssuerAuthorities {
     private IssuerAuthorities() {
         // utility
     }
 
+    /**
+     * Loads the authority's selected issuer generation and requires active matching ownership.
+     *
+     * @param store authoritative issuer-generation store
+     * @param authority CA record supplying its current issuance selection
+     * @return selected active generation owned by the authority
+     * @throws NullPointerException if a required input is null
+     * @throws PkiException if the generation is missing, inactive or owned by another authority
+     */
     /* default */ static IssuerGeneration current(PkiStore store, CaRecord authority) {
         IssuerGeneration generation = store.getIssuerGeneration(authority.currentIssuanceIssuerId())
                 .orElseThrow(() -> new PkiException("Current issuer generation not found",
@@ -65,6 +76,15 @@ final class IssuerAuthorities {
         return generation;
     }
 
+    /**
+     * Loads and checks the authority's exact selected issuance chain path.
+     *
+     * @param store authoritative chain-path store
+     * @param authority CA record supplying the selected path and issuer generation
+     * @return chain path belonging to the authority and selected issuer
+     * @throws NullPointerException if a required input is null
+     * @throws PkiException if the path is missing or its ownership or issuer differs
+     */
     /* default */ static IssuerChainPath issuancePath(PkiStore store, CaRecord authority) {
         IssuerChainPath path = store.getIssuerChainPath(authority.issuanceChainPathId())
                 .orElseThrow(() -> new PkiException("Issuance chain path not found",
@@ -76,6 +96,15 @@ final class IssuerAuthorities {
         return path;
     }
 
+    /**
+     * Loads the credential of the authority's currently active issuer generation.
+     *
+     * @param store authoritative generation and credential store
+     * @param authority CA record supplying its current issuance selection
+     * @return exact credential referenced by the selected active generation
+     * @throws NullPointerException if a required input is null
+     * @throws PkiException if the generation is missing, inactive or inconsistent, or its credential is missing
+     */
     /* default */ static Credential currentCredential(PkiStore store, CaRecord authority) {
         IssuerGeneration generation = current(store, authority);
         return store.getCredential(generation.credentialId())
@@ -83,6 +112,17 @@ final class IssuerAuthorities {
                         zeroecho.pki.api.PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
     }
 
+    /**
+     * Constructs active generation metadata from an already validated CA credential.
+     *
+     * @param authorityId owning logical authority identity
+     * @param keyRef provider signing key reference
+     * @param credential validated CA credential with a CA profile binding
+     * @return active generation binding the credential, key and canonical profile commitment
+     * @throws NullPointerException if a required input is null
+     * @throws ClassCastException if the credential does not carry a CA profile binding
+     * @throws IllegalArgumentException if generation coordinates violate model constraints
+     */
     /* default */ static IssuerGeneration generation(PkiId authorityId, zeroecho.pki.api.KeyRef keyRef,
             Credential credential) {
         CertificateProfileRef profile = ((CaProfileBinding) credential.profileBinding()).reference();
@@ -92,6 +132,14 @@ final class IssuerAuthorities {
                 profileCommitment);
     }
 
+    /**
+     * Copies credential metadata with a replacement issuer reference.
+     *
+     * @param credential immutable metadata to copy
+     * @param issuerRef replacement exact issuer-generation and chain reference
+     * @return new credential retaining the other metadata and content reference
+     * @throws NullPointerException if the credential or replacement reference is null
+     */
     /* default */ static Credential withIssuer(Credential credential, IssuerRef issuerRef) {
         Objects.requireNonNull(credential, "credential");
         return new Credential(credential.credentialId(), credential.formatId(), issuerRef, credential.subjectRef(),
@@ -99,10 +147,31 @@ final class IssuerAuthorities {
                 credential.profileBinding(), credential.status(), credential.content(), credential.attributes());
     }
 
+    /**
+     * Creates a root issuance path containing exactly its own credential.
+     *
+     * @param authorityId owning root authority identity
+     * @param issuerId exact root issuer generation identity
+     * @param credentialId root credential identity
+     * @return canonical singleton chain path
+     * @throws NullPointerException if a required identity is null
+     * @throws IllegalArgumentException if path coordinates violate model constraints
+     */
     /* default */ static IssuerChainPath rootPath(PkiId authorityId, PkiId issuerId, PkiId credentialId) {
         return IssuerChainPath.create(authorityId, issuerId, List.of(credentialId));
     }
 
+    /**
+     * Creates an issuance path by prepending a child credential to its parent's ordered path.
+     *
+     * @param authorityId owning child authority identity
+     * @param issuerId child issuer generation identity
+     * @param credentialId child credential identity to prepend
+     * @param parentPath immutable parent issuance path
+     * @return canonical child-to-root path without modifying the parent
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if path coordinates violate model constraints
+     */
     /* default */ static IssuerChainPath childPath(PkiId authorityId, PkiId issuerId, PkiId credentialId,
             IssuerChainPath parentPath) {
         List<PkiId> credentials = new java.util.ArrayList<>();

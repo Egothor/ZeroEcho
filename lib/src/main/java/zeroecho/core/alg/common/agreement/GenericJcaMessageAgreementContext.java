@@ -208,7 +208,9 @@ public final class GenericJcaMessageAgreementContext implements MessageAgreement
         agreement.setPeerPublic(peerPublic);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void setPeerPublic(PublicKey peer) {
         agreement.setPeerPublic(peer);
@@ -240,25 +242,33 @@ public final class GenericJcaMessageAgreementContext implements MessageAgreement
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public byte[] deriveSecret() {
         return agreement.deriveSecret();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CryptoAlgorithm algorithm() {
         return agreement.algorithm();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public java.security.Key key() {
         return agreement.key();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         agreement.close();

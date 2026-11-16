@@ -85,7 +85,9 @@ import zeroecho.pki.api.attr.AttributeId;
  */
 @SuppressWarnings("PMD.DataClass")
 public final class BcX509Attributes {
-    /** Original canonical CRMF CertReqMsg bytes; mutually exclusive with {@link #CSR_DER}. */
+    /**
+     * Original canonical CRMF CertReqMsg bytes; mutually exclusive with {@link #CSR_DER}.
+     */
     public static final AttributeId CRMF_DER = new AttributeId("urn:zeroecho:pki:x509:crmf:der");
 
     /**

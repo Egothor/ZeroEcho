@@ -47,7 +47,14 @@ import zeroecho.pki.api.KeyRef;
  */
 public record CaRotationSelection(int version, Optional<RoleChange> primary,
         Optional<RoleChange> alternative) {
-    /** Rejects empty or unsupported selectors; all optional containers are required. */
+    /**
+     * Rejects empty or unsupported selectors; all optional containers are required.
+     * @param version selector version, exactly one
+     * @param primary optional primary role changes
+     * @param alternative optional alternative role changes; cannot add a missing role
+     * @throws NullPointerException if primary or alternative is null
+     * @throws IllegalArgumentException if version is not one or neither role is selected
+     */
     public CaRotationSelection {
         Objects.requireNonNull(primary, "primary");
         Objects.requireNonNull(alternative, "alternative");
@@ -71,6 +78,7 @@ public record CaRotationSelection(int version, Optional<RoleChange> primary,
      * @param retained exact selected immutable issuer binding
      * @return complete primary and, when present, alternative selection
      * @throws IllegalArgumentException if an alternative change targets a single-key issuer
+     * @throws NullPointerException if retained is null
      */
     public CaRotationSelection effective(IssuerCryptographicBinding retained) {
         Objects.requireNonNull(retained, "retained");
@@ -93,7 +101,14 @@ public record CaRotationSelection(int version, Optional<RoleChange> primary,
      * @param signatureAlgorithmId optional exact canonical signature identity
      */
     public record RoleChange(Optional<KeyRef> keyRef, Optional<String> signatureAlgorithmId) {
-        /** Rejects an empty override or unbounded/non-exact algorithm text. */
+        /**
+         * Rejects an empty override or unbounded/non-exact algorithm text.
+         * @param keyRef optional managed key reference; never a private-key payload
+         * @param signatureAlgorithmId optional exact canonical signature identity
+         * @throws NullPointerException if keyRef or signatureAlgorithmId is null
+         * @throws IllegalArgumentException if neither role member is selected, the key reference is invalid, or
+         *     the exact signature identity is blank, padded, contains NUL or exceeds 8192 characters
+         */
         public RoleChange {
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(signatureAlgorithmId, "signatureAlgorithmId");

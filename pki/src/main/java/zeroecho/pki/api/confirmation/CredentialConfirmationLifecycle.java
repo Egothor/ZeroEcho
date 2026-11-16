@@ -79,28 +79,48 @@ public record CredentialConfirmationLifecycle(PkiId credentialId, long revision,
         Optional<Instant> confirmedAt,
         String recordCommitment) {
 
-    /** Initial pending or not-required revision. */
+    /**
+     * Initial pending or not-required revision.
+     */
     public static final long INITIAL_REVISION = 1L;
-    /** Terminal confirmed revision. */
+    /**
+     * Terminal confirmed revision.
+     */
     public static final long CONFIRMED_REVISION = 2L;
 
-    /** Derived closed lifecycle states. */
+    /**
+     * Derived closed lifecycle states.
+     */
     public enum State {
-        /** Public disclosure requires no credential confirmation. */
+        /**
+         * Public disclosure requires no credential confirmation.
+         */
         NOT_REQUIRED,
-        /** Non-public disclosure awaits credential confirmation. */
+        /**
+         * Non-public disclosure awaits credential confirmation.
+         */
         PENDING,
-        /** Credential confirmation was committed. */
+        /**
+         * Credential confirmation was committed.
+         */
         CONFIRMED
     }
 
-    /** Derived confirmation timeliness classifications. */
+    /**
+     * Derived confirmation timeliness classifications.
+     */
     public enum Timeliness {
-        /** No confirmation time exists yet or confirmation is not required. */
+        /**
+         * No confirmation time exists yet or confirmation is not required.
+         */
         NOT_APPLICABLE,
-        /** Confirmation occurred at or before the timeliness review boundary. */
+        /**
+         * Confirmation occurred at or before the timeliness review boundary.
+         */
         TIMELY,
-        /** Confirmation occurred after the timeliness review boundary. */
+        /**
+         * Confirmation occurred after the timeliness review boundary.
+         */
         LATE
     }
 
@@ -109,6 +129,16 @@ public record CredentialConfirmationLifecycle(PkiId credentialId, long revision,
      *
      * @throws NullPointerException if a reference component is {@code null}
      * @throws IllegalArgumentException if state invariants or the canonical commitment are invalid
+     * @param credentialId exact issued credential, within the confirmation model's strict UTF-8 bound
+     * @param revision closed lifecycle revision, 1 or 2
+     * @param initialPolicy disclosure policy frozen at initialization
+     * @param initialPolicyCommitment lowercase hexadecimal SHA-256 commitment of the exact policy configuration
+     * @param confirmationRequired {@code false} exactly for {@link ConfirmationDisclosurePolicy#PUBLIC}
+     * @param confirmationReviewAt authoritative timeliness review boundary in the UTC range from the epoch through year 9999
+     * @param proofSuite exact proof-suite profile frozen at initialization
+     * @param consumedChallengeRecordCommitment empty at revision 1; exact consumed challenge commitment at revision 2
+     * @param confirmedAt empty at revision 1; authoritative confirmation time at revision 2
+     * @param recordCommitment lowercase canonical SHA-256 commitment of every preceding component
      */
     public CredentialConfirmationLifecycle {
         credentialId = ConfirmationModelSupport.requireCredentialId(credentialId);

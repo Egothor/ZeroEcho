@@ -58,12 +58,16 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public final class AuditWriteEvent extends Event {
 
-    /** Audit category of the record, e.g. {@code SERVER_SECURITY}. */
+    /**
+     * Audit category of the record, e.g. {@code SERVER_SECURITY}.
+     */
     @Label("Category")
     @Description("Audit category of the written record, e.g. SERVER_SECURITY.")
     public String category;
 
-    /** Number of records written in this batch (always 1 for the server-control sink). */
+    /**
+     * Number of records written in this batch (always 1 for the server-control sink).
+     */
     @Label("Record Count")
     @Description("Number of audit records written in this write operation.")
     public int recordCount;
@@ -75,7 +79,9 @@ public final class AuditWriteEvent extends Event {
     @Label("Fsync")
     @Description("True if the write included an explicit filesystem sync; false for best-effort writes.")
     public boolean fsync;
-    /** Creates an uncommitted event with default field values; populate fields before committing. */
+    /**
+     * Creates an uncommitted event with default field values; populate fields before committing.
+     */
     public AuditWriteEvent() {
         super();
     }

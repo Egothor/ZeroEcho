@@ -57,10 +57,22 @@ public record EstEndpoint(
         String enrollmentProfileId,
         KeygenPolicy keygen) implements zeroecho.pki.server.enrollment.EnrollmentEndpoint {
 
-    /** Maximum permitted label length. */
+    /**
+     * Maximum permitted label length.
+     */
     public static final int MAX_LABEL_LENGTH = 64;
 
-    /** Validates all fields. */
+    /**
+     * Validates all fields.
+     * @param label URL-safe identifier, 1\u201364 characters, matching {@code [A-Za-z0-9._-]+}
+     * @param authorityId the CA authority identifier whose chain is served on this endpoint
+     * @param profileId the issuance profile identifier applied to enrollment requests
+     * @param enrollmentProfileId mandatory enrollment policy identity, distinct from the issuance profile
+     * @param keygen key-generation policy for POST {@code /serverkeygen}
+     * @throws NullPointerException if any of {@code label}, {@code authorityId}, {@code profileId}, {@code
+     *         keygen} is null
+     * @throws IllegalArgumentException if the authority identity is blank or the profile identity is blank
+     */
     public EstEndpoint {
         Objects.requireNonNull(label, "label");
         Objects.requireNonNull(authorityId, "authorityId");

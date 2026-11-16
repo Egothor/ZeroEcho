@@ -7,7 +7,15 @@ import zeroecho.pki.api.ca.IssuerKeyBinding;
 import zeroecho.pki.impl.core.IssuerBindingResolver;
 import zeroecho.pki.testkit.RootCreationFixture;
 
+/**
+ * Contract and regression tests for issuer algorithm evidence verifier.
+ */
 class IssuerAlgorithmEvidenceVerifierTest {
+    /**
+     * Verifies only public evidence and rejects wrong identity or changed subject key.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test void verifiesOnlyPublicEvidenceAndRejectsWrongIdentityOrChangedSubjectKey() throws Exception {
         var fixture = new RootCreationFixture();
         var spki = new EncodedObject(Encoding.DER, fixture.key.getPublic().getEncoded());
@@ -23,6 +31,9 @@ class IssuerAlgorithmEvidenceVerifierTest {
         assertThrows(IllegalStateException.class, () -> configured.verify(wrong, spki));
         assertEquals(lookups, fixture.provider.lookups.get(), "Public history validation has no managed-key resolver");
     }
+    /**
+     * Store dependency keeps clock and captured verifier while legacy construction remains available.
+     */
     @Test void storeDependencyKeepsClockAndCapturedVerifierWhileLegacyConstructionRemainsAvailable() {
         var clock = java.time.Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC);
         IssuerAlgorithmEvidenceVerifier verifier = IssuerBindingResolver.defaultPublicEvidenceVerifier();

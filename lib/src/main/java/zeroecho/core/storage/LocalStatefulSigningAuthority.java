@@ -91,6 +91,7 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
     /**
      * Creates an empty authority in a new owner-only directory. Creation never
      * replaces or repairs an existing directory and never enrolls existing keys.
+     *
      * @param directory new authority directory, outside all backup roots
      * @return exclusively owned authority
      * @throws IOException if secure durable initialization fails
@@ -102,6 +103,7 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
 
     /**
      * Opens a previously initialized authority without creating missing state.
+     *
      * @param directory existing authority directory at its original location
      * @return exclusively owned authority
      * @throws IOException if missing, corrupt, moved, insecure or already owned
@@ -111,6 +113,16 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         return acquire(directory, false, KeyringFileOperations.NIO);
     }
 
+    /**
+     * Creates or opens the secured authority and acquires its exclusive filesystem fence.
+     *
+     * @param directory authority directory; must not be null
+     * @param create whether to create a new directory and durable authority identity
+     * @param operations borrowed persistence implementation
+     * @return exclusively owned open authority; the caller must close it
+     * @throws NullPointerException if the directory is null
+     * @throws IOException if initialization, security checks, or exclusive ownership fail
+     */
     /* default */ static LocalStatefulSigningAuthority acquire(Path directory, boolean create,
             KeyringFileOperations operations) throws IOException {
         Objects.requireNonNull(directory, "directory");
@@ -183,6 +195,12 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         write(header, buffer.toByteArray());
     }
 
+    /**
+     * Checks the live fence, original identity, and separation from the keyring directory.
+     *
+     * @param keyring existing keyring path whose parent must not contain this authority
+     * @throws IOException if the authority is closed, poisoned, moved, insecure, or invalid
+     */
     /* default */ synchronized void ensureUsable(Path keyring) throws IOException { // NOPMD AvoidSynchronizedAtMethodLevel - Shares the authority monitor with keyring transactions; Java25 has no monitor pinning.
         if (closed || poisoned || !lock.isValid()) {
             throw recovery();
@@ -201,9 +219,36 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         }
     }
 
+    /**
+     * Exact durable coordinates binding a stateful key to one store and authority record.
+     *
+     * @param keyId hexadecimal public-key identity
+     * @param storeId keyring store identity
+     * @param keyring normalized keyring path text
+     * @param alias logical key alias
+     * @param algorithm canonical stateful algorithm identifier
+     */
     /* default */ record Binding(String keyId, String storeId, String keyring, String alias, String algorithm) { }
+    /**
+     * Authenticated stateful-signing progress retained by the local authority.
+     *
+     * @param binding immutable durable key coordinates
+     * @param next next leaf index; capacity denotes exhaustion
+     * @param capacity total enrolled leaf capacity
+     * @param ready whether durable keyring state is synchronized with this record
+     * @param digest borrowed digest of the corresponding stored private state
+     */
     /* default */ record State(Binding binding, long next, long capacity, boolean ready, byte[] digest) { }
 
+    /**
+     * Authenticates and decodes the durable record for the exact key binding.
+     *
+     * @param binding exact expected key coordinates
+     * @param macKey borrowed record-authentication key
+     * @return decoded state after identity and framing checks
+     * @throws IOException if the authority, record, security checks, or persistence fail
+     * @throws GeneralSecurityException if record authentication cannot execute
+     */
     /* default */ synchronized State read(Binding binding, byte[] macKey) throws IOException, GeneralSecurityException { // NOPMD AvoidSynchronizedAtMethodLevel - Shares the authority monitor with keyring transactions; Java25 has no monitor pinning.
         ensureUsable(Path.of(binding.keyring()));
         byte[] image = readBounded(recordPath(binding));
@@ -239,6 +284,14 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         }
     }
 
+    /**
+     * Creates a new durable enrollment, rejecting an already existing record.
+     *
+     * @param state state to encode and publish
+     * @param macKey borrowed record-authentication key
+     * @throws IOException if the authority, record, security checks, or persistence fail
+     * @throws GeneralSecurityException if record authentication cannot execute
+     */
     /* default */ synchronized void enroll(State state, byte[] macKey) throws IOException, GeneralSecurityException { // NOPMD AvoidSynchronizedAtMethodLevel - Shares the authority monitor with keyring transactions; Java25 has no monitor pinning.
         ensureUsable(Path.of(state.binding().keyring()));
         if (Files.exists(recordPath(state.binding()), LinkOption.NOFOLLOW_LINKS)) {
@@ -247,6 +300,14 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         save(state, macKey);
     }
 
+    /**
+     * Authenticates and atomically publishes the next durable state record.
+     *
+     * @param state state to encode and publish
+     * @param macKey borrowed record-authentication key
+     * @throws IOException if the authority, record, security checks, or persistence fail
+     * @throws GeneralSecurityException if record authentication cannot execute
+     */
     /* default */ synchronized void save(State state, byte[] macKey) throws IOException, GeneralSecurityException { // NOPMD AvoidSynchronizedAtMethodLevel - Shares the authority monitor with keyring transactions; Java25 has no monitor pinning.
         ensureUsable(Path.of(state.binding().keyring()));
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
@@ -329,12 +390,18 @@ public final class LocalStatefulSigningAuthority implements AutoCloseable { // N
         }
     }
 
+    /**
+     * Creates the stable fail-closed exception used for uncertain stateful authority state.
+     *
+     * @return a new exception carrying KEYRING_STATEFUL_RECOVERY_REQUIRED
+     */
     /* default */ static KeyringException recovery() {
         return new KeyringException(Code.KEYRING_STATEFUL_RECOVERY_REQUIRED);
     }
 
     /**
      * Releases exclusive authority ownership after admitted signing completes.
+     *
      * @throws IOException if releasing the filesystem fence fails
      */
     @Override

@@ -112,6 +112,7 @@ public final class DefaultProfileService implements ProfileService {
      * @param certificateBinding optional explicit certificate-signature binding
      * @param crlBinding optional explicit CRL-signature binding
      * @param publicKeyBinding optional explicit subject-public-key binding
+     * @throws NullPointerException if store, clock, auditSink, algorithmBindings, certificateBinding, crlBinding, publicKeyBinding is null
      */
     public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink,
             X509AlgorithmBindingRegistry algorithmBindings, boolean signingConfigured,
@@ -126,6 +127,9 @@ public final class DefaultProfileService implements ProfileService {
         this.publicKeyBinding = Objects.requireNonNull(publicKeyBinding, "publicKeyBinding");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateProfileRef importProfile(byte[] jsonDocument) {
         Objects.requireNonNull(jsonDocument, "jsonDocument");
@@ -137,6 +141,9 @@ public final class DefaultProfileService implements ProfileService {
         }, Code.PROFILE_IMPORT_VALIDATION_FAILED);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateProfileRef importProfile(InputStream jsonDocument) {
         Objects.requireNonNull(jsonDocument, "jsonDocument");
@@ -148,6 +155,9 @@ public final class DefaultProfileService implements ProfileService {
         }, Code.PROFILE_IMPORT_VALIDATION_FAILED);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateProfileRef importBuiltIn(BuiltInCertificateProfileTemplate template) {
         Objects.requireNonNull(template, "template");
@@ -165,6 +175,9 @@ public final class DefaultProfileService implements ProfileService {
         }, Code.BUILT_IN_PROFILE_INVALID);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void validateActivation(String profileId, long profileVersion) {
         requireProfileId(profileId);
@@ -175,6 +188,9 @@ public final class DefaultProfileService implements ProfileService {
         validateRuntimeBindings(version.definition());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CertificateProfileRef activateProfile(String profileId, long profileVersion) {
         requireProfileId(profileId);
@@ -189,6 +205,9 @@ public final class DefaultProfileService implements ProfileService {
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ActiveCertificateProfile requireActiveProfile(String profileId) {
         requireProfileId(profileId);
@@ -200,6 +219,9 @@ public final class DefaultProfileService implements ProfileService {
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<ImportedCertificateProfileVersion> getImportedVersion(String profileId, long profileVersion) {
         requireProfileId(profileId);
@@ -209,12 +231,18 @@ public final class DefaultProfileService implements ProfileService {
         return executeSanitized(() -> store.getProfileVersion(profileId, profileVersion), Code.PROFILE_STORE_FAILURE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<ImportedCertificateProfileVersion> listImportedVersions(String profileId) {
         requireProfileId(profileId);
         return executeSanitized(() -> store.listProfileVersions(profileId), Code.PROFILE_STORE_FAILURE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<CertificateProfileRef> getActiveReference(String profileId) {
         requireProfileId(profileId);

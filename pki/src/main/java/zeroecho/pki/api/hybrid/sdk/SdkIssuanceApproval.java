@@ -39,6 +39,12 @@ import java.util.Objects;
 /**
  * Retained SDK approval input. Domain preparation independently verifies both
  * proofs at durable acceptance time and revalidates the frozen policy coordinates.
+ *
+ * <p>The record is a retained input carrier, not a newly granted approval. Its
+ * constructor checks frame kinds, signature sizes and commitment syntax only. It
+ * does not establish agreement between frames, preview and proofs, authenticate
+ * the acceptance timestamp or admit the operation under current policy.</p>
+ *
  * @param preview frozen effective public issuance coordinates
  * @param primaryFrame exact accepted F1 frame, whose target hash binds preview
  * @param targetFrame exact retained F7 target bound by the subject proofs
@@ -49,19 +55,53 @@ import java.util.Objects;
  */
 public record SdkIssuanceApproval(SdkIssuancePreview preview, HybridSdkFrame primaryFrame, HybridSdkFrame targetFrame,
         byte[] primaryProof, byte[] alternativeProof, String expectedF3, Instant proofAcceptedAt) {
-    /** Snapshots proof bytes without establishing their validity or authorizing issuance. */
+    /**
+     * Snapshots both proof arrays after checking their bounded representation.
+     *
+     * <p>The preview and immutable frame references are retained. Callers must supply
+     * the acceptance instant from trusted durable evidence; construction accepts any
+     * non-null instant and does not treat it as current proof freshness.</p>
+     *
+     * @param preview frozen public issuance coordinates
+     * @param primaryFrame retained F1 proof frame
+     * @param targetFrame retained F7 issuance target frame
+     * @param primaryProof primary signature bytes, from 1 through 104 bytes; copied
+     * @param alternativeProof alternative signature bytes, exactly 4627 bytes; copied
+     * @param expectedF3 SHA-512 commitment in sha512: form with 128 lowercase hex digits
+     * @param proofAcceptedAt trusted durable proof acceptance instant
+     * @throws NullPointerException if the preview, a frame, proof array or instant is null
+     * @throws IllegalArgumentException if a frame kind, proof size or commitment syntax is invalid
+     */
     public SdkIssuanceApproval {
-        Objects.requireNonNull(preview); Objects.requireNonNull(primaryFrame); Objects.requireNonNull(targetFrame);
-        Objects.requireNonNull(primaryProof); Objects.requireNonNull(alternativeProof);
+        Objects.requireNonNull(preview);
+        Objects.requireNonNull(primaryFrame);
+        Objects.requireNonNull(targetFrame);
+        Objects.requireNonNull(primaryProof);
+        Objects.requireNonNull(alternativeProof);
         if (primaryFrame.kind() != 1 || targetFrame.kind() != 7 || primaryProof.length < 1 || primaryProof.length > 104
                 || alternativeProof.length != 4627 || expectedF3 == null || !expectedF3.matches("sha512:[0-9a-f]{128}")) {
             throw new IllegalArgumentException("Invalid retained SDK proof coordinates");
         }
-        primaryProof = primaryProof.clone(); alternativeProof = alternativeProof.clone();
+        primaryProof = primaryProof.clone();
+        alternativeProof = alternativeProof.clone();
         Objects.requireNonNull(proofAcceptedAt);
     }
-    /** @return independent copy of the accepted primary signature */
-    @Override public byte[] primaryProof() { return primaryProof.clone(); }
-    /** @return independent copy of the accepted alternative signature */
-    @Override public byte[] alternativeProof() { return alternativeProof.clone(); }
+    /**
+     * Returns an independent copy of the retained primary signature.
+     *
+     * @return new primary-proof array; modifying it does not alter this approval
+     */
+    @Override
+    public byte[] primaryProof() {
+        return primaryProof.clone();
+    }
+    /**
+     * Returns an independent copy of the retained alternative signature.
+     *
+     * @return new alternative-proof array; modifying it does not alter this approval
+     */
+    @Override
+    public byte[] alternativeProof() {
+        return alternativeProof.clone();
+    }
 }

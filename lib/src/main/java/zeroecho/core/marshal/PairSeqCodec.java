@@ -190,18 +190,48 @@ public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
         return type.cast(UNMARSHAL_PLANS.get(type).get().invoke(repr));
     }
 
+    /**
+     * Resolves and returns the canonical cached marshal plan for one runtime class.
+     *
+     * @param runtimeType class whose reflective plan is requested; must not be null
+     * @return the class-scoped plan, resolving it on first access
+     * @throws NullPointerException if the runtime class is null
+     * @throws IllegalStateException if the reflective entry point cannot be resolved
+     */
     /* default */ static Object cachedMarshalPlan(Class<?> runtimeType) {
         return MARSHAL_PLANS.get(runtimeType).get();
     }
 
+    /**
+     * Resolves and returns the canonical cached unmarshal plan for one runtime class.
+     *
+     * @param runtimeType class whose reflective plan is requested; must not be null
+     * @return the class-scoped plan, resolving it on first access
+     * @throws NullPointerException if the runtime class is null
+     * @throws IllegalStateException if the reflective entry point cannot be resolved
+     */
     /* default */ static Object cachedUnmarshalPlan(Class<?> runtimeType) {
         return UNMARSHAL_PLANS.get(runtimeType).get();
     }
 
+    /**
+     * Reports how many times the class-scoped marshal plan has been resolved.
+     *
+     * @param runtimeType class whose resolution count is requested; must not be null
+     * @return the current resolution count; observing it does not resolve the plan
+     * @throws NullPointerException if the runtime class is null
+     */
     /* default */ static int marshalResolutionCount(Class<?> runtimeType) {
         return MARSHAL_PLANS.get(runtimeType).resolutionCount();
     }
 
+    /**
+     * Reports how many times the class-scoped unmarshal plan has been resolved.
+     *
+     * @param runtimeType class whose resolution count is requested; must not be null
+     * @return the current resolution count; observing it does not resolve the plan
+     * @throws NullPointerException if the runtime class is null
+     */
     /* default */ static int unmarshalResolutionCount(Class<?> runtimeType) {
         return UNMARSHAL_PLANS.get(runtimeType).resolutionCount();
     }

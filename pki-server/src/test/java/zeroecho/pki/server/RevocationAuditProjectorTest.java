@@ -79,6 +79,9 @@ import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
+/**
+ * Checks source-bound audit delivery, durable cursor advancement and retry behavior after partial failures.
+ */
 final class RevocationAuditProjectorTest {
     private static final MetadataStoreId SOURCE =
             new MetadataStoreId("abcdefabcdefabcdefabcdefabcdefab");
@@ -87,8 +90,16 @@ final class RevocationAuditProjectorTest {
     private static final Instant NOW = Instant.parse("2026-08-21T12:00:00Z");
     private static final String PLAINTEXT = "ticket-secret-42";
 
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path temporaryDirectory;
 
+    /**
+     * Checks five source transitions advance while only four recognized administrative/ACME evidence entries produce audit events.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void mapsAdministrativeAndAcmeEvidenceExactlyAndSkipsLegacy() throws Exception {
         FeedSource source = new FeedSource(SOURCE);
@@ -147,6 +158,11 @@ final class RevocationAuditProjectorTest {
         }
     }
 
+    /**
+     * Checks poison evidence retains the delivery cursor, applies retry eligibility and blocks later entries without skipping.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void poisonRetainsCursorAppliesBackoffAndBlocksLaterEntries() throws Exception {
         FeedSource source = new FeedSource(SOURCE);
@@ -180,6 +196,11 @@ final class RevocationAuditProjectorTest {
         }
     }
 
+    /**
+     * Checks an audit-sink failure retains the cursor and publishes bounded backoff before retry.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void sinkFailureRetainsCursorAndCursorMovesOnlyAfterAcknowledgement() throws Exception {
         FeedSource source = new FeedSource(SOURCE);
@@ -220,6 +241,11 @@ final class RevocationAuditProjectorTest {
         }
     }
 
+    /**
+     * Checks cancellation after sink acknowledgement leaves the cursor unchanged so a later pass replays safely without losing later records.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void cancellationAfterSinkAcknowledgementRetainsCursorAndRetryResumesWithoutLoss() throws Exception {
         FeedSource source = new FeedSource(SOURCE);
@@ -257,6 +283,11 @@ final class RevocationAuditProjectorTest {
         }
     }
 
+    /**
+     * Checks durable restart continuation and stable event identity when sink delivery precedes an uncertain cursor commit.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void resumesAfterRestartAndReplaysStableIdAfterUncertainStateCommit() throws Exception {
         FeedSource restartSource = new FeedSource(SOURCE);
@@ -306,6 +337,11 @@ final class RevocationAuditProjectorTest {
         }
     }
 
+    /**
+     * Checks foreign-source or malformed retained cursor state is rejected before any sink event is emitted.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void foreignAndMalformedStateFailClosedBeforeSink() throws Exception {
         FeedSource source = new FeedSource(SOURCE);
@@ -442,7 +478,13 @@ final class RevocationAuditProjectorTest {
             this.head = head;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public HighWatermark highWatermark() { requireOpen(); return head; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean next(CancellationSignal cancellation) throws IOException {
             requireOpen();
             cancellation.throwIfCancelled();
@@ -450,11 +492,17 @@ final class RevocationAuditProjectorTest {
             current = entries.get(index++);
             return true;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Entry current() {
             requireOpen();
             if (current == null) throw new IllegalStateException("Test feed is not positioned");
             return current;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public void close() { closed = true; current = null; }
         private void requireOpen() {
             if (closed) throw new IllegalStateException("Test feed is closed");
@@ -472,11 +520,20 @@ final class RevocationAuditProjectorTest {
             instant = instant.plusSeconds(seconds);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Clock withZone(ZoneId zone) {
             if (!ZoneOffset.UTC.equals(zone)) throw new IllegalArgumentException("Only UTC is supported");
             return this;
         }
+        /**
+         * {@inheritDoc}
+         */
         @Override public Instant instant() { return instant; }
     }
 }

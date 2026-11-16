@@ -64,6 +64,12 @@ public final class KeyBuilders {
     private final Symmetric symmetric = new Symmetric();
     private final Asymmetric asymmetric = new Asymmetric();
 
+    /**
+     * Binds key operations to the owning session and its audit sink.
+     *
+     * @param session owning session; must not be null
+     * @throws NullPointerException if the session is null
+     */
     /* default */ KeyBuilders(ZeroEchoSession session) {
         this.session = Objects.requireNonNull(session, "session must not be null");
     }

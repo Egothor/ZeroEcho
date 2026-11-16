@@ -47,6 +47,14 @@ import zeroecho.pki.server.RealmId;
  * does not reserve capacity or authorize admission. Arrays are copied at both
  * boundaries; instances are immutable and safe for concurrent reads. Validation
  * takes linear time in the bounded original request, wire and proof bytes.
+ *
+ * <p>The original typed payload and native wire retain exact request evidence,
+ * potentially including confidential native attributes. Hash commitments and
+ * redacted diagnostics do not sanitize these bytes. Construction validates their
+ * relationships but neither verifies client signatures nor consults a current
+ * clock. Consumed tombstones support exact accepted replay through the coordinator;
+ * they do not reopen an expired challenge or grant fresh enrollment authority.</p>
+ *
  * @param id canonical server intent identity
  * @param version payload version, exactly one
  * @param realmId exact owning realm
@@ -73,12 +81,45 @@ public record EnrollmentSdkIntent(String id, int version, RealmId realmId, Enrol
         State state, long revision, Optional<String> sdkRequestId, Optional<byte[]> primaryProof,
         Optional<byte[]> alternativeProof, Optional<String> proofCommitment, Optional<Instant> acceptedAt,
         Optional<String> enrollmentId) {
-    /** Closed durable consumption state; unknown states are never treated as OPEN. */
+    /**
+     * Closed durable consumption state; unknown states are never treated as OPEN.
+     */
     public enum State {
-        /** Challenge has not admitted any enrollment. */ OPEN,
-        /** Exact proofs and one enrollment receipt are retained atomically. */ CONSUMED
+        /**
+         * Challenge has not admitted any enrollment.
+         */
+        OPEN,
+        /**
+         * Exact proofs and one enrollment receipt are retained atomically.
+         */
+        CONSUMED
     }
-    /** Validates finite coordinates and state without authenticating or accessing persistence. */
+    /**
+     * Copies optional wire/proof arrays and checks frozen context and consumption-state correspondence.
+     *
+     * @param id canonical server intent identity
+     * @param version payload version, exactly one
+     * @param realmId exact owning realm
+     * @param admission retained trusted native context
+     * @param originalPayload exact typed original request, shared by the admission codec
+     * @param nativeWire bounded original SCEP/CMP protected wire, absent otherwise
+     * @param primaryFrame retained F1 frame
+     * @param authenticationContext retained F6 frame
+     * @param targetFrame retained F7 frame
+     * @param issuedAt trusted creation time
+     * @param expiresAt creation plus the fixed 300-second lifetime
+     * @param state closed consumption state
+     * @param revision nonnegative mutation revision
+     * @param sdkRequestId exact accepted stable request identity
+     * @param primaryProof accepted primary client signature
+     * @param alternativeProof accepted alternative client signature
+     * @param proofCommitment accepted F3 SHA-512 commitment
+     * @param acceptedAt trusted proof acceptance time
+     * @param enrollmentId linked durable enrollment receipt identity
+     * @throws NullPointerException if a required object or optional container is null
+     * @throws IllegalArgumentException if identity/version/revision, exact frame/request/time/wire
+     *     correspondence or consumed proof/receipt shape is invalid
+     */
     public EnrollmentSdkIntent {
         if (id == null || !id.matches("[0-9a-f]{64}") || version != 1 || revision < 0) throw EnrollmentTransaction.invalid();
         Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(admission, "admission");
@@ -119,12 +160,28 @@ public record EnrollmentSdkIntent(String id, int version, RealmId realmId, Enrol
     private static Optional<byte[]> copy(Optional<byte[]> value) {
         return Objects.requireNonNull(value, "bytes").map(bytes -> Objects.requireNonNull(bytes, "bytes").clone());
     }
-    /** @return fresh copy of the retained protected wire, if applicable */
+    /**
+     * Returns fresh copy of the retained protected wire, if applicable.
+     *
+     * @return fresh copy of the retained protected wire, if applicable
+     */
     @Override public Optional<byte[]> nativeWire() { return copy(nativeWire); }
-    /** @return fresh copy of the accepted primary proof, if consumed */
+    /**
+     * Returns fresh copy of the accepted primary proof, if consumed.
+     *
+     * @return fresh copy of the accepted primary proof, if consumed
+     */
     @Override public Optional<byte[]> primaryProof() { return copy(primaryProof); }
-    /** @return fresh copy of the accepted alternative proof, if consumed */
+    /**
+     * Returns fresh copy of the accepted alternative proof, if consumed.
+     *
+     * @return fresh copy of the accepted alternative proof, if consumed
+     */
     @Override public Optional<byte[]> alternativeProof() { return copy(alternativeProof); }
-    /** @return redacted state description without wire, proof or requester contents */
+    /**
+     * Returns redacted state description without wire, proof or requester contents.
+     *
+     * @return redacted state description without wire, proof or requester contents
+     */
     @Override public String toString() { return "EnrollmentSdkIntent[state=" + state + ", revision=" + revision + "]"; }
 }

@@ -100,6 +100,7 @@ public final class DefaultPublicationService implements PublicationService {
      * @param publishers configured publisher instances with unique targets
      * @throws IllegalArgumentException if a publisher target is duplicated
      * @throws PkiException if durable publication recovery fails closed
+     * @throws NullPointerException if store, clock, publishers, publisher is null or a supplied collection contains a null member
      */
     public DefaultPublicationService(PkiStore store, Clock clock, Collection<? extends Publisher> publishers) {
         this.store = Objects.requireNonNull(store, "store");
@@ -122,6 +123,9 @@ public final class DefaultPublicationService implements PublicationService {
         validateConfiguredOperations();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationRecord register(PublicationRequest request) {
         requireOpen();
@@ -145,6 +149,9 @@ public final class DefaultPublicationService implements PublicationService {
         return store.createPublicationRecord(pending);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationResult process(PkiId publicationId) {
         requireOpen();
@@ -169,6 +176,9 @@ public final class DefaultPublicationService implements PublicationService {
         return dispatchPrepared(prepared, PublicationEvidence.DIRECT_RESPONSE, false);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationResult retry(PkiId publicationId) {
         requireOpen();
@@ -185,6 +195,9 @@ public final class DefaultPublicationService implements PublicationService {
         return process(publicationId);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationResult reconcile(PkiId publicationId) {
         requireOpen();
@@ -201,18 +214,27 @@ public final class DefaultPublicationService implements PublicationService {
         return dispatchPrepared(prepared, PublicationEvidence.RECONCILIATION_RESPONSE, true);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Optional<PublicationRecord> find(PkiId publicationId) {
         requireOpen();
         return store.getPublicationRecord(Objects.requireNonNull(publicationId, "publicationId"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public PublicationCursor openPublications(PublicationQuery query) {
         requireOpen();
         return new FilteringCursor(store.openPublicationRecords(), Objects.requireNonNull(query, "query"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         closed.set(true);
@@ -456,7 +478,9 @@ public final class DefaultPublicationService implements PublicationService {
                 PkiFailureReason.PUBLICATION_RECOVERY_FAILED);
     }
 
-    /** Lazy query wrapper retaining the stable store cursor. */
+    /**
+     * Lazy query wrapper retaining the stable store cursor.
+     */
     private static final class FilteringCursor implements PublicationCursor {
         private final PublicationCursor delegate;
         private final PublicationQuery query;
@@ -466,6 +490,9 @@ public final class DefaultPublicationService implements PublicationService {
             this.query = query;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Optional<PublicationRecord> next(CancellationSignal cancellation) throws IOException {
             Optional<PublicationRecord> next;
@@ -486,6 +513,9 @@ public final class DefaultPublicationService implements PublicationService {
             return Optional.empty();
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public void close() {
             delegate.close();

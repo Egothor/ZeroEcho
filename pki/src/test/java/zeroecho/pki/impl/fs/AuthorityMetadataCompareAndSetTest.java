@@ -83,7 +83,16 @@ import zeroecho.pki.spi.store.MetadataTransactionId;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 import zeroecho.pki.testkit.SemanticIssuanceFixture;
 
+/**
+ * Contract and regression tests for authority metadata compare and set.
+ */
 final class AuthorityMetadataCompareAndSetTest {
+    /**
+     * Exact replacement changes only current state and adds atomic history.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactReplacementChangesOnlyCurrentStateAndAddsAtomicHistory(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options())) {
@@ -106,6 +115,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Absent and stale expected values publish no authority rows.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void absentAndStaleExpectedValuesPublishNoAuthorityRows(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options())) {
@@ -121,6 +136,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * History cleanup runs only after successful replacement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void historyCleanupRunsOnlyAfterSuccessfulReplacement(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
@@ -138,6 +159,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Rejects invalid inputs and precommit validation without fencing.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsInvalidInputsAndPrecommitValidationWithoutFencing(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options())) {
@@ -162,6 +189,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Concurrent winner after snapshot rejects loser without membership or history leak.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentWinnerAfterSnapshotRejectsLoserWithoutMembershipOrHistoryLeak(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options())) {
@@ -189,6 +222,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Helper acknowledges every attempt once and only conflict returns false.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void helperAcknowledgesEveryAttemptOnceAndOnlyConflictReturnsFalse(@TempDir Path root) throws Exception {
         List<Optional<MetadataCommitResult.FailureCategory>> categories = List.of(
@@ -232,6 +271,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Helper unknown and acknowledgement failure propagate without false result.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void helperUnknownAndAcknowledgementFailurePropagateWithoutFalseResult(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options())) {
@@ -257,6 +302,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Unknown commit fences facade and reopen resolves durable winner.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unknownCommitFencesFacadeAndReopenResolvesDurableWinner(@TempDir Path root) throws Exception {
         for (boolean durable : List.of(false, true)) {
@@ -264,6 +315,12 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
+    /**
+     * Acknowledgement failure fences facade without misreporting conflict.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acknowledgementFailureFencesFacadeWithoutMisreportingConflict(@TempDir Path root) throws Exception {
         assertFacadeFailureRecovery(root.resolve("acknowledgement"), 3, false, true);
@@ -363,7 +420,9 @@ final class AuthorityMetadataCompareAndSetTest {
     @FunctionalInterface
     private interface BeforeCommit { void run() throws IOException; }
 
-    /** Inserts a real competing commit, or supplies one exact result category to the helper. */
+    /**
+     * Inserts a real competing commit, or supplies one exact result category to the helper.
+     */
     private static final class InterleavingMetadata implements TransactionalMetadataStore {
         private final TransactionalMetadataStore delegate;
         private BeforeCommit beforeCommit;
@@ -403,7 +462,9 @@ final class AuthorityMetadataCompareAndSetTest {
         }
     }
 
-    /** Existing WAL seam; arm after fixture publication, before issue/commit/acknowledgement. */
+    /**
+     * Existing WAL seam; arm after fixture publication, before issue/commit/acknowledgement.
+     */
     private static final class ArmedWalFailure implements SigningActiveWal.Operations {
         private final AtomicInteger remaining = new AtomicInteger();
         private boolean durableBeforeFailure;

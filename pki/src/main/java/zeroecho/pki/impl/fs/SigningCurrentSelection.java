@@ -40,7 +40,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Capacity-reserved current pointers with exact short-lived generation pins. */
+/**
+ * Capacity-reserved current pointers with exact short-lived generation pins.
+ */
 final class SigningCurrentSelection implements AutoCloseable {
     private static final long FIXED_BYTES = 128L;
     private static final long RECORD_BYTES = 128L;
@@ -60,6 +62,19 @@ final class SigningCurrentSelection implements AutoCloseable {
     }
 
     // Success transfers both resources to the returned closeable; failure closes them here.
+    /**
+     * Captures one current record while reserving capacity and pinning its exact artifact generation.
+     *
+     * <p>Failure before ownership transfer releases every reservation and pin already acquired.</p>
+     *
+     * @param capacity shared index byte budget
+     * @param generations registry retaining exact generation reference ownership
+     * @param record current immutable pointer descriptor, or null for an empty selection
+     * @return owned immutable selection; caller closes it to release capacity and generation pins
+     * @throws NullPointerException if a required collaborator is null
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if the fixed selection reservation exceeds the budget
+     * @throws IllegalStateException if the selected generation cannot be pinned
+     */
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
     /* default */ static SigningCurrentSelection single(
             SigningIndexCapacityBudget capacity, SigningGenerationRegistry generations,
@@ -85,15 +100,34 @@ final class SigningCurrentSelection implements AutoCloseable {
         }
     }
 
+    /**
+     * Creates an owned range builder that reserves capacity before capturing pointer growth.
+     *
+     * @param capacity shared index budget used for fixed and per-record reservations
+     * @return owned one-lock-scope builder; close it unless its resources transfer to the built selection
+     * @throws NullPointerException if a required collaborator is null
+     * @throws SigningIndexCapacityBudget.CapacityExceededException if the fixed builder reservation exceeds the budget
+     */
     /* default */ static Builder rangeBuilder(SigningIndexCapacityBudget capacity) {
         return new Builder(capacity);
     }
 
+    /**
+     * Returns the immutable selected current-state pointers while this selection remains open.
+     *
+     * @return retained immutable pointer descriptors in selection order
+     * @throws IllegalStateException if this selection was closed
+     */
     /* default */ List<SigningMvccIndex.SnapshotRecord> records() {
         requireOpen();
         return records;
     }
 
+    /**
+     * Releases the exact generation pins and capacity reservations once.
+     *
+     * <p>The selection becomes unavailable before cleanup; repeated closure has no effect.</p>
+     */
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
@@ -117,7 +151,9 @@ final class SigningCurrentSelection implements AutoCloseable {
         }
     }
 
-    /** One-lock-scope builder that reserves capacity before capturing each growth block. */
+    /**
+     * One-lock-scope builder that reserves capacity before capturing each growth block.
+     */
     /* default */ static final class Builder implements AutoCloseable {
         private final SigningIndexCapacityBudget capacity;
         private final List<SigningIndexCapacityBudget.Reservation> reservations = new ArrayList<>();
@@ -131,6 +167,14 @@ final class SigningCurrentSelection implements AutoCloseable {
             addReservation(FIXED_BYTES);
         }
 
+        /**
+         * Reserves growth capacity before retaining one exact current-state record pointer.
+         *
+         * @param record non-null current record descriptor; the builder must remain open and untransferred
+         * @throws NullPointerException if the record is null
+         * @throws SigningIndexCapacityBudget.CapacityExceededException if the next growth block exceeds the capacity budget
+         * @throws ArithmeticException if the growth count or byte calculation overflows
+         */
         /* default */ void add(SigningMvccIndex.SnapshotRecord record) {
             Objects.requireNonNull(record, "record");
             reserveBeforeCapture();
@@ -139,6 +183,14 @@ final class SigningCurrentSelection implements AutoCloseable {
         }
 
         // Success transfers pins to the returned closeable; failure releases them here.
+        /**
+         * Pins the captured generations and transfers all builder capacity reservations to an immutable selection.
+         *
+         * @param generations registry owning all captured physical pointer generations
+         * @return owned selection; caller closes it to release pins and reservations
+         * @throws NullPointerException if a required collaborator is null
+         * @throws IllegalStateException if the builder already transferred ownership or a captured generation cannot be pinned
+         */
         @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
         /* default */ SigningCurrentSelection build(SigningGenerationRegistry generations) {
             if (transferred) {
@@ -183,6 +235,11 @@ final class SigningCurrentSelection implements AutoCloseable {
             }
         }
 
+        /**
+         * Releases capacity still owned by this builder unless it transferred to a selection.
+         *
+         * <p>Closure is idempotent and prevents another successful build.</p>
+         */
         @Override
         public void close() {
             if (!transferred) {

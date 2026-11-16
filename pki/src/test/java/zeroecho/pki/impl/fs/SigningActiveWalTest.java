@@ -66,6 +66,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+/**
+ * Contract and regression tests for signing active WAL.
+ */
 final class SigningActiveWalTest {
 
     private static final SigningActiveWal.Descriptor DESCRIPTOR =
@@ -76,6 +79,11 @@ final class SigningActiveWalTest {
     @TempDir
     private Path temporaryDirectory;
 
+    /**
+     * Validated recovery open remains passive until writer starts exactly once.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void validatedRecoveryOpenRemainsPassiveUntilWriterStartsExactlyOnce() throws Exception {
         Path path = temporaryDirectory.resolve("passive-active.zew");
@@ -107,6 +115,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Closing passive recovery WAL closes channel without starting writer.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void closingPassiveRecoveryWalClosesChannelWithoutStartingWriter() throws Exception {
         Path path = temporaryDirectory.resolve("close-passive-active.zew");
@@ -128,6 +141,11 @@ final class SigningActiveWalTest {
         assertArrayEquals(header, Files.readAllBytes(path));
     }
 
+    /**
+     * Singleton timeout commits one group with one force and stable boundaries.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void singletonTimeoutCommitsOneGroupWithOneForceAndStableBoundaries() throws Exception {
         Path path = temporaryDirectory.resolve("active.zew");
@@ -167,6 +185,11 @@ final class SigningActiveWalTest {
         assertArrayEquals(new byte[] { 1, 2, 3 }, restored.get(0).payload());
     }
 
+    /**
+     * Declined guard consumes no sequence revision or recovered frame.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void declinedGuardConsumesNoSequenceRevisionOrRecoveredFrame() throws Exception {
         Path path = temporaryDirectory.resolve("guarded-admission.zew");
@@ -208,6 +231,12 @@ final class SigningActiveWalTest {
         recovered.close();
     }
 
+    /**
+     * Configured full batch and concurrent admission produce consecutive assignments.
+     *
+     * @param maximumGroupSize maximum WAL requests permitted in the initial writer group
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @MethodSource("supportedMaximumGroups")
     void configuredFullBatchAndConcurrentAdmissionProduceConsecutiveAssignments(int maximumGroupSize)
@@ -239,6 +268,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Singleton maximum never invokes coalescing wait.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void singletonMaximumNeverInvokesCoalescingWait() throws Exception {
         Path path = temporaryDirectory.resolve("singleton-no-wait.zew");
@@ -261,6 +295,12 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Historical maximum group remains readable under smaller runtime maximum.
+     *
+     * @param reopenedMaximumGroupSize maximum WAL requests permitted after reopening
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @MethodSource("reopenMaximumGroups")
     void historicalMaximumGroupRemainsReadableUnderSmallerRuntimeMaximum(
@@ -302,6 +342,11 @@ final class SigningActiveWalTest {
         recovered.close();
     }
 
+    /**
+     * Aggregate writer grows reuses and clears one contiguous buffer.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void aggregateWriterGrowsReusesAndClearsOneContiguousBuffer() throws Exception {
         Path path = temporaryDirectory.resolve("aggregate-buffer.zew");
@@ -329,6 +374,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Group byte bound splits near two mib transactions.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void groupByteBoundSplitsNearTwoMibTransactions() throws Exception {
         Path path = temporaryDirectory.resolve("byte-bounded-batch.zew");
@@ -353,6 +403,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Bounded queue rejects before admission and reports depth.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedQueueRejectsBeforeAdmissionAndReportsDepth() throws Exception {
         Path path = temporaryDirectory.resolve("bounded.zew");
@@ -383,6 +438,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Cancelled pre admission reservation creates no sequence gap.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancelledPreAdmissionReservationCreatesNoSequenceGap() throws Exception {
         Path path = temporaryDirectory.resolve("reservation-no-gap.zew");
@@ -402,6 +462,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Full admission rejects before copy and close rolls back reservation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void fullAdmissionRejectsBeforeCopyAndCloseRollsBackReservation() throws Exception {
         Path path = temporaryDirectory.resolve("reservation.zew");
@@ -447,6 +512,11 @@ final class SigningActiveWalTest {
         assertEquals(0L, wal.snapshot().outstandingEncodedBytes());
     }
 
+    /**
+     * Failed payload copy releases headroom without consuming sequence.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void failedPayloadCopyReleasesHeadroomWithoutConsumingSequence() throws Exception {
         Path path = temporaryDirectory.resolve("headroom-copy-failure.zew");
@@ -481,6 +551,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Concurrent submit results match persisted admission order.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void concurrentSubmitResultsMatchPersistedAdmissionOrder() throws Exception {
         Path path = temporaryDirectory.resolve("concurrent.zew");
@@ -528,6 +603,11 @@ final class SigningActiveWalTest {
         }
     }
 
+    /**
+     * Duplicate transaction fails but group byte bound isolates valid requests.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void duplicateTransactionFailsButGroupByteBoundIsolatesValidRequests() throws Exception {
         Path duplicatePath = temporaryDirectory.resolve("duplicate.zew");
@@ -568,6 +648,11 @@ final class SigningActiveWalTest {
         assertEquals(2, scan(bytesPath).size());
     }
 
+    /**
+     * Revision exhaustion fails without durability uncertainty.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void revisionExhaustionFailsWithoutDurabilityUncertainty() throws Exception {
         SigningActiveWal.Descriptor exhausted = new SigningActiveWal.Descriptor(
@@ -588,6 +673,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Cancellation does not cancel admitted mutation.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void cancellationDoesNotCancelAdmittedMutation() throws Exception {
         Path path = temporaryDirectory.resolve("cancel.zew");
@@ -605,6 +695,11 @@ final class SigningActiveWalTest {
         assertEquals(1, scan(path).size());
     }
 
+    /**
+     * Slow acknowledgement consumer cannot block later commit.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void slowAcknowledgementConsumerCannotBlockLaterCommit() throws Exception {
         Path path = temporaryDirectory.resolve("slow-consumer.zew");
@@ -636,6 +731,11 @@ final class SigningActiveWalTest {
         wal.close();
     }
 
+    /**
+     * Interrupted await restores interrupt status.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void interruptedAwaitRestoresInterruptStatus() throws Exception {
         SigningActiveWal.Acknowledgement acknowledgement = new SigningActiveWal.Acknowledgement();
@@ -648,6 +748,11 @@ final class SigningActiveWalTest {
         }
     }
 
+    /**
+     * Close drains admission is repeatable and stops new submission.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void closeDrainsAdmissionIsRepeatableAndStopsNewSubmission() throws Exception {
         Path path = temporaryDirectory.resolve("close.zew");
@@ -669,6 +774,11 @@ final class SigningActiveWalTest {
                 SigningWalFrameCodec.RecordType.INTENT, uuid(99), new byte[0]));
     }
 
+    /**
+     * Partial writes succeed and no progress requires recovery.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void partialWritesSucceedAndNoProgressRequiresRecovery() throws Exception {
         Path partialPath = temporaryDirectory.resolve("partial.zew");
@@ -710,6 +820,11 @@ final class SigningActiveWalTest {
         assertThrows(SigningActiveWal.RecoveryRequiredException.class, writeFailed::close);
     }
 
+    /**
+     * Force failure makes inflight uncertain and queued work not attempted.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void forceFailureMakesInflightUncertainAndQueuedWorkNotAttempted() throws Exception {
         Path path = temporaryDirectory.resolve("force-failure.zew");
@@ -750,6 +865,11 @@ final class SigningActiveWalTest {
         assertFalse(uncertain.getMessage().contains(uuid(1).toString()));
     }
 
+    /**
+     * Seek failure before append is unavailable not attempted.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void seekFailureBeforeAppendIsUnavailableNotAttempted() throws Exception {
         Path path = temporaryDirectory.resolve("seek-failure.zew");
@@ -769,6 +889,14 @@ final class SigningActiveWalTest {
         assertThrows(SigningActiveWal.RecoveryRequiredException.class, wal::close);
     }
 
+    /**
+     * Restart matrix publishes only complete groups and never reports false success.
+     *
+     * @param crashImage retained WAL image representing the selected crash boundary
+     * @param committedAfterRestart whether recovery is expected to retain the tested committed transaction
+     * @param expectedOutcome expected classification of attempted versus uncertain WAL durability
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @ParameterizedTest
     @MethodSource("restartCrashImages")
     void restartMatrixPublishesOnlyCompleteGroupsAndNeverReportsFalseSuccess(
@@ -805,6 +933,11 @@ final class SigningActiveWalTest {
         assertEquals(committedAfterRestart ? 2 : 1, scan(path).size());
     }
 
+    /**
+     * Reopen truncates only active tail and restores commit state.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void reopenTruncatesOnlyActiveTailAndRestoresCommitState() throws Exception {
         Path path = temporaryDirectory.resolve("reopen.zew");
@@ -830,6 +963,11 @@ final class SigningActiveWalTest {
         assertEquals(2, scan(path).size());
     }
 
+    /**
+     * Incompatible container and corrupt committed content fail closed.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void incompatibleContainerAndCorruptCommittedContentFailClosed() throws Exception {
         Path mismatch = temporaryDirectory.resolve("mismatch.zew");
@@ -851,6 +989,11 @@ final class SigningActiveWalTest {
                 new TestOperations(), FIXED_CLOCK, NO_WAIT));
     }
 
+    /**
+     * Creation forces file then directory and reports uncertain directory failure.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void creationForcesFileThenDirectoryAndReportsUncertainDirectoryFailure() throws Exception {
         Path path = temporaryDirectory.resolve("created.zew");
@@ -878,6 +1021,11 @@ final class SigningActiveWalTest {
                         FIXED_CLOCK, NO_WAIT));
     }
 
+    /**
+     * Exact headroom boundary rejects before assignment and never rotates admitted work.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void exactHeadroomBoundaryRejectsBeforeAssignmentAndNeverRotatesAdmittedWork()
             throws Exception {

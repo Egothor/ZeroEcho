@@ -55,10 +55,24 @@ import zeroecho.pki.api.PkiId;
  */
 public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
         List<PkiId> orderedCredentialIds, String pathCommitment) {
-    /** Maximum supported certificates in one explicit PKI path. */
+    /**
+     * Maximum supported certificates in one explicit PKI path.
+     */
     public static final int MAX_CERTIFICATES = 32;
 
-    /** Creates and validates an immutable chain path. */
+    /**
+     * Creates and validates an immutable chain path.
+     * @param pathId deterministic identity derived from {@code pathCommitment}
+     * @param authorityId logical authority that owns the path
+     * @param issuerId exact issuer generation at the path leaf
+     * @param orderedCredentialIds nonempty leaf-to-anchor credential identities
+     * @param pathCommitment lowercase SHA-256 commitment to authority, issuer, and order
+     * @throws NullPointerException if pathId, authorityId or issuerId is null
+     * @throws IllegalArgumentException if the ordered path is null, empty, contains null or duplicate
+     *     identities, exceeds MAX_CERTIFICATES, or its commitment or path identifier differs from the derived
+     *     value
+     * @throws IllegalStateException if SHA-256 is unavailable
+     */
     public IssuerChainPath {
         Objects.requireNonNull(pathId, "pathId");
         Objects.requireNonNull(authorityId, "authorityId");
@@ -85,6 +99,10 @@ public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
      * @param issuerId exact issuer generation at the path leaf
      * @param credentials nonempty leaf-to-anchor credential identities
      * @return validated path with deterministic identity and commitment
+     * @throws NullPointerException if authorityId, issuerId or credentials is null, or a credential entry is
+     *     null
+     * @throws IllegalArgumentException if the path is empty, contains duplicates or exceeds MAX_CERTIFICATES
+     * @throws IllegalStateException if SHA-256 is unavailable
      */
     public static IssuerChainPath create(PkiId authorityId, PkiId issuerId, List<PkiId> credentials) {
         String commitment = commitmentFor(authorityId, issuerId, credentials);
@@ -95,6 +113,7 @@ public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
      * Returns the canonical path identity for a path commitment.
      * @param commitment lowercase 64-hex-character SHA-256 commitment
      * @return deterministic path identifier
+     * @throws IllegalArgumentException if commitment is null or is not 64 lowercase hexadecimal characters
      */
     public static PkiId idFor(String commitment) {
         if (commitment == null || !commitment.matches("[0-9a-f]{64}")) {
@@ -109,6 +128,9 @@ public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
      * @param issuerId exact issuer-generation identifier
      * @param credentials exact ordered credential identifiers
      * @return lowercase SHA-256 hexadecimal commitment
+     * @throws NullPointerException if authorityId, issuerId or credentials is null, or a credential entry is
+     *     null
+     * @throws IllegalStateException if SHA-256 is unavailable
      */
     public static String commitmentFor(PkiId authorityId, PkiId issuerId, List<PkiId> credentials) {
         Objects.requireNonNull(authorityId, "authorityId");

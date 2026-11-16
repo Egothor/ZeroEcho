@@ -65,7 +65,16 @@ import zeroecho.pki.api.signing.SigningOperationState;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.spi.store.PkiStore;
 
+/**
+ * Contract and regression tests for semantic result projection.
+ */
 final class SemanticResultProjectionTest {
+    /**
+     * Status identity projection is pure exact and fails closed for malformed CRL.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void statusIdentityProjectionIsPureExactAndFailsClosedForMalformedCrl(@TempDir Path root) throws Exception {
         try (FilesystemPkiStore store = open(root);
@@ -109,6 +118,11 @@ final class SemanticResultProjectionTest {
         }
     }
 
+    /**
+     * Credential identity requires ca or issuance completion with DER.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void credentialIdentityRequiresCaOrIssuanceCompletionWithDer() throws Exception {
         byte[] bytes = { 1, 2, 3 };

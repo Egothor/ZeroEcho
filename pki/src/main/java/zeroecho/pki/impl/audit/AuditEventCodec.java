@@ -69,7 +69,9 @@ import zeroecho.pki.api.audit.Purpose;
  */
 final class AuditEventCodec {
 
-    /** Domain separation tag for the append-only audit hash chain. */
+    /**
+     * Domain separation tag for the append-only audit hash chain.
+     */
     private static final String INTEGRITY_DOMAIN = "ZEROECHO-AUDIT-CHAIN-V1";
     private static final int MINIMUM_CHAIN_PARTS = 4;
 
@@ -87,6 +89,11 @@ final class AuditEventCodec {
      * @param event        the decoded audit event payload
      */
     /* default */ record ChainedRecord(long sequence, String previousHash, String recordHash, AuditEvent event) {
+        /**
+         * Reports whether this record carries the versioned integrity-chain header.
+         *
+         * @return true for a nonnegative chain sequence; false for a legacy unchained record
+         */
         /* default */ boolean chained() {
             return sequence >= 0L;
         }
@@ -212,7 +219,6 @@ final class AuditEventCodec {
      * @return canonical bytes
      * @throws IllegalArgumentException if {@code event} is null
      */
-    @SuppressWarnings("PMD")
     /* default */ static byte[] canonicalBytes(AuditEvent event) {
         if (event == null) {
             throw new IllegalArgumentException("event must not be null");
@@ -249,7 +255,6 @@ final class AuditEventCodec {
      * @return encoded line
      * @throws IllegalArgumentException if {@code event} is null
      */
-    @SuppressWarnings("PMD")
     /* default */ static String encodeLine(AuditEvent event) {
         if (event == null) {
             throw new IllegalArgumentException("event must not be null");
@@ -355,7 +360,6 @@ final class AuditEventCodec {
         return x;
     }
 
-    @SuppressWarnings("PMD")
     private static String unescape(String s) {
         StringBuilder out = new StringBuilder(s.length());
         boolean esc = false;

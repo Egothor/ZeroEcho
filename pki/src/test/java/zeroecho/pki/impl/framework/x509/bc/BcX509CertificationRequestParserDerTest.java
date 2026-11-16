@@ -54,8 +54,16 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.request.CertificationRequest;
 
+/**
+ * Contract and regression tests for BC X.509 certification request parser DER.
+ */
 final class BcX509CertificationRequestParserDerTest {
 
+    /**
+     * Accepts one bounded challenge password without opening other attribute grammar.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptsOneBoundedChallengePasswordWithoutOpeningOtherAttributeGrammar() throws Exception {
         java.security.SecureRandom random = java.security.SecureRandom.getInstance("SHA1PRNG");
@@ -80,6 +88,11 @@ final class BcX509CertificationRequestParserDerTest {
         }
     }
 
+    /**
+     * Accepts only exact single CSR PEM object.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void acceptsOnlyExactSingleCsrPemObject() throws Exception {
         System.out.println("acceptsOnlyExactSingleCsrPemObject");
@@ -104,6 +117,11 @@ final class BcX509CertificationRequestParserDerTest {
         System.out.println("acceptsOnlyExactSingleCsrPemObject...ok");
     }
 
+    /**
+     * Rejects oversize and non canonical DER before PKCS#10 parsing.
+     *
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rejectsOversizeAndNonCanonicalDerBeforePkcs10Parsing() throws Exception {
         System.out.println("rejectsOversizeAndNonCanonicalDerBeforePkcs10Parsing");

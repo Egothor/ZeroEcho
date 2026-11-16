@@ -57,6 +57,7 @@ public record CredentialConfirmationProofAudience(String value) {
      *
      * @throws NullPointerException if {@code value} is {@code null}
      * @throws IllegalArgumentException if the value is not a canonical lowercase UUID-v4 URN
+     * @param value exact {@code urn:uuid:xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx}
      */
     public CredentialConfirmationProofAudience {
         Objects.requireNonNull(value, "value");
@@ -66,7 +67,10 @@ public record CredentialConfirmationProofAudience(String value) {
         }
     }
 
-    /** Returns the exact public audience value. */
+    /**
+     * Returns the exact public audience value.
+     * @return {@inheritDoc}
+     */
     @Override
     public String toString() {
         return value;

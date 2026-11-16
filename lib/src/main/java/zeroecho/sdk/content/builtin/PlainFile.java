@@ -68,6 +68,7 @@ public final class PlainFile implements PlainContent {
      * Constructs a PlainFile from the specified URL.
      *
      * @param location the file URL; must not be null
+     * @throws NullPointerException if {@code location} is null
      */
     public PlainFile(final URL location) {
         Objects.requireNonNull(location, "URL must not be null");

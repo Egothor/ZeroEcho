@@ -49,7 +49,9 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
 import zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Strict store- and cutoff-bound opaque pending-review cursor codec. */
+/**
+ * Strict store- and cutoff-bound opaque pending-review cursor codec.
+ */
 @SuppressWarnings({ "PMD.ExceptionAsFlowControl", "PMD.PreserveStackTrace" })
 final class CredentialConfirmationReviewCursorCodec {
     private static final int MAGIC = 0x5a454352; // ZECR
@@ -64,6 +66,18 @@ final class CredentialConfirmationReviewCursorCodec {
 
     private CredentialConfirmationReviewCursorCodec() { }
 
+    /**
+     * Encodes checksum-protected traversal state without granting review authority.
+     *
+     * @param storeId exact store identity for which the traversal was opened
+     * @param scopeBinding 32-byte binding to the original query scope
+     * @param cutoff captured traversal time cutoff
+     * @param reviewAt last traversed review timestamp
+     * @param credentialId last traversed exact credential identity
+     * @return canonical unpadded base64url review cursor
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if scope binding or cursor model constraints are violated
+     */
     /* default */ static CredentialConfirmationReviewCursor encode(MetadataStoreId storeId,
             byte[] scopeBinding, Instant cutoff, Instant reviewAt, PkiId credentialId) {
         byte[] identity = credentialId.value().getBytes(StandardCharsets.UTF_8);
@@ -81,6 +95,14 @@ final class CredentialConfirmationReviewCursorCodec {
                 .encodeToString(complete.array()));
     }
 
+    /**
+     * Decodes a canonical review cursor and verifies its checksum and bounded coordinates.
+     *
+     * @param cursor opaque canonical traversal token
+     * @return non-authoritative traversal state; callers must still check the store and scope binding
+     * @throws NullPointerException if the cursor is null
+     * @throws IllegalArgumentException if base64url syntax, checksum, version, bounds or coordinate encoding is invalid
+     */
     /* default */ static State decode(CredentialConfirmationReviewCursor cursor) {
         try {
             byte[] encoded = Base64.getUrlDecoder().decode(cursor.value());
@@ -172,13 +194,34 @@ final class CredentialConfirmationReviewCursorCodec {
         return new IllegalArgumentException("Confirmation review cursor is malformed");
     }
 
-    /** Decoded non-authoritative traversal state. */
+    /**
+     * Decoded non-authoritative traversal state.
+     * @param storeId exact authoritative metadata store identity
+     * @param scopeBinding digest binding the traversal to its original scope
+     * @param cutoff captured upper time boundary for this traversal
+     * @param reviewAt review-time position of the last traversed credential
+     * @param credentialId exact credential identity
+     */
     /* default */ record State(MetadataStoreId storeId, byte[] scopeBinding, Instant cutoff,
             Instant reviewAt, PkiId credentialId) {
+        /**
+         * Creates the decoded non-authoritative traversal state.
+         *
+         * @param storeId exact authoritative metadata store identity
+         * @param scopeBinding digest binding the traversal to its original scope
+         * @param cutoff captured upper time boundary for this traversal
+         * @param reviewAt review-time position of the last traversed credential
+         * @param credentialId exact credential identity
+         */
         State {
             scopeBinding = scopeBinding.clone();
         }
 
+        /**
+         * Returns an independent copy of the retained query-scope binding bytes.
+         *
+         * @return newly allocated array containing the digest binding the traversal to its original scope
+         */
         @Override
         public byte[] scopeBinding() {
             return scopeBinding.clone();

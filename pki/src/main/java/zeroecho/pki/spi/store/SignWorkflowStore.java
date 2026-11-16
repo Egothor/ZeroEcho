@@ -88,27 +88,46 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * @param fairnessAuthorityId opaque authority used by the scheduling policy
      */
     record SchedulingCoordinates(KeyRef keyRef, PkiId fairnessAuthorityId) {
-        /** Validates the required scheduling coordinates. */
+        /**
+         * Retains the two required opaque routing coordinates without resolving a key or authority.
+         *
+         * @param keyRef opaque signing-key route
+         * @param fairnessAuthorityId opaque authority used by the scheduling policy
+         * @throws NullPointerException if a required value is null
+         */
         public SchedulingCoordinates {
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(fairnessAuthorityId, "fairnessAuthorityId");
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public String toString() {
             return "SchedulingCoordinates[keyRef=<redacted>, fairnessAuthorityId=<redacted>]";
         }
     }
 
-    /** Durable classification for one deferred reconciliation retry. */
+    /**
+     * Durable classification for one deferred reconciliation retry.
+     */
     enum ReconciliationFailureClass {
-        /** Submission may have been accepted. */
+        /**
+         * Submission may have been accepted.
+         */
         SUBMISSION_UNCERTAIN,
-        /** Provider status could not be obtained. */
+        /**
+         * Provider status could not be obtained.
+         */
         STATUS_UNAVAILABLE,
-        /** Provider cancellation outcome is uncertain. */
+        /**
+         * Provider cancellation outcome is uncertain.
+         */
         CANCELLATION_UNCERTAIN,
-        /** Local durable reconciliation failed. */
+        /**
+         * Local durable reconciliation failed.
+         */
         LOCAL_FAILURE
     }
 
@@ -123,25 +142,46 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * </p>
      */
     enum State {
-        /** Durable intent exists but has not been submitted to the provider. */
+        /**
+         * Durable intent exists but has not been submitted to the provider.
+         */
         INTENT(10),
-        /** Provider submission has a stable downstream operation identifier. */
+        /**
+         * Provider submission has a stable downstream operation identifier.
+         */
         DISPATCHED(20),
-        /** Provider completed successfully with a trustworthy result. */
+        /**
+         * Provider completed successfully with a trustworthy result.
+         */
         SUCCEEDED(40),
-        /** Provider or local processing reached a terminal failure. */
+        /**
+         * Provider or local processing reached a terminal failure.
+         */
         FAILED(50),
-        /** Provider confirmed cancellation. */
+        /**
+         * Provider confirmed cancellation.
+         */
         CANCELLED(60),
-        /** Terminal evidence is retained without live content ownership. */
+        /**
+         * Terminal evidence is retained without live content ownership.
+         */
         RETIRED(70),
-        /** The store-authoritative signing deadline elapsed. */
+        /**
+         * The store-authoritative signing deadline elapsed.
+         */
         EXPIRED(80),
-        /** Cancellation is durably requested but provider outcome is not final. */
+        /**
+         * Cancellation is durably requested but provider outcome is not final.
+         */
         CANCELLING(30);
 
         private final int persistentCode;
 
+        /**
+         * Associates the enum constant with its explicit persisted discriminator.
+         *
+         * @param persistentCode stable current-format state code; independent of enum declaration order
+         */
         State(int persistentCode) {
             this.persistentCode = persistentCode;
         }
@@ -177,25 +217,43 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         }
     }
 
-    /** Atomic durable acceptance disposition. */
+    /**
+     * Atomic durable acceptance disposition.
+     */
     enum AcceptanceResult {
-        /** A new envelope and initial state were committed. */
+        /**
+         * A new envelope and initial state were committed.
+         */
         ACCEPTED,
-        /** The exact immutable acceptance was already committed. */
+        /**
+         * The exact immutable acceptance was already committed.
+         */
         ATTACHED_EXISTING,
-        /** The operation or candidate is committed to different immutable input. */
+        /**
+         * The operation or candidate is committed to different immutable input.
+         */
         CONFLICT,
-        /** No durable acceptance occurred because the active-work bound was full. */
+        /**
+         * No durable acceptance occurred because the active-work bound was full.
+         */
         CAPACITY_REJECTED
     }
 
-    /** Authoritative resolution of a potentially uncertain acceptance commit. */
+    /**
+     * Authoritative resolution of a potentially uncertain acceptance commit.
+     */
     enum AcceptanceResolution {
-        /** The exact acceptance commitment is durably present. */
+        /**
+         * The exact acceptance commitment is durably present.
+         */
         MATCHED,
-        /** The operation identifier names different immutable input. */
+        /**
+         * The operation identifier names different immutable input.
+         */
         CONFLICT,
-        /** No acceptance exists for the identifier. */
+        /**
+         * No acceptance exists for the identifier.
+         */
         NOT_ACCEPTED
     }
 
@@ -219,8 +277,10 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
 
         /**
          * Restores a canonical current-version commitment.
-         * @param encoded exact {@code accept-sign:v3:} or dual {@code accept-sign:v4:} representation with a lowercase SHA-256 digest
+         * @param encoded exact {@code accept-sign:v3:} or dual {@code accept-sign:v4:} representation with a
+         *     lowercase SHA-256 digest
          * @return immutable parsed commitment
+         * @throws NullPointerException if the representation is null
          * @throws IllegalArgumentException if the representation is not canonical
          */
         public static AcceptanceCommitment parse(String encoded) {
@@ -231,7 +291,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             return new AcceptanceCommitment(HexFormat.of().parseHex(exact.substring(PREFIX.length())), exact.charAt(13) - '0');
         }
 
-        /** {@return the versioned persistence representation} */
+        /**
+         * Returns the versioned persistence representation.
+         *
+         * @return the versioned persistence representation
+         */
         public String encoded() {
             return "accept-sign:v" + version + ":" + HexFormat.of().formatHex(digest);
         }
@@ -239,20 +303,29 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         /**
          * Compares digest bytes in constant time.
          * @param other another commitment, or null
-         * @return true if the non-null commitment has identical digest bytes
+         * @return true if the non-null commitment has the same version and identical digest bytes
          */
         public boolean matches(AcceptanceCommitment other) {
             return other != null && version == other.version && MessageDigest.isEqual(digest, other.digest);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public boolean equals(Object other) {
             return other instanceof AcceptanceCommitment commitment && matches(commitment);
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public int hashCode() {
             return 31 * Arrays.hashCode(digest) + version;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() {
             return "AcceptanceCommitment[redacted]";
         }
@@ -268,7 +341,17 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record OuterCommand(DomainContinuationStore.Kind kind, String correlationId,
             EncodedObject command, String commandCommitment) {
-        /** Validates and snapshots the bounded outer command. */
+        /**
+         * Copies the encoded outer command and checks bounded correlation and commitment syntax.
+         *
+         * @param kind outer domain kind
+         * @param correlationId mandatory bounded idempotency identity
+         * @param command exact bounded command
+         * @param commandCommitment canonical command commitment
+         * @throws NullPointerException if a required value is null
+         * @throws IllegalArgumentException if the correlation identifier, command length (1 through 1048576
+         *     bytes) or domain:v1 commitment syntax is invalid
+         */
         public OuterCommand {
             Objects.requireNonNull(kind, "kind");
             if (correlationId == null || !correlationId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
@@ -290,24 +373,47 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * Provider success in {@link #CA_PROOF} cannot mean parent signing success.
      */
     enum Stage {
-        /** One ordinary signing step, including root self-signatures. */
+        /**
+         * One ordinary signing step, including root self-signatures.
+         */
         SINGLE(10),
-        /** The distinct subject-key proof provider step is current. */
+        /**
+         * The distinct subject-key proof provider step is current.
+         */
         CA_PROOF(20),
-        /** A retained proof signature awaits local cryptographic verification. */
+        /**
+         * A retained proof signature awaits local cryptographic verification.
+         */
         CA_PROOF_VERIFYING(30),
-        /** Proof verification succeeded; certificate dispatch has not started. */
+        /**
+         * Proof verification succeeded; certificate dispatch has not started.
+         */
         CA_CERTIFICATE_READY(40),
-        /** The parent's final certificate provider step is current. */
+        /**
+         * The parent's final certificate provider step is current.
+         */
         CA_CERTIFICATE(50),
-        /** Alternative subject-key proof dispatch/reconciliation. */
+        /**
+         * Alternative subject-key proof dispatch/reconciliation.
+         */
         CA_ALT_PROOF(60),
-        /** Alternative subject-key proof awaits local verification. */
+        /**
+         * Alternative subject-key proof awaits local verification.
+         */
         CA_ALT_PROOF_VERIFYING(70);
 
         private final int persistentCode;
+        /**
+         * Associates the enum constant with its explicit persisted discriminator.
+         *
+         * @param persistentCode stable current-format signing stage code; independent of enum declaration order
+         */
         Stage(int persistentCode) { this.persistentCode = persistentCode; }
-        /** {@return the stable current-format stage code} */
+        /**
+         * Returns the stable current-format stage code.
+         *
+         * @return the stable current-format stage code
+         */
         public int persistentCode() { return persistentCode; }
         /**
          * Restores a stage.
@@ -327,14 +433,26 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                 default -> throw new IllegalArgumentException("Unknown signing stage");
             };
         }
-        /** {@return whether scheduling still uses the proof key} */
+        /**
+         * Returns whether scheduling still uses the proof key.
+         *
+         * @return whether scheduling still uses the proof key
+         */
         public boolean usesProofKey() { return this == CA_PROOF || this == CA_PROOF_VERIFYING || this == CA_ALT_PROOF || this == CA_ALT_PROOF_VERIFYING; }
     }
 
-    /** Disjoint ownership of the CA subject keys proven by internal steps. */
+    /**
+     * Disjoint ownership of the CA subject keys proven by internal steps.
+     */
     enum SubjectKeyRole {
-        /** Native subject key possession. */ PRIMARY,
-        /** Alternative subject key possession; never the issuer's alternative key. */ ALTERNATIVE
+        /**
+         * Native subject key possession.
+         */
+        PRIMARY,
+        /**
+         * Alternative subject key possession; never the issuer's alternative key.
+         */
+        ALTERNATIVE
     }
 
     /**
@@ -355,22 +473,34 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record CaSubjectProofStep(PkiId operationId, KeyRef subjectKeyRef,
             String algorithmId, DurableContentReference challenge, SubjectKeyRole role) {
-        /** Preserves the primary-only descriptor.
+        /**
+         * Preserves the primary-only descriptor.
          * @param operationId distinct provider-step identity
          * @param subjectKeyRef managed subject key reference
          * @param algorithmId exact proof signature algorithm
          * @param challenge sealed operation-bound proof challenge
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         public CaSubjectProofStep(PkiId operationId, KeyRef subjectKeyRef, String algorithmId, DurableContentReference challenge) {
             this(operationId, subjectKeyRef, algorithmId, challenge, SubjectKeyRole.PRIMARY);
         }
-        /** Existing managed-proof challenge bound: command + SPKI + framing. */
+        /**
+         * Existing managed-proof challenge bound: command + SPKI + framing.
+         */
         public static final int MAXIMUM_CHALLENGE_BYTES = 2 * 1_048_576 + 8192;
 
         /**
-         * Validates structural bounds without reading content or resolving keys.
-         * @throws NullPointerException if a coordinate is null
-         * @throws IllegalArgumentException if identity, algorithm or challenge shape is invalid
+         * Checks descriptor bounds and canonical provider-step identity without reading its challenge.
+         *
+         * @param operationId distinct canonical provider-step identifier
+         * @param subjectKeyRef exact subject key, at most 1 MiB of strict UTF-8
+         * @param algorithmId exact nonblank algorithm text, at most 8,192 strict UTF-8 bytes
+         * @param challenge staged binary operation challenge, validated by its store later
+         * @param role exact subject key ownership role
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if the identifier, strict UTF-8 key/algorithm bounds, challenge
+         *     encoding/lifecycle/length or digest shape is invalid
          */
         public CaSubjectProofStep {
             Objects.requireNonNull(role, "role");
@@ -404,7 +534,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * Timestamp admission and accepted-deadline validation belong to the store.
          * @param parentId canonical parent signing identifier
          * @throws NullPointerException if the parent is null
-         * @throws IllegalArgumentException if it equals this step or has another namespace
+         * @throws IllegalArgumentException if the parent is noncanonical, equals this step or has another namespace
          */
         public void requireParent(PkiId parentId) {
             SigningSubmissionId parent = requireCanonicalOperation(Objects.requireNonNull(parentId, "parentId"));
@@ -425,6 +555,9 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             return parsed;
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override public String toString() { return "CaSubjectProofStep[redacted]"; }
     }
 
@@ -442,10 +575,14 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
     record CaSubjectProofOutcome(ObservationState disposition, DetailCode detailCode,
             Optional<Instant> providerUpdatedAt) {
         /**
-         * Requires terminal evidence and an existing provider-compatible detail.
-         * @throws NullPointerException if a component is null
-         * @throws IllegalArgumentException if the disposition is nonterminal, detail mismatches,
-         *         or success/cancellation lacks its provider timestamp
+         * Checks terminal provider disposition, finite detail compatibility and required timestamps.
+         *
+         * @param disposition terminal provider observation disposition
+         * @param detailCode matching finite safe provider detail
+         * @param providerUpdatedAt required provider timestamp for success or cancellation;
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if the disposition is nonterminal, detail mismatches or
+         *     successful/cancelled evidence lacks its timestamp
          */
         public CaSubjectProofOutcome {
             Objects.requireNonNull(disposition, "disposition");
@@ -472,7 +609,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
     }
 
     /**
-     * Both immutable scheduling coordinates reserved at acceptance. Only the
+     * Immutable certificate and optional primary/alternative scheduling coordinates
+     * reserved at acceptance. Only the
      * selected coordinate is placed in the due index; switching stage introduces
      * no new identity reservation.
      * @param certificate final certificate/ordinary coordinate
@@ -481,14 +619,23 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record SchedulingPlan(SchedulingCoordinates certificate, Optional<SchedulingCoordinates> proof,
             Optional<SchedulingCoordinates> alternativeProof) {
-        /** Preserves ordinary and single-proof scheduling construction.
+        /**
+         * Preserves ordinary and single-proof scheduling construction.
          * @param certificate final certificate signing coordinate
          * @param proof optional primary subject-proof coordinate
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
          */
         public SchedulingPlan(SchedulingCoordinates certificate, Optional<SchedulingCoordinates> proof) {
             this(certificate, proof, Optional.empty());
         }
-        /** Validates both immutable coordinates. */
+        /**
+         * Retains certificate and optional proof routes without reserving identities or selecting a stage.
+         *
+         * @param certificate final certificate/ordinary coordinate
+         * @param proof optional primary subject-proof coordinate
+         * @param alternativeProof optional alternative subject-proof coordinate
+         * @throws NullPointerException if a required component or optional container is null
+         */
         public SchedulingPlan {
             Objects.requireNonNull(certificate, "certificate");
             Objects.requireNonNull(proof, "proof");
@@ -497,7 +644,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         /**
          * Constructs an immutable plan from accepted input.
          * @param envelope immutable accepted input
-         * @return certificate and optional proof scheduling coordinates
+         * @return certificate and optional primary/alternative proof scheduling coordinates
+         * @throws NullPointerException if the envelope is null
          */
         public static SchedulingPlan from(AcceptanceEnvelope envelope) {
             return new SchedulingPlan(new SchedulingCoordinates(envelope.keyRef(), envelope.fairnessAuthorityId()),
@@ -508,6 +656,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * Selects a pre-reserved coordinate.
          * @param stage current durable signing stage
          * @return scheduling coordinate for the selected provider step
+         * @throws NullPointerException if the stage is null
          * @throws IllegalArgumentException if a proof stage lacks its reserved coordinate
          */
         public SchedulingCoordinates forStage(Stage stage) {
@@ -518,15 +667,30 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         }
     }
 
-    /** Internal hybrid CRL adoption phase; terminal status belongs to the parent domain. */
+    /**
+     * Internal hybrid CRL adoption phase; terminal status belongs to the parent domain.
+     */
     enum CrlHybridPhase {
-        /** No native child has been adopted; alternative signing may still be pending. */
+        /**
+         * No native child has been adopted; alternative signing may still be pending.
+         */
         AWAITING_ALT(10),
-        /** One exact native child and its content are durably linked. */
+        /**
+         * One exact native child and its content are durably linked.
+         */
         NATIVE_LINKED(20);
         private final int code;
+        /**
+         * Associates the enum constant with its explicit persisted discriminator.
+         *
+         * @param code stable internal hybrid CRL phase code; independent of enum declaration order
+         */
         CrlHybridPhase(int code) { this.code = code; }
-        /** @return stable private metadata code */
+        /**
+         * Returns stable private metadata code.
+         *
+         * @return stable private metadata code
+         */
         public int persistentCode() { return code; }
         /**
          * Restores one explicitly supported phase.
@@ -543,18 +707,33 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         }
     }
 
-    /** Immutable execution policy selected at acceptance. */
+    /**
+     * Immutable execution policy selected at acceptance.
+     */
     enum Mode {
-        /** Ordinary durable signing with the existing reconciliation lifecycle. */
+        /**
+         * Ordinary durable signing with the existing reconciliation lifecycle.
+         */
         NORMAL(10),
-        /** Raw signing with one durable initial dispatch and observation budget. */
+        /**
+         * Raw signing with one durable initial dispatch and observation budget.
+         */
         BOUNDED_OBSERVATION(20);
 
         private final int persistentCode;
 
+        /**
+         * Associates the enum constant with its explicit persisted discriminator.
+         *
+         * @param persistentCode stable current-format execution mode code; independent of enum declaration order
+         */
         Mode(int persistentCode) { this.persistentCode = persistentCode; }
 
-        /** {@return the stable format code, independent of enum order} */
+        /**
+         * Returns the stable format code, independent of enum order.
+         *
+         * @return the stable format code, independent of enum order
+         */
         public int persistentCode() { return persistentCode; }
 
         /**
@@ -572,26 +751,49 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         }
     }
 
-    /** Persisted budget of the bounded initial attempt, separate from cleanup retries. */
+    /**
+     * Persisted budget of the bounded initial attempt, separate from cleanup retries.
+     */
     enum InitialAttemptPhase {
-        /** Ordinary signing has no bounded initial attempt. */
+        /**
+         * Ordinary signing has no bounded initial attempt.
+         */
         NOT_APPLICABLE(10),
-        /** The initial dispatch has not yet returned a durable pending checkpoint. */
+        /**
+         * The initial dispatch has not yet returned a durable pending checkpoint.
+         */
         DISPATCH_OWED(20),
-        /** Dispatch returned pending and the sole observation is ready to claim. */
+        /**
+         * Dispatch returned pending and the sole observation is ready to claim.
+         */
         OBSERVATION_OWED(30),
-        /** The observation budget was consumed before invoking the provider. */
+        /**
+         * The observation budget was consumed before invoking the provider.
+         */
         OBSERVATION_CONSUMED(40),
-        /** A provider observation returned, including a pending result, or signing terminated. */
+        /**
+         * A provider observation returned, including a pending result, or signing terminated.
+         */
         COMPLETED(50),
-        /** The initial attempt failed; ordinary durable cleanup remains eligible. */
+        /**
+         * The initial attempt failed; ordinary durable cleanup remains eligible.
+         */
         FAILED(60);
 
         private final int persistentCode;
 
+        /**
+         * Associates the enum constant with its explicit persisted discriminator.
+         *
+         * @param persistentCode stable current-format initial-attempt phase code; independent of enum declaration order
+         */
         InitialAttemptPhase(int persistentCode) { this.persistentCode = persistentCode; }
 
-        /** {@return the stable format code, independent of enum order} */
+        /**
+         * Returns the stable format code, independent of enum order.
+         *
+         * @return the stable format code, independent of enum order
+         */
         public int persistentCode() { return persistentCode; }
 
         /**
@@ -612,12 +814,20 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             };
         }
 
-        /** {@return whether a bounded initial attempt has a retained outcome} */
+        /**
+         * Returns whether a bounded initial attempt has a retained outcome.
+         *
+         * @return whether a bounded initial attempt has a retained outcome
+         */
         public boolean finished() { return this == COMPLETED || this == FAILED; }
     }
 
     /**
      * Transport-neutral immutable input consumed by one atomic acceptance.
+     * Construction retains immutable value/reference objects and performs structural
+     * checks only. It does not read candidate bytes, establish caller authority,
+     * resolve canonical algorithms or confirm store capacity/durable admission.
+     * Content custody changes at the store call, not record construction.
      * Custody of {@code candidate} transfers to the store when
      * {@link #acceptSign(AcceptanceCommand)} is invoked.
      *
@@ -642,7 +852,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId,
             String algorithmId, Encoding signatureEncoding, Instant createdAt,
             Instant deadline, DurableContentReference candidate, Optional<OuterCommand> outer, Mode mode, Optional<CaSubjectProofStep> proofStep, Optional<CaSubjectProofStep> alternativeProofStep) {
-        /** Preserves the existing single-proof acceptance constructor.
+        /**
+         * Preserves the existing single-proof acceptance constructor.
          * @param operationId canonical accepted operation identity
          * @param providerNamespace accepted signing provider namespace
          * @param providerConfigurationCommitment immutable provider configuration commitment
@@ -657,6 +868,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param outer optional paired domain command
          * @param mode immutable signing execution policy
          * @param proofStep optional primary subject-proof descriptor
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         public AcceptanceCommand(PkiId operationId, String providerNamespace, ConfigurationCommitment providerConfigurationCommitment,
                 AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId, String algorithmId, Encoding signatureEncoding,
@@ -665,7 +878,28 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             this(operationId, providerNamespace, providerConfigurationCommitment, accessContext, keyRef, fairnessAuthorityId,
                     algorithmId, signatureEncoding, createdAt, deadline, candidate, outer, mode, proofStep, Optional.empty());
         }
-        /** Validates immutable command structure and current component bounds. */
+        /**
+         * Checks composite acceptance shape without adopting content or performing durable admission.
+         *
+         * @param operationId stable operation identifier
+         * @param providerNamespace exact provider namespace
+         * @param providerConfigurationCommitment exact provider configuration
+         * @param accessContext exact trusted access context
+         * @param keyRef exact trusted signing key reference
+         * @param fairnessAuthorityId server-derived fairness authority
+         * @param algorithmId canonical signature algorithm
+         * @param signatureEncoding requested signature encoding
+         * @param createdAt identifier creation time
+         * @param deadline absolute signing deadline
+         * @param candidate sealed candidate content
+         * @param outer optional paired outer command
+         * @param mode immutable execution policy; bounded observation requires no outer command
+         * @param proofStep optional internal CA proof descriptor, ordinary/domain producers otherwise empty
+         * @param alternativeProofStep optional alternative subject-proof descriptor, requiring a primary descriptor
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if proof roles/identities/content references, outer-kind/mode,
+         *     encodings, nonblank namespace/algorithm or deadline ordering are inconsistent
+         */
         public AcceptanceCommand {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(providerNamespace, "providerNamespace");
@@ -718,14 +952,27 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             }
         }
 
-        /** {@return the canonical streaming v3 single-proof or v4 dual-proof commitment} */
+        /**
+         * Computes the complete immutable command commitment without reading candidate content.
+         *
+         * <p>The canonical stream uses version three for ordinary/single-proof input
+         * and version four for dual-proof input. It binds exact content references,
+         * trusted context and provider configuration, not a new authorization decision.
+         * Each length-prefixed text or byte component is bounded by 1048576 bytes.</p>
+         *
+         * @return canonical v3 or v4 SHA-256 commitment
+         * @throws IllegalArgumentException if a committed component exceeds its encoded bound
+         * @throws IllegalStateException if SHA-256 or in-memory encoding is unavailable
+         */
         public AcceptanceCommitment commitment() {
             return AcceptanceCommitments.compute(this);
         }
     }
 
     /**
-     * Once-written immutable signing envelope. It contains no mutable lifecycle
+     * Once-written immutable signing envelope. Constructing this value checks the
+     * supplied command commitment but does not prove that a store accepted it.
+     * It contains no mutable lifecycle
      * fields and is not retained in the active projection. The immutable mode
      * participates in the commitment; bounded observation cannot have an outer command.
      *
@@ -751,7 +998,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId,
             String algorithmId, Encoding signatureEncoding, Instant createdAt,
             Instant deadline, DurableContentReference candidate, Optional<OuterCommand> outer, Mode mode, Optional<CaSubjectProofStep> proofStep, Optional<CaSubjectProofStep> alternativeProofStep) {
-        /** Preserves the existing single-proof acceptance constructor.
+        /**
+         * Preserves the existing single-proof acceptance constructor.
          * @param operationId canonical accepted operation identity
          * @param acceptanceCommitment canonical commitment of the immutable accepted input
          * @param providerNamespace accepted signing provider namespace
@@ -767,6 +1015,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param outer optional paired domain command
          * @param mode immutable signing execution policy
          * @param proofStep optional primary subject-proof descriptor
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         public AcceptanceEnvelope(PkiId operationId, AcceptanceCommitment acceptanceCommitment, String providerNamespace, ConfigurationCommitment providerConfigurationCommitment,
                 AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId, String algorithmId, Encoding signatureEncoding,
@@ -775,7 +1025,29 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             this(operationId, acceptanceCommitment, providerNamespace, providerConfigurationCommitment, accessContext, keyRef, fairnessAuthorityId,
                     algorithmId, signatureEncoding, createdAt, deadline, candidate, outer, mode, proofStep, Optional.empty());
         }
-        /** Validates one exact immutable envelope. */
+        /**
+         * Reconstructs the command and requires an exact matching versioned acceptance commitment.
+         *
+         * @param operationId canonical accepted signing operation identity
+         * @param acceptanceCommitment verified commitment to the complete immutable acceptance command
+         * @param providerNamespace exact provider namespace
+         * @param providerConfigurationCommitment exact accepted provider configuration commitment
+         * @param accessContext trusted access context retained at acceptance
+         * @param keyRef accepted signing key reference
+         * @param fairnessAuthorityId server-derived authority used for fair scheduling
+         * @param algorithmId canonical signature algorithm identity
+         * @param signatureEncoding requested signature encoding
+         * @param createdAt operation identifier creation time
+         * @param deadline absolute accepted signing deadline
+         * @param candidate sealed staged content retained by this workflow
+         * @param outer optional paired domain continuation command
+         * @param mode immutable execution policy selected at acceptance
+         * @param alternativeProofStep optional independent alternative subject proof descriptor
+         * @param proofStep optional descriptor of the parent-owned CA proof step
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if command shape or computed commitment differs, or a committed
+         *     component exceeds 1048576 encoded bytes
+         */
         public AcceptanceEnvelope {
             Objects.requireNonNull(acceptanceCommitment, "acceptanceCommitment");
             AcceptanceCommand command = new AcceptanceCommand(operationId, providerNamespace,
@@ -790,6 +1062,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * Creates the immutable envelope for a validated acceptance command.
          * @param command non-null accepted input
          * @return immutable envelope with its computed commitment
+         * @throws NullPointerException if the command is null
+         * @throws IllegalArgumentException if a committed component exceeds its encoded bound
          */
         public static AcceptanceEnvelope from(AcceptanceCommand command) {
             AcceptanceCommand exact = Objects.requireNonNull(command, "command");
@@ -812,7 +1086,17 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record CandidateBinding(String candidateId, PkiId operationId, long length,
             String sha256) {
-        /** Validates one canonical binding. */
+        /**
+         * Checks binding syntax without reading candidate content or establishing exclusive ownership.
+         *
+         * @param candidateId sealed content identity
+         * @param operationId accepted operation identity
+         * @param length exact candidate length
+         * @param sha256 canonical candidate digest
+         * @throws NullPointerException if a required value is null
+         * @throws IllegalArgumentException if the candidate identifier is blank, length is negative or the
+         *     digest is not 64 lowercase hexadecimal characters
+         */
         public CandidateBinding {
             Objects.requireNonNull(candidateId, "candidateId");
             Objects.requireNonNull(operationId, "operationId");
@@ -827,7 +1111,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
     /**
      * Separately replaced mutable signing state. The initial-attempt phase retains
      * its outcome independently of retry metadata and is checked against the
-     * accepted mode when assembling a workflow.
+     * accepted mode when assembling a workflow. The record itself is immutable:
+     * "mutable" refers to separately replaced durable state, not writable fields.
+     * A present encoded result is independently copied; timestamps, descriptors and
+     * optional wrappers retain immutable value references. Structural construction
+     * does not verify a proof signature or grant transition authority.
      *
      * @param operationId canonical accepted signing operation identity
      * @param state durable signing lifecycle state
@@ -854,7 +1142,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             Optional<ReconciliationFailureClass> reconciliationFailureClass,
             InitialAttemptPhase initialAttemptPhase, Stage stage, Optional<CaSubjectProofOutcome> proofOutcome,
             Optional<CaSubjectProofOutcome> alternativeProofOutcome) {
-        /** Preserves single-proof mutable state construction.
+        /**
+         * Preserves single-proof mutable state construction.
          * @param operationId canonical accepted operation identity
          * @param state durable signing lifecycle state
          * @param revision nonnegative compare-and-set revision
@@ -870,6 +1159,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param initialAttemptPhase bounded-observation execution phase
          * @param stage durable signing or verification stage
          * @param proofOutcome optional retained primary subject-proof outcome
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         public MutableState(PkiId operationId, State state, long revision, long fence, Optional<Instant> leaseUntil,
                 Optional<PkiId> downstreamOperationId, Optional<String> detailCode, Optional<EncodedObject> result,
@@ -879,7 +1170,29 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             this(operationId, state, revision, fence, leaseUntil, downstreamOperationId, detailCode, result, providerUpdatedAt,
                     failureCount, nextEligibleAt, reconciliationFailureClass, initialAttemptPhase, stage, proofOutcome, Optional.empty());
         }
-        /** Validates lifecycle, fencing and retry metadata. */
+        /**
+         * Copies a present signature and checks revision, fence and retry metadata without performing a transition.
+         *
+         * @param operationId canonical accepted signing operation identity
+         * @param state durable signing lifecycle state
+         * @param revision nonnegative compare-and-set revision
+         * @param fence nonnegative fencing token
+         * @param leaseUntil optional expiration of the current provider claim
+         * @param downstreamOperationId optional current provider-side operation identity
+         * @param detailCode optional finite safe status detail
+         * @param result optional retained signature, defensively copied
+         * @param providerUpdatedAt optional timestamp of the last provider observation
+         * @param failureCount nonnegative reconciliation failure count
+         * @param nextEligibleAt optional earliest reconciliation retry time
+         * @param reconciliationFailureClass optional classification accompanying the retry time
+         * @param initialAttemptPhase retained bounded-observation attempt phase
+         * @param stage current provider or proof-verification stage
+         * @param proofOutcome optional retained terminal primary CA proof evidence
+         * @param alternativeProofOutcome optional retained terminal alternative CA proof evidence
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if revision/fence/counts or lifecycle/retry classifications are
+         *     inconsistent
+         */
         public MutableState {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(state, "state");
@@ -924,7 +1237,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param operationId accepted operation identity
          * @param mode immutable accepted execution policy
          * @param stage SINGLE or CA_PROOF according to the accepted descriptor
-         * @return initial immutable mutable-state value
+         * @return initial immutable state snapshot; no durable intent is written
+         * @throws NullPointerException if the operation, mode or stage is null
          */
         public static MutableState intent(PkiId operationId, Mode mode, Stage stage) {
             Objects.requireNonNull(mode, "mode");
@@ -943,7 +1257,16 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * @param mutableState current mutable state with the same operation identity
      */
     record Workflow(AcceptanceEnvelope envelope, MutableState mutableState) { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
-        /** Validates shared operation identity and accepted-mode/phase invariants. */
+        /**
+         * Checks shared identity and accepted-mode/proof-stage invariants without verifying cryptographic
+         * signatures.
+         *
+         * @param envelope immutable accepted signing envelope
+         * @param mutableState current mutable state with the same operation identity
+         * @throws NullPointerException if a required value is null
+         * @throws IllegalArgumentException if operation identity, mode/attempt phase or primary/alternative
+         *     proof progression is inconsistent
+         */
         public Workflow {
             Objects.requireNonNull(envelope, "envelope");
             Objects.requireNonNull(mutableState, "mutableState");
@@ -1055,17 +1378,41 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             }
         }
 
-        /** {@return the immutable accepted execution policy} */
+        /**
+         * Returns the immutable accepted execution policy.
+         *
+         * @return the immutable accepted execution policy
+         */
         public Mode mode() { return envelope.mode(); }
-        /** {@return the durable provider/local-verification stage} */
+        /**
+         * Returns the durable provider/local-verification stage.
+         *
+         * @return the durable provider/local-verification stage
+         */
         public Stage stage() { return mutableState.stage(); }
-        /** {@return small retained proof evidence, never its signature} */
+        /**
+         * Returns small retained proof evidence, never its signature.
+         *
+         * @return small retained proof evidence, never its signature
+         */
         public Optional<CaSubjectProofOutcome> proofOutcome() { return mutableState.proofOutcome(); }
-        /** @return immutable alternative subject proof descriptor, if required */
+        /**
+         * Returns immutable alternative subject proof descriptor, if required.
+         *
+         * @return immutable alternative subject proof descriptor, if required
+         */
         public Optional<CaSubjectProofStep> alternativeProofStep() { return envelope.alternativeProofStep(); }
-        /** @return retained alternative subject proof outcome */
+        /**
+         * Returns retained alternative subject proof outcome.
+         *
+         * @return retained alternative subject proof outcome
+         */
         public Optional<CaSubjectProofOutcome> alternativeProofOutcome() { return mutableState.alternativeProofOutcome(); }
-        /** {@return the exact immutable references owned by this one parent} */
+        /**
+         * Returns the exact immutable references owned by this one parent.
+         *
+         * @return the exact immutable references owned by this one parent
+         */
         public List<DurableContentReference> candidates() {
             if (envelope.alternativeProofStep().isPresent()) {
                 return List.of(envelope.candidate(), envelope.proofStep().orElseThrow().challenge(),
@@ -1074,56 +1421,148 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             return envelope.proofStep().map(proof -> List.of(envelope.candidate(), proof.challenge()))
                     .orElseGet(() -> List.of(envelope.candidate()));
         }
-        /** {@return the current stage's exact provider identity} */
+        /**
+         * Returns the current stage's exact provider identity.
+         *
+         * @return the current stage's exact provider identity
+         */
         public PkiId providerOperationId() {
             return stage().usesProofKey() ? activeProofStep().orElseThrow().operationId() : operationId();
         }
-        /** @return the immutable proof descriptor selected by the current proof stage */
+        /**
+         * Selects the alternative descriptor in an alternative-proof stage, otherwise the primary descriptor.
+         *
+         * <p>A primary descriptor can therefore be returned after proof completion
+         * in certificate stages. Use {@link #stage()} to decide whether proof-key
+         * dispatch or local verification is currently required.</p>
+         *
+         * @return retained primary/alternative descriptor, empty for ordinary single-step signing
+         */
         public Optional<CaSubjectProofStep> activeProofStep() {
             return stage() == Stage.CA_ALT_PROOF || stage() == Stage.CA_ALT_PROOF_VERIFYING
                     ? envelope.alternativeProofStep() : envelope.proofStep();
         }
-        /** {@return the retained bounded initial-attempt phase} */
+        /**
+         * Returns the retained bounded initial-attempt phase.
+         *
+         * @return the retained bounded initial-attempt phase
+         */
         public InitialAttemptPhase initialAttemptPhase() { return mutableState.initialAttemptPhase(); }
-        /** {@return the canonical accepted operation identity} */
+        /**
+         * Returns the canonical accepted operation identity.
+         *
+         * @return the canonical accepted operation identity
+         */
         public PkiId operationId() { return envelope.operationId(); }
-        /** {@return the accepted operation identity, also used as its submission identity} */
+        /**
+         * Returns the accepted operation identity, also used as its submission identity.
+         *
+         * @return the accepted operation identity, also used as its submission identity
+         */
         public PkiId submissionId() { return envelope.operationId(); }
-        /** {@return the accepted provider namespace} */
+        /**
+         * Returns the accepted provider namespace.
+         *
+         * @return the accepted provider namespace
+         */
         public String namespace() { return envelope.providerNamespace(); }
-        /** {@return the encoded acceptance commitment} */
+        /**
+         * Returns the encoded acceptance commitment.
+         *
+         * @return the encoded acceptance commitment
+         */
         public String fingerprint() { return envelope.acceptanceCommitment().encoded(); }
-        /** {@return the accepted provider configuration commitment} */
+        /**
+         * Returns the accepted provider configuration commitment.
+         *
+         * @return the accepted provider configuration commitment
+         */
         public ConfigurationCommitment configurationCommitment() {
             return envelope.providerConfigurationCommitment();
         }
-        /** {@return the trusted principal retained at acceptance} */
+        /**
+         * Returns the trusted principal retained at acceptance.
+         *
+         * @return the trusted principal retained at acceptance
+         */
         public Principal owner() { return envelope.accessContext().principal(); }
-        /** {@return the accepted identifier creation time} */
+        /**
+         * Returns the accepted identifier creation time.
+         *
+         * @return the accepted identifier creation time
+         */
         public Instant createdAt() { return envelope.createdAt(); }
-        /** {@return the absolute accepted signing deadline} */
+        /**
+         * Returns the absolute accepted signing deadline.
+         *
+         * @return the absolute accepted signing deadline
+         */
         public Instant deadline() { return envelope.deadline(); }
-        /** {@return the durable lifecycle state} */
+        /**
+         * Returns the durable lifecycle state.
+         *
+         * @return the durable lifecycle state
+         */
         public State state() { return mutableState.state(); }
-        /** {@return the current compare-and-set revision} */
+        /**
+         * Returns the current compare-and-set revision.
+         *
+         * @return the current compare-and-set revision
+         */
         public long revision() { return mutableState.revision(); }
-        /** {@return the current fencing token} */
+        /**
+         * Returns the current fencing token.
+         *
+         * @return the current fencing token
+         */
         public long fence() { return mutableState.fence(); }
-        /** {@return the optional provider claim expiration} */
+        /**
+         * Returns the optional provider claim expiration.
+         *
+         * @return the optional provider claim expiration
+         */
         public Optional<Instant> leaseUntil() { return mutableState.leaseUntil(); }
-        /** {@return the optional current provider-side operation identity} */
+        /**
+         * Returns the optional current provider-side operation identity.
+         *
+         * @return the optional current provider-side operation identity
+         */
         public Optional<PkiId> downstreamOperationId() { return mutableState.downstreamOperationId(); }
-        /** {@return the optional finite safe status detail} */
+        /**
+         * Returns the optional finite safe status detail.
+         *
+         * @return the optional finite safe status detail
+         */
         public Optional<String> detailCode() { return mutableState.detailCode(); }
-        /** {@return the optional immutable retained signature} */
+        /**
+         * Returns the optional immutable retained signature.
+         *
+         * @return the optional immutable retained signature
+         */
         public Optional<EncodedObject> result() { return mutableState.result(); }
-        /** {@return the optional last provider observation timestamp} */
+        /**
+         * Returns the optional last provider observation timestamp.
+         *
+         * @return the optional last provider observation timestamp
+         */
         public Optional<Instant> providerUpdatedAt() { return mutableState.providerUpdatedAt(); }
-        /** {@return the nonnegative reconciliation failure count} */
+        /**
+         * Returns the nonnegative reconciliation failure count.
+         *
+         * @return the nonnegative reconciliation failure count
+         */
         public int failureCount() { return mutableState.failureCount(); }
-        /** {@return the optional earliest reconciliation retry time} */
+        /**
+         * Returns the optional earliest reconciliation retry time.
+         *
+         * @return the optional earliest reconciliation retry time
+         */
         public Optional<Instant> nextEligibleAt() { return mutableState.nextEligibleAt(); }
-        /** {@return the optional retained reconciliation failure classification} */
+        /**
+         * Returns the optional retained reconciliation failure classification.
+         *
+         * @return the optional retained reconciliation failure classification
+         */
         public Optional<ReconciliationFailureClass> reconciliationFailureClass() {
             return mutableState.reconciliationFailureClass();
         }
@@ -1136,7 +1575,14 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      * @param record decoded signing record, or empty when the candidate was malformed
      */
     record PageCandidate(String cursor, Optional<Workflow> record) {
-        /** Validates one immutable scan result. */
+        /**
+         * Checks the examined cursor and its relationship to a present decoded record.
+         *
+         * @param cursor exclusive cursor after this examined metadata candidate
+         * @param record decoded signing record, or empty when the candidate was malformed
+         * @throws NullPointerException if a required component or optional container is null
+         * @throws IllegalArgumentException if the cursor is blank or differs from the present record identifier
+         */
         public PageCandidate {
             Objects.requireNonNull(cursor, "cursor");
             record = Objects.requireNonNull(record, "record");
@@ -1173,6 +1619,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param failures number of malformed candidates
          * @param endReached whether the snapshot namespace was exhausted
          * @param candidates ordered decoded and malformed candidates
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         public Page(List<Workflow> records, Optional<String> nextCursor, int examined, int failures,
                 boolean endReached, List<PageCandidate> candidates) {
@@ -1189,6 +1637,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param endReached whether the snapshot namespace was exhausted
          * @deprecated implementations should provide explicit ordered candidate
          *             details so reconciliation can resume precisely after failures
+         * @throws NullPointerException if a required delegated-constructor component or list element is null
+         * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
         @Deprecated
         public Page(List<Workflow> records, Optional<String> nextCursor, int examined, int failures,
@@ -1197,7 +1647,20 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                     successfulCandidates(records, examined, failures), Optional.empty());
         }
 
-        /** Validates one immutable page. */
+        /**
+         * Snapshots record/candidate lists and checks counts, projection order and final examined cursor.
+         *
+         * @param records immutable page records
+         * @param nextCursor exclusive cursor after the last examined metadata candidate
+         * @param examined number of metadata candidates examined for this page
+         * @param failures number of malformed candidates among {@code examined}
+         * @param endReached whether the snapshot namespace was exhausted
+         * @param candidates ordered examined candidates, including malformed entries
+         * @param highWatermark greatest record key in the page's stable snapshot
+         * @throws NullPointerException if a list, list element or optional container is null
+         * @throws IllegalArgumentException if counts, successful-record projection or final candidate cursor
+         *     are inconsistent
+         */
         public Page {
             records = List.copyOf(Objects.requireNonNull(records, "records"));
             nextCursor = Objects.requireNonNull(nextCursor, "nextCursor");
@@ -1248,7 +1711,15 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record DueCandidate(PkiId operationId, SchedulingCoordinates scheduling,
             boolean malformed) {
-        /** Validates one immutable due candidate. */
+        /**
+         * Checks the canonical operation identity and retains its scheduling hint without point-loading state.
+         *
+         * @param operationId canonical signing submission identifier
+         * @param scheduling immutable coordinates derived from the authoritative envelope
+         * @param malformed whether the indexed mutable-state record was malformed
+         * @throws NullPointerException if a required value is null
+         * @throws IllegalArgumentException if the signing identifier is not canonical
+         */
         public DueCandidate {
             requireCanonicalSigningId(operationId, "due candidate operation id");
             Objects.requireNonNull(scheduling, "scheduling");
@@ -1267,7 +1738,18 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     record DuePage(List<DueCandidate> candidates, Optional<String> nextCursor,
             int failures, boolean endReached, Optional<String> highWatermark) {
-        /** Validates and snapshots one lightweight due page. */
+        /**
+         * Snapshots candidates and checks strict identity order, malformed count, cursor and optional watermark.
+         *
+         * @param candidates immutable candidates in strict canonical identifier order
+         * @param nextCursor exclusive cursor equal to the final candidate identifier,
+         * @param failures number of malformed candidates
+         * @param endReached whether the stable due cycle was exhausted
+         * @param highWatermark stable inclusive upper bound for the due cycle
+         * @throws NullPointerException if a list, list element or optional container is null
+         * @throws IllegalArgumentException if order, failure count, final cursor or canonical upper watermark
+         *     are inconsistent
+         */
         public DuePage {
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
             nextCursor = Objects.requireNonNull(nextCursor, "nextCursor");
@@ -1463,12 +1945,18 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
 
     /**
      * Selects bounded reconciliation work ordered by its durable eligibility time.
-     * Implementations without an ordered projection retain compatibility through
-     * this bounded-result fallback; production stores should override it.
+     *
+     * @implSpec The compatibility default scans {@link #listSignWorkflows()}, filters
+     *     future retry times and retired records, then keeps its encounter-order prefix.
+     *     It does not itself sort by eligibility, inspect lease availability or bound
+     *     the underlying snapshot scan. A production implementation must override this
+     *     fallback to provide the required ordered, bounded due projection.
      *
      * @param cutoffInclusive latest eligible retry time
      * @param maximumRecords result bound from 1 through 4096
-     * @return due records in deterministic reconciliation order
+     * @return due records in deterministic reconciliation order; the compatibility default retains snapshot order
+     * @throws NullPointerException if the cutoff is null
+     * @throws IllegalArgumentException if the bound is outside 1 through 4096
      */
     default List<Workflow> selectDueSignWorkflows(Instant cutoffInclusive, int maximumRecords) {
         Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
@@ -1497,6 +1985,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
 
     /**
      * Returns a page capped at an inclusive stable cycle high-watermark.
+     *
+     * @implSpec The compatibility default delegates to the three-argument page method
+     *     without applying the supplied watermark. Implementations must override this
+     *     overload to provide the required capped-cycle semantics; callers cannot rely
+     *     on the compatibility default alone for an inclusive cycle boundary.
      *
      * @param exclusiveCursor opaque cursor from an earlier page
      * @param inclusiveHighWatermark greatest key eligible for this cycle
@@ -1697,8 +2190,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             CaSubjectProofOutcome outcome, Optional<EncodedObject> signature);
 
     /**
-     * Records successful local verification and releases the claim for final-key
-     * scheduling. The trusted caller must verify the retained signature first.
+     * Records successful local proof verification and releases the current claim.
+     * The trusted caller must cryptographically verify the retained signature first;
+     * invoking this mutation is not itself signature verification. With two subject
+     * roles, successful primary verification advances to the alternative proof before
+     * final certificate-key scheduling. Proof success never means parent success.
      * @param submissionId parent identity
      * @param expectedRevision exact verifying revision
      * @param fence exact claimed fence
@@ -1718,7 +2214,9 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     int purgeExpiredSignRecords();
 
-    /** Canonical streaming encoder for the immutable acceptance commitment. */
+    /**
+     * Canonical streaming encoder for the immutable acceptance commitment.
+     */
     final class AcceptanceCommitments {
         private static final byte[] DOMAIN = "accept-sign:v3"
                 .getBytes(StandardCharsets.US_ASCII);

@@ -62,7 +62,9 @@ import zeroecho.pki.api.backup.BackupLimits;
 import zeroecho.pki.api.backup.BackupPreparation;
 import zeroecho.pki.api.backup.RestoreStatus;
 
-/** External lifetime fencing and cold activation; all roots are on one filesystem. */
+/**
+ * External lifetime fencing and cold activation; all roots are on one filesystem.
+ */
 final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticComplexity - Aggregate lifecycle/coordinator complexity; individual methods remain checked.
     private static final String ROLLBACK_PREFIX = "rollback-";
     private static final String INVALID_ROOT_LAYOUT = "RESTORE_ROOT_LAYOUT_INVALID";
@@ -84,15 +86,141 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     private boolean uncertain;
     private static final ThreadLocal<Observer> OBSERVER = new ThreadLocal<>();
 
-    /** Durable restore progress states recognized on restart. */
-    /* default */ enum State { PREPARED, LIVE_MOVED, STAGING_PROMOTED, NEW_ROOT_VERIFIED, COMPLETE, ROLLED_BACK }
-    /** Observable transition points for crash and filesystem fault injection. */
-    /* default */ enum Phase { JOURNAL, BEFORE_LIVE_MOVE, AFTER_LIVE_MOVE, BEFORE_PROMOTION, AFTER_PROMOTION,
-        RECOVERY_STARTED, BEFORE_RECOVERY, AFTER_RECOVERY, BEFORE_ROLLBACK, AFTER_ROLLBACK, DIRECTORY_FORCE,
-        BEFORE_RECORD_FORCE, AFTER_JOURNAL_RENAME, BEFORE_RECORD_WRITE, AFTER_RECORD_WRITE, AFTER_RECORD_FORCE,
-        BEFORE_RECORD_RENAME, AFTER_RECORD_DIRECTORY_FORCE, BEFORE_ATOMIC_MOVE, AFTER_ATOMIC_MOVE,
-        BEFORE_RECOVERY_CLOSE, BEFORE_PARENT_FORCE, AFTER_STAGE_MOVE, AFTER_CANDIDATE_MARKER, AFTER_ORIGINAL_MARKER }
-    /** Receives deterministic restore transition notifications. */
+    /**
+     * Durable restore progress states recognized on restart.
+     */
+    /* default */ enum State {
+        /**
+         * The transaction has prepared owned content but has not committed it.
+         */
+        PREPARED,
+        /**
+         * The previous live root has been moved aside.
+         */
+        LIVE_MOVED,
+        /**
+         * The prepared staging root has been promoted to the live location.
+         */
+        STAGING_PROMOTED,
+        /**
+         * The promoted live root has passed recovery verification.
+         */
+        NEW_ROOT_VERIFIED,
+        /**
+         * The restore transaction has completed.
+         */
+        COMPLETE,
+        /**
+         * The restore transaction has restored the previous live root.
+         */
+        ROLLED_BACK }
+    /**
+     * Observable transition points for crash and filesystem fault injection.
+     */
+    /* default */ enum Phase {
+        /**
+         * Observation point restore journal processing.
+         */
+        JOURNAL,
+        /**
+         * Observation point before moving the previous live root.
+         */
+        BEFORE_LIVE_MOVE,
+        /**
+         * Observation point after moving the previous live root.
+         */
+        AFTER_LIVE_MOVE,
+        /**
+         * Observation point before promoting the staging root.
+         */
+        BEFORE_PROMOTION,
+        /**
+         * Observation point after promoting the staging root.
+         */
+        AFTER_PROMOTION,
+        /**
+         * Observation point starting recovery of the promoted root.
+         */
+        RECOVERY_STARTED,
+        /**
+         * Observation point before recovery verification.
+         */
+        BEFORE_RECOVERY,
+        /**
+         * Observation point after recovery verification.
+         */
+        AFTER_RECOVERY,
+        /**
+         * Observation point before restoring the previous root.
+         */
+        BEFORE_ROLLBACK,
+        /**
+         * Observation point after restoring the previous root.
+         */
+        AFTER_ROLLBACK,
+        /**
+         * Observation point for forcing the parent directory.
+         */
+        DIRECTORY_FORCE,
+        /**
+         * Observation point before forcing a restore journal record.
+         */
+        BEFORE_RECORD_FORCE,
+        /**
+         * Observation point after publishing the restore journal by rename.
+         */
+        AFTER_JOURNAL_RENAME,
+        /**
+         * Observation point before writing a restore journal record.
+         */
+        BEFORE_RECORD_WRITE,
+        /**
+         * Observation point after writing a restore journal record.
+         */
+        AFTER_RECORD_WRITE,
+        /**
+         * Observation point after forcing a restore journal record.
+         */
+        AFTER_RECORD_FORCE,
+        /**
+         * Observation point before publishing a restore journal record.
+         */
+        BEFORE_RECORD_RENAME,
+        /**
+         * Observation point after forcing the restore journal directory.
+         */
+        AFTER_RECORD_DIRECTORY_FORCE,
+        /**
+         * Observation point before atomic publication.
+         */
+        BEFORE_ATOMIC_MOVE,
+        /**
+         * Observation point after atomic publication.
+         */
+        AFTER_ATOMIC_MOVE,
+        /**
+         * Observation point before closing recovery resources.
+         */
+        BEFORE_RECOVERY_CLOSE,
+        /**
+         * Observation point before forcing the parent directory.
+         */
+        BEFORE_PARENT_FORCE,
+        /**
+         * Observation point after moving the staging root.
+         */
+        AFTER_STAGE_MOVE,
+        /**
+         * Observation point after publishing the candidate marker.
+         */
+        AFTER_CANDIDATE_MARKER,
+        /**
+         * Observation point after publishing the original-root marker.
+         */
+        AFTER_ORIGINAL_MARKER }
+    /**
+     * Receives deterministic restore transition notifications.
+     */
     /* default */ @FunctionalInterface interface Observer {
         /** Observes one restore transition.
          * @param phase current transition point
@@ -100,6 +228,11 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
          */
         void accept(Phase phase) throws IOException;
     }
+    /**
+     * Installs the current thread's restore observer, or removes it when the supplied observer is null.
+     *
+     * @param observer thread-local transition callback, or null to remove it
+     */
     /* default */ static void observeWith(Observer observer) { if (observer == null) { OBSERVER.remove(); } else { OBSERVER.set(observer); } }
     private static void observe(Phase phase) throws IOException {
         Observer observer = OBSERVER.get();
@@ -112,6 +245,16 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                 inventory, live, stage, rollback, next); }
     }
 
+    /**
+     * Acquires restore-control ownership, reconciles the durable journal and cleans abandoned preparation. On failure, acquired coordinator resources are released; the caller must close a successfully opened coordinator.
+     *
+     * @param root filesystem tree or store root
+     * @param limits resource and path limits to enforce
+     * @param options store and historical-export options
+     * @param clock clock used during restore reconciliation
+     * @return owned reconciled coordinator that the caller must close
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static FsRestoreCoordinator open(Path root, BackupLimits limits, FsPkiStoreOptions options, Clock clock)
             throws IOException {
         FsRestoreCoordinator result = new FsRestoreCoordinator(root, limits);
@@ -140,6 +283,12 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         catch (IOException | RuntimeException failure) { processLock.closeSilently(); throw failure; } // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.
     }
 
+    /**
+     * Acquires and retains exclusive store ownership for the normalized root until coordinator closure. Repeated acquisition of an already owned root is a no-op.
+     *
+     * @param root filesystem tree or store root
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ void lockRoot(Path root) throws IOException {
         Path canonical = root.toAbsolutePath().normalize();
         if (roots.containsKey(canonical)) { return; }
@@ -147,6 +296,12 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         roots.put(canonical, FilesystemPkiStore.StoreOwnership.acquire(canonical.resolve(".lock/store.lock")));
     }
 
+    /**
+     * Creates and restricts the coordinator's private preparation directory and returns its path.
+     *
+     * @return private preparation directory
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ Path work() throws IOException {
         Path directory = control.resolve("work");
         Files.createDirectories(directory);
@@ -154,6 +309,11 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         return directory;
     }
 
+    /**
+     * Projects the durable journal and uncertainty fence into the externally visible restore status.
+     *
+     * @return current restore status, or empty when no journal exists
+     */
     /* default */ Optional<RestoreStatus> status() {
         if (journal == null) { return Optional.empty(); }
         RestoreStatus.State state = uncertain ? RestoreStatus.State.UNCERTAIN : switch (journal.state()) {
@@ -166,11 +326,26 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                         : state == RestoreStatus.State.FAILED ? List.of("RESTORE_ACTIVATION_REJECTED") : List.of()));
     }
 
+    /**
+     * Returns the source identity and manifest commitment associated with the current restore status.
+     *
+     * @return current restore identity, or empty when no journal exists
+     */
     /* default */ Optional<zeroecho.pki.api.backup.RestoreIdentity> identity() {
         return status().map(value -> new zeroecho.pki.api.backup.RestoreIdentity(
                 new PkiId(journal.source()), journal.manifest(), value));
     }
 
+    /**
+     * Moves a prepared restore into its staging root, acquires ownership, writes and forces transition markers and publishes the durable journal. Preparation rejections are classified before publication; later failures require journal reconciliation.
+     *
+     * @param prepared validated prepared backup whose directory is moved into staging
+     * @param baseline baseline store root whose authority must be retained
+     * @param restoreId identity assigned to this restore attempt
+     * @return published staged restore status
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws zeroecho.pki.api.backup.RestoreRejectedException if the prepared restore fails prepublication validation
+     */
     /* default */ RestoreStatus stage(BackupPreparation prepared, Path baseline, PkiId restoreId) throws IOException {
         Journal next;
         try { next = prepareJournal(prepared, baseline, restoreId); }
@@ -188,6 +363,15 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         return status().orElseThrow();
     }
 
+    /**
+     * Deletes only artifacts belonging to an unpublished restore after verifying the previous terminal restore identity and excluding uncertain or conflicting layouts.
+     *
+     * @param restoreId identity assigned to this restore attempt
+     * @param previousRestoreId expected preceding terminal restore identity, or empty when none exists
+     * @param manifest exact expected manifest commitment
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     * @throws IllegalArgumentException if the restore identity is not canonical, repeats its predecessor or has an invalid manifest commitment
+     */
     /* default */ void discardUnpublished(PkiId restoreId, Optional<PkiId> previousRestoreId,
             String manifest) throws IOException {
         String id = restoreId.value();
@@ -233,7 +417,9 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         }
     }
 
-    /** Called only during cold open, before any preparation can be admitted. */
+    /**
+     * Called only during cold open, before any preparation can be admitted.
+     */
     private void cleanupAbandonedPreparation() throws IOException {
         Path directory = control.resolve("work");
         if (!Files.exists(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
@@ -602,6 +788,14 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         }
     }
 
+    /**
+     * Reads a file through a fixed upper byte bound, rejecting oversized input rather than allocating from an untrusted file size.
+     *
+     * @param path relative backup name or filesystem path being processed
+     * @param maximum inclusive maximum file length in bytes
+     * @return new array containing the complete bounded file
+     * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
+     */
     /* default */ static byte[] boundedRead(Path path, int maximum) throws IOException {
         if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS) || Files.size(path) > maximum) {
             throw new IOException("RESTORE_RECORD_INVALID");
@@ -613,6 +807,9 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close() throws IOException {
         IOException failure = null;
         for (FilesystemPkiStore.StoreOwnership lock : roots.values()) { // NOPMD CloseResource - Ownership is transferred to the enclosing lifecycle and its explicit close/stream completion; not a local resource.

@@ -67,6 +67,7 @@ public interface PkiStoreProvider extends ConfigurableProvider<PkiStore> {
      * @param config structural provider configuration
      * @param dependencies authoritative process-local runtime dependencies
      * @return opened store
+     * @throws NullPointerException if dependencies is null
      */
     default PkiStore allocate(ProviderConfig config, PkiStoreRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies");

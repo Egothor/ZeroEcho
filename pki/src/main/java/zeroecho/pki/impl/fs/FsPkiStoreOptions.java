@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
-import java.time.Duration;
 import java.math.BigInteger;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -91,15 +91,30 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
 
     /**
      * Preserves existing options with hybrid CRL verification unavailable.
-     * @param caHistoryPolicy CA history policy @param profileHistoryPolicy profile history policy
-     * @param revocationHistoryPolicy revocation history policy @param workflowHistoryPolicy workflow history policy
-     * @param strictSnapshotExport strict snapshot validation @param signingOperationHorizon retained signing horizon
-     * @param signingIdPermittedSkew permitted identifier clock skew @param signingMaximumGroupSize signing group bound
-     * @param signingResidentIndexBudgetBytes resident index byte budget
-     * @param signingCompactionTransientBudgetBytes transient compaction byte budget
-     * @param initialCrlNumber initial CRL counter @param signingEvidenceAudit signing evidence audit setting
-     * @param credentialSearch optional credential search configuration
-     * @param issuerAlgorithmEvidenceVerifier optional configured public issuer verifier
+     *
+     * <p>The hybrid native-child verifier is absent; all supplied options retain
+     * their canonical validation and semantics. Constructing options does not open
+     * a store, enable a worker or validate a historical cryptographic artifact.
+     *
+     * @param caHistoryPolicy CA history policy; must not be null
+     * @param profileHistoryPolicy profile history policy; must not be null
+     * @param revocationHistoryPolicy revocation history policy; must not be null
+     * @param workflowHistoryPolicy continuation history policy; must not be null
+     * @param strictSnapshotExport whether snapshot export fails closed on validation errors
+     * @param signingOperationHorizon positive retained signing horizon
+     * @param signingIdPermittedSkew nonnegative permitted future identifier clock skew
+     * @param signingMaximumGroupSize new signing-group request limit, from 1 through 32
+     * @param signingResidentIndexBudgetBytes positive resident signing-index byte budget
+     * @param signingCompactionTransientBudgetBytes positive detached-compaction byte budget;
+     *        its sum with the resident budget must fit in a signed {@code long}
+     * @param initialCrlNumber first issued number of a new scope, from zero through {@code 2^159 - 1}
+     * @param signingEvidenceAudit whether optional best-effort signing evidence is maintained
+     * @param credentialSearch explicit search resources, or an empty optional; must not be null
+     * @param issuerAlgorithmEvidenceVerifier public issuer verifier, or an empty optional;
+     *        the optional must not be null
+     * @throws NullPointerException if a required object or optional container is null
+     * @throws IllegalArgumentException if a duration, group size, budget, combined
+     *         budget or initial CRL number is outside its supported range
      */
     public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
             FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
@@ -115,7 +130,13 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
 
     private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
     private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
+    /**
+     * Default maximum resident index accounting budget in bytes.
+     */
     /* default */ static final long DEFAULT_RESIDENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
+    /**
+     * Default maximum transient index workspace budget in bytes.
+     */
     /* default */ static final long DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
     private static final long MINIMUM_RESIDENT_INDEX_BUDGET_BYTES = 1L;
 
@@ -128,7 +149,17 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @param maximumCertificateBytes maximum certificate DER bytes before allocation, from 1 through 1048576
      */
     public record CredentialSearch(int cacheKiB, int queryTimeoutMillis, int maximumCertificateBytes) {
-        /** Validates all explicitly selected resource bounds. */
+        /**
+         * Validates the explicitly selected cache, whole-query deadline and certificate-size bounds.
+         *
+         * <p>No database is opened and no memory is reserved by construction.
+         * These settings constrain the derived index; they are not a total JVM heap limit.
+         *
+         * @throws IllegalArgumentException if any setting is outside its documented range
+         * @param cacheKiB database cache setting, from 16 through 1048576 KiB
+         * @param queryTimeoutMillis maximum whole-search time, from 1 through 600000 milliseconds
+         * @param maximumCertificateBytes maximum certificate DER bytes before allocation, from 1 through 1048576
+         */
         public CredentialSearch {
             if (cacheKiB < 16 || cacheKiB > 1_048_576 || queryTimeoutMillis < 1 || queryTimeoutMillis > 600_000
                     || maximumCertificateBytes < 1 || maximumCertificateBytes > 1_048_576) {
@@ -151,6 +182,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @param signingCompactionTransientBudgetBytes signing transient-memory budget
      * @param initialCrlNumber initial CRL number
      * @param signingEvidenceAudit whether signing evidence is enabled
+     * @throws NullPointerException if a required object value is null
+     * @throws IllegalArgumentException if a canonical duration, group, budget or number bound is invalid
      */
     // Preserves the public source/binary-compatible overload delegating to the search-disabled canonical configuration.
     @SuppressWarnings("PMD.ExcessiveParameterList")
@@ -179,6 +212,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @param initialCrlNumber initial CRL number
      * @param signingEvidenceAudit optional evidence audit
      * @param credentialSearch optional credential search resources
+     * @throws NullPointerException if a required object or optional container is null
+     * @throws IllegalArgumentException if a canonical duration, group, budget or number bound is invalid
      */
     public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
             FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
@@ -191,12 +226,31 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
     }
 
     /**
-     * Canonical constructor with validation.
+     * Validates all history, lifetime, resource and initial-number settings.
+     *
+     * <p>All optional containers must be present even when their capabilities are
+     * disabled. The two positive signing-index budgets must have a representable
+     * combined sum; no resource allocation or store mutation occurs here.
      *
      * @throws NullPointerException     if a required object value is {@code null}
      * @throws IllegalArgumentException if a duration, signing group size, or
-     *                                  resident-index budget or initial CRL number is outside its
-     *                                  supported range
+     *                                  either signing-index budget, their combined sum,
+     *                                  or the initial CRL number is outside its supported range
+     * @param caHistoryPolicy history policy for CA records
+     * @param profileHistoryPolicy history policy for certificate profiles
+     * @param revocationHistoryPolicy history policy for revocation records
+     * @param workflowHistoryPolicy history policy for workflow continuation state
+     * @param strictSnapshotExport whether snapshot export is strict (fail-closed)
+     * @param signingOperationHorizon maximum stable signing identifier and record retention horizon
+     * @param signingIdPermittedSkew permitted future signing identifier clock skew
+     * @param signingMaximumGroupSize maximum number of newly committed signing WAL requests per durability group, from 1 through 32
+     * @param signingResidentIndexBudgetBytes maximum conservatively accounted resident bytes shared by the signing indexes; must be positive
+     * @param signingCompactionTransientBudgetBytes maximum conservatively accounted resident bytes available only to detached compaction work; must be positive
+     * @param initialCrlNumber initial number for a newly created CRL scope counter, from zero through {@code 2^159 - 1}; defaults to one
+     * @param signingEvidenceAudit whether optional best-effort signing/proof evidence is appended; defaults to false
+     * @param credentialSearch optional explicitly budgeted embedded credential search
+     * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved through snapshots and restore
+     * @param crlHybridNativeChildVerifier optional immutable configured public hybrid CRL authority
      */
     public FsPkiStoreOptions {
         Objects.requireNonNull(caHistoryPolicy, "caHistoryPolicy");
@@ -244,6 +298,11 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * based on operational requirements.
      * </p>
      *
+     * <p>The signing horizon is 90 days, future-identifier skew is zero, each new
+     * durability group permits at most 32 requests, and steady and transient index
+     * budgets are each 512 MiB. New CRL counters begin at one. Signing evidence,
+     * credential search and explicit verifier overrides are not enabled by these defaults.
+     *
      * @return default options
      */
     public static FsPkiStoreOptions defaults() {
@@ -270,7 +329,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, maximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
+                signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -283,13 +343,15 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @param maximumBytes maximum conservatively accounted resident bytes; must
      *                     be positive
      * @return an immutable copy with the supplied resident-index budget
-     * @throws IllegalArgumentException if {@code maximumBytes} is not positive
+     * @throws IllegalArgumentException if {@code maximumBytes} is not positive or
+     *         its sum with the transient budget cannot be represented by a signed {@code long}
      */
     public FsPkiStoreOptions withSigningResidentIndexBudgetBytes(long maximumBytes) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
+                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit,
+                credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -305,7 +367,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
+                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch,
+                issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
@@ -321,7 +384,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit,
+                credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
     /**
      * Returns a copy enabling or disabling best-effort terminal signing and internal-proof evidence.
@@ -335,13 +399,15 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled, credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled,
+                credentialSearch, issuerAlgorithmEvidenceVerifier, crlHybridNativeChildVerifier);
     }
 
     /**
      * Returns a copy with explicitly selected credential-search resources.
      * @param configuration explicit search settings; empty disables the index
      * @return immutable options preserving all other settings
+     * @throws NullPointerException if the optional container is null
      */
     public FsPkiStoreOptions withCredentialSearch(Optional<CredentialSearch> configuration) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
@@ -353,17 +419,20 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * Returns options carrying trusted immutable public algorithm rules through store lifecycle operations.
      * @param verifier configured public-only verifier
      * @return immutable options preserving all resource and history settings
+     * @throws NullPointerException if the verifier is null
      */
     public FsPkiStoreOptions withIssuerAlgorithmEvidenceVerifier(zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier verifier) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
                 strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
                 signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
-                signingEvidenceAudit, credentialSearch, Optional.of(Objects.requireNonNull(verifier, "verifier")), crlHybridNativeChildVerifier);
+                signingEvidenceAudit, credentialSearch, Optional.of(Objects.requireNonNull(verifier, "verifier")),
+                crlHybridNativeChildVerifier);
     }
     /**
      * Retains configured pure hybrid CRL verification through every store lifecycle copy.
      * @param verifier immutable public verification authority, never a private-key resolver
      * @return immutable options preserving all existing settings
+     * @throws NullPointerException if the verifier is null
      */
     public FsPkiStoreOptions withCrlHybridNativeChildVerifier(zeroecho.pki.spi.store.CrlHybridNativeChildVerifier verifier) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,

@@ -56,6 +56,8 @@ public record AlgorithmSuite(AlgorithmIdentity signature, AlgorithmIdentity publ
      *
      * @throws NullPointerException     if an identity is {@code null}
      * @throws IllegalArgumentException if an identity has the wrong semantic kind
+     * @param signature exact signature-scheme identity
+     * @param publicKey exact public-key identity
      */
     public AlgorithmSuite {
         Objects.requireNonNull(signature, "signature");

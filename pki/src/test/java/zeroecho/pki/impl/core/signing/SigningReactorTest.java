@@ -106,6 +106,9 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
+/**
+ * Contract and regression tests for signing reactor.
+ */
 @SuppressWarnings({ "PMD.DoNotUseThreads", "PMD.UnitTestAssertionsShouldIncludeMessage",
         "PMD.UnitTestContainsTooManyAsserts" })
 final class SigningReactorTest {
@@ -116,6 +119,12 @@ final class SigningReactorTest {
             new Principal("TEST", "topology-reactor"), new Purpose("SIGN"),
             Optional.empty(), Optional.empty());
 
+    /**
+     * Step executor dispatches and advances outer on calling thread without reactor.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stepExecutorDispatchesAndAdvancesOuterOnCallingThreadWithoutReactor(
             @TempDir Path root) throws Exception {
@@ -157,6 +166,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Step executor reconciles recovered dispatch without signing again.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stepExecutorReconcilesRecoveredDispatchWithoutSigningAgain(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -187,6 +202,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Step executor does nothing when claim is not eligible.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stepExecutorDoesNothingWhenClaimIsNotEligible(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -207,18 +228,36 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Terminal handoff schedules dynamic child without polling or external wake.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalHandoffSchedulesDynamicChildWithoutPollingOrExternalWake(@TempDir Path root)
             throws Exception {
         dynamicTerminalHandoff(root, false, false);
     }
 
+    /**
+     * Recovered terminal handoff schedules dynamic child without polling or external wake.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveredTerminalHandoffSchedulesDynamicChildWithoutPollingOrExternalWake(@TempDir Path root)
             throws Exception {
         dynamicTerminalHandoff(root, true, false);
     }
 
+    /**
+     * Uncertain recovered terminal handoff schedules committed child without replay.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void uncertainRecoveredTerminalHandoffSchedulesCommittedChildWithoutReplay(@TempDir Path root)
             throws Exception {
@@ -286,6 +325,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Unchanged normal pending does not request another scan.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void unchangedNormalPendingDoesNotRequestAnotherScan(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -308,6 +353,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Routes exact and catch all with fixed daemon threads and redacted names.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void routesExactAndCatchAllWithFixedDaemonThreadsAndRedactedNames(
             @TempDir Path root) throws Exception {
@@ -338,6 +389,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Rechecks scheduled coordinates and route before claim.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void rechecksScheduledCoordinatesAndRouteBeforeClaim(@TempDir Path root)
             throws Exception {
@@ -392,6 +449,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Capacity blocked scanner resumes its stable cycle when lane frees slot.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void capacityBlockedScannerResumesItsStableCycleWhenLaneFreesSlot(
             @TempDir Path root) throws Exception {
@@ -451,6 +514,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Authority round robin preserves per authority fifo.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void authorityRoundRobinPreservesPerAuthorityFifo(@TempDir Path root)
             throws Exception {
@@ -481,6 +550,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Saturated exact pool does not borrow or block catch all.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void saturatedExactPoolDoesNotBorrowOrBlockCatchAll(@TempDir Path root)
             throws Exception {
@@ -520,6 +595,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Saturated route scans with fixed page quantum until unrelated capacity is filled.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void saturatedRouteScansWithFixedPageQuantumUntilUnrelatedCapacityIsFilled(
             @TempDir Path root) throws Exception {
@@ -591,6 +672,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Stable cycle skips malformed drains backlog and restart finds skipped work.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void stableCycleSkipsMalformedDrainsBacklogAndRestartFindsSkippedWork(
             @TempDir Path root) throws Exception {
@@ -649,6 +736,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Acceptance gate rejects new work while an accepted call drains.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @RepeatedTest(20)
     void acceptanceGateRejectsNewWorkWhileAnAcceptedCallDrains(@TempDir Path root)
             throws Exception {
@@ -714,6 +807,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Common close deadline can be retried after blocked provider returns.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @RepeatedTest(20)
     void commonCloseDeadlineCanBeRetriedAfterBlockedProviderReturns(@TempDir Path root)
             throws Exception {
@@ -763,6 +862,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Terminal outer continuation advances before retirement.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void terminalOuterContinuationAdvancesBeforeRetirement(@TempDir Path root)
             throws Exception {
@@ -788,6 +893,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Bounded preparation binds mode and immediate terminal can complete before wait.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedPreparationBindsModeAndImmediateTerminalCanCompleteBeforeWait(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -822,6 +933,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Bounded pending returns after one observation and later cleans up without caller.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void boundedPendingReturnsAfterOneObservationAndLaterCleansUpWithoutCaller(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -847,6 +964,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Initial failure remains failure after cleanup finds success.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void initialFailureRemainsFailureAfterCleanupFindsSuccess(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -874,6 +997,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Shutdown dispatch exception remains failed after restart cleanup success.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void shutdownDispatchExceptionRemainsFailedAfterRestartCleanupSuccess(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -923,6 +1052,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Recovery never redispatches and never repeats consumed initial observation.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void recoveryNeverRedispatchesAndNeverRepeatsConsumedInitialObservation(@TempDir Path root) throws Exception {
         for (boolean consumed : List.of(false, true)) {
@@ -963,6 +1098,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Completion between authoritative read and wait cannot lose wake.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void completionBetweenAuthoritativeReadAndWaitCannotLoseWake(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1003,6 +1144,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Wait cancellation interruption and shutdown do not cancel durable intent.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void waitCancellationInterruptionAndShutdownDoNotCancelDurableIntent(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1061,6 +1208,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Interrupted authoritative lookup returns safe failure and preserves interrupt.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void interruptedAuthoritativeLookupReturnsSafeFailureAndPreservesInterrupt(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1114,6 +1267,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Noncancel metadata failure is not reclassified by interrupt flag or cause.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void noncancelMetadataFailureIsNotReclassifiedByInterruptFlagOrCause(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);
@@ -1146,6 +1305,12 @@ final class SigningReactorTest {
         }
     }
 
+    /**
+     * Ordinary mode is rejected and unknown bounded identity returns empty.
+     *
+     * @param root isolated temporary store root supplied by JUnit
+     * @throws Exception if fixture setup, execution, or cleanup fails
+     */
     @Test
     void ordinaryModeIsRejectedAndUnknownBoundedIdentityReturnsEmpty(@TempDir Path root) throws Exception {
         MutableClock clock = new MutableClock(NOW);

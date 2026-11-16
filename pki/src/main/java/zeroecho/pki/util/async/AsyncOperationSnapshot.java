@@ -62,6 +62,13 @@ public record AsyncOperationSnapshot<OpId, Owner, EndpointId>(OpId opId, String 
      *
      * @throws IllegalArgumentException if required fields are null/blank or expiry
      *                                  is invalid
+     * @param opId operation id (never {@code null})
+     * @param type operation type string (never blank)
+     * @param owner operation owner (never {@code null})
+     * @param endpointId endpoint id (never {@code null})
+     * @param createdAt creation time (never {@code null})
+     * @param expiresAt expiration deadline (never {@code null})
+     * @throws NullPointerException if {@code opId}, {@code type}, {@code owner}, {@code endpointId}, {@code createdAt} or {@code expiresAt} is null
      */
     public AsyncOperationSnapshot {
         Objects.requireNonNull(opId, "opId");

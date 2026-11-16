@@ -52,10 +52,16 @@ import javax.crypto.SecretKey;
 
 import org.junit.jupiter.api.Test;
 
+/**
+ * Contract and regression tests for jul audit listener std security.
+ */
 class JulAuditListenerStdSecurityTest {
     private static final String SENSITIVE_TEXT = "controlled-sensitive-message";
     private static final AtomicInteger LOGGER_IDS = new AtomicInteger();
 
+    /**
+     * Key logging uses only safe metadata and clears public encoding.
+     */
     @Test
     void keyLoggingUsesOnlySafeMetadataAndClearsPublicEncoding() {
         System.out.println("keyLoggingUsesOnlySafeMetadataAndClearsPublicEncoding");
@@ -78,6 +84,9 @@ class JulAuditListenerStdSecurityTest {
         System.out.println("keyLoggingUsesOnlySafeMetadataAndClearsPublicEncoding...ok");
     }
 
+    /**
+     * Default failure logging omits exception message and throwable.
+     */
     @Test
     void defaultFailureLoggingOmitsExceptionMessageAndThrowable() {
         System.out.println("defaultFailureLoggingOmitsExceptionMessageAndThrowable");

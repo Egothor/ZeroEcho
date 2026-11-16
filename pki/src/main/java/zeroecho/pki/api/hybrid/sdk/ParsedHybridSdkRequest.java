@@ -51,6 +51,9 @@ public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, Encoded
      * Preserves the PKCS#10 request constructor.
      * @param primary normalized request retaining original CSR evidence
      * @param alternativeSubjectPublicKeyInfo alternative subject SPKI
+     * @throws IllegalArgumentException if the extracted original request is not PKCS#10 or the alternative key
+     *     is not bounded DER
+     * @throws NullPointerException if primary or alternativeSubjectPublicKeyInfo is null
      */
     public ParsedHybridSdkRequest(ParsedCertificationRequest primary, EncodedObject alternativeSubjectPublicKeyInfo) {
         this(primary, alternativeSubjectPublicKeyInfo,
@@ -59,7 +62,14 @@ public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, Encoded
             throw new IllegalArgumentException("SDK_REQUEST_KIND_UNSUPPORTED");
         }
     }
-    /** Validates the bounded public request view. */
+    /**
+     * Validates the bounded public request view.
+     * @param primary normalized request retaining its exact original signed CSR
+     * @param alternativeSubjectPublicKeyInfo requested alternative SUBJECT SPKI, never an issuer key
+     * @param originalPayload exact typed original request; construction does not verify it
+     * @throws NullPointerException if originalPayload, primary or alternativeSubjectPublicKeyInfo is null
+     * @throws IllegalArgumentException if alternativeSubjectPublicKeyInfo is not DER or exceeds 8192 bytes
+     */
     public ParsedHybridSdkRequest {
         Objects.requireNonNull(originalPayload, "originalPayload");
         Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternativeSubjectPublicKeyInfo, "alternativeSubjectPublicKeyInfo");

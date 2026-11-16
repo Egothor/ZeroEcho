@@ -78,16 +78,27 @@ import zeroecho.core.policy.CryptoPolicy;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.sdk.ZeroEchoSession;
 
+/**
+ * Contract and regression tests for keyring signature executor.
+ */
 final class KeyringSignatureExecutorTest {
     private static final char[] PASSWORD = { 'e', 'x', 'e', 'c', 'u', 't', 'o', 'r' };
     private static final String PRIVATE_ALIAS = "signing.prv";
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
     private KeyringStore keyring;
     private KeyPair keyPair;
 
+    /**
+     * Creates the secured keyring and cryptographic fixtures used by each signing test.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @BeforeEach
     void createKeyring() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -99,11 +110,19 @@ final class KeyringSignatureExecutorTest {
         keyring.putPrivate(PRIVATE_ALIAS, "RSA", keyPair.getPrivate());
     }
 
+    /**
+     * Closes the owned keyring and password after each test.
+     */
     @AfterEach
     void closeKeyring() {
         keyring.close();
     }
 
+    /**
+     * Rejects stateful stored metadata and actual keys before session or content.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsStatefulStoredMetadataAndActualKeysBeforeSessionOrContent() throws Exception {
         for (String algorithm : java.util.List.of("LMS", "XMSS")) {
@@ -123,6 +142,11 @@ final class KeyringSignatureExecutorTest {
         }
     }
 
+    /**
+     * Signs multiple buffers and returned signature verifies.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void signsMultipleBuffersAndReturnedSignatureVerifies() throws Exception {
         System.out.println("signsMultipleBuffersAndReturnedSignatureVerifies");
@@ -156,6 +180,11 @@ final class KeyringSignatureExecutorTest {
         System.out.println("signsMultipleBuffersAndReturnedSignatureVerifies...ok");
     }
 
+    /**
+     * Rejects unavailable keys invalid identities and incompatible algorithms.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void rejectsUnavailableKeysInvalidIdentitiesAndIncompatibleAlgorithms() throws Exception {
         System.out.println("rejectsUnavailableKeysInvalidIdentitiesAndIncompatibleAlgorithms");
@@ -184,6 +213,11 @@ final class KeyringSignatureExecutorTest {
         System.out.println("rejectsUnavailableKeysInvalidIdentitiesAndIncompatibleAlgorithms...ok");
     }
 
+    /**
+     * Closed keyring preserves I/O failure and policy denial is redacted.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void closedKeyringPreservesIoFailureAndPolicyDenialIsRedacted() throws Exception {
         System.out.println("closedKeyringPreservesIoFailureAndPolicyDenialIsRedacted");
@@ -220,6 +254,11 @@ final class KeyringSignatureExecutorTest {
         System.out.println("closedKeyringPreservesIoFailureAndPolicyDenialIsRedacted...ok");
     }
 
+    /**
+     * Cancellation wins before resolution and stops during streaming.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void cancellationWinsBeforeResolutionAndStopsDuringStreaming() throws Exception {
         System.out.println("cancellationWinsBeforeResolutionAndStopsDuringStreaming");
@@ -278,6 +317,11 @@ final class KeyringSignatureExecutorTest {
         System.out.println("cancellationWinsBeforeResolutionAndStopsDuringStreaming...ok");
     }
 
+    /**
+     * Zero progress and failing content are checked and closed.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void zeroProgressAndFailingContentAreCheckedAndClosed() throws Exception {
         System.out.println("zeroProgressAndFailingContentAreCheckedAndClosed");
@@ -330,6 +374,11 @@ final class KeyringSignatureExecutorTest {
         System.out.println("zeroProgressAndFailingContentAreCheckedAndClosed...ok");
     }
 
+    /**
+     * Provider I/O and malformed results are redacted provider failures.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void providerIoAndMalformedResultsAreRedactedProviderFailures() throws Exception {
         System.out.println("providerIoAndMalformedResultsAreRedactedProviderFailures");
@@ -399,6 +448,9 @@ final class KeyringSignatureExecutorTest {
         System.out.println("providerIoAndMalformedResultsAreRedactedProviderFailures...ok");
     }
 
+    /**
+     * Public surface and fields expose no private key types.
+     */
     @Test
     void publicSurfaceAndFieldsExposeNoPrivateKeyTypes() {
         System.out.println("publicSurfaceAndFieldsExposeNoPrivateKeyTypes");

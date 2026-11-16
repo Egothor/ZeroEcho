@@ -56,7 +56,15 @@ public record DurableContentOwner(Category category, String identifier) {
 
     private static final int MAX_IDENTIFIER_BYTES = 512;
 
-    /** Creates and validates one typed owner identity. */
+    /**
+     * Creates and validates one typed owner identity.
+     * @param category closed durable-owner category
+     * @param identifier canonical category-specific identifier
+     * @throws NullPointerException if category or identifier is null
+     * @throws IllegalArgumentException if identifier is blank, padded, oversized, contains
+     *     nonprintable/non-ASCII or path separator characters, or is not a valid signing submission identity
+     *     for a signing owner
+     */
     public DurableContentOwner {
         Objects.requireNonNull(category, "category");
         String exact = Objects.requireNonNull(identifier, "identifier");
@@ -82,6 +90,7 @@ public record DurableContentOwner(Category category, String identifier) {
      * @return signing-operation owner
      * @throws IllegalArgumentException if the identifier is not a canonical
      *         signing submission identifier
+     * @throws NullPointerException if operationId is null
      */
     public static DurableContentOwner signingOperation(PkiId operationId) {
         Objects.requireNonNull(operationId, "operationId");
@@ -96,6 +105,7 @@ public record DurableContentOwner(Category category, String identifier) {
      * @return credential-record owner
      * @throws IllegalArgumentException if the identifier cannot be represented as
      *         a canonical durable owner identifier
+     * @throws NullPointerException if credentialId is null
      */
     public static DurableContentOwner credentialRecord(PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
@@ -111,13 +121,21 @@ public record DurableContentOwner(Category category, String identifier) {
         return category.name() + ":" + identifier;
     }
 
-    /** Closed durable-owner categories reserved by the Phase A lifecycle. */
+    /**
+     * Closed durable-owner categories reserved by the Phase A lifecycle.
+     */
     public enum Category {
-        /** Pending or recoverable signing operation. */
+        /**
+         * Pending or recoverable signing operation.
+         */
         SIGNING_OPERATION,
-        /** Persisted credential record; integration is deferred. */
+        /**
+         * Persisted credential record; integration is deferred.
+         */
         CREDENTIAL_RECORD,
-        /** Persisted status-object record; integration is deferred. */
+        /**
+         * Persisted status-object record; integration is deferred.
+         */
         STATUS_OBJECT_RECORD
     }
 }

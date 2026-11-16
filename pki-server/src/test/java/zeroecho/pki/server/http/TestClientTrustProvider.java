@@ -40,22 +40,37 @@ import javax.net.ssl.X509TrustManager;
 import zeroecho.pki.server.spi.PkiServerClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
-/** Deterministic process-confined forwarded-client trust provider for tests. */
+/**
+ * Deterministic process-confined forwarded-client trust provider for tests.
+ */
 public final class TestClientTrustProvider implements PkiServerClientTrustProvider {
-    /** Stable test provider identity. */
+    /**
+     * Stable test provider identity.
+     */
     public static final String ID = "test-client-trust";
     private static volatile X509TrustManager installed;
 
-    /** Installs the deterministic test trust manager. */
+    /**
+     * Installs the exact test client trust manager before fixture server construction.
+     *
+     * @param manager initialized test trust manager
+     * @throws NullPointerException if manager is null
+     */
     public static void install(X509TrustManager manager) {
         installed = Objects.requireNonNull(manager, "manager");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String id() {
         return ID;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public X509TrustManager create(ProviderConfig configuration) {
         if (!ID.equals(configuration.backendId()) || !configuration.properties().isEmpty()) {

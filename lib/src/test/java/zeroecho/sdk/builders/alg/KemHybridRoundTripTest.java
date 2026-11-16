@@ -87,6 +87,9 @@ import zeroecho.sdk.util.Kdf;
 @TestMethodOrder(MethodOrderer.MethodName.class)
 class KemHybridRoundTripTest {
 
+    /**
+     * Initializes the cryptographic providers and shared fixtures used by the tests.
+     */
     @BeforeAll
     void setupProviders() {
         // PQC providers (required by most KEM impls)
@@ -110,6 +113,11 @@ class KemHybridRoundTripTest {
     }
 
     // --- generic vectors over all KEMs we support (compile-time known) ---
+    /**
+     * Supplies supported KEM specifications paired with payload modes and display labels.
+     *
+     * @return stream of algorithm, specification, payload-mode, and label arguments
+     */
     static Stream<Arguments> vectors() {
         List<Arguments> out = new ArrayList<>();
 
@@ -203,6 +211,15 @@ class KemHybridRoundTripTest {
         return out.stream();
     }
 
+    /**
+     * Checks KEM encapsulation and decapsulation under each supplied payload mode.
+     *
+     * @param kemId registered key-encapsulation algorithm identifier
+     * @param keyGenSpec matching algorithm key-generation specification
+     * @param mode symmetric payload mode used for the round trip
+     * @param pretty display label for the selected parameter set
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @ParameterizedTest(name = "{3}")
     @MethodSource("vectors")
     @zeroecho.core.annotation.DisplayName("KEM→symmetric (AES/ChaCha, single-thread) round-trip — generic")
@@ -302,7 +319,9 @@ class KemHybridRoundTripTest {
         }
     }
 
-    /** Simple byte-array source for the pipeline. */
+    /**
+     * Simple byte-array source for the pipeline.
+     */
     private static final class BytesContent implements PlainContent {
         private final byte[] data;
 
@@ -317,6 +336,9 @@ class KemHybridRoundTripTest {
     }
 
     // Sanity: HKDF provider is available (exercise earlier utility)
+    /**
+     * Checks that the runtime provides the HMAC primitive used for HKDF.
+     */
     @org.junit.jupiter.api.Test
     void hkdfAvailable() {
         assertDoesNotThrow(() -> Kdf.hkdfSha256(new byte[] { 1, 2, 3 }, null, null, 32));

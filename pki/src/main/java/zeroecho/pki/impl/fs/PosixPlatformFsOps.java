@@ -57,6 +57,9 @@ final class PosixPlatformFsOps implements PlatformFsOps {
     private static final Set<PosixFilePermission> FILE_0600 = EnumSet.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void forceDirectory(final Path directory) throws IOException {
         // On POSIX a directory can always be opened for READ by its owner, so a
@@ -66,16 +69,25 @@ final class PosixPlatformFsOps implements PlatformFsOps {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] directoryCreateAttributes() {
         return new FileAttribute<?>[] { PosixFilePermissions.asFileAttribute(DIR_0700) };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileAttribute<?>[] fileCreateAttributes() {
         return new FileAttribute<?>[] { PosixFilePermissions.asFileAttribute(FILE_0600) };
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void restrictToOwner(final Path directory) {
         // No-op: owner-only protection is established by the 0700/0600 create-time
@@ -83,11 +95,17 @@ final class PosixPlatformFsOps implements PlatformFsOps {
         // exactly as before this seam existed.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public String platformId() {
         return "posix";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean enterpriseGrade() {
         return true;

@@ -61,14 +61,24 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.application.PkiOperationValue;
 
-/** Checks maintained examples with offline parsers and temporary publisher stores. */
+/**
+ * Checks maintained examples with offline parsers and temporary publisher stores.
+ */
 class DocumentationExamplesTest {
     private static final Pattern BLOCK = Pattern.compile("(?m)^ *```(bash|sh|console|json) *\\R(.*?)^ *```", Pattern.DOTALL);
     private static final Pattern TOKEN = Pattern.compile("\"([^\"]*)\"|'([^']*)'|([^\\s]+)");
 
+    /**
+     * Isolated temporary directory created and removed by the JUnit test lifecycle.
+     */
     @TempDir
     Path temporaryDirectory;
 
+    /**
+     * Executes the documented publisher commands and verifies all secret protection profiles round-trip.
+     *
+     * @throws Exception if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void documentedPublisherCommandsRoundTripAllProtectionProfiles() throws Exception {
         String page = Files.readString(repositoryRoot().resolve("documentation/admin/publication.md"));
@@ -150,6 +160,11 @@ class DocumentationExamplesTest {
         arguments.set(index + 1, value);
     }
 
+    /**
+     * Parses committed local configuration and plan examples against the current schema.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void committedLocalConfigurationsAndPlanParse() throws IOException {
         Path root = repositoryRoot();
@@ -177,6 +192,11 @@ class DocumentationExamplesTest {
         assertTrue(plans >= 1, "No plan examples found");
     }
 
+    /**
+     * Checks committed remote command examples against CLI parsing and catalogue argument requirements.
+     *
+     * @throws IOException if fixture setup, invocation, or cleanup fails
+     */
     @Test
     void committedRemoteCommandsPassCliAndCatalogArgumentValidation() throws IOException {
         Map<String, PkiOperationValue.ObjectValue> schema = schema();

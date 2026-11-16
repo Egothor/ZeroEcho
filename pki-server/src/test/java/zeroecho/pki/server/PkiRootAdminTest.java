@@ -47,9 +47,20 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
+/**
+ * Checks original-bootstrap identity constraints and safe outcomes of root capability provisioning.
+ */
 class PkiRootAdminTest {
+    /**
+     * JUnit-managed isolated filesystem root, removed according to the configured cleanup policy.
+     */
     @TempDir Path directory;
 
+    /**
+     * Checks explicit root designation adds exactly one administrator capability, preserves other principals/grants and replays idempotently.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void explicitDesignationAddsOnlyRootCapabilityAndIsIdempotent() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -68,6 +79,11 @@ class PkiRootAdminTest {
         }
     }
 
+    /**
+     * Checks current own-decision capability applies to an existing request while its frozen requester-separation policy remains unchanged.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void designationAuthorizesExistingOwnPendingRequestWithoutChangingItsPolicySnapshot() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -89,6 +105,11 @@ class PkiRootAdminTest {
         }
     }
 
+    /**
+     * Checks disabled original identities or revoked bootstrap grants prevent designation without changing retained grants.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void designationRefusesDisabledInitialUserOrRevokedBaselineGrant() throws Exception {
         for (String kind : List.of("disabled", "revoked")) {
@@ -113,6 +134,11 @@ class PkiRootAdminTest {
         }
     }
 
+    /**
+     * Checks an empty PKI directory is not initialized as a side effect of refused root designation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void uninitializedPkiDirectoryIsNotInitializedDuringDesignation() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -127,6 +153,11 @@ class PkiRootAdminTest {
         assertEquals(before, snapshot(configuration));
     }
 
+    /**
+     * Checks missing original PKI state is not recreated during refused root designation.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void missingPkiRootIsNotReinitializedDuringDesignation() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);
@@ -140,6 +171,11 @@ class PkiRootAdminTest {
         assertEquals(before, snapshot(configuration));
     }
 
+    /**
+     * Checks absent durable bootstrap state or swapped original identities cannot acquire root capability and invalid CLI options are refused.
+     *
+     * @throws Exception if test fixture setup or execution fails
+     */
     @Test
     void missingStateAndArbitraryIdentityCannotBecomeRoot() throws Exception {
         var configuration = PkiAdminBootstrapTest.configuration(directory);

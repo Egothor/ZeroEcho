@@ -92,7 +92,25 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
             AdministrativeOperation operation,
             Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
             Optional<String> approvalId, String correlationId) {
-        /** Validates the immutable request. */
+        /**
+         * Validates the immutable request.
+         * @param realmId exact realm identity
+         * @param principalId authenticated end-client principal identity
+         * @param authenticationMode explicit administrative authentication mode
+         * @param transportPrincipalId trusted proxy identity, present only in proxy mode
+         * @param credentialEvidence trusted end-client credential evidence, never operation data
+         * @param operation existing typed operation
+         * @param resource exact non-bearer resource reference
+         * @param relationship established object relationship
+         * @param context safe closed-condition context
+         * @param approvalId optional durable approval reference
+         * @param correlationId safe finite request correlation identity
+         * @throws NullPointerException if any of {@code realmId}, {@code authenticationMode}, {@code
+         *         transportPrincipalId}, {@code credentialEvidence}, {@code operation}, {@code resource},
+         *         {@code relationship}, {@code context}, {@code approvalId} is null
+         * @throws IllegalArgumentException if credential evidence belongs to another realm or authentication
+         *         mode and trusted identity context are inconsistent
+         */
         public Request {
             Objects.requireNonNull(realmId, "realmId");
             Permission.requirePrincipal(principalId);
@@ -178,7 +196,9 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         }
     }
 
-    /** Closed gateway outcome preserving typed backend results. */
+    /**
+     * Closed gateway outcome preserving typed backend results.
+     */
     public sealed interface Outcome permits Outcome.Executed, Outcome.ControlExecuted,
             Outcome.Denied, Outcome.ApprovalRequired {
         /**
@@ -187,7 +207,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
          * @param outcome exact typed PKI backend outcome
          */
         record Executed(PkiOperationOutcome outcome) implements Outcome {
-            /** Validates the backend result. */ public Executed { Objects.requireNonNull(outcome, "outcome"); }
+            /**
+             * Validates the backend result.
+             * @param outcome exact typed PKI backend outcome
+             * @throws NullPointerException if {@code outcome} is null
+             */
+            public Executed { Objects.requireNonNull(outcome, "outcome"); }
         }
         /**
          * Successfully admitted server-control result.
@@ -195,7 +220,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
          * @param outcome exact typed server-control outcome
          */
         record ControlExecuted(ServerControlOperationOutcome outcome) implements Outcome {
-            /** Validates the control result. */ public ControlExecuted { Objects.requireNonNull(outcome, "outcome"); }
+            /**
+             * Validates the control result.
+             * @param outcome exact typed server-control outcome
+             * @throws NullPointerException if {@code outcome} is null
+             */
+            public ControlExecuted { Objects.requireNonNull(outcome, "outcome"); }
         }
         /**
          * Safe denial without protected-object existence information.
@@ -203,7 +233,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
          * @param code stable non-sensitive denial code
          */
         record Denied(AuthorizationEngine.Code code) implements Outcome {
-            /** Validates the safe code. */ public Denied { Objects.requireNonNull(code, "code"); }
+            /**
+             * Validates the safe code.
+             * @param code stable non-sensitive denial code
+             * @throws NullPointerException if {@code code} is null
+             */
+            public Denied { Objects.requireNonNull(code, "code"); }
         }
         /**
          * High-risk operation requires a separately created durable approval.
@@ -211,7 +246,11 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
          * @param operationCommitment exact safe operation commitment to approve
          */
         record ApprovalRequired(String operationCommitment) implements Outcome {
-            /** Validates the safe exact-operation commitment. */
+            /**
+             * Validates the safe exact-operation commitment.
+             * @param operationCommitment exact safe operation commitment to approve
+             * @throws IllegalArgumentException if the exact-operation commitment is noncanonical
+             */
             public ApprovalRequired {
                 if (operationCommitment == null || !operationCommitment.matches("[0-9a-f]{64}"))
                     throw new IllegalArgumentException("Operation commitment is invalid");
@@ -290,6 +329,10 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @param auditSink safe audit sink
      * @param reconciliationWake signal for newly actionable reconciliation work
      * @param openCheck realm lifecycle guard
+     * @throws NullPointerException if any of {@code realmId}, {@code exposure}, {@code control}, {@code roles},
+     *         {@code authorization}, {@code approvals}, {@code breakGlass}, {@code descriptors}, {@code
+     *         executor}, {@code signingExecutor}, {@code resourceScopes}, {@code approvalPolicies}, {@code
+     *         issuanceApprovalRequirements}, {@code reconciliationWake}, {@code openCheck} is null
      */
     public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
             RoleTemplateCatalog roles, AuthorizationEngine authorization, ApprovalService approvals,
@@ -380,6 +423,13 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      */
     public void installOcsp(OcspResponderService service) { controlExecutor.installOcsp(service); }
 
+    /**
+     * Installs realm-owned managed-key admission before the gateway becomes ready.
+     *
+     * @param service configured generate-only managed-key service
+     * @throws NullPointerException if service is null
+     * @throws IllegalStateException if a managed-key service is already installed
+     */
     void installManagedKeys(ManagedKeyGenerationService service) { controlExecutor.installManagedKeys(service); }
 
     /**
@@ -402,6 +452,13 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         controlExecutor.installBackup(backupService);
     }
 
+    /**
+     * Installs realm-owned durable streaming-backup execution before readiness.
+     *
+     * @param service configured artifact-transfer service
+     * @throws NullPointerException if service is null
+     * @throws IllegalStateException if a transfer companion is already installed
+     */
     /* default */ void installBackupTransfers(BackupTransferService service) { controlExecutor.installBackupTransfers(service); }
 
     /**
@@ -417,7 +474,13 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                         && selection.credentialSearchAvailable())
                 && (!operationId.startsWith("backup.stream.") || controlExecutor.backupTransfersAvailable());
     }
-    /** Applies shared pure control preconditions to an already authorized retained target. */
+    /**
+     * Applies shared pure control preconditions to an already authorized retained target.
+     *
+     * @param admission authoritative current admission assessment
+     * @throws IllegalArgumentException if admission does not carry a control operation
+     * @throws SecurityException if current actor or target preconditions reject execution
+     */
     void validateAdministrativeControl(Admission admission) {
         if(!(admission.request().operation() instanceof AdministrativeOperation.Control control))throw new IllegalArgumentException("Control operation required");
         controlExecutor.validateAdministrative(control.operation(),admission.request().principalId());
@@ -486,6 +549,12 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
     public record Admission(Request request, String commitment, Optional<ApprovalService.Policy> policy,
             AuthorizationEngine.Decision decision) { }
 
+    /**
+     * Builds safe issuance-execution evidence from authoritative principal and admission observations.
+     *
+     * @param admission exact current authorization and approval assessment
+     * @return evidence for supported issuance operations, or empty for other operation families
+     */
     Optional<IssuanceExecutionEvidence> administrativeSigningEvidence(Admission admission) {
         return signingEvidence(control.requirePrincipal(admission.request().principalId()), admission.request(),
                 admission.decision(), admission.request().approvalId(), admission.commitment());
@@ -509,6 +578,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @param cancellation request cancellation signal
      * @param channel deadline-bound transport streams
      * @return classified authorized result or denial
+     * @throws NullPointerException if {@code channel} is null
      */
     public Outcome executeBackupTransfer(Request request, CancellationSignal cancellation, BackupTransferChannel channel) {
         return execute(request, cancellation, Objects.requireNonNull(channel, "channel"));
@@ -553,6 +623,15 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
         return descriptor;
     }
 
+    /**
+     * Executes root activation with the exact caller-supplied trust-anchor activation evidence.
+     *
+     * @param request trusted complete root-activation security request
+     * @param evidence externally obtained activation evidence; must not be null
+     * @param cancellation exact cooperative cancellation signal
+     * @return safe gateway execution, denial or approval-required outcome
+     * @throws NullPointerException if required request, evidence or cancellation input is null
+     */
     Outcome executeRootActivation(Request request, zeroecho.pki.api.ca.RootTrustAnchorActivation evidence, CancellationSignal cancellation) {
         return execute(request,cancellation,null,Objects.requireNonNull(evidence,"evidence"));
     }
@@ -802,6 +881,7 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * @param context trusted operation context
      * @param correlationId bounded trace identity
      * @return complete current allow or deny decision
+     * @throws NullPointerException if {@code dataView} is null
      */
     public AuthorizationEngine.Decision authorizeControl(String principalId,Permission.Action action,
             Permission.Resource resource,Permission.DataView dataView,Permission.Context context,String correlationId) {
@@ -864,6 +944,8 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
      * allowing authority beyond forwarded-identity attestation.
      *
      * @param principalId configured trusted proxy principal
+     * @throws IllegalArgumentException if the proxy principal holds authority beyond the permitted forwarding
+     *         capability
      */
     public void validateForwardingPrincipal(String principalId) {
         openCheck.run();
@@ -1326,7 +1408,9 @@ public final class ServerOperationGateway { // NOPMD TooManyMethods - One cohesi
                 request.credentialEvidence(), request.operation(), resource, request.relationship(), request.context(), request.approvalId(), request.correlationId());
     }
 
-    /** Resolves only existing closed control identities; supplied coordinates remain strict constraints. */
+    /**
+     * Resolves only existing closed control identities; supplied coordinates remain strict constraints.
+     */
     private Optional<Permission.Scope> persistedControlScope(ServerControlOperation operation) {
         return switch(operation) {
             case ServerControlOperation.InspectAcmeDirectory value -> Optional.of(controlExecutor.acmeScope(value));

@@ -135,6 +135,9 @@ public class Base64Stream extends InputStream {
         lineBreak = lineLength - ((lineSuffix == null) ? 0 : lineSuffix.length);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int read() throws IOException {
         byte[] result = { 0 };
@@ -142,6 +145,9 @@ public class Base64Stream extends InputStream {
         return (count == 0) ? -1 : result[0] & 0xff;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
         if (pos == lineLength) {
