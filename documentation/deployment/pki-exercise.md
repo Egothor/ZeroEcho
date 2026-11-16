@@ -1,5 +1,12 @@
 # PKI deployment and host-client qualification
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review when launchers, protocol
+configuration or cryptographic contracts change. These written procedures have
+source review only; clean-environment rehearsal and assembled-site checks remain
+outstanding. Start with the [fast-track](pki-fast-track.md) or
+[persistent deployment](pki-production.md), then use this reference for detailed
+qualification and algorithm recipes.
+
 The two entry points have separate responsibilities:
 
 - `deploy/rootless-pki.sh` installs, starts and manages PKI containers, server keys,
@@ -55,11 +62,12 @@ enabled.
 First terminal — the deployment script owns the complete disposable environment:
 
 ```sh
-./deploy/rootless-pki.sh test-start --directory "$HOME/.local/share/zeroecho-pki-test"
+./deploy/rootless-pki.sh test-start --hybrid-sdk \
+  --directory "$HOME/.local/share/northstar-qualification"
 ```
 
 Wait for `READY` and keep this terminal open. The script exports a private client
-connection file in the sibling `zeroecho-pki-test-client` directory. It owns
+connection file in the sibling `northstar-qualification-client` directory. It owns
 container lifecycle, server-side profiles, keys, protocol custody, DNS setup,
 prepared publication failure states and the initial bounded legacy backup.
 Those preparation actions are not counted as client test receipts.
@@ -68,8 +76,8 @@ Second terminal — run only the host client:
 
 ```sh
 ./deploy/exercise-pki.sh --mode full \
-  --connection-file "$HOME/.local/share/zeroecho-pki-test-client/client-config.json" \
-  --output "$HOME/.local/state/zeroecho-pki-test-results"
+  --connection-file "$HOME/.local/share/northstar-qualification-client/client-config.json" \
+  --output "$HOME/.local/state/northstar-qualification-results"
 ```
 
 The client requires a private owner-only version-1 connection descriptor with
@@ -77,6 +85,11 @@ The client requires a private owner-only version-1 connection descriptor with
 by verified HTTPS before any mutation. Only exported client credentials, public
 certificates, protocol addresses and preparation metadata are accepted. Server
 configuration paths, image IDs and server keyring passwords are rejected.
+
+The fresh `test-start --hybrid-sdk` opt-in enables administrative SDK and separate
+public OCSP SDK at their actual configured origins. Default test-start keeps
+both off. The public body bound is 16384 bytes; this minimum configured budget
+does not mean every request needs 16 KiB. No already-running instance is assumed.
 
 ## Restore requires an external restart
 
@@ -157,7 +170,7 @@ only the existing administrative SDK listener at the configured external origin:
 
 ```sh
 ./deploy/rootless-pki.sh install --hybrid-sdk \
-  --directory "$HOME/.local/share/zeroecho-pki-c04"
+  --directory "$HOME/.local/share/northstar-pki"
 ```
 
 Enter the intended hostname, port, realm and independent initial administrator
@@ -167,20 +180,23 @@ ordinary administrators do not acquire that capability by selecting this mode.
 Enable its existing own-approval and certificate-download capabilities explicitly:
 
 ```sh
-./deploy/rootless-pki.sh update --root-admin --certificate-access \
-  --directory "$HOME/.local/share/zeroecho-pki-c04"
+./deploy/rootless-pki.sh update --root-admin --certificate-access --status-access \
+  --directory "$HOME/.local/share/northstar-pki"
 ```
 
 These commands belong to the deployment operator. The external exercise never
 executes them, changes server configuration or resolves missing prerequisites.
+Fresh installations already include the corresponding initial access grants.
+The explicit update above is for compatible retained installations missing the
+desired grants; it is not a mandatory repeat after fresh install.
 For classical/PQC-only installations, `--hybrid-sdk` can be omitted. This option
-applies to fresh installation only; an already configured listener is not silently
+applies to fresh install/test-start only; an already configured listener is not silently
 changed on resume. Missing SDK configuration is a blocked prerequisite.
 
 Build the local client cryptographic helper from this checkout with Java 25+:
 
 ```sh
-./gradlew :app:installDist
+./gradlew :app:installDist --no-parallel
 ```
 
 Run Gradle commands serially. The helper uses the distribution's existing
@@ -194,16 +210,16 @@ In a normal host console, set the exact selected realm and FIRST administrator I
 from the installation (the values below are examples to replace):
 
 ```sh
-C04_REALM=production
-C04_PRINCIPAL=bootstrap-admin
-C04_INSTALL="$HOME/.local/share/zeroecho-pki-c04"
-C04_OUTPUT="$HOME/.local/state/zeroecho-pki-c04-p384"
+NORTHSTAR_REALM=northstar
+NORTHSTAR_PRINCIPAL=northstar-admin
+NORTHSTAR_INSTALL="$HOME/.local/share/northstar-pki"
+NORTHSTAR_OUTPUT="$HOME/.local/state/northstar-p384"
 
 ./deploy/exercise-pki.sh --mode algorithms --variant p384 \
-  --directory "$C04_INSTALL" --realm-id "$C04_REALM" \
-  --principal-id "$C04_PRINCIPAL" \
+  --directory "$NORTHSTAR_INSTALL" --realm-id "$NORTHSTAR_REALM" \
+  --principal-id "$NORTHSTAR_PRINCIPAL" \
   --crypto-classpath "$PWD/app/build/install/app/lib/*" \
-  --output "$C04_OUTPUT"
+  --output "$NORTHSTAR_OUTPUT"
 ```
 
 Use `--variant rsa4096` or `--variant mldsa87` and a **different initially empty**
@@ -211,6 +227,26 @@ output directory for the other ordinary scenarios. Explicit `--url`,
 `--admin-p12` and `--trust` overrides work as in the demo. No client connection
 file or server filesystem access is used in this mode. PKCS#12 passwords retain
 the hidden-input/stdin handling described above.
+
+For example, after the P-384 command, run each separately:
+
+```sh
+./deploy/exercise-pki.sh --mode algorithms --variant rsa4096 \
+  --directory "$NORTHSTAR_INSTALL" --realm-id "$NORTHSTAR_REALM" \
+  --principal-id "$NORTHSTAR_PRINCIPAL" \
+  --crypto-classpath "$PWD/app/build/install/app/lib/*" \
+  --output "$HOME/.local/state/northstar-rsa4096"
+./deploy/exercise-pki.sh --mode algorithms --variant mldsa87 \
+  --directory "$NORTHSTAR_INSTALL" --realm-id "$NORTHSTAR_REALM" \
+  --principal-id "$NORTHSTAR_PRINCIPAL" \
+  --crypto-classpath "$PWD/app/build/install/app/lib/*" \
+  --output "$HOME/.local/state/northstar-mldsa87"
+```
+
+For a disposable deployment, use `--url`, `--admin-p12`, `--trust`, the exact
+realm and principal exported in its **new** client descriptor; these algorithm
+commands do not accept that descriptor as a substitute for `--realm-id`.
+Never use a historical descriptor or checkpoint for a new environment.
 
 The client generates and retains its own private key and signed PKCS#10 CSR.
 Only the protected FIRST administrator asks `key.generate` for distinct managed
@@ -227,13 +263,13 @@ For the hybrid scenario use its own output and the actual authentication context
 The rootless installer uses the following proxy context:
 
 ```sh
-C04_OUTPUT="$HOME/.local/state/zeroecho-pki-c04-hybrid"
+NORTHSTAR_OUTPUT="$HOME/.local/state/northstar-hybrid"
 ./deploy/exercise-pki.sh --mode algorithms --variant hybrid \
-  --directory "$C04_INSTALL" --realm-id "$C04_REALM" \
-  --principal-id "$C04_PRINCIPAL" \
+  --directory "$NORTHSTAR_INSTALL" --realm-id "$NORTHSTAR_REALM" \
+  --principal-id "$NORTHSTAR_PRINCIPAL" \
   --crypto-classpath "$PWD/app/build/install/app/lib/*" \
   --sdk-authentication trusted-proxy-mtls-v1 \
-  --sdk-transport-principal trusted-proxy --output "$C04_OUTPUT"
+  --sdk-transport-principal trusted-proxy --output "$NORTHSTAR_OUTPUT"
 ```
 
 For a separately configured direct mTLS administrative endpoint use
@@ -282,8 +318,19 @@ alternative extensions, ML-DSA-87 SPKIs, both issuer relationships and every
 Cor. 3 alternative signature. OpenSSL primary verification is not used as a
 substitute for PQC/alternative verification. The authenticated downloaded root
 is this scenario's trust anchor; this does not qualify external trust stores.
-The cryptographic verification covers original DER; downloaded PEM is retained
-as a separate representation, not independently asserted as verified.
+The algorithm helper verifies original DER. Do not infer PEM equivalence or full
+CRL/OCSP qualification from this algorithm report alone. The reusable host
+[downloads](pki-operator.md#certificate-current-ca-crl-and-chain-files) compare
+PEM-decoded bytes to the original DER; its chain action also verifies signatures.
+Retain these distinct assertions when producing representation evidence.
+
+The scenario checkpoint retains generation jobs, profile references, imported
+request, credential receipts and path IDs; `algorithm-report.json` retains the
+actual generations/paths and artifact hashes. Carry these returned identities
+into later downloads. The TUI equivalent is explicit managed-key generation,
+profile registration, root/intermediate creation, request import/verification and
+issuance through typed forms; each retains the same actual identifiers and
+approval boundary. A plain issuance form does not manufacture hybrid SDK proofs.
 
 The native rehearsal runs the real Python client and local helper against a
 fresh localhost HTTPS PKI, including completed-run observation without mutation
@@ -295,11 +342,11 @@ replay:
 PYTHONPATH=deploy python3 -m unittest discover -s deploy -p 'test_*.py'
 ```
 
-This rehearsal is distinct from a live PKI in Podman. Actual Podman deployment,
-protocol qualification and release readiness require separately retained C08
-results. Scenario artifacts alone are not a full-catalogue, CRL, OCSP or protocol
-qualification report. Existing C03 native mixed-issuer, protocol, CRL and OCSP
-checks retain their narrower stated environments.
+This native rehearsal is distinct from a live PKI in Podman. Scenario artifacts
+alone are not a full-catalogue, CRL, OCSP or protocol qualification report.
+Retain actual deployment association and independent verification for those
+separate claims; a source/helper test is not a hosted result. No P-521, SLH-DSA
+or Composite scenario is supplied by this command's four-variant menu.
 
 For reusable requests and named downloads outside qualification scenarios, see
 [the host operator client](pki-operator.md).

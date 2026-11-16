@@ -1,6 +1,11 @@
 # Operation permissions reference
 
-Every operation exposed by the administrative API requires a specific `action` on a specific `resourceType`. This page lists every operation, the exact grant it consumes, and whether the operation requires a high-risk approval before it executes.
+Every operation exposed by the administrative API requires a specific `action`
+on a specific `resourceType`. This page maps the principal operator families;
+the live catalog/schema supplies the complete configured set, including optional
+protocol/backup operations. Profile approval is additional to HIGH_RISK.
+
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on catalog/permission changes.
 
 To discover this mapping at runtime, call `GET /admin/v1/operations` — the response includes `action`, `resourceType`, and `approval` for every operation the caller is permitted to see.
 
@@ -34,6 +39,16 @@ For the full grant model — scopes, conditions, data-view levels, and the decis
 | `issuer.path.register` | `ISSUER_ROTATE` | `AUTHORITY` | |
 | `issuer.path.select` | `ISSUER_ROTATE` | `AUTHORITY` | ✓ |
 
+Managed key generation is a separate protected operation:
+
+| Operation ID | Required action | Resource type | HIGH_RISK |
+| --- | --- | --- | --- |
+| `key.generate` | `MANAGED_KEY_GENERATE` | `MANAGED_KEY` | ✓ |
+
+The protected FIRST administrator identity is an additional invariant; creating
+an ordinary grant cannot grant another principal that identity. Normal authorized
+CA use of existing compatible keys remains separate.
+
 ## Profiles and algorithm bindings
 
 | Operation ID | Required action | Resource type | HIGH_RISK |
@@ -53,6 +68,7 @@ For the full grant model — scopes, conditions, data-view levels, and the decis
 | Operation ID | Required action | Resource type | HIGH_RISK |
 | --- | --- | --- | --- |
 | `credential.search` | `CERTIFICATE_SEARCH` | `CERTIFICATE` | |
+| `credential.list` | `CERTIFICATE_SEARCH` | `CERTIFICATE` | |
 | `credential.inspect` | `CERTIFICATE_READ_METADATA` | `CERTIFICATE` | |
 | `credential.issue` | `CERTIFICATE_ISSUE` | `CERTIFICATE` | |
 | `credential.renew` | `CERTIFICATE_RENEW` | `CERTIFICATE` | |
@@ -119,6 +135,12 @@ separation and the frozen approval policy apply in addition to the listed grants
 | `ocsp.responder.register` | `OCSP_ADMINISTER` | `OCSP_RESPONDER` | ✓ |
 | `ocsp.responder.activate` | `OCSP_ADMINISTER` | `OCSP_RESPONDER` | ✓ |
 | `ocsp.responder.deactivate` | `OCSP_ADMINISTER` | `OCSP_RESPONDER` | |
+| `ocsp.responder.issue-certificate` | `CERTIFICATE_ISSUE` | `CERTIFICATE` | Profile approval |
+
+Controlled issuance binds exact managed keys/profile/issuer/path and uses its
+canonical provisioning slot. It does not register or activate the responder.
+Certificate metadata read, full-content view and download authority remain
+distinct. CRL metadata/status access does not imply public disclosure.
 
 ## ACME directories and accounts
 

@@ -6,6 +6,11 @@ information, control who may do what, and prove after the fact that every change
 was authorised. It covers both the web administration console and the equivalent
 command-line access over mutual TLS.
 
+Start with the [operator activity reference](operator-activities.md) to find each
+task's permissions, inputs, approval, result checks and safe recovery. The
+[interface reference](../reference/pki-operator-interfaces.md) distinguishes the
+host CLI/TUI, direct remote Java CLI and exclusive local store administration.
+
 If you have not yet stood up the platform, start with the
 [Deployment Guide](../deployment/index.md). If you are new to the platform's
 vocabulary, the [concepts overview](../overview/concepts.md) introduces
@@ -74,16 +79,25 @@ in the console.
 
 ### Every action is an operation
 
-An administrative action is invoked by posting a request envelope to
-`POST /admin/v1/operations/{operationId}`. The envelope carries the operation's
-typed arguments and, for authority-scoped operations, the target `authorityId`.
-The server validates the arguments, checks that the caller is authorised, executes
-the operation, and returns an outcome envelope.
+Every action has a typed catalog operation and authority scope. The console
+uses `durableRequest` metadata to select the retained business workflow:
+`POST /admin/v1/requests` once, then `GET /admin/v1/requests/{requestId}` for
+approval/execution/result observation. Arguments and linked approval/signing IDs
+stay attached to that original request. See
+[administrative requests](administrative-requests.md).
+
+Reads and dedicated actions retain their direct
+`POST /admin/v1/operations/{operationId}` contract. A semantic read can therefore
+use POST without being a mutation. Dedicated decisions/proofs/backup transfers
+have their documented separate once-only or binary transport boundaries. The
+server validates arguments and authorization for every path; no unavailable
+durable operation falls back to approval-then-repeat.
 
 ### Executed synchronously with a bounded wait
 
-Operations run synchronously: the call blocks until the operation reaches a
-terminal outcome or a bounded wait budget elapses. The outcome is one of:
+Low-level direct operation calls have a bounded wait and the following outcomes.
+This does not make console business signing synchronous or mean a durable
+request should be submitted twice:
 
 | Outcome | Meaning |
 |---|---|
@@ -94,22 +108,25 @@ terminal outcome or a bounded wait budget elapses. The outcome is one of:
 
 ### Some defer to a signing hand-off
 
-Operations that require a CA signature may hand off to a signing service — which,
-for a remote signer, can take longer than the synchronous budget. When that
-happens the server returns a **pending** outcome that identifies a *signing
-operation*. The console polls `/admin/v1/signing-operations/{id}` until the
-operation terminalises or the wait budget elapses; if it is still pending, the
-work is not lost — it can be resumed later by its signing-operation id. The
-command line surfaces the same behaviour, including a distinct exit code for a
-still-pending operation (see the [CLI reference](../reference/cli-reference.md)).
+Operations that require a CA signature may outlast the direct call's wait budget.
+A low-level call returns a **pending** outcome with its signing identity;
+`/admin/v1/signing-operations/{id}` provides authorized GET inspection. The console
+and reusable host client retain the outer administrative request and observe that
+original request instead of reconstructing it. Pending or approved states are
+not success. Preserve all returned identities and never resubmit after an
+uncertain acknowledgement. The direct Java CLI's distinct pending/observation
+exits are in the [CLI reference](../reference/cli-reference.md).
 
 ### High-risk ones require an approval
 
 Some operations are classified **high-risk** and enforce dual control: they cannot
 be executed directly, only through a durable [approval](access-control.md#approvals).
-The requester creates an approval that binds the exact operation and arguments;
-one or more separate, eligible principals approve it; then the operation is re-run
-citing the approval id. A grant may additionally *condition* an otherwise
+The retained business request binds its linked approval to the exact operation
+and arguments. Eligible justified decisions allow server execution to continue;
+the operator observes the original request, without another business submission.
+Ordinary requesters need another eligible principal; explicit root own-approval
+does not waive thresholds or eligibility. Low-level direct clients retain their
+separate explicit approval-ID contract. A grant may additionally *condition* an otherwise
 approval-free operation (for example a revocation) on approval. Examples of
 statically high-risk operations include creating an authority (`ca.create`),
 transitioning an authority's state (`ca.transition`), selecting an issuance path

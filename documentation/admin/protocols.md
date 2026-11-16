@@ -6,9 +6,50 @@ covers the administrative side of each protocol: registering and governing the
 endpoints that expose them, and understanding how each protocol authenticates
 enrolling clients.
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on protocol/SDK changes.
+These written procedures remain unverified pending clean-environment rehearsal.
+
 Protocol endpoints are managed via the administrative API. ACME is managed under
 the **ACME** area (Directories and Accounts tabs); EST, SCEP, and CMP endpoints
 are managed via API operations in their respective namespaces.
+
+## Hybrid SDK enrollment boundary
+
+Ordinary single-key enrollment retains its configured standards path. A
+request-owned AltSignature target additionally needs an explicitly enabled SDK
+listener and enrollment profile `sdkProfile=zeroecho-hybrid-sdk-v1`. Both native
+authentication and fresh P-384/ML-DSA-87 subject proofs are required. Merely
+installing capable classes or selecting an AltSignature profile does not enable
+those endpoints. Missing/invalid SDK proof fails closed without classical fallback.
+
+| Protocol | Discovery sidepath | Native authenticated context retained |
+| --- | --- | --- |
+| ACME | `/acme/{alias}/hybrid-sdk/v1` | Account JWS, order, validated identifiers and CSR; fresh ACME replay nonce on each sidepath call. |
+| EST | `/.well-known/est/{label}/hybrid-sdk/v1` | Validated mTLS identity and native simpleenroll/simplereenroll rules. |
+| SCEP | `/scep/{label}/hybrid-sdk/v1` | Original protected CMS request, transaction and authenticated challenge policy. |
+| CMP | `/pkix/{label}/hybrid-sdk/v1` | Original signature/PBM-protected request, transaction, nonces and one supported CertReqMsg. |
+
+| Protocol | Challenge POST | Acceptance POST | POST media/authentication |
+| --- | --- | --- | --- |
+| ACME | `/acme/{alias}/hybrid-sdk/v1/challenge/{orderId}` | `/acme/{alias}/hybrid-sdk/v1/accept/{orderId}` | `application/jose+json`, ordinary account JWS and exact protected sidepath URL. |
+| EST | `/.well-known/est/{label}/hybrid-sdk/v1/challenge` | `/.well-known/est/{label}/hybrid-sdk/v1/accept` | `application/vnd.zeroecho.hybrid-sdk+json`, native mTLS. |
+| SCEP | `/scep/{label}/hybrid-sdk/v1/challenge` | `/scep/{label}/hybrid-sdk/v1/accept` | `application/vnd.zeroecho.hybrid-sdk+json`, original native CMS. |
+| CMP | `/pkix/{label}/hybrid-sdk/v1/challenge` | `/pkix/{label}/hybrid-sdk/v1/accept` | `application/vnd.zeroecho.hybrid-sdk+json`, original native signature/PBM. |
+
+All SDK documents carry integer `version:1` and the exact supported profile.
+The JSON body's binary values are canonical unpadded base64url; native original
+request and authentication remain mandatory. These sidepaths do not replace the
+native protocol's polling/confirmation exchanges.
+
+Each uses its configured challenge/accept sidepaths and preserves the original
+native receipt/polling/confirmation behavior. Accepted replay does not create
+another certificate or consume one-time authentication again. Do not reconstruct
+protected messages or manufacture proof frames by hand. See the
+[interface reference](../reference/pki-operator-interfaces.md#hybrid-sdk-and-status-boundaries)
+and [administrative hybrid recipe](../deployment/pki-exercise.md#approved-algorithm-scenarios).
+The four native protocol issuance checks and native SDK-carrier tests have
+different environment labels; they do not establish four hosted hybrid-protocol
+qualification runs or universal third-party interoperability.
 
 ## ACME directories
 
@@ -389,6 +430,12 @@ not accepted, a new attempt must pass current policy checks.
 | `subjectDnPattern` | No | Whole-subject pattern with literal text and `.*` wildcards |
 | `requiredSanDomains` | No | Required DNS suffixes, normalized to lowercase ASCII |
 | `requireApproval` | No | Requires human approval even when the certificate profile does not (default `false`) |
+| `sdkProfile` | No | Optional text; only `zeroecho-hybrid-sdk-v1` is supported. Absent means ordinary enrollment. Listener and profile must both opt in. |
+
+`enrollment.profile.update` replaces the complete profile: omitting `sdkProfile`
+removes the selector; omission is not an implicit keep. Inspect/list emit it only
+when present. Compare the full current profile before approving an update so an
+unrelated policy edit does not accidentally disable SDK enrollment.
 
 ### Reviewing enrollment requests
 

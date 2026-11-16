@@ -1,9 +1,13 @@
 # Container images
 
-Upgrading an existing store volume requires the explicit
-[offline layout migration](operations.md#offline-layout-migration). The parent volume now
-mounts at `store-container`; its replaceable `store/` child must not be a mount
-point. The entrypoint rejects legacy root layouts instead of initializing over them.
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on image/layout changes.
+Source-reviewed procedures remain unverified pending rehearsal.
+
+The supported baseline uses a fresh empty v18 store, with no earlier-store
+migration path. See [earlier-deployment boundaries](operations.md#mount-layout-and-earlier-deployments).
+The parent volume mounts at `store-container`; its replaceable `store/` child
+must not be a mount point. The entrypoint rejects legacy layouts instead of
+initializing over them.
 
 The platform ships as two images. This page describes what each image contains,
 how to build or obtain them, and how to run them together with Docker Compose. For

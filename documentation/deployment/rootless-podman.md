@@ -1,13 +1,20 @@
 # Rootless Podman installer
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on installer/configuration
+changes. These source-reviewed written procedures remain unverified pending
+clean-environment rehearsal. See [production deployment](pki-production.md) for
+the operating sequence and [fast-track](pki-fast-track.md) for disposable testing.
+
 `deploy/rootless-pki.sh install` prepares a **fresh** persistent PKI realm and
 starts the production server and web console under the current Linux user's
 systemd manager. It uses the regular nginx mTLS edge and backend, not frontend
 demo mode. One curses form collects all operator inputs before provisioning.
 
-This automation has unit and local TLS/configuration integration tests. A full
-Podman/systemd deployment must pass the opt-in gate below on the target platform
-before production use; a successful local configuration test is not that gate.
+This automation has native and actual rootless qualification evidence for the
+recorded candidate. A new target platform still needs its own installation and
+operating checks; a historical successful result is not current health or
+production promotion. The baseline is a fresh empty version-18 store, with no
+earlier-store migration path.
 
 ## Requirements
 
@@ -35,6 +42,12 @@ Run as the user who will own the service, **without sudo**:
 ```sh
 ./deploy/rootless-pki.sh install
 ```
+
+Add `--hybrid-sdk` only when an administrative SDK listener is intended at fresh
+installation. It is default-disabled and is not an update option. The production
+install option does not configure a public OCSP SDK listener. The disposable
+`test-start --hybrid-sdk` path configures both administrative and public OCSP SDK
+for qualification; do not copy its test policy into production implicitly.
 
 The terminal needs at least 78 columns and 22 rows. Tab/arrows move between
 fields; typing appends, Backspace deletes, Ctrl-U clears the current field.
@@ -102,18 +115,21 @@ There is **no username/password login**. After startup, read the printed file
 4. Open `https://<web-DNS-name>:<port>/` and select the client identity when asked.
    `curl --cert ...` alone does not configure a browser's certificate store.
 5. In the console create a root CA with profile `root-ca` and signing reference
-   `zeroecho-lib:root.prv`. Review the prepared approval request and submit it
-   explicitly with **Create approval request**. Root can select **Review approval
-   decision**, enter a justification and approve it in the same dialog. Select
-   **Use approved request**, then explicitly run the retained CA operation. An
-   ordinary administrator needs another eligible identity for the decision.
+   `zeroecho-lib:root.prv`. Review and explicitly submit the retained
+   administrative request. Review its linked approval and record a justified
+   decision using an eligible identity; the root administrator may decide their
+   own request with the explicit capability. Observe that same request through
+   execution to terminal success. Do not re-enter or run a second CA operation
+   after approval. An ordinary administrator needs another eligible decision
+   identity. See [administrative requests](../admin/administrative-requests.md).
 6. Create an issuing CA with `intermediate-ca` and
    `zeroecho-lib:intermediate.prv`, then import a CSR and issue a certificate using
    `server-tls`, `vpn-server` or `vpn-client`. See
    [profiles and issuance](../admin/profiles-and-issuance.md) and
    [approval workflow](../admin/access-control.md).
 
-Only the console/admin API is enabled initially. ACME, EST, SCEP, CMP, public
+The console/admin API and any explicitly selected administrative SDK are enabled
+initially. ACME, EST, SCEP, CMP, public
 repository and OCSP setup require their separate documented configurations.
 The filesystem publisher target is `local`, writing into `artifacts/`; this is
 not an externally reachable certificate repository.
@@ -202,10 +218,10 @@ Plain `update` never provisions this privilege.
 
 Updates hold an exclusive per-installation lock. A private
 `updates/pending.json` retains exact staged content hashes, image IDs and the
-explicit root-designation intent before services stop. If interrupted, repeat
-**the same command**, including `--root-admin` when originally requested. The
+explicit access-migration intent before services stop. If interrupted, repeat
+**the same command**, including every access flag originally requested. The
 updater verifies and resumes those retained artifacts without rebuilding or
-silently choosing different images. Changing the root flag while an update is
+silently choosing different images. Changing access flags while an update is
 pending is refused. Restore externally changed metadata/configuration only after
 inspection; the updater will not overwrite unrelated changes.
 
@@ -305,6 +321,18 @@ The launcher is also installed as `zeroecho-pki-certificate-access`, with the sa
 initial bootstrap. It must run offline with the backend stopped. Normal rootless
 updates invoke it in the pinned new image without network access and require its
 `CERTIFICATE_ACCESS_READY` completion marker before reporting success.
+
+Status-object content grants are separate. A compatible retained installation
+can explicitly add the original administrator pair's missing grants with:
+
+```sh
+./deploy/rootless-pki.sh update --status-access
+```
+
+The same original-identity/authority checks and retained-intent rules apply.
+Combine with the other explicit update flags only when all are intended. Fresh
+installations include the initial grants; these flags do not publish objects or
+change disclosure policy. This is an access migration, not a store migration.
 
 Public repository access remains disabled by default. For a separately reviewed
 public deployment, configure the public listener's TLS and trusted-proxy policy,

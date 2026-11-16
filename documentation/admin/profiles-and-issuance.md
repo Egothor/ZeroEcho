@@ -1,5 +1,10 @@
 # Profiles and issuance
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on profile/issuance changes.
+These source-reviewed procedures remain unverified pending clean-environment
+rehearsal. Use the [activity reference](operator-activities.md) for the shared
+CLI/TUI retained submission and recovery procedure.
+
 This page covers the material that governs what may be issued and the act of
 issuing it: registering, validating, inspecting, and activating certificate
 profile versions; importing and verifying certification requests (CSRs); issuing
@@ -78,8 +83,14 @@ the matching private key. Requests are managed under **Requests (CSRs)**.
   including proof of possession.
 - **Inspect request** (`request.inspect`) — show one request by `requestId`.
 
-Requests do not have a realm-wide list; keep the identifier returned by import (or
-inspect it directly) to reference it in the next step.
+Use `request.list` with `limit` and optional `after` to inventory stored requests
+under the applicable read authority. Keep the identifier returned by import and
+verify that exact request before using it in issuance.
+
+For request-owned AltSignature issuance, the SDK additionally requires fresh
+operation-bound proof of both subject keys. An ordinary single-key CSR alone
+does not authorize that form. See the
+[approved recipes](../deployment/pki-exercise.md#approved-algorithm-scenarios).
 
 !!! tip "How requesters submit"
     End users can submit and track their own requests. See
@@ -97,15 +108,17 @@ request and a profile. Complete:
 | `requestId` | The certification request to issue against. |
 | `profileId` | The profile governing the issued certificate. |
 
-Issuance runs synchronously with a [bounded wait](index.md#executed-synchronously-with-a-bounded-wait).
-If the issuing authority hands off to a signing service that does not return in
-time, the outcome is **pending** and identifies a signing operation to resume. If
-the resolved profile requires it, the outcome is **approval required** — create a
-single or threshold approval, have it approved, and re-run citing the approval id.
+Remote signing may remain **pending** after acceptance. Prefer a retained
+[administrative request](administrative-requests.md): submit once, retain its
+approval/signing identities, have the exact target approved when required, and
+observe the original request. Do not re-enter or resubmit it after an uncertain
+acknowledgement. Low-level direct operations retain their explicit approval-ID
+contract; the [host client](../deployment/pki-operator.md) manages durable request
+observation instead. Only terminal SUCCEEDED with the credential result is success.
 
 **Inspect credential** (`credential.inspect`) shows an issued credential by
 `credentialId`. Credentials are looked up by identifier (for example the one
-returned by issuance) rather than from a realm-wide list.
+returned by issuance); use `credential.list` for the authority inventory below.
 
 ## Browse / search credentials
 
@@ -124,7 +137,7 @@ AND-combined: omitting a filter leaves that field unconstrained.
 
 | Filter parameter | Type | How it matches |
 |---|---|---|
-| `subjectFilter` | optional text | Case-insensitive substring match on the subject distinguished name. For example, `server1` matches `CN=server1,O=Acme`. |
+| `subjectFilter` | optional text | Case-insensitive substring match on the subject distinguished name. For example, `server1` matches `CN=server1,O=Northstar Example`. |
 | `serialFilter` | optional text | Case-insensitive substring match on the serial number or unique identifier. |
 | `fingerprintFilter` | optional text | Case-insensitive prefix match on the credential ID (`credentialId`); no certificate digest is computed. |
 | `statusFilter` | optional enum: `ISSUED`, `REVOKED`, `EXPIRED` | Exact match on the credential's inventory status. |
@@ -152,8 +165,8 @@ owning authority.
 
 | Operation | Id | What it does | Approval |
 |---|---|---|---|
-| **Renew credential** | `credential.renew` | Renews an existing credential by `credentialId`. | None |
-| **Replace credential** | `credential.replace` | Replaces `existingCredentialId` using a new `requestId` and `profileId` (for example a re-key). | None |
+| **Renew credential** | `credential.renew` | Renews an existing credential by `credentialId`. | Governing profile |
+| **Replace credential** | `credential.replace` | Replaces `existingCredentialId` using a new `requestId` and `profileId` (for example a re-key). | Governing profile |
 | **Reissue credential** | `credential.reissue` | Reissues a credential (same key) by `credentialId`. | High-risk |
 
 === "Renew"
@@ -171,6 +184,12 @@ owning authority.
 
     Choose *Reissue credential* and supply the `credentialId`. Reissue keeps the
     same key and is high-risk, so it requires an approval.
+
+Hybrid renewal and reissue require fresh operation-bound proof of **both**
+unchanged subject keys; replacement proves the complete requested key tuple.
+Use the configured SDK workflow with its retained target, not ordinary replay
+of an old proof. Keep exact subject SPKIs and the accepted immutable issuer
+selection when checking the resulting certificate.
 
 ### Credential confirmation
 

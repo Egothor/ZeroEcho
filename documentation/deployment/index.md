@@ -8,8 +8,11 @@ a Kubernetes deployment, day-two operations, and the security model you must
 uphold at the edge.
 
 For a guided Linux installation, start with the
-[rootless Podman installer](rootless-podman.md). To exercise a running installation
-from a separate host console, follow the [PKI exercise guide](pki-exercise.md).
+[production deployment guide](pki-production.md) and
+[rootless installer reference](rootless-podman.md). For a disposable two-terminal
+qualification, start with the [fast-track](pki-fast-track.md). The
+[PKI exercise guide](pki-exercise.md) supplies the classical/PQC/hybrid recipes;
+the [host operator](pki-operator.md) handles reusable work.
 
 ## What you will deploy
 
@@ -17,9 +20,12 @@ The platform runs as two cooperating containers on a private network:
 
 - **The PKI server** — a long-lived HTTPS service that holds the system of record:
   certificate authorities, requests, issued credentials, revocations, the metadata
-  log, and the CA signing keyring. It exposes only a JSON API (administrative,
-  public, and health routes) over a mandatory mutual-TLS listener. It does not
-  serve any static web content.
+  log, and the CA signing keyring. Its default administrative listener requires
+  mutual TLS and exposes typed JSON operations, retained requests, health and
+  permitted binary artifact/backup routes. Public repository, OCSP and enrollment
+  listeners are separately configured with their own authentication/disclosure
+  policies, including intentionally anonymous public routes. The backend does
+  not serve static web content.
 - **The nginx edge** — a stateless reverse proxy that serves the single-page web
   console bundle, terminates the administrator's browser client certificate, and
   forwards the verified client identity to the PKI server over its own mutual-TLS

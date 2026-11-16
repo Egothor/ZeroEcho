@@ -1,5 +1,10 @@
 # Certificate authorities and issuer generations
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on CA/issuer contract
+changes. Written procedures remain unverified pending clean-environment rehearsal.
+See the [activity reference](operator-activities.md) for the shared retained
+CLI/TUI workflow and [algorithm recipes](../deployment/pki-exercise.md#approved-algorithm-scenarios).
+
 A certificate authority (CA) is the trust anchor or intermediate that issues
 credentials in your realm. This page covers creating root and intermediate CAs,
 issuing subordinate CA certificates, moving an authority through its lifecycle
@@ -13,7 +18,9 @@ generations and chain paths under **Issuer Generations & Paths**.
     Creating an authority, transitioning its state, creating or issuing an
     intermediate, rolling over, rotating a key, and selecting an issuance path are
     all classified high-risk and require a durable [approval](access-control.md#approvals).
-    Plan for a second, eligible principal to approve before the operation can run.
+    Ordinary requesters need another eligible principal. The initial root
+    administrator may decide their own request only with explicit own-approval
+    permission; justification, eligibility and thresholds still apply.
 
 ## The authorities table
 
@@ -33,11 +40,14 @@ Use **Create root authority** (`ca.create`). Complete:
 | `subjectRef` | Reference to the subject (distinguished name) material for the root. |
 | `profileId` | The [profile](profiles-and-issuance.md) governing the root certificate. |
 | `keyRef` | Reference to the key material the root will use. |
+| `signatureAlgorithmId` | Optional explicit outgoing signature identity; select the approved compatible binding when composing classical/PQC/hybrid authorities in one realm. |
 
-On success the server assigns the new authority's identifier and the authority
-appears in the table in the `ACTIVE` state. Because this is high-risk, the console
-will report *approval required* unless you supply an approval id for a matching,
-approved request.
+The console prepares a retained administrative request with its linked approval
+for this high-risk operation. Review and submit that exact request, obtain an
+eligible justified decision, then observe execution. On terminal success inspect
+the returned credential and outgoing issuer generation before selecting the new
+authority. The low-level direct API has a separate explicit approval-ID contract;
+do not reconstruct a second mutation to recover a pending console request.
 
 ## Creating an intermediate authority
 
@@ -51,7 +61,8 @@ issue its CA certificate. Use **Create intermediate CA**
 | `issuerCaId` | The parent authority that will issue the subordinate's certificate (a type-to-search picker). This is also the operation's target authority. |
 | `subjectRef` | Subject material for the intermediate. |
 | `profileId` | Profile governing the intermediate certificate. |
-| `keyRef` | *(Optional)* Key reference; omit to have key material provisioned. |
+| `keyRef` | Required existing compatible managed key reference. Generation is a separate protected-FIRST operation; omission does not provision a key. |
+| `signatureAlgorithmId` | Optional explicit outgoing signature identity of the new intermediate; its incoming certificate signature is selected from the parent issuer. |
 
 ### Issuing an intermediate certificate
 
@@ -99,13 +110,26 @@ Two distinct operations renew an authority's own certificate material:
 === "Rotate the key"
 
     **Rotate CA key** (`ca.rotate`) issues a new generation on a *new signing key*.
-    Complete `caId`, optionally `newKeyRef` (the new key material to use; omit to
-    have it provisioned), and, for a subordinate, the issuing `issuerCaId`.
-    Rotation is high-risk.
+    Complete `caId` and explicitly select the roles to change: `newKeyRef`,
+    `newAlternativeKeyRef`, `primarySignatureAlgorithmId` and/or
+    `alternativeSignatureAlgorithmId`, with compatible existing managed keys.
+    Omitted roles retain their exact current binding; no implicit key generation
+    occurs. Alternative-only rotation does not require a new primary key.
+    For a subordinate also select the issuing `issuerCaId` as applicable.
+    Rotation is high-risk; compare the captured `expectedHead` fence.
 
 Both operations produce a new **issuer generation** for the authority. Existing
 credentials remain chained to the generation that issued them; new issuance uses
 the authority's active issuance path (below).
+
+For a root, a change to either role's SPKI or explicit outgoing algorithm is
+two-phase: publish a candidate without advancing the selected head; download and
+distribute the exact candidate; then perform separate approved path activation
+with the expected head, transition commitment and `distributionAcknowledged`.
+The acknowledgement does not prove client trust stores were updated. Same-key,
+same-algorithm rollover retains the immediate behavior. Hybrid accepted work
+keeps its frozen keys/generation, and hybrid leaf lifecycle requires fresh proof
+of both applicant keys. See [activity reference](operator-activities.md).
 
 ## Issuer generations and chain paths
 

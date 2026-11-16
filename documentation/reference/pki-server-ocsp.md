@@ -1,5 +1,8 @@
 # ZeroEcho OCSP responder
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on responder/SDK contract
+changes. Written procedures remain unverified pending clean-environment rehearsal.
+
 ZeroEcho serves OCSP only on the separately bounded public listener at
 `/ocsp/{responderAlias}`. Administrative operations remain under `/admin/v1`,
 the public repository remains under `/public/v1`, and ACME remains on its own
@@ -20,6 +23,8 @@ timestamp inference, runtime path building, or fallback signing algorithm.
 
 The unified administrative catalog exposes:
 
+- `ocsp.responder.issue-certificate` (controlled managed-certificate issuance;
+  issuer-use permission and profile approval, separate from administration)
 - `ocsp.responder.register`
 - `ocsp.responder.inspect`
 - `ocsp.responder.list`
@@ -32,6 +37,61 @@ operations and use the existing approval policy. Registration input does not
 accept authoritative creation timestamps, lifecycle state, or record
 commitments; the server creates those values. Ordinary results omit `KeyRef`,
 certificate DER, and provider configuration.
+
+## Controlled managed responder provisioning
+
+Generate dedicated keys explicitly through protected-FIRST `key.generate`, or
+select existing compatible managed references under ordinary authorization.
+`ocsp.responder.issue-certificate` requires exact `authorityId`, `issuerId`,
+`primaryKeyRef`, `alternativeKeyRef`, typed `subject`, `profileId`, integer
+`profileVersion`, `profileSha256`, `chainPathId`, `chainPathCommitment`, and
+absolute `notBefore`/`notAfter`. Its non-CA profile must delegate OCSP signing
+with digitalSignature and id-kp-OCSPSigning. Both managed subject-key proofs and
+both issuer signatures are verified without private-key export.
+
+Use the durable [host operator workflow](../deployment/pki-operator.md). The
+server normalizes authority/generation/public-key coordinates to an occupied
+provisioning slot and returns a canonical `ocsp-prov:<slot>:r<revision>` request
+ID. The client keeps its local request identity plus that canonical ID. Equal
+targets attach to the original request/result; changed dates/profile do not
+silently issue another certificate. An intentional same-slot renewal requires
+`expectedPredecessorCredentialId` equal to the current completed credential.
+Uncertain canonical acknowledgement requires authorized inspection, not retry
+under another caller ID or slot deletion. Registration and activation remain
+separate approved operations after artifact verification.
+
+## Separate SDK status evidence
+
+Native `/ocsp/{alias}` remains ordinary RFC 6960 single-signature assurance.
+An explicitly configured public listener and responder may additionally expose:
+
+```text
+GET  /ocsp/{alias}/hybrid-sdk/v1
+POST /ocsp/{alias}/hybrid-sdk/v1
+```
+
+SDK POST uses `application/vnd.zeroecho.hybrid-sdk+json` and exactly version 1,
+`profile=zeroecho-hybrid-sdk-v1`, `requestDer` (canonical unpadded base64url of
+the complete native request) and `clientNonce` (independently generated 32 bytes,
+canonical unpadded base64url). Existing native signed/unsigned requester policy,
+authorization, nonce and resource bounds still apply. Capability metadata does
+not grant query authority or supply trusted issuer expectations.
+
+The delegated SDK responder uses dedicated managed P-384/ECDSA-SHA384 and pure
+ML-DSA-87 roles. Verify the native response and both separate F4/F5 signatures,
+the exact request/response hashes, native and SDK nonces, ordered status entries,
+trusted realm/origin, immutable generation/path/binding and delegated certificate
+authorization. Do not trust bundle-provided roots or commitments as expectations.
+Evaluate freshness with trusted **current** time: response age at most 300 seconds,
+future skew at most 60 seconds, evidence life at most 120 seconds and no later than
+nextUpdate or responder expiry. Missing/invalid SDK evidence fails SDK assurance
+without fallback. This is **not standard AltSignature BasicOCSPResponse**; GOOD
+does not by itself establish certificate-path or application validity.
+
+Fresh `rootless-pki.sh test-start --hybrid-sdk` enables the administrative and
+public SDK configuration for its disposable qualification environment. Persistent
+`install --hybrid-sdk` configures only administrative SDK; public production
+responder/listener setup is separate. Default-off behavior is preserved.
 
 ## Signing modes
 

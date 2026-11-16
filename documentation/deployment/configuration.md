@@ -1,10 +1,14 @@
 # Configuration
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on configuration/bootstrap
+changes. Source-reviewed procedures remain unverified pending rehearsal.
+
 The store volume mounts at `/var/lib/zeroecho/store-container`, with PKI state
 under `store/` and server-control state under `server-control/`. The writable
-parent also retains cold-restore journals and rollback roots. Existing volumes
-need the explicit [offline layout migration](operations.md#offline-layout-migration);
-never point a new child configuration at an unmigrated old root.
+parent also retains cold-restore journals and rollback roots. The supported
+baseline is a fresh empty v18 store; there is no earlier-store migration path.
+See [earlier-deployment boundaries](operations.md#mount-layout-and-earlier-deployments);
+never point a new child configuration at an old root and infer compatibility.
 
 The PKI server keeps no secrets and no storage locations baked into its image.
 Everything it needs at run time arrives through three channels: persistent data
@@ -173,12 +177,11 @@ start-up. To change one:
    identifier is not already present in the store.
 
 !!! warning "Editing an existing profile requires changed content"
-    The bootstrap skips a profile when its active version already has identical
-    content (SHA-256 of the canonical document matches); changed content is always
-    re-registered and activated. Restarting with an unmodified profile document
-    is a no-op for that profile. To change an active profile, update the document
-    content in the profiles source before restarting, or register a new version
-    through the console or the [command line](../admin/command-line.md). Set
+    Deployment bootstrap skips every already-known profile identity, including an
+    inactive one. Editing a mounted document and restarting does not update or
+    reactivate it. Register changed content as a new version through the console
+    or the [operator workflow](pki-operator.md), then activate it with the required
+    approval. Set
     `ZEROECHO_PROFILE_RECONCILE=off` to disable the start-up reconcile if a
     separate process owns profile lifecycle.
 

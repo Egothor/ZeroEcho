@@ -1,5 +1,10 @@
 # Operations
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on deployment/recovery
+changes. Written procedures remain unverified pending clean-environment rehearsal.
+For the supported fresh-v18 rootless operating path, start with
+[production deployment](pki-production.md).
+
 This page covers running the platform day to day: checking health, backing up and
 restoring the volumes, upgrading the images, recovering from disaster, and handling
 logs and audit records.
@@ -68,7 +73,7 @@ authority and rollback roots. See the [restore procedure](../admin/backup-restor
     its unlock password as a unit: store them under separate access control but
     ensure both are retained together.
 
-## Offline layout migration
+## Mount layout and earlier deployments
 
 The writable durable mount is `/var/lib/zeroecho/store-container`; its `store/`
 child is the replaceable PKI root. Server-control authority lives separately at
@@ -76,13 +81,12 @@ child is the replaceable PKI root. Server-control authority lives separately at
 child: cold activation needs sibling stage/rollback roots and
 `.store.restore-control` on the same filesystem.
 
-For an old layout, stop every server and bootstrap process and preserve a complete
-offline copy first. Place the former PKI root under `store/`, move its existing
-`server-control.log` to `server-control/server-control.log`, and preserve other
-external authority under separately configured stable paths. Update server and
-bootstrap configurations together, retaining ownership and permissions. The
-entrypoint rejects a legacy `VERSION` at the mount root; it never automatically
-migrates or initializes over it. Moving the layout does not permit rewinding state.
+The qualified baseline uses a fresh empty version-18 store. There is no supported
+earlier-store migration procedure in this package. The entrypoint rejects a
+legacy `VERSION` at the mount root; it never automatically migrates or initializes
+over it. Do not move earlier authority/state into a new deployment and infer
+compatibility from matching paths. Preserve earlier state and obtain a separately
+approved migration design before attempting such work.
 
 ## Upgrades
 
@@ -117,12 +121,11 @@ volumes carry the state forward.
     with its default rolling strategy.
 
 !!! note "Certificate profiles on upgrade"
-    The bootstrap skips a profile when its active version already has identical
-    content (SHA-256 of the canonical document matches); changed content is always
-    re-registered and activated. To change a profile during an upgrade, update the
-    document in the profiles source — the changed content will be picked up on
-    restart. Alternatively, register a new version through the console or
-    [command line](../admin/command-line.md) after the server is running.
+    Deployment profile bootstrap registers and activates an **absent identity**.
+    It skips a known identity, including an inactive one; it does not overwrite
+    changed content or reactivate an existing profile on restart. To change a
+    profile, register the new version through the console or
+    [operator workflow](pki-operator.md) and activate it with the required approval.
     See [Configuration](configuration.md#changing-a-certificate-profile).
 
 ## Disaster recovery

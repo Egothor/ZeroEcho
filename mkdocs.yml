@@ -158,6 +158,8 @@ nav:
           - overview/concepts.md
           - Deployment:
               - deployment/index.md
+              - deployment/pki-fast-track.md
+              - deployment/pki-production.md
               - deployment/requirements.md
               - deployment/containers.md
               - deployment/configuration.md
@@ -170,6 +172,7 @@ nav:
               - deployment/pki-operator.md
           - Administration:
               - admin/index.md
+              - admin/operator-activities.md
               - admin/console.md
               - admin/authorities.md
               - admin/profiles-and-issuance.md
@@ -201,6 +204,7 @@ nav:
       - reference/operation-permissions.md
       - reference/glossary.md
       - reference/pki-cli.md
+      - reference/pki-operator-interfaces.md
       - reference/pki-deployment-cli-contracts.md
       - reference/pki-server-admin-https.md
       - reference/pki-server-acme.md

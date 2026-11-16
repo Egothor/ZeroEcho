@@ -1,8 +1,15 @@
 # Certificate profile schema
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on profile/codec changes.
+Source-reviewed examples remain unverified as written pending procedure rehearsal.
+
 A certificate profile document is a strict JSON object that constrains a class
 of certificates. The codec enforces schema version 5. Documents must not exceed
-**256 KB**.
+**262144 bytes**. Unknown/duplicate fields, wrong types, unsupported versions,
+trailing data, a UTF-8 BOM and null optionals are rejected. Depth is bounded at
+16, arrays at 128 elements and ordinary strings at 4096 UTF-8 bytes; individual
+fields may have smaller bounds. These are JSON profiles consumed by
+`CertificateProfileDocumentCodec`, not arbitrary CSR-format documents.
 
 ## Top-level structure
 
@@ -14,17 +21,17 @@ All fields listed below are **required** unless the Req column says Optional.
 | `certificateType` | string | Yes | see [Certificate types](#certificate-types) | The kind of certificate this profile governs. |
 | `profileId` | string | Yes | ≤ 128 UTF-8 bytes | Stable identifier for this profile. |
 | `profileVersion` | integer | Yes | positive | Monotonically increasing version counter. |
-| `formatId` | string | Yes | ≤ 128 UTF-8 bytes | Format binding identifier used when importing CSRs. |
+| `formatId` | string | Yes | ≤ 128 UTF-8 bytes | Installed certificate format; the recipes use `x509`. |
 | `displayName` | string | Yes | ≤ 256 UTF-8 bytes | Human-readable profile name. |
 | `maxValidity` | string | Yes | ISO-8601 duration | Maximum certificate validity period (e.g. `PT8760H` for one year). |
 | `approvalRequirement` | string | Yes | see [Approval requirement](#approval-requirement) | Whether issuance requires administrative approval. |
-| `algorithmBindings` | object | Yes | see [Algorithm bindings](#algorithm-bindings) | Key algorithm and key-usage constraints. |
-| `subject` | array | Yes | see [Subject rules](#subject-rules) | Ordered list of subject RDN rules. |
-| `subjectAlternativeNames` | array | END_ENTITY only | see [SAN rules](#san-rules) | Allowed subject alternative name types. |
+| `algorithmBindings` | object | Yes | see [Algorithm bindings](#algorithm-bindings) | Standard-only or explicitly pinned representation bindings. |
+| `subject` | object | Yes | see [Subject rules](#subject-rules) | Empty-subject policy and ordered subject RDN rules. |
+| `subjectAlternativeNames` | object | END_ENTITY only | see [SAN rules](#san-rules) | Total limits, identity/criticality policy and allowed SAN type rules. |
 | `leafCertificate` | object | END_ENTITY only | see [Leaf certificate](#leaf-certificate) | Key-usage and extension rules for end-entity certificates. |
 | `confirmationPolicy` | object | END_ENTITY only | see [Confirmation policy](#confirmation-policy) | Request-confirmation policy for end-entity issuance. |
 | `caCertificate` | object | CA types only | see [CA certificate](#ca-certificate) | Key-usage and path-length constraint for CA certificates. |
-| `hybridMode` | object | Optional | see [Hybrid mode](#hybrid-mode) | Selects supported AltSignature root issuance or marks an independently administered Twin hierarchy. Omit for ordinary single-signature profiles. |
+| `hybridMode` | object | Optional | see [Hybrid mode](#hybrid-mode) | Selects supported AltSignature issuance/lifecycle or marks an independently administered Twin hierarchy. Omit for ordinary single-signature profiles. |
 
 ## Certificate types
 
@@ -42,25 +49,37 @@ an administrative approval before signing.
 
 | Value | Meaning |
 |---|---|
-| `NONE` | Issuance proceeds immediately without any approval. |
+| `NONE` | No profile-imposed issuance approval; other authorization/high-risk policy still applies. |
 | `SINGLE` | Issuance requires exactly one attributable administrative approval. |
 | `THRESHOLD` | Issuance requires a multi-party (M-of-N) approval threshold. The exact threshold and eligible approvers are deployment concerns, not embedded in the profile. |
 
 ## Algorithm bindings
 
-The `algorithmBindings` object controls which public-key algorithms and key
-usages a CSR may carry.
+The `algorithmBindings` object selects X.509 representation policy; subject-key
+families and key usages belong to leaf/CA policy below. It has required `mode`
+and optional `subjectPublicKey`, `csrSignature`, `certificateSignature`,
+`crlSignature` references. Each reference is exactly `{ "bindingId": "...",
+"semanticCommitment": "..." }` from the installed binding registry; do not
+invent an OID, commitment or algorithm identity.
 
 ```json
 "algorithmBindings": {
-  "allowedKeyAlgorithms": ["ECDSA", "Ed25519"],
-  "allowedKeyUsages": ["DIGITAL_SIGNATURE"]
+  "mode": "STANDARD_ONLY"
 }
 ```
 
+`STANDARD_ONLY` permits no explicit references and no private-OID fallback.
+`EXPLICIT` requires at least one exact reference. Discover bindings through
+`algorithm.binding.list` (required integer `limit`) and inspect their identity,
+semantic commitment and role. Representation selection alone does not choose
+an issuer's key or outgoing signature algorithm.
+
 ### `allowedKeyAlgorithms`
 
-Array of one or more strings. Accepted values:
+`leafCertificate.allowedKeyAlgorithms` and
+`caCertificate.allowedSubjectKeyAlgorithms` are arrays of supported family tokens.
+Accepted syntax includes the following; codec acceptance does not prove a signer,
+client or qualified scenario supports every family/parameter set.
 
 | Value | Algorithm |
 |---|---|
@@ -71,10 +90,13 @@ Array of one or more strings. Accepted values:
 | `SPHINCS+` | SPHINCS+ (stateless hash-based signature) |
 | `ML-DSA` | Module-Lattice Digital Signature Algorithm (FIPS 204) |
 | `SLH-DSA` | Stateless Hash-Based Digital Signature Algorithm (FIPS 205) |
+| `LMS`, `XMSS` | Stateful families; not supplied by the four approved certificate scenarios. |
 
 ### `allowedKeyUsages`
 
-Array of key-usage identifiers. The valid set depends on `certificateType`.
+Key-usage identifiers live in `leafCertificate.keyUsage` (singular) or
+`caCertificate.keyUsages` (plural), not `algorithmBindings.allowedKeyUsages`.
+The valid set depends on `certificateType`.
 
 **For `END_ENTITY`** (from `LeafKeyUsage`):
 
@@ -97,8 +119,10 @@ Array of key-usage identifiers. The valid set depends on `certificateType`.
 
 ## Subject rules
 
-`subject` is an ordered array of RDN rule objects. Each rule specifies how many
-times an RDN component of a given OID may appear and how its value is sourced.
+`subject` is exactly an object with required boolean `allowEmpty` and array
+`rules`. Each ordered rule specifies how many times an RDN component of a given
+OID may appear and how its value is sourced. An empty permitted subject requires
+at least one SAN in an end-entity profile.
 
 | Field | Type | Req | Description |
 |---|---|---|---|
@@ -111,14 +135,18 @@ times an RDN component of a given OID may appear and how its value is sourced.
 
 ## SAN rules
 
-`subjectAlternativeNames` (END_ENTITY only) is an array of SAN type rule objects.
-Each entry permits one SAN type and its constraints.
+`subjectAlternativeNames` (END_ENTITY only) is an object with all six required
+fields: integer `minimumTotal`, integer `maximumTotal`, boolean
+`serviceIdentityRequired`, boolean `emailIdentityRequired`, boolean
+`criticalWhenSubjectNonEmpty`, and array `rules`. Every rule permits one SAN
+type and its occurrence constraints. Minimum/maximum bounds and policy invariants
+are checked by the typed policy constructors.
 
 ### Common fields
 
 | Field | Type | Req | Description |
 |---|---|---|---|
-| `sanType` | string | Yes | One of `DNS_NAME`, `IP_ADDRESS`, `URI`, `RFC822_NAME`. |
+| `type` | string | Yes | One of `DNS_NAME`, `IP_ADDRESS`, `URI`, `RFC822_NAME`. |
 | `minimumOccurrences` | integer | Yes | Minimum required count (0 = optional). |
 | `maximumOccurrences` | integer | Yes | Maximum permitted count. |
 
@@ -126,22 +154,23 @@ Each entry permits one SAN type and its constraints.
 
 | Field | Type | Description |
 |---|---|---|
-| `wildcardAllowed` | boolean | Whether wildcard DNS names (e.g. `*.example.com`) are accepted. |
+| `wildcardAllowed` | boolean, required | Whether wildcard DNS names (e.g. `*.northstar.example`) are accepted. |
 
 ### `IP_ADDRESS` extra fields
 
 | Field | Type | Description |
 |---|---|---|
-| `ipv4Allowed` | boolean | Whether IPv4 addresses are accepted. |
-| `ipv6Allowed` | boolean | Whether IPv6 addresses are accepted. |
+| `ipv4Allowed` | boolean, required | Whether IPv4 addresses are accepted. |
+| `ipv6Allowed` | boolean, required | Whether IPv6 addresses are accepted. |
 
 ### `URI` extra fields
 
 | Field | Type | Description |
 |---|---|---|
-| `allowedSchemes` | array of string | The URI schemes the SAN value may use (e.g. `["https", "ldap"]`). |
+| `allowedSchemes` | array of string, required | Lowercase ASCII URI schemes, each at most 32 bytes (e.g. `["https", "spiffe"]`). |
 
-`RFC822_NAME` has no additional fields beyond the common ones.
+`RFC822_NAME` has no additional fields beyond the common ones. Type-specific
+fields are mandatory for their type and forbidden on other types.
 
 ## Leaf certificate
 
@@ -150,32 +179,43 @@ extensions and key-usage assertions the issued certificate will carry.
 
 ```json
 "leafCertificate": {
-  "keyUsages": ["DIGITAL_SIGNATURE"],
-  "extendedKeyUsages": ["1.3.6.1.5.5.7.3.2"],
-  "subjectKeyIdentifierIncluded": true,
-  "authorityKeyIdentifierIncluded": true
+  "basicConstraintsCritical": true,
+  "keyUsageCritical": true,
+  "keyUsage": ["DIGITAL_SIGNATURE"],
+  "extendedKeyUsageCritical": false,
+  "extendedKeyUsage": ["1.3.6.1.5.5.7.3.2"],
+  "allowedKeyAlgorithms": ["ECDSA", "Ed25519", "RSA"]
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `keyUsages` | array | One or more `LeafKeyUsage` values (see [allowedKeyUsages](#allowedkeyusages)). Must be a subset of `algorithmBindings.allowedKeyUsages`. |
-| `extendedKeyUsages` | array of string | Optional OID strings for Extended Key Usage extension values. |
-| `subjectKeyIdentifierIncluded` | boolean | Whether to include the Subject Key Identifier extension. |
-| `authorityKeyIdentifierIncluded` | boolean | Whether to include the Authority Key Identifier extension. |
+| `basicConstraintsCritical` | boolean | Required criticality flag for non-CA basic constraints. |
+| `keyUsageCritical` | boolean | Required key-usage criticality flag. |
+| `keyUsage` | array | Required `LeafKeyUsage` values (see [usage values](#allowedkeyusages)). |
+| `extendedKeyUsageCritical` | boolean | Required EKU criticality flag. |
+| `extendedKeyUsage` | array of string | Required array of canonical EKU OID strings. |
+| `allowedKeyAlgorithms` | array of string | Required permitted subject-key families. |
 
 ## Confirmation policy
 
-`confirmationPolicy` (END_ENTITY only) controls how the server confirms that the
-requesting entity controls the subject information before issuing.
+`confirmationPolicy` is required for END_ENTITY and forbidden for CA types. It
+defines the disclosure and holder-confirmation policy, distinct from CSR PoP and
+administrative approval. All five fields are required:
 
 | Field | Type | Description |
 |---|---|---|
-| `type` | string | Confirmation strategy. |
+| `disclosurePolicy` | string | Supported `ConfirmationDisclosurePolicy` value, such as `OWNER_ONLY`; select the actual configured policy. |
+| `confirmationWindow` | string | Positive supported ISO-8601 confirmation duration. |
+| `proofSuiteId` | string | Installed proof suite ID, at most 128 UTF-8 bytes. |
+| `proofSuiteCommitment` | string | Exact 64-character configuration commitment of that proof suite. |
+| `policyCommitment` | string | Exact 64-character derived commitment of the whole confirmation policy. |
 
-Confirmation types and their additional fields are defined by the installed
-confirmation-policy providers. Contact your deployment documentation for the
-supported types.
+The codec reconstructs the typed policy and checks its derived commitment.
+Do not use a fabricated `type=NONE` object or guess hashes. The complete example
+below retains the shipped OWNER_ONLY/PT24H proof-policy values; changing that
+policy requires generating the matching canonical commitment with the supported
+SDK/configuration workflow and validating before registration.
 
 ## CA certificate
 
@@ -184,8 +224,11 @@ profiles.
 
 | Field | Type | Req | Description |
 |---|---|---|---|
+| `basicConstraintsCritical` | boolean | Yes | CA basic-constraints criticality. |
+| `keyUsageCritical` | boolean | Yes | Key-usage criticality. |
 | `keyUsages` | array | Yes | One or more `CaKeyUsage` values (`KEY_CERT_SIGN`, `CRL_SIGN`). |
-| `pathLengthConstraint` | integer | No | X.509 path-length constraint. Omit or set to `-1` for no constraint. `0` means no further CAs below this one. |
+| `pathLengthConstraint` | integer | Yes | `-1` means no path-length constraint; `0` means no further subordinate CAs. |
+| `allowedSubjectKeyAlgorithms` | array of string | Yes | Permitted subject-key families; does not replace explicit outgoing algorithm/key selection. |
 
 ## Hybrid mode
 
@@ -196,8 +239,8 @@ the validator.
 
 ### `ALT_SIGNATURE` mode
 
-Embeds three X.509 2019 Amendment 2 extensions into the certificate
-TBS structure:
+Uses the X.509 alternative-signature extensions with the implemented Cor. 3
+transcript rules. Verify the actual primary and alternative issuer relationships:
 
 | Extension | OID | Content |
 |---|---|---|
@@ -212,7 +255,8 @@ recognise them skip them and still validate the primary signature correctly.
 |---|---|---|
 | `type` | string | Must be `ALT_SIGNATURE`. |
 | `altSignatureAlgorithmId` | string | Canonical ZeroEcho algorithm identity string for the alternative signature. The signing provider must support this algorithm and have the corresponding private key loaded. |
-| `altKeyRef` | string | Key reference for the alternative private key in the signing provider's keyring (e.g. `zeroecho-lib:root-alt.prv`). |
+| `subjectKeySource` | string | `MANAGED` (default) for CA subject keys, `REQUEST` for ordinary hybrid end-entity subject keys. |
+| `altKeyRef` | string | Required managed alternative subject-key reference for MANAGED; absent for REQUEST. Applicant private keys remain client-owned. |
 
 ```json
 "hybridMode": {
@@ -233,10 +277,13 @@ parameters, are currently unsupported for the alternative signature. No
 fixed-length signature or placeholder is required. ML-DSA-65 is the built-in
 profile's tested default.
 
-`ALT_SIGNATURE` is accepted only for `ROOT_CA` profiles. An intermediate or
-end-entity profile requesting it is rejected during validation. Such descendants
-may use ordinary or Twin profiles beneath an AltSignature root; their certificates
-then carry only their configured primary signature.
+`ALT_SIGNATURE` supports root/intermediate CA and end-entity issuance. CA profiles
+use managed subject keys. Ordinary end-entity profiles use `subjectKeySource:
+"REQUEST"` and omit `altKeyRef`; issuance requires the approved SDK dual-subject
+PoP workflow. The narrow dedicated managed OCSP responder profile instead permits
+MANAGED end-entity keys with exactly digitalSignature and id-kp-OCSPSigning, through
+controlled `ocsp.responder.issue-certificate`. Selecting a profile alone grants
+neither key generation nor permission to sign.
 
 Historical unsupported profiles remain readable and included in backup/restore.
 New imports, activation and issuance validate current lifecycle support; loading
@@ -245,18 +292,19 @@ an archived profile does not authorize its use for issuance.
 | Lifecycle | AltSignature | Twin |
 |---|---|---|
 | Root creation | Both signatures and all three extensions | One signature per independent hierarchy |
-| Root rollover / primary-key rotation | Preserves alternative public key and algorithm | Preserves Twin profile marker |
-| Intermediate / leaf issuance | AltSignature profile rejected; ordinary descendants permitted | Standard single-signature issuance in each hierarchy |
-| CRL / delta CRL | Primary signature only | Primary signature of the selected hierarchy |
-| OCSP operation | Existing operation availability is unchanged; no hybrid OCSP support added | Same |
+| CA rollover / key rotation | Explicit primary, alternative or both-role rotation; omitted roles preserved | Preserves Twin profile marker |
+| Intermediate / leaf issuance | Both issuer signatures; leaf subject keys require both fresh SDK proofs | Standard single-signature issuance in each hierarchy |
+| CRL / delta CRL | Both signatures with qualified SDK/BC-compatible transcript profile and generation/base continuity | Primary signature of the selected hierarchy |
+| OCSP | Native single-signature RFC 6960 plus optional **separate** SDK F4/F5 evidence, not standard AltSignature OCSP | Ordinary native profile |
 | Verification | Primary verification plus explicit alternative issuer-key verification | Independently verify each hierarchy |
 
-Root rollover and primary-key rotation preserve the historical hybrid mode.
-An active profile change cannot implicitly migrate between None, Twin and
-AltSignature. Alternative-key or alternative-algorithm rotation is unsupported.
-The configured alternative key must match the public key in the current root
-certificate. A creation-time key-reference override is not persisted as a new
-configuration default: configure the matching key before later rollover.
+Lifecycle operations preserve the accepted immutable issuer/key/profile binding;
+an active profile edit cannot implicitly migrate existing credentials. Hybrid
+renew/reissue proves both unchanged subject keys; replacement proves the requested
+tuple. A changed-key/algorithm root candidate requires separately approved
+activation after distribution acknowledgement; same-tuple rollover keeps ordinary
+selection behavior. See [CA lifecycle](../admin/authorities.md#certificate-rollover-and-key-rotation)
+and [activities](../admin/operator-activities.md).
 
 Previously issued AltSignature roots using the invalid placeholder transform
 remain readable, but fail alternative-signature verification and rollover.
@@ -271,6 +319,12 @@ The built-in `hybrid-root-ca` profile uses this mode with ML-DSA-65 as the
 alternative algorithm and `zeroecho-lib:root-alt.prv` as the key reference.
 Operators who activate this profile must provision an ML-DSA key under that
 reference in the signing provider's keyring.
+
+That bundled default is not the approved ML-DSA-87 scenario selection. The
+[classical/PQC/hybrid recipes](../deployment/pki-exercise.md#approved-algorithm-scenarios)
+register explicit per-run profiles and managed keys for P-384/SHA-384 plus
+ML-DSA-87. A primary-only verifier does not establish alternative-signature
+assurance or universal PQC browser/TLS compatibility.
 
 ### `TWIN_CERTIFICATE` mode
 
@@ -312,56 +366,47 @@ OIDs are recognised within the ZeroEcho ecosystem.
 {
   "schemaVersion": 5,
   "certificateType": "END_ENTITY",
-  "profileId": "tls-server-v1",
+  "profileId": "northstar-server-tls",
   "profileVersion": 1,
-  "formatId": "PKCS10-DER",
-  "displayName": "TLS Server Certificate",
+  "formatId": "x509",
+  "displayName": "Northstar Example Server TLS",
   "maxValidity": "PT8760H",
   "approvalRequirement": "NONE",
-  "algorithmBindings": {
-    "allowedKeyAlgorithms": ["ECDSA", "Ed25519"],
-    "allowedKeyUsages": ["DIGITAL_SIGNATURE"]
+  "algorithmBindings": {"mode": "STANDARD_ONLY"},
+  "subject": {
+    "allowEmpty": true,
+    "rules": [
+      {"oid": "2.5.4.3", "source": "REQUESTER", "minimumOccurrences": 0,
+       "maximumOccurrences": 1, "maximumUtf8Bytes": 253}
+    ]
   },
-  "subject": [
-    {
-      "oid": "2.5.4.3",
-      "source": "REQUESTER",
-      "minimumOccurrences": 1,
-      "maximumOccurrences": 1,
-      "maximumUtf8Bytes": 64
-    },
-    {
-      "oid": "2.5.4.10",
-      "source": "PROFILE_FIXED",
-      "minimumOccurrences": 1,
-      "maximumOccurrences": 1,
-      "maximumUtf8Bytes": 64,
-      "fixedValue": "Example Organisation"
-    }
-  ],
-  "subjectAlternativeNames": [
-    {
-      "sanType": "DNS_NAME",
-      "minimumOccurrences": 1,
-      "maximumOccurrences": 16,
-      "wildcardAllowed": false
-    },
-    {
-      "sanType": "IP_ADDRESS",
-      "minimumOccurrences": 0,
-      "maximumOccurrences": 4,
-      "ipv4Allowed": true,
-      "ipv6Allowed": true
-    }
-  ],
+  "subjectAlternativeNames": {
+    "minimumTotal": 1,
+    "maximumTotal": 64,
+    "serviceIdentityRequired": true,
+    "emailIdentityRequired": false,
+    "criticalWhenSubjectNonEmpty": false,
+    "rules": [
+      {"type": "DNS_NAME", "minimumOccurrences": 0, "maximumOccurrences": 64,
+       "wildcardAllowed": false},
+      {"type": "IP_ADDRESS", "minimumOccurrences": 0, "maximumOccurrences": 16,
+       "ipv4Allowed": true, "ipv6Allowed": true}
+    ]
+  },
   "leafCertificate": {
-    "keyUsages": ["DIGITAL_SIGNATURE"],
-    "extendedKeyUsages": ["1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"],
-    "subjectKeyIdentifierIncluded": true,
-    "authorityKeyIdentifierIncluded": true
+    "basicConstraintsCritical": true,
+    "keyUsageCritical": true,
+    "keyUsage": ["DIGITAL_SIGNATURE"],
+    "extendedKeyUsageCritical": false,
+    "extendedKeyUsage": ["1.3.6.1.5.5.7.3.1"],
+    "allowedKeyAlgorithms": ["ECDSA", "Ed25519", "RSA"]
   },
   "confirmationPolicy": {
-    "type": "NONE"
+    "disclosurePolicy": "OWNER_ONLY",
+    "confirmationWindow": "PT24H",
+    "proofSuiteId": "zeroecho.signature-pop.v1",
+    "proofSuiteCommitment": "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11",
+    "policyCommitment": "4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30"
   }
 }
 ```
@@ -372,28 +417,34 @@ OIDs are recognised within the ZeroEcho ecosystem.
 {
   "schemaVersion": 5,
   "certificateType": "INTERMEDIATE_CA",
-  "profileId": "intermediate-ca-v1",
+  "profileId": "northstar-intermediate-ca",
   "profileVersion": 1,
-  "formatId": "PKCS10-DER",
-  "displayName": "Intermediate CA",
-  "maxValidity": "PT87600H",
-  "approvalRequirement": "THRESHOLD",
-  "algorithmBindings": {
-    "allowedKeyAlgorithms": ["ECDSA"],
-    "allowedKeyUsages": ["KEY_CERT_SIGN", "CRL_SIGN"]
+  "formatId": "x509",
+  "displayName": "Northstar Example Intermediate CA",
+  "maxValidity": "PT43800H",
+  "approvalRequirement": "NONE",
+  "algorithmBindings": {"mode": "STANDARD_ONLY"},
+  "subject": {
+    "allowEmpty": false,
+    "rules": [
+      {"oid": "2.5.4.3", "source": "REQUESTER", "minimumOccurrences": 1,
+       "maximumOccurrences": 1, "maximumUtf8Bytes": 253}
+    ]
   },
-  "subject": [
-    {
-      "oid": "2.5.4.3",
-      "source": "REQUESTER",
-      "minimumOccurrences": 1,
-      "maximumOccurrences": 1,
-      "maximumUtf8Bytes": 64
-    }
-  ],
   "caCertificate": {
+    "basicConstraintsCritical": true,
+    "pathLengthConstraint": 0,
+    "keyUsageCritical": true,
     "keyUsages": ["KEY_CERT_SIGN", "CRL_SIGN"],
-    "pathLengthConstraint": 0
+    "allowedSubjectKeyAlgorithms": ["ECDSA", "Ed25519", "ML-DSA", "RSA", "SLH-DSA"]
   }
 }
 ```
+
+These examples preserve the shipped schema/policy shapes with fictitious
+Northstar labels; they do not claim successful registration in a new instance.
+Validate with `profile.validate` before registering. Use the TUI's profile form
+or base64-encode the complete JSON as `document` in the automation intent, as
+specified by the live schema. Registration returns the actual profile reference;
+carry its version/hash forward. Never substitute a profile label for exact
+subject-key, issuer-algorithm or alternative-signature verification.

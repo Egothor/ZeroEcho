@@ -1,9 +1,13 @@
 # Kubernetes
 
-Before upgrading an existing PVC, follow the explicit
-[offline layout migration](operations.md#offline-layout-migration). Mount the writable
-`store-container` parent, with PKI state in its `store/` child and server-control
-state outside that child. The entrypoint refuses an unmigrated legacy root.
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on manifest/layout changes.
+Source-reviewed procedures remain unverified pending rehearsal.
+
+The qualified baseline is fresh empty v18; no earlier-store/PVC migration is
+supplied. See [earlier-deployment boundaries](operations.md#mount-layout-and-earlier-deployments).
+Mount the writable `store-container` parent, with PKI state in `store/` and
+server-control state outside that child. The entrypoint refuses a legacy root;
+a mount-layout change alone does not establish store compatibility.
 
 On Kubernetes the PKI server runs as a single-replica StatefulSet with per-instance
 PersistentVolumeClaims, and the nginx edge runs as a horizontally scalable

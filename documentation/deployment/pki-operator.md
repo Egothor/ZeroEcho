@@ -1,5 +1,10 @@
 # Host PKI operator client
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on client/API contract
+changes. Written procedures are source-reviewed and remain unverified pending
+clean-environment rehearsal. See [activities](../admin/operator-activities.md)
+and the [exact interface reference](../reference/pki-operator-interfaces.md).
+
 `deploy/pki-operator.sh` is the reusable Python 3 host client for the administrative
 HTTPS API. It shares bounded mTLS transport with `exercise-pki.sh` but does not run
 qualification scenarios. It never deploys, invokes Podman, reads server files or
@@ -17,7 +22,7 @@ contain sensitive application data. Retain and protect them for recovery.
 ```sh
 chmod 600 "$HOME/zeroecho-client/admin.p12" "$HOME/zeroecho-client/request.json"
 ./deploy/pki-operator.sh \
-  --url https://localhost:8443 --realm example \
+  --url https://pki.northstar.example:8443 --realm northstar \
   --trust "$HOME/zeroecho-client/trust.pem" \
   --p12 "$HOME/zeroecho-client/admin.p12" \
   --checkpoint "$HOME/zeroecho-client/operator-state" discover
@@ -30,7 +35,7 @@ password in your own protected local credential file:
 
 ```sh
 ./deploy/pki-operator.sh \
-  --url https://localhost:8443 --realm example \
+  --url https://pki.northstar.example:8443 --realm northstar \
   --trust "$HOME/zeroecho-client/trust.pem" \
   --p12 "$HOME/zeroecho-client/admin.p12" \
   --password-fd 3 --checkpoint "$HOME/zeroecho-client/operator-state" \
@@ -61,7 +66,7 @@ permissions; discovery does not grant authority.
   "operation": "ca.create",
   "arguments": {
     "formatId": "x509",
-    "subjectRef": "CN=Example Root",
+    "subjectRef": "CN=Northstar Example Root",
     "profileId": "root-profile",
     "keyRef": "existing-managed-key",
     "signatureAlgorithmId": "use-the-exact-discovered-supported-identity"
@@ -175,9 +180,9 @@ The last downloaded certificate is the explicitly selected anchor; this does not
 assert distribution to external trust stores or universal TLS interoperability.
 A missing helper or unsupported algorithm fails without publishing a bundle.
 
-These commands are a client interface, not deployment qualification. Real Podman
-qualification and final representation/algorithm coverage belong to C08, with
-F06 closure tracked through C07/C08. SDK OCSP evidence remains separately signed
+These commands are a client interface, not deployment qualification. Keep actual
+environment/source and representation/signature evidence separately from a
+download result. SDK OCSP evidence remains separately signed
 ZeroEcho evidence and is not standard AltSignature OCSP.
 
 ## Library use and rollback
@@ -203,7 +208,7 @@ Java is needed only for the existing local chain cryptographic verifier.
 
 ```sh
 ./deploy/pki-tui.sh \
-  --url https://localhost:8443 --realm example \
+  --url https://pki.northstar.example:8443 --realm northstar \
   --trust "$HOME/zeroecho-client/trust.pem" \
   --p12 "$HOME/zeroecho-client/admin.p12" \
   --checkpoint "$HOME/zeroecho-client/operator-state"
@@ -266,7 +271,7 @@ result screen replaces the completed submission form and explicitly labels
 pending/approval-only and uncertain outcomes. Approval alone never means the
 original operation executed successfully.
 
-Worklist entries use the existing C05 checkpoint identities. Reopen a retained
+Worklist entries use the retained checkpoint identities. Reopen a retained
 entry, inspect its intent/result, or select **Observe GET only**. Lost
 acknowledgements are reconciled by observation; the TUI does not resend them.
 Dedicated actions have no durable observation route and are never replayed.
@@ -284,26 +289,26 @@ CA, status and issuer-path IDs. Metadata reads preserve applicable authority fro
 the retained exact request; CA reads use the selected CA identity. If an
 authority-scoped metadata read has no retained or explicit session context, the
 TUI asks for it rather than inventing one. Realm-scoped reads receive no authority
-parameter. Downloads use the authenticated C05 routes,
+parameter. Downloads use the authenticated artifact routes,
 explicit representation/output, reviewed confirmation, and new files only.
 A downloaded certificate, possession of its private key, server signing-key
 custody, disclosure policy and public access are distinct facts. Individual
 certificate/CRL downloads validate transport and object representation; inspect
 `signatureVerified` before inferring cryptographic trust. Chain verification uses
-the explicitly selected downloaded anchor under the C05 rules above.
+the explicitly selected downloaded anchor under the rules above.
 
 Common context defaults apply only to fields present in the selected operation;
 explicit draft overrides remain unchanged. Connection settings contain only
 session values and local file references. Changing connection coordinates clears
 discovery, choices, drafts, review, results and target context before reconnecting
 and checking the new realm. Select a separate checkpoint for a different endpoint,
-realm or identity; C05 rejects binding reuse. If reconnection fails, the UI exits
+realm or identity; the client rejects binding reuse. If reconnection fails, the UI exits
 with status 2 and leaves accepted work in its original checkpoint for observation.
 Preferences and passwords are not persisted. Exiting the UI normally returns 0;
 this process exit is not a claim that pending operations succeeded. Per-request
 screens retain the documented 0/2/3/4 result meanings.
 
-Rollback removes the TUI files and guide additions only. Preserve checkpoints and
-observe attempted work with the host client; removing a TUI draft or checkpoint
-does not cancel work on the server. This interface is C06 client functionality,
-not actual Podman qualification or final F01–F06 closure.
+Preserve checkpoints when replacing client files and observe attempted work with
+the host client; removing a TUI draft or checkpoint does not cancel server work.
+A normal TUI exit is not deployment qualification or a declaration that all
+retained requests succeeded.

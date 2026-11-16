@@ -1,5 +1,8 @@
 # ZeroEcho administrative HTTPS server
 
+Owner: PKI maintainers. Reviewed: 2026-11-16. Review on listener/API changes.
+Source-reviewed examples remain unverified as written pending procedure rehearsal.
+
 The `pki-server` distribution exposes the transport-neutral realm gateway through mutual TLS. One process opens one realm and one long-lived PKI session; all administrative execution uses the existing typed operation catalog and `ServerOperationGateway`.
 
 ## Starting the server
@@ -65,17 +68,31 @@ The paths and upstream name above are placeholders, not deployment values. The p
 
 ## API
 
-The listener exposes only:
+Core administrative routes include:
 
 ```text
 GET  /health/live
 GET  /health/ready
 GET  /admin/v1/realm
 GET  /admin/v1/operations
+GET  /admin/v1/schema
 GET  /admin/v1/operations/{operationId}
 GET  /admin/v1/signing-operations/{privatePkiId}
 POST /admin/v1/operations/{operationId}
+POST /admin/v1/requests
+GET  /admin/v1/requests/{requestId}
+GET  /admin/v1/certificate-artifacts/{credentialId}
+GET  /admin/v1/certificate-artifacts/{credentialId}/content
+GET  /admin/v1/status-artifacts/{statusObjectId}
+GET  /admin/v1/status-artifacts/{statusObjectId}/content
 ```
+
+Content routes use explicit `representation=original|pem`. Dedicated backup
+binary transfer, request inspection and optional administrative hybrid SDK routes
+have their own contracts; this list is not an exhaustive endpoint schema. See
+[operator interfaces](pki-operator-interfaces.md),
+[administrative requests](../admin/administrative-requests.md) and
+[backup transfer](../admin/backup-restore.md#opt-in-http-transfer).
 
 No ACME or public certificate repository routes are registered on the administrative listener. Optional ACME and public repository listeners are independently configured and bounded; see [pki-server-acme.md](pki-server-acme.md) and [pki-server-public-repository.md](pki-server-public-repository.md). Administrative POST bodies are strict UTF-8 JSON containing version, optional authority and approval identities, an optional shortening deadline, and the closed argument object for one typed operation. Batch execution, file paths, raw DER, polymorphic class metadata, unknown keys, duplicate keys, and trailing JSON are rejected.
 
