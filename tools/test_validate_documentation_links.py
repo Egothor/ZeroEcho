@@ -33,6 +33,8 @@
 """Deterministic fixtures for the documentation link gate."""
 
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -142,6 +144,120 @@ class DocumentationLinksTest(unittest.TestCase):
         self.assertEqual([], validate_site(site))
         (site / "index.html").write_text('<a href="page/#absent">bad</a><a href="../outside">escape</a><a href="bad%zz">bad</a>')
         self.assertEqual(3, len(validate_site(site)))
+
+    def mounted_site(self):
+        site = self.root / "site"
+        (site / "section").mkdir(parents=True)
+        (site / "index.html").write_text('<h1 id="home">Home</h1>')
+        (site / "section/index.html").write_text('<h1 id="there">There</h1>')
+        (site / "asset.png").write_bytes(b"fixture")
+        return site
+
+    def test_mounted_origin_root_files_assets_directories_and_anchors(self):
+        site = self.mounted_site()
+        (site / "404.html").write_text(
+            '<a href="/ZeroEcho/index.html#home">home</a>'
+            '<a href="/ZeroEcho/section/#there">section</a>'
+            '<a href="/ZeroEcho/">root</a><a href="/ZeroEcho">root without slash</a>'
+            '<img src="/ZeroEcho/asset.png">')
+        self.assertEqual([], validate_site(site, mount_path="/ZeroEcho/"))
+
+    def test_percent_encoded_mount_and_target_resolve_to_same_artifact(self):
+        site = self.mounted_site()
+        (site / "404.html").write_text('<img src="/North%20Star/asset.png">')
+        self.assertEqual([], validate_site(site, mount_path="/North%20Star/"))
+
+    def test_invalid_mount_cannot_change_the_artifact_boundary(self):
+        site = self.mounted_site()
+        for mount in ("relative/", "/bad%zz/", "/%ff/", "/bad%00/",
+                      "/bad%5c/", "/ZeroEcho/../", "/%2e%2e/"):
+            with self.subTest(mount=mount):
+                errors = validate_site(site, mount_path=mount)
+                self.assertEqual(1, len(errors))
+                self.assertTrue(errors[0].startswith("assembled site:"))
+
+    def test_nested_mount_is_exact_and_removed_only_once(self):
+        site = self.mounted_site()
+        page = site / "404.html"
+        page.write_text('<a href="/projects/docs/index.html#home">home</a>')
+        self.assertEqual([], validate_site(site, mount_path="/projects/docs/"))
+        page.write_text('<img src="/projects/docs/projects/docs/asset.png">')
+        errors = validate_site(site, mount_path="/projects/docs/")
+        self.assertEqual(1, len(errors))
+        self.assertIn("missing target", errors[0])
+
+    def test_mount_preserves_relative_fragment_external_and_root_hosted_links(self):
+        site = self.mounted_site()
+        (site / "index.html").write_text(
+            '<h1 id="home">Home</h1><a href="#home">self</a>'
+            '<a href="section/#there">relative</a><img src="asset.png">'
+            '<a href="https://example.invalid/missing">external</a>'
+            '<a href="//example.invalid/missing">external</a>')
+        self.assertEqual([], validate_site(site, mount_path="/ZeroEcho/"))
+        (site / "404.html").write_text('<a href="/index.html#home">root</a>')
+        self.assertEqual([], validate_site(site))
+        self.assertEqual([], validate_site(site, mount_path="/"))
+
+    def test_mounted_missing_targets_and_anchors_still_fail(self):
+        site = self.mounted_site()
+        (site / "404.html").write_text(
+            '<a href="/ZeroEcho/missing.html">missing</a>'
+            '<a href="/ZeroEcho/section/#absent">missing anchor</a>')
+        errors = validate_site(site, mount_path="/ZeroEcho/")
+        self.assertEqual(2, len(errors))
+        self.assertEqual(1, sum("missing target" in error for error in errors))
+        self.assertEqual(1, sum("missing anchor" in error for error in errors))
+
+    def test_origin_root_paths_outside_mount_are_not_artifact_relative(self):
+        site = self.mounted_site()
+        (site / "404.html").write_text(
+            '<img src="/asset.png"><img src="/ZeroEchoElse/asset.png">'
+            '<img src="/Other/asset.png">')
+        errors = validate_site(site, mount_path="/ZeroEcho/")
+        self.assertEqual(3, len(errors))
+        self.assertTrue(all("outside publication mount" in error for error in errors))
+
+    def test_mount_does_not_hide_malformed_paths_or_encoded_escapes(self):
+        site = self.mounted_site()
+        (site / "404.html").write_text(
+            '<a href="/ZeroEcho/bad%zz">bad escape</a>'
+            '<a href="/ZeroEcho/%ff">bad unicode</a>'
+            '<a href="/ZeroEcho/bad%00path">nul</a>'
+            '<a href="/ZeroEcho/bad%5cpath">backslash</a>'
+            '<a href="/ZeroEcho/%2e%2e/outside.html">escape</a>')
+        errors = validate_site(site, mount_path="/ZeroEcho/")
+        self.assertEqual(5, len(errors))
+        self.assertTrue(any("target escapes assembled site" in error for error in errors))
+
+    def test_mounted_symlink_target_cannot_escape_site(self):
+        site = self.mounted_site()
+        outside = self.root / "outside.html"
+        outside.write_text('<h1 id="secret">Secret</h1>')
+        (site / "alias.html").symlink_to(outside)
+        (site / "404.html").write_text('<a href="/ZeroEcho/alias.html#secret">bad</a>')
+        errors = validate_site(site, mount_path="/ZeroEcho/")
+        self.assertEqual(2, len(errors))
+        self.assertTrue(any("target escapes assembled site" in error for error in errors))
+        self.assertTrue(any("source escapes assembled site" in error for error in errors))
+
+    def test_main_uses_site_url_mount_for_actual_assembled_validation(self):
+        (self.docs / "index.md").write_text("# Home")
+        site = self.mounted_site()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        for mount in ("/", "/ZeroEcho/", "/projects/docs/", "/North%20Star/"):
+            with self.subTest(mount=mount):
+                (self.root / "mkdocs.yml").write_text(
+                    "site_name: Fixture\nsite_url: https://example.invalid" + mount +
+                    "\ndocs_dir: documentation\nnav:\n  - Home: index.md\n")
+                (site / "404.html").write_text(
+                    '<a href="' + mount + 'index.html#home">home</a>'
+                    '<img src="' + mount + 'asset.png">')
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).with_name("validate_documentation_links.py")),
+                     "--root", str(self.root), "--site", str(site)],
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn("0 errors", result.stdout)
 
     def test_build_declared_namespaces_exclude_disabled_and_nonjava_modules(self):
         (self.root / "settings.gradle").write_text("include('lib', 'samples', 'frontend', 'unknown')")

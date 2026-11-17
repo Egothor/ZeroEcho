@@ -28,7 +28,7 @@ principal has a type:
 The **Principals** area lists principals (`security.principal.list`). Manage them
 with:
 
-- **Register principal** (`security.principal.register`) — high-risk; supply
+- **Register principal** (`security.principal.register`) — supply
   `principalId`, `type`, `displayName`, and whether it is `enabled`.
 - **Enable principal** (`security.principal.enable`) — re-enable a principal.
 - **Disable principal** (`security.principal.disable`) — high-risk; disable a

@@ -372,6 +372,8 @@ def _service(root, name, arguments, *, requires=None, ready=False, output_direct
             + "ExecStart=" + " ".join(map(_systemd_quote, [podman, "--remote=false", "run", "--pull=never", "--replace", "--rm", "--name", name, *arguments])) + "\n"
             + "ExecStop=" + " ".join(map(_systemd_quote, [podman, "--remote=false", "stop", "--time", "40", name])) + "\n")
     if ready:
+        # Keep unexpected exit 143 restartable while classifying explicit stops as successful.
+        unit += "SuccessExitStatus=143\nRestartForceExitStatus=143\n"
         # systemd holds dependent startup until the backend's real mTLS health probe succeeds.
         unit += "ExecStartPost=" + " ".join(map(_systemd_quote, [sys.executable, root / "manage.py", "_ready", "--directory", root])) + "\n"
     unit += "\n[Install]\nWantedBy=default.target\n"

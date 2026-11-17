@@ -74,6 +74,40 @@ class EnvironmentTests(unittest.TestCase):
         fixture.assert_disposable.assert_called_once_with(fixture.admin_url,fixture.run_id)
         manager.__exit__.assert_called_once()
 
+    def test_failed_ready_status_is_unverified_until_explicit_stop_cleans_once(self):
+        """A read-only status error retains READY state until an explicit stop."""
+        import subprocess
+        fixture=Mock();fixture.admin_url="https://localhost:10000";fixture.run_id="a"*32
+        fixture.assert_disposable=Mock(side_effect=ExerciseFailure("Disposable container ownership or running identity changed"))
+        manager=Mock();manager.__enter__=Mock(return_value=fixture);manager.__exit__=Mock(return_value=False)
+        commands=iter(("status","stop"));connection={"version":1,"purpose":"qualification","environmentId":"a"*32}
+        def command(_prompt):
+            """Observe that no cleanup has run before the user's explicit stop."""
+            manager.__exit__.assert_not_called()
+            return next(commands)
+        with patch("exercise_fixture.DisposableFixture",return_value=manager),patch("rootless_pki._image",return_value="a"*64),patch("shutil.which",return_value="tool"),patch("subprocess.run",return_value=subprocess.CompletedProcess([],0,b"-jdktrust",b"")),patch("os.geteuid",return_value=1000),patch.object(environment,"_provision",return_value=connection),patch("builtins.print") as output:
+            environment.start(self.base/"retained-status",read_command=command,password_prompt=lambda _:"sixsix")
+        manager.__exit__.assert_called_once_with(None,None,None)
+        fixture.restart.assert_not_called()
+        self.assertTrue(any("UNVERIFIED" in str(call) for call in output.call_args_list))
+        self.assertFalse(any("RUNNING " in str(call) for call in output.call_args_list))
+        self.assertEqual(connection,json.loads((self.base/"retained-status-client/client-config.json").read_text()))
+
+    def test_post_ready_exception_eof_and_interrupt_retain_without_cleanup(self):
+        """Unexpected exit never substitutes for an explicit stop after READY."""
+        import subprocess
+        connection={"version":1,"purpose":"qualification","environmentId":"a"*32}
+        for index,error in enumerate((RuntimeError("console failed"),EOFError(),KeyboardInterrupt())):
+            with self.subTest(error=type(error).__name__):
+                fixture=Mock();manager=Mock();manager.__enter__=Mock(return_value=fixture);manager.__exit__=Mock(return_value=False)
+                root=self.base/("retained-exit-"+str(index))
+                with patch("exercise_fixture.DisposableFixture",return_value=manager),patch("rootless_pki._image",return_value="a"*64),patch("shutil.which",return_value="tool"),patch("subprocess.run",return_value=subprocess.CompletedProcess([],0,b"-jdktrust",b"")),patch("os.geteuid",return_value=1000),patch.object(environment,"_provision",return_value=connection),patch("builtins.print") as output:
+                    with self.assertRaises(type(error)):
+                        environment.start(root,read_command=Mock(side_effect=error),password_prompt=lambda _:"sixsix")
+                manager.__exit__.assert_not_called();fixture.restart.assert_not_called()
+                self.assertEqual(connection,json.loads(root.with_name(root.name+"-client").joinpath("client-config.json").read_text()))
+                self.assertTrue(any("retained" in str(call).lower() for call in output.call_args_list))
+
     def test_provider_preparation_binds_exact_fresh_realm(self):
         (self.base/".exercise-owner.json").write_text(json.dumps({"nonce":"a"*32}))
         configuration={"realm":{"realmId":"zeroecho-exercise-"+"a"*32,"pkiSession":{"store":{"properties":{}},"signing":{"signatureAlgorithm":"algorithm"}}}}
@@ -120,6 +154,8 @@ class EnvironmentTests(unittest.TestCase):
                 environment.start(self.base/"state",password_prompt=lambda _:"client-secret")
         self.assertEqual(b"public-evidence",(self.base/"state-client/partial-public-certificate.der").read_bytes())
         self.assertTrue(any("retained" in str(call) for call in output.call_args_list))
+        manager.__exit__.assert_called_once()
+        self.assertIs(ExerciseFailure,manager.__exit__.call_args.args[0])
 
     def test_cli_routes_test_start_before_production_manifest_loading(self):
         import rootless_pki

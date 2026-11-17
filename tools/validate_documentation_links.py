@@ -211,18 +211,32 @@ def validate(root, paths, docs, nav, extensions, extension_configs, *,
     return sorted(set(errors))
 
 
-def validate_site(site):
+def validate_site(site, mount_path="/"):
     """Return broken local links and anchors in an assembled HTML site.
 
     Args:
         site: Existing assembled publication root, including generated Javadocs.
+        mount_path: Origin-root URL path from site_url, optionally percent-encoded.
+            Defaults to root hosting. Absolute local links must belong to this
+            exact mount; its prefix is removed once before filesystem resolution.
 
     Returns:
-        Sorted diagnostics; absent root/index, traversal and invalid encoding fail.
+        Sorted diagnostics; absent root/index, outside-mount links, traversal,
+        invalid encoding and symlink escapes fail. Relative/external links keep
+        their existing resolution independent of the publication mount.
     """
     site = Path(site).resolve()
     if not (site / "index.html").is_file():
         return ["assembled site: missing index.html"]
+    try:
+        if re.search(r"%(?![0-9a-fA-F]{2})", mount_path):
+            raise ValueError("malformed percent escape in publication mount")
+        mount = unquote(mount_path, errors="strict").removesuffix("/")
+        if mount and (not mount.startswith("/") or "\x00" in mount or "\\" in mount
+                      or any(part in (".", "..") for part in mount.split("/"))):
+            raise ValueError("invalid publication mount")
+    except (ValueError, UnicodeError) as failure:
+        return [f"assembled site: {failure}"]
     errors = []
     cache = {}
 
@@ -249,6 +263,13 @@ def validate_site(site):
                 fragment = unquote(url.fragment, errors="strict")
                 if "\x00" in path or "\\" in path:
                     raise ValueError("invalid local path")
+                if path.startswith("/") and mount:
+                    if path == mount:
+                        path = "/"
+                    elif path.startswith(mount + "/"):
+                        path = path[len(mount):]
+                    else:
+                        raise ValueError("target outside publication mount")
                 target = ((site / path.lstrip("/")) if path.startswith("/")
                           else (source.parent / path if path else source)).resolve()
                 if not target.is_relative_to(site):
@@ -320,7 +341,8 @@ def main():
                       excluded=excluded, generated_modules=declared_javadoc_modules(root),
                       site=arguments.site)
     if arguments.site is not None:
-        errors = sorted(set(errors + validate_site(arguments.site)))
+        errors = sorted(set(errors + validate_site(
+            arguments.site, mount_path=urlsplit(config["site_url"] or "").path)))
     for error in errors:
         print(error, file=sys.stderr)
     print(f"Documentation links: {len(paths)} Markdown files, {len(errors)} errors")

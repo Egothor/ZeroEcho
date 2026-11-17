@@ -126,6 +126,38 @@ class OpenApiCatalogParityTest {
         assertEquals(expectedIds, paths);
     }
 
+    /**
+     * Checks required cancellation path parameters in actual generated parameter objects.
+     *
+     * @throws Exception if generation or temporary output access fails
+     */
+    @Test void cancellationDeclaresBothRequiredStringPathParameters() throws Exception {
+        Path output = temporary.resolve("cancellation-openapi.yaml");
+        OpenApiGenerator.main(new String[]{"test", "src/main/resources/openapi-supplement.yaml", output.toString()});
+        String cancellation = block(Files.readString(output),
+                "  '/operations/{operationId}/{requestId}':", 2);
+        String deletion = block(cancellation, "    delete:", 4);
+        assertTrue(deletion.contains("      operationId: \"operations.cancel\"\n"));
+        String parameters = block(deletion, "      parameters:", 6);
+        var objects = Pattern.compile("(?ms)^        -\\n(.*?)(?=^        -\\n|\\z)")
+                .matcher(parameters).results().map(match -> match.group(1)).toList();
+        assertEquals(2, objects.size(), "Cancellation has exactly its two path parameters");
+        Set<String> names = new HashSet<>();
+        for (String parameter : objects) {
+            Matcher name = Pattern.compile("(?m)^          name: \"([^\"]+)\"$").matcher(parameter);
+            assertTrue(name.find(), parameter);
+            assertTrue(names.add(name.group(1)), "Duplicate path parameter: " + name.group(1));
+            assertTrue(Pattern.compile("(?m)^          in: \"path\"$").matcher(parameter).find(), parameter);
+            assertTrue(Pattern.compile("(?m)^          required: true$").matcher(parameter).find(), parameter);
+            assertEquals("          schema:\n            type: \"string\"\n",
+                    block(parameter, "          schema:", 10));
+        }
+        assertEquals(Set.of("operationId", "requestId"), names);
+        assertTrue(OperationDescriptorCatalog.current().entries().stream()
+                .noneMatch(entry -> entry.security().operationId().equals("operations.cancel")),
+                "Cancellation remains a transport control outside the descriptor catalogue");
+    }
+
     private static String block(String text, String heading, int indent) {
         int start = text.indexOf(heading + "\n");
         assertTrue(start >= 0, heading);

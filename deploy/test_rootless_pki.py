@@ -115,6 +115,28 @@ class ValidationTest(unittest.TestCase):
             self.assertIn('"--health-timeout" "5s"', server)
             self.assertIn('"--health-retries" "5"', server)
 
+    def test_backend_emits_paired143_policy_without_changing_web_or_stop_commands(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(installer.shutil, "which", return_value="/fixture/podman"):
+            root = Path(directory)
+            (root / "units").mkdir()
+            installer._units(root, _values(root), {"server": "sha256:abc", "web": "sha256:def"},
+                             "zeroecho-test", ["10.88.0.2", "10.88.0.3"])
+            server = (root / "units/zeroecho-test-server.service").read_text().splitlines()
+            web = (root / "units/zeroecho-test-web.service").read_text().splitlines()
+            self.assertEqual(["SuccessExitStatus=143"], [line for line in server if line.startswith("SuccessExitStatus=")])
+            self.assertEqual(["RestartForceExitStatus=143"], [line for line in server if line.startswith("RestartForceExitStatus=")])
+            self.assertFalse(any(line.startswith(("SuccessExitStatus=", "RestartForceExitStatus=")) for line in web))
+            for unit in (server, web):
+                self.assertEqual(1, unit.count("Restart=on-failure"))
+                self.assertEqual(1, unit.count("TimeoutStopSec=60"))
+                self.assertEqual(1, unit.count("RestartSec=5"))
+            for name, unit in (("server", server), ("web", web)):
+                self.assertEqual(['ExecStop="/fixture/podman" "--remote=false" "stop" "--time" "40" "zeroecho-test-' + name + '"'],
+                                 [line for line in unit if line.startswith("ExecStop=")])
+            self.assertEqual(1, sum(line.startswith("ExecStartPost=") and '"_ready"' in line for line in server))
+            self.assertFalse(any(line.startswith("ExecStartPost=") for line in web))
+
     def test_missing_healthcheck_fails_immediately_with_safe_diagnostic(self):
         result = subprocess.CompletedProcess([], 125, b"", b"Error: container arbitrary has no defined healthcheck")
         with patch.object(installer.subprocess, "run", return_value=result), \

@@ -555,6 +555,21 @@ public final class OpenApiGenerator {
                                         () -> {
                                             y.mapping("operationId", "operations.cancel");
                                             y.mapping(SUMMARY, "Cancel an in-flight operation");
+                                            y.blockMapping(
+                                                    "parameters",
+                                                    () -> {
+                                                        for (String name : List.of("operationId", "requestId")) {
+                                                            y.sequenceItem(
+                                                                    () -> {
+                                                                        y.mapping(NAME, name);
+                                                                        y.mapping("in", "path");
+                                                                        y.mappingLiteral("required", TRUE);
+                                                                        y.blockMapping(
+                                                                                SCHEMA_FIELD,
+                                                                                () -> y.mapping(TEXT_TYPE, STRING_TYPE));
+                                                                    });
+                                                        }
+                                                    });
                                             emitStandardResponses(y);
                                         });
                             });

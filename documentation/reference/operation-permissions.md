@@ -175,7 +175,7 @@ distinct. CRL metadata/status access does not imply public disclosure.
 | --- | --- | --- | --- |
 | `security.principal.list` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | |
 | `security.principal.inspect` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | |
-| `security.principal.register` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | ✓ |
+| `security.principal.register` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | |
 | `security.principal.enable` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | |
 | `security.principal.disable` | `PRINCIPAL_MANAGE` | `PRINCIPAL` | ✓ |
 | `security.role-template.list` | `ROLE_MANAGE` | `ROLE` | |

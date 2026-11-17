@@ -252,7 +252,11 @@ def _failed_client_export(client, identity):
 
 
 def start(directory, *, client_directory=None, read_command=input, password_prompt=None, hybrid_sdk=False):
-    """Start the separate foreground Podman environment and own its lifecycle until stop.
+    """Start the separate foreground Podman environment until explicit stop.
+
+    After READY, failed status or console exit retains the deployment for
+    inspection; only explicit stop requests owned cleanup. Startup failures keep
+    the existing cleanup behavior. An interrupted ready console is not a stop.
 
     Args:
         directory: New deployment state directory; existing paths are refused.
@@ -298,32 +302,46 @@ def start(directory, *, client_directory=None, read_command=input, password_prom
     metadata = client.lstat()
     identity = (metadata.st_dev, metadata.st_ino)
     ready = False
+    entered = False
+    manager = None
     try:
-        with DisposableFixture(images, prepare=configure, directory=root, login_password=password) as fixture:
-            if hybrid_sdk:
-                connection = _provision(fixture, client, password, hybrid_sdk=True)
-            else:
-                connection = _provision(fixture, client, password)
-            _atomic_json(client / "client-config.json", connection)
-            ready = True
-            print("READY " + str(client / "client-config.json"), flush=True)
-            print("Environment console: status | restart | stop. Tests run separately in another terminal.", flush=True)
-            while True:
+        manager = DisposableFixture(images, prepare=configure, directory=root, login_password=password)
+        fixture = manager.__enter__()
+        entered = True
+        if hybrid_sdk:
+            connection = _provision(fixture, client, password, hybrid_sdk=True)
+        else:
+            connection = _provision(fixture, client, password)
+        _atomic_json(client / "client-config.json", connection)
+        ready = True
+        print("READY " + str(client / "client-config.json"), flush=True)
+        print("Environment console: status | restart | stop. Tests run separately in another terminal.", flush=True)
+        while True:
+            command = read_command("pki-environment> ").strip()
+            if command == "stop":
+                entered = False
+                manager.__exit__(None, None, None)
+                return
+            if command == "restart":
+                fixture.restart()
+                print("READY " + str(client / "client-config.json"), flush=True)
+            elif command == "status":
                 try:
-                    command = read_command("pki-environment> ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    command = "stop"
-                if command == "stop":
-                    return
-                if command == "restart":
-                    fixture.restart()
-                    print("READY " + str(client / "client-config.json"), flush=True)
-                elif command == "status":
                     fixture.assert_disposable(fixture.admin_url, fixture.run_id)
-                    print("RUNNING " + fixture.admin_url, flush=True)
+                except ExerciseFailure:
+                    print("UNVERIFIED status; deployment retained. No automatic cleanup or restart.", flush=True)
                 else:
-                    print("Use status, restart or stop.", flush=True)
+                    print("RUNNING " + fixture.admin_url, flush=True)
+            else:
+                print("Use status, restart or stop.", flush=True)
     except BaseException:
         if not ready:
-            _failed_client_export(client, identity)
+            try:
+                if entered:
+                    entered = False
+                    manager.__exit__(*sys.exc_info())
+            finally:
+                _failed_client_export(client, identity)
+        else:
+            print("READY environment exit: remaining state retained; no automatic cleanup.", flush=True)
         raise
