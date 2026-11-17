@@ -33,14 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.spi.store.DomainContinuationStore;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
-
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.spi.store.DomainContinuationStore;
 
 /**
  * Immutable bounded domain input attached atomically to a signing intent.
@@ -55,12 +55,14 @@ public record DomainContinuationTemplate(DomainContinuationStore.Kind kind,
 
     /**
      * Validates and defensively snapshots the exact command.
+     *
      * @param kind durable outer-operation kind
      * @param correlationId optional stable restart idempotency identity
      * @param command nonempty bounded encoded command, defensively copied
      * @param commandCommitment canonical versioned SHA-256 command commitment
      * @throws NullPointerException if kind, correlationId, command is null
-     * @throws IllegalArgumentException if correlation identity is malformed or command encoding violates the required bounded binary contract
+     * @throws IllegalArgumentException if correlation identity is malformed or command encoding
+     *     violates the required bounded binary contract
      */
     public DomainContinuationTemplate {
         Objects.requireNonNull(kind, "kind");

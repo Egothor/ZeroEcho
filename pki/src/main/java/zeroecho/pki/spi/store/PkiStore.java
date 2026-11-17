@@ -114,7 +114,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @throws UnsupportedOperationException if this provider has no pure validator
      * @throws RuntimeException if target state, clock or confirmation policy rejects input
      */
-    default void validateRevocation(zeroecho.pki.api.revocation.RevocationCommand command, boolean overdueConfirmation) {
+    default void validateRevocation(RevocationCommand command, boolean overdueConfirmation) {
         throw new UnsupportedOperationException("Pure revocation validation unavailable");
     }
 
@@ -926,7 +926,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
-     * @throws UnsupportedOperationException always in this default implementation, which does not provide the issuance evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide
+     * the issuance evidence feed
      */
     default AuditEvidenceFeed openIssuanceEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Issuance evidence feed is not supported by this store");
@@ -943,7 +944,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
-     * @throws UnsupportedOperationException always in this default implementation, which does not provide the status evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide
+     * the status evidence feed
      */
     default AuditEvidenceFeed openStatusEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Status evidence feed is not supported by this store");
@@ -960,7 +962,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
      * @return closeable append-ordered evidence feed
-     * @throws UnsupportedOperationException always in this default implementation, which does not provide the publication evidence feed
+     * @throws UnsupportedOperationException always in this default implementation, which does not provide
+     * the publication evidence feed
      */
     default AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Publication evidence feed is not supported by this store");
@@ -1321,7 +1324,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @throws NullPointerException if the schedule is null
      * @throws IllegalStateException if the required SHA-256 implementation is unavailable
      */
-    static String statusScheduleCursor(StatusSchedule schedule) {
+    /* default */ static String statusScheduleCursor(StatusSchedule schedule) {
         try {
             byte[] identity = ("status-schedule-key:v1:" + schedule.caId().value())
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);

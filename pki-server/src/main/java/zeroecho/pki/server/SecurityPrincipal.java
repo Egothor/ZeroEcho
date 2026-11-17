@@ -73,7 +73,7 @@ public record SecurityPrincipal(String principalId, Type type, String displayNam
 
         private final int code;
 
-        Type(int code) {
+        /* default */ Type(int code) {
             this.code = code;
         }
 

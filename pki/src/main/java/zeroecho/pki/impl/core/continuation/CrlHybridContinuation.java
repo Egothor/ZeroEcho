@@ -34,11 +34,6 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.security.GeneralSecurityException;
-import java.util.Arrays;
-import java.util.Optional;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
@@ -46,6 +41,7 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.api.ca.IssuerKeyBinding;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.impl.core.CrlSigningRoleTuple;
 import zeroecho.pki.impl.framework.x509.StreamingCrlAlternativeSignature;
@@ -53,11 +49,19 @@ import zeroecho.pki.impl.framework.x509.StreamingCrlSignatureVerifier;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.CrlHybridExecution;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.GeneralSecurityException;
+import java.security.cert.X509Certificate;
+import java.util.Arrays;
+import java.util.Optional;
 
 /**
  * The sole STATUS parent drives one retained ALT result and one private native child.
@@ -76,7 +80,10 @@ final class CrlHybridContinuation {
      * @param pureMaximum maximum pure-EdDSA message length in bytes
      * @param publisher borrowed completed-CRL publisher
      */
-    CrlHybridContinuation(PkiStore store, X509BindingCatalog bindings, long pureMaximum,
+    /* default */ CrlHybridContinuation(
+            PkiStore store,
+            X509BindingCatalog bindings,
+            long pureMaximum,
             FullCrlContinuationPublisher publisher) {
         this.store = store; this.bindings = bindings; this.pureMaximum = pureMaximum; this.publisher = publisher;
     }
@@ -84,58 +91,71 @@ final class CrlHybridContinuation {
     /**
      * Advances or retires one durable hybrid CRL parent and its captured native child.
      *
-     * <p>Reloads authoritative workflow state, preserves captured commitments, and records
-     * terminal publication outcomes without resubmitting the alternative signature.</p>
+     * <p>Reloads authoritative workflow state, preserves captured commitments, and records terminal
+     * publication outcomes without resubmitting the alternative signature.
      *
      * @param supplied parent workflow identity to reload from authoritative storage
      * @throws IllegalStateException if required alternative-signature output is not retained
      * @throws PkiException if advancing the hybrid continuation fails and requires recovery
      */
-    void advance(SignWorkflowStore.Workflow supplied) {
-        var parent = store.getSignWorkflow(supplied.operationId()).orElseThrow();
-        var domain = store.getDomainContinuation(parent.operationId()).orElseThrow();
+    /* default */ void advance(SignWorkflowStore.Workflow supplied) {
+        SignWorkflowStore.Workflow parent =
+                store.getSignWorkflow(supplied.operationId()).orElseThrow();
+        DomainContinuationStore.Record domain =
+                store.getDomainContinuation(parent.operationId()).orElseThrow();
         if (terminal(domain)) { retire(parent); return; }
         if (parent.state() == SignWorkflowStore.State.FAILED || parent.state() == SignWorkflowStore.State.CANCELLED
                 || parent.state() == SignWorkflowStore.State.EXPIRED) {
-            finish(domain, parent.state() == SignWorkflowStore.State.EXPIRED ? DomainContinuationStore.State.EXPIRED
-                    : DomainContinuationStore.State.FAILED, parent.detailCode().orElse("SIGNING_FAILED"), Optional.empty());
+            finish(
+                    domain,
+                    parent.state() == SignWorkflowStore.State.EXPIRED
+                            ? DomainContinuationStore.State.EXPIRED
+                            : DomainContinuationStore.State.FAILED,
+                    parent.detailCode().orElse("SIGNING_FAILED"),
+                    Optional.empty());
             retire(parent); return;
         }
-        if (parent.state() != SignWorkflowStore.State.SUCCEEDED) throw new IllegalStateException("Hybrid CRL alternative result is not retained");
+        if (parent.state() != SignWorkflowStore.State.SUCCEEDED) {
+            throw new IllegalStateException("Hybrid CRL alternative result is not retained");
+        }
         if (domain.state() == DomainContinuationStore.State.SIGNING) {
-            var changed = store.transitionDomainContinuation(domain.operationId(), domain.revision(),
-                    DomainContinuationStore.State.PUBLISHING, Optional.empty(), Optional.empty());
-            if (changed.isEmpty()) return;
+            Optional<DomainContinuationStore.Record> changed =
+                    store.transitionDomainContinuation(
+                            domain.operationId(),
+                            domain.revision(),
+                            DomainContinuationStore.State.PUBLISHING,
+                            Optional.empty(),
+                            Optional.empty());
+            if (changed.isEmpty()) {
+                return;
+            }
             domain = changed.orElseThrow();
         }
         try {
-            var command = DomainCommandEncoding.decode(domain.command());
+            DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(domain.command());
             FullCrlSigningCommand.validate(command);
-            var descriptor = CrlHybridSigningCommand.descriptor(command);
-            var execution = store.getCrlHybridExecution(parent.operationId()).orElseThrow();
-            var binding = store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow();
-            if (!binding.commitment().equals(descriptor.issuerBindingCommitment())
-                    || !execution.parentCommandCommitment().equals(domain.commandCommitment())
-                    || !execution.nativeChildId().equals(descriptor.nativeChildId())) throw invalid("HYBRID_CRL_CAPTURE_DIFFERS");
+            CrlHybridSigningCommand.Descriptor descriptor =
+                    CrlHybridSigningCommand.descriptor(command);
+            CrlHybridExecution execution =
+                    store.getCrlHybridExecution(parent.operationId()).orElseThrow();
+            IssuerCryptographicBinding binding =
+                    store.getIssuerCryptographicBinding(new PkiId(command.field(6))).orElseThrow();
+            requireCapturedGraph(binding, descriptor, execution, domain);
             if (execution.phase() == SignWorkflowStore.CrlHybridPhase.AWAITING_ALT) {
                 if (!store.signingNow().isBefore(parent.deadline())) {
-                    finish(domain, DomainContinuationStore.State.EXPIRED, "EXPIRED", Optional.empty()); retire(parent); return;
+                    finish(
+                            domain,
+                            DomainContinuationStore.State.EXPIRED,
+                            "EXPIRED",
+                            Optional.empty());
+                    retire(parent); return;
                 }
-                execution = adopt(parent, domain, command, binding, execution);
-                if (execution == null) return;
+                execution = adopt(parent, command, binding, execution);
+                if (execution == null) {
+                    return;
+                }
             }
-            var child = store.getSignWorkflow(execution.nativeChildId()).orElseThrow();
-            if ((child.state() == SignWorkflowStore.State.SUCCEEDED || child.state() == SignWorkflowStore.State.RETIRED)
-                    && child.result().isPresent() && child.detailCode().filter("SIGNED"::equals).isPresent()) {
-                EncodedObject result = publisher.publishHybrid(domain, execution, parent, child);
-                finish(domain, DomainContinuationStore.State.COMPLETED, "COMPLETED", Optional.of(result));
-                retire(parent);
-            } else if (child.state() == SignWorkflowStore.State.FAILED || child.state() == SignWorkflowStore.State.CANCELLED
-                    || child.state() == SignWorkflowStore.State.EXPIRED || child.state() == SignWorkflowStore.State.RETIRED) {
-                finish(domain, child.state() == SignWorkflowStore.State.EXPIRED ? DomainContinuationStore.State.EXPIRED
-                        : DomainContinuationStore.State.FAILED, child.detailCode().orElse("HYBRID_CRL_NATIVE_FAILED"), Optional.empty());
-                retire(parent);
-            }
+            publishChildOrFinish(parent, domain, execution);
         } catch (DomainContinuationPublisher.PostconditionFailure failure) {
             finish(domain, DomainContinuationStore.State.FAILED, failure.getMessage(), Optional.empty()); retire(parent);
         } catch (IOException | GeneralSecurityException failure) {
@@ -143,73 +163,102 @@ final class CrlHybridContinuation {
         }
     }
 
-    private CrlHybridExecution adopt(SignWorkflowStore.Workflow parent, DomainContinuationStore.Record domain,
-            DomainCommandEncoding.Decoded command, IssuerCryptographicBinding binding, CrlHybridExecution execution)
+    // Resolve durable custody before deciding whether staged content may be retired.
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace"})
+    private CrlHybridExecution adopt(
+            SignWorkflowStore.Workflow parent,
+            DomainCommandEncoding.Decoded command,
+            IssuerCryptographicBinding binding,
+            CrlHybridExecution execution)
             throws IOException, GeneralSecurityException {
-        var descriptor = CrlHybridSigningCommand.descriptor(command);
+        CrlHybridSigningCommand.Descriptor descriptor = CrlHybridSigningCommand.descriptor(command);
         byte[] alternativeSignature = parent.result().orElseThrow().bytes();
         DurableContentReference nativeTbs = null;
         boolean custodyUncertain = false;
         try (RepeatableContent alternativeTbs = store.stagedContent().openContent(parent.envelope().candidate())) {
-            var alternative = binding.alternative().orElseThrow();
+            IssuerKeyBinding alternative = binding.alternative().orElseThrow();
             byte[] certificateBytes = new DomainContentAccess(store).materialize(store.getCredential(binding.credentialId())
                     .orElseThrow().content(), "HYBRID_CRL_ISSUER_INVALID");
-            var certificate = Pkix.parseCertificate(certificateBytes);
-            var layout = new StreamingDerReader().inspectAlternativeCrlTbs(alternativeTbs, CancellationSignal.NONE);
-            if (parent.result().orElseThrow().encoding() != Encoding.BINARY || alternativeSignature.length == 0
-                    || alternativeSignature.length > descriptor.alternativeMaximumSignatureBytes()
-                    || !Arrays.equals(layout.alternativeAlgorithmDer(), alternative.signatureAlgorithmIdentifier().bytes())
-                    || !layout.crlNumber().toString().equals(command.field(10))) throw invalid("HYBRID_CRL_ALTERNATIVE_INVALID");
-            FullCrlSigningCommand.requireAdmission(alternative.signatureAlgorithm().canonicalForm(), layout.encodedLength(), pureMaximum);
-            try {
-                if (!StreamingCrlSignatureVerifier.verify(alternativeTbs, alternative.signatureAlgorithm().canonicalForm(),
-                        CrlSigningRoleTuple.alternativeSpki(certificate), alternativeSignature, bindings, CancellationSignal.NONE).equals(command.field(28)))
-                    throw invalid("HYBRID_CRL_ALTERNATIVE_INVALID");
-            } catch (GeneralSecurityException | IllegalArgumentException | IOException failure) {
-                throw new DomainContinuationPublisher.PostconditionFailure("HYBRID_CRL_ALTERNATIVE_INVALID", failure);
-            }
-            try (var sink = store.stagedContent().beginContent(Encoding.DER, DurableContentReference.Lifecycle.OPERATION);
+            X509Certificate certificate = Pkix.parseCertificate(certificateBytes);
+            StreamingDerReader.CrlAlternativeTbsLayout layout =
+                    new StreamingDerReader()
+                            .inspectAlternativeCrlTbs(alternativeTbs, CancellationSignal.NONE);
+            requireAlternativeResult(
+                    parent,
+                    descriptor,
+                    alternativeSignature,
+                    layout,
+                    alternative,
+                    command,
+                    alternativeTbs,
+                    certificate);
+            try (ContentSink sink =
+                            store.stagedContent()
+                                    .beginContent(
+                                            Encoding.DER,
+                                            DurableContentReference.Lifecycle.OPERATION);
                     OutputStream output = sink.outputStream()) {
-                long length = StreamingCrlAlternativeSignature.completeTbs(alternativeTbs,
-                        BcX509AlgorithmAdapter.fromLib(Pkix.parseAlgorithmIdentifier(java.util.HexFormat.of().parseHex(command.field(9)))),
-                        alternativeSignature, output, CancellationSignal.NONE);
+                long length =
+                        StreamingCrlAlternativeSignature.completeTbs(
+                                alternativeTbs,
+                                BcX509AlgorithmAdapter.fromLib(
+                                        Pkix.parseAlgorithmIdentifier(
+                                                java.util.HexFormat.of().parseHex(command.field(9)))),
+                                alternativeSignature,
+                                output,
+                                CancellationSignal.NONE);
                 FullCrlSigningCommand.requireAdmission(command.field(8), length, pureMaximum);
                 nativeTbs = sink.complete();
-                if (nativeTbs == null || nativeTbs.length() != length || nativeTbs.encoding() != Encoding.DER
-                        || nativeTbs.lifecycle() != DurableContentReference.Lifecycle.OPERATION
-                        || !store.stagedContent().contentStoreId().equals(nativeTbs.storeId())) throw invalid("HYBRID_CRL_NATIVE_CONTENT_INVALID");
+                requireNativeContent(nativeTbs, length);
             }
-            var envelope = parent.envelope();
-            var child = new SignWorkflowStore.AcceptanceCommand(descriptor.nativeChildId(), envelope.providerNamespace(),
-                    envelope.providerConfigurationCommitment(), envelope.accessContext(), binding.primary().keyRef(),
-                    envelope.fairnessAuthorityId(), binding.primary().signatureAlgorithm().canonicalForm(), Encoding.BINARY,
-                    envelope.createdAt(), envelope.deadline(), nativeTbs, Optional.empty(), SignWorkflowStore.Mode.NORMAL, Optional.empty());
+            SignWorkflowStore.AcceptanceEnvelope envelope = parent.envelope();
+            SignWorkflowStore.AcceptanceCommand child =
+                    new SignWorkflowStore.AcceptanceCommand(
+                            descriptor.nativeChildId(),
+                            envelope.providerNamespace(),
+                            envelope.providerConfigurationCommitment(),
+                            envelope.accessContext(),
+                            binding.primary().keyRef(),
+                            envelope.fairnessAuthorityId(),
+                            binding.primary().signatureAlgorithm().canonicalForm(),
+                            Encoding.BINARY,
+                            envelope.createdAt(),
+                            envelope.deadline(),
+                            nativeTbs,
+                            Optional.empty(),
+                            SignWorkflowStore.Mode.NORMAL,
+                            Optional.empty());
             SignWorkflowStore.AcceptanceResult result;
             try {
                 custodyUncertain = true;
                 result = store.adoptCrlNativeChild(parent.operationId(), parent.revision(), parent.fence(), execution.revision(), child);
                 custodyUncertain = false;
             } catch (RuntimeException uncertain) {
-                var resolution = store.resolveCrlNativeChild(parent.operationId(), child.commitment());
+                SignWorkflowStore.AcceptanceResolution resolution =
+                        store.resolveCrlNativeChild(parent.operationId(), child.commitment());
                 if (resolution == SignWorkflowStore.AcceptanceResolution.MATCHED) {
                     nativeTbs = null;
                     return store.getCrlHybridExecution(parent.operationId()).orElseThrow();
                 }
                 custodyUncertain = false;
-                if (resolution == SignWorkflowStore.AcceptanceResolution.CONFLICT) throw invalid("HYBRID_CRL_CHILD_CONFLICT");
-                if (uncertain instanceof IllegalArgumentException)
-                    throw new DomainContinuationPublisher.PostconditionFailure("HYBRID_CRL_CHILD_REJECTED", uncertain);
-                throw uncertain;
+                if (resolution == SignWorkflowStore.AcceptanceResolution.CONFLICT) {
+                    throw invalid("HYBRID_CRL_CHILD_CONFLICT");
+                }
+                throw admissionFailure(uncertain);
             }
             if (result == SignWorkflowStore.AcceptanceResult.ACCEPTED || result == SignWorkflowStore.AcceptanceResult.ATTACHED_EXISTING) {
                 nativeTbs = null;
                 return store.getCrlHybridExecution(parent.operationId()).orElseThrow();
             }
-            if (result == SignWorkflowStore.AcceptanceResult.CONFLICT) throw invalid("HYBRID_CRL_CHILD_CONFLICT");
+            if (result == SignWorkflowStore.AcceptanceResult.CONFLICT) {
+                throw invalid("HYBRID_CRL_CHILD_CONFLICT");
+            }
             throw new PkiException("Hybrid CRL native admission requires recovery");
         } finally {
             Arrays.fill(alternativeSignature, (byte) 0);
-            if (nativeTbs != null && !custodyUncertain) store.stagedContent().retireUnownedContent(nativeTbs);
+            if (nativeTbs != null && !custodyUncertain) {
+                store.stagedContent().retireUnownedContent(nativeTbs);
+            }
         }
     }
 
@@ -219,19 +268,28 @@ final class CrlHybridContinuation {
     }
 
     private void retire(SignWorkflowStore.Workflow parent) {
-        var current = store.getSignWorkflow(parent.operationId()).orElseThrow();
-        var domain = store.getDomainContinuation(parent.operationId()).orElseThrow();
-        if (!terminal(domain)) return;
-        var execution = store.getCrlHybridExecution(parent.operationId()).orElseThrow();
+        SignWorkflowStore.Workflow current =
+                store.getSignWorkflow(parent.operationId()).orElseThrow();
+        DomainContinuationStore.Record domain =
+                store.getDomainContinuation(parent.operationId()).orElseThrow();
+        if (!terminal(domain)) {
+            return;
+        }
+        CrlHybridExecution execution =
+                store.getCrlHybridExecution(parent.operationId()).orElseThrow();
         SignWorkflowStore.Workflow child = null;
         if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
             child = store.getSignWorkflow(execution.nativeChildId()).orElseThrow();
-            if (child.state() == SignWorkflowStore.State.INTENT || child.state() == SignWorkflowStore.State.DISPATCHED
-                    || child.state() == SignWorkflowStore.State.CANCELLING) return;
+            if (child.state() == SignWorkflowStore.State.INTENT
+                    || child.state() == SignWorkflowStore.State.DISPATCHED
+                    || child.state() == SignWorkflowStore.State.CANCELLING) {
+                return;
+            }
         }
         store.retireSign(current.operationId(), current.revision(), current.fence());
-        if (child != null && child.state() != SignWorkflowStore.State.RETIRED)
+        if (child != null && child.state() != SignWorkflowStore.State.RETIRED) {
             store.retireSign(child.operationId(), child.revision(), child.fence());
+        }
     }
 
     private static boolean terminal(DomainContinuationStore.Record domain) {
@@ -240,5 +298,107 @@ final class CrlHybridContinuation {
     }
     private static DomainContinuationPublisher.PostconditionFailure invalid(String code) {
         return new DomainContinuationPublisher.PostconditionFailure(code);
+    }
+
+    private void publishChildOrFinish(
+            SignWorkflowStore.Workflow parent,
+            DomainContinuationStore.Record domain,
+            CrlHybridExecution execution) {
+        SignWorkflowStore.Workflow child =
+                store.getSignWorkflow(execution.nativeChildId()).orElseThrow();
+        if ((child.state() == SignWorkflowStore.State.SUCCEEDED
+                        || child.state() == SignWorkflowStore.State.RETIRED)
+                && child.result().isPresent()
+                && child.detailCode().filter("SIGNED"::equals).isPresent()) {
+            EncodedObject result = publisher.publishHybrid(domain, execution, parent, child);
+            finish(
+                    domain,
+                    DomainContinuationStore.State.COMPLETED,
+                    "COMPLETED",
+                    Optional.of(result));
+            retire(parent);
+        } else if (child.state() == SignWorkflowStore.State.FAILED
+                || child.state() == SignWorkflowStore.State.CANCELLED
+                || child.state() == SignWorkflowStore.State.EXPIRED
+                || child.state() == SignWorkflowStore.State.RETIRED) {
+            finish(
+                    domain,
+                    child.state() == SignWorkflowStore.State.EXPIRED
+                            ? DomainContinuationStore.State.EXPIRED
+                            : DomainContinuationStore.State.FAILED,
+                    child.detailCode().orElse("HYBRID_CRL_NATIVE_FAILED"),
+                    Optional.empty());
+            retire(parent);
+        }
+    }
+
+    private static void requireCapturedGraph(
+            IssuerCryptographicBinding binding,
+            CrlHybridSigningCommand.Descriptor descriptor,
+            CrlHybridExecution execution,
+            DomainContinuationStore.Record domain) {
+        if (!binding.commitment().equals(descriptor.issuerBindingCommitment())
+                || !execution.parentCommandCommitment().equals(domain.commandCommitment())
+                || !execution.nativeChildId().equals(descriptor.nativeChildId())) {
+            throw invalid("HYBRID_CRL_CAPTURE_DIFFERS");
+        }
+    }
+
+    private void requireAlternativeResult(
+            SignWorkflowStore.Workflow parent,
+            CrlHybridSigningCommand.Descriptor descriptor,
+            byte[] alternativeSignature,
+            StreamingDerReader.CrlAlternativeTbsLayout layout,
+            IssuerKeyBinding alternative,
+            DomainCommandEncoding.Decoded command,
+            RepeatableContent alternativeTbs,
+            X509Certificate certificate)
+            throws IOException, GeneralSecurityException {
+        if (parent.result().orElseThrow().encoding() != Encoding.BINARY
+                || alternativeSignature.length == 0
+                || alternativeSignature.length > descriptor.alternativeMaximumSignatureBytes()
+                || !Arrays.equals(
+                        layout.alternativeAlgorithmDer(),
+                        alternative.signatureAlgorithmIdentifier().bytes())
+                || !layout.crlNumber().toString().equals(command.field(10))) {
+            throw invalid("HYBRID_CRL_ALTERNATIVE_INVALID");
+        }
+        FullCrlSigningCommand.requireAdmission(
+                alternative.signatureAlgorithm().canonicalForm(),
+                layout.encodedLength(),
+                pureMaximum);
+        try {
+            if (!StreamingCrlSignatureVerifier.verify(
+                            alternativeTbs,
+                            alternative.signatureAlgorithm().canonicalForm(),
+                            CrlSigningRoleTuple.alternativeSpki(certificate),
+                            alternativeSignature,
+                            bindings,
+                            CancellationSignal.NONE)
+                    .equals(command.field(28))) {
+                throw invalid("HYBRID_CRL_ALTERNATIVE_INVALID");
+            }
+        } catch (GeneralSecurityException | IllegalArgumentException | IOException failure) {
+            throw new DomainContinuationPublisher.PostconditionFailure(
+                    "HYBRID_CRL_ALTERNATIVE_INVALID", failure);
+        }
+    }
+
+    private void requireNativeContent(DurableContentReference nativeTbs, long length) {
+        if (nativeTbs == null
+                || nativeTbs.length() != length
+                || nativeTbs.encoding() != Encoding.DER
+                || nativeTbs.lifecycle() != DurableContentReference.Lifecycle.OPERATION
+                || !store.stagedContent().contentStoreId().equals(nativeTbs.storeId())) {
+            throw invalid("HYBRID_CRL_NATIVE_CONTENT_INVALID");
+        }
+    }
+
+    private static RuntimeException admissionFailure(RuntimeException failure) {
+        if (failure instanceof IllegalArgumentException) {
+            return new DomainContinuationPublisher.PostconditionFailure(
+                    "HYBRID_CRL_CHILD_REJECTED", failure);
+        }
+        return failure;
     }
 }

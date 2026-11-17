@@ -44,7 +44,7 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * Single-threaded, self-rescheduling status-schedule owner for one realm.
  */
-@SuppressWarnings({ "PMD.DoNotUseThreads", "PMD.CommentDefaultAccessModifier" })
+@SuppressWarnings({"PMD.DoNotUseThreads"})
 final class StatusScheduleWorker implements AutoCloseable {
     private static final Duration IDLE_INTERVAL = Duration.ofMinutes(1);
 
@@ -147,7 +147,7 @@ final class StatusScheduleWorker implements AutoCloseable {
      * @param coalescedWake whether a wake arrived during the previous pass
      * @return nonnegative delay, using the idle interval if clock evaluation fails
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // A faulty clock degrades scheduling to the idle interval.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // A faulty clock degrades scheduling to the idle interval.
     /* default */ Duration nextDelay(PassHints hints, boolean coalescedWake) {
         if (hints.immediate() || coalescedWake) {
             return Duration.ZERO;
@@ -172,7 +172,7 @@ final class StatusScheduleWorker implements AutoCloseable {
      *
      * @return whether schedule execution remains active
      */
-    boolean isRunning() { return workerThread.isAlive() && !cancelled.get(); }
+    /* default */ boolean isRunning() { return workerThread.isAlive() && !cancelled.get(); }
 
     /**
      * Requests cancellation before waiting for the configured forced-shutdown bound.
@@ -223,7 +223,7 @@ final class StatusScheduleWorker implements AutoCloseable {
     /**
      * Boundary for per-pass schedule evaluation and generation.
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     /* default */ interface ScheduleGateway {
         /** Evaluates one cancellable pass and returns the next scheduling hints.
          * @param cancellation shutdown signal
@@ -246,7 +246,7 @@ final class StatusScheduleWorker implements AutoCloseable {
          * @param nextEligible earliest known eligibility instant, or empty
          * @throws NullPointerException if the eligibility container is null
          */
-        PassHints {
+        /* default */ PassHints {
             nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         }
         /**

@@ -64,8 +64,12 @@ import zeroecho.pki.api.request.SubjectRdn;
  * @param expectedPredecessorCredentialId same-slot renewal predecessor, or an empty
  *        optional for initial provisioning; the optional must not be {@code null}
  */
+// Record component names are established public accessors and remain source compatible.
+@SuppressWarnings("PMD.LongVariable")
 public record ManagedOcspResponderIssuanceRequest(PkiId authorityId, KeyRef primaryKeyRef, KeyRef alternativeKeyRef,
         List<SubjectRdn> subject, Validity validity, IssuanceIntent intent, Optional<PkiId> expectedPredecessorCredentialId) {
+    private static final int LIMIT_1_048_576 = 1_048_576;
+
     /**
      * Validates request structure and takes an immutable snapshot of the subject list.
      *
@@ -78,11 +82,13 @@ public record ManagedOcspResponderIssuanceRequest(PkiId authorityId, KeyRef prim
      *         are equal or oversized, or the subject count is outside 1 through 32
      * @param authorityId logical issuer authority; must not be {@code null}
      * @param primaryKeyRef existing managed primary subject key; must not be {@code null}
-     * @param alternativeKeyRef existing managed alternative subject key, distinct from the primary reference; must not be {@code null}
+     * @param alternativeKeyRef existing managed alternative subject key, distinct from the primary
+     * reference; must not be {@code null}
      * @param subject ordered subject RDNs, containing between 1 and 32 non-null entries
      * @param validity absolute requested validity; must not be {@code null}
      * @param intent exact issuer, profile and path selection; must not be {@code null}
-     * @param expectedPredecessorCredentialId same-slot renewal predecessor, or an empty optional for initial provisioning; the optional must not be {@code null}
+     * @param expectedPredecessorCredentialId same-slot renewal predecessor, or an empty optional for
+     * initial provisioning; the optional must not be {@code null}
      */
     public ManagedOcspResponderIssuanceRequest {
         Objects.requireNonNull(authorityId, "authorityId");
@@ -90,7 +96,7 @@ public record ManagedOcspResponderIssuanceRequest(PkiId authorityId, KeyRef prim
         Objects.requireNonNull(primaryKeyRef, "primaryKeyRef");
         Objects.requireNonNull(alternativeKeyRef, "alternativeKeyRef");
         for (KeyRef key : List.of(primaryKeyRef, alternativeKeyRef)) {
-            if (key.value().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1_048_576) {
+            if (key.value().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > LIMIT_1_048_576) {
                 throw new IllegalArgumentException("Managed key reference exceeds bound");
             }
         }

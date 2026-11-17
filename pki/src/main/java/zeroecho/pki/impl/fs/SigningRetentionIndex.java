@@ -47,7 +47,7 @@ import java.util.TreeMap;
  */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource",
         "PMD.CommentRequired", "PMD.CompareObjectsWithEquals", "PMD.ConfusingTernary",
-        "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.NPathComplexity",
+        "PMD.CyclomaticComplexity", "PMD.NPathComplexity",
         "PMD.PrematureDeclaration", "PMD.UseTryWithResources" })
 final class SigningRetentionIndex implements AutoCloseable {
     /* Hash node, tree node, key/slot objects, timestamp and alignment. */
@@ -154,7 +154,7 @@ final class SigningRetentionIndex implements AutoCloseable {
             transferred = true;
             return result;
         } finally {
-            if (!transferred) reservation.close();
+            if (!transferred) { reservation.close(); }
         }
     }
 
@@ -173,7 +173,7 @@ final class SigningRetentionIndex implements AutoCloseable {
         requireOpen();
         OperationSlot slot = byOperation.get(operationId);
         requireReusedIdentity(operationId, slot);
-        if (slot == null || slot.published == null) return new PreparedChange();
+        if (slot == null || slot.published == null) { return new PreparedChange(); }
         if (slot.pending) {
             throw new IllegalStateException("signing retention operation already has a prepared change");
         }
@@ -219,7 +219,7 @@ final class SigningRetentionIndex implements AutoCloseable {
         List<String> result = new ArrayList<>(Math.min(maximumResults, ordered.size()));
         for (Map.Entry<RetentionKey, DescriptorSlot> entry : ordered.entrySet()) {
             if (entry.getKey().createdAt.isAfter(cutoffInclusive)
-                    || result.size() == maximumResults) break;
+                    || result.size() == maximumResults) { break; }
             if (entry.getValue().published) {
                 result.add(entry.getKey().operationId.value());
             }
@@ -249,16 +249,16 @@ final class SigningRetentionIndex implements AutoCloseable {
      * {@inheritDoc}
      */
     @Override public void close() {
-        if (closed) return;
+        if (closed) { return; }
         closed = true;
-        if (reservedBytes > 0L) capacity.releaseCommitted(reservedBytes);
+        if (reservedBytes > 0L) { capacity.releaseCommitted(reservedBytes); }
         reservedBytes = 0L;
         ordered.clear();
         byOperation.clear();
     }
 
     private void requireOpen() {
-        if (closed) throw new IllegalStateException("signing retention index is closed");
+        if (closed) { throw new IllegalStateException("signing retention index is closed"); }
     }
 
     private static void requireReusedIdentity(SigningDueWorkIndex.CanonicalOperationId supplied,
@@ -342,7 +342,7 @@ final class SigningRetentionIndex implements AutoCloseable {
          * @throws IllegalStateException if the index is closed or prepared entry ownership is inconsistent
          */
         /* default */ void publish() {
-            if (!active) return;
+            if (!active) { return; }
             requireOpen();
             if (!operationSlot.pending) {
                 throw new IllegalStateException("signing retention prepared ownership is inconsistent");
@@ -369,22 +369,22 @@ final class SigningRetentionIndex implements AutoCloseable {
             }
             operationSlot.pending = false;
             active = false;
-            if (reservation != null) reservation.close();
+            if (reservation != null) { reservation.close(); }
         }
 
         /**
          * {@inheritDoc}
          */
         @Override public void close() {
-            if (!active) return;
+            if (!active) { return; }
             active = false;
             operationSlot.pending = false;
-            if (replacementSlot != null) replacementSlot.pending = false;
-            if (insertedReplacement) ordered.remove(replacementKey, replacementSlot);
+            if (replacementSlot != null) { replacementSlot.pending = false; }
+            if (insertedReplacement) { ordered.remove(replacementKey, replacementSlot); }
             if (operationSlot.published == null) {
                 byOperation.remove(operationSlot.operationId, operationSlot);
             }
-            if (reservation != null) reservation.close();
+            if (reservation != null) { reservation.close(); }
         }
     }
 }

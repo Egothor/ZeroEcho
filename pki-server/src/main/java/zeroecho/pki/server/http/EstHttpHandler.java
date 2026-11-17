@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpsExchange;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -47,14 +50,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
-
 import javax.net.ssl.SSLPeerUnverifiedException;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpsExchange;
-
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.est.EstEndpoint;
@@ -65,14 +61,17 @@ import zeroecho.pki.server.est.EstService;
 /**
  * Strict EST RFC 7030 route adapter; protocol state and PKI business rules remain in {@link EstService}.
  */
-final class EstHttpHandler implements HttpHandler {
+/* default */ final class EstHttpHandler implements HttpHandler {
+    private static final int BOUND_1 = 1;
+    private static final int BOUND_2 = 2;
+
     private static final String CERTS_ONLY = "application/pkcs7-mime; smime-type=certs-only";
     private static final String CSRATTRS = "application/csrattrs";
     private static final String TEXT_PLAIN = "text/plain; charset=utf-8";
     private static final String WELL_KNOWN_EST = "/.well-known/est";
 
     private final PkiServerConfiguration.EstListener configuration;
-    private final ServerRealmContext realm;
+
     private final EstService service;
     private final ServerRuntime runtime;
     private final RequestIds requestIds;
@@ -89,10 +88,10 @@ final class EstHttpHandler implements HttpHandler {
      * @param ready readiness observation checked before request admission
      * @throws NullPointerException if any collaborator is null
      */
-    EstHttpHandler(PkiServerConfiguration.EstListener configuration, ServerRealmContext realm,
+    /* default */ EstHttpHandler(PkiServerConfiguration.EstListener configuration, ServerRealmContext realm,
             EstService service, ServerRuntime runtime, RequestIds requestIds, BooleanSupplier ready) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
-        this.realm = Objects.requireNonNull(realm, "realm");
+        Objects.requireNonNull(realm, "realm");
         this.service = Objects.requireNonNull(service, "service");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.requestIds = Objects.requireNonNull(requestIds, "requestIds");
@@ -102,6 +101,10 @@ final class EstHttpHandler implements HttpHandler {
     /**
      * {@inheritDoc}
      */
+    // This transport boundary must preserve cleanup and finite masking of provider/runtime failures. The
+    // standalone transport owns bounded task executors and preserves cancellation/thread lifetime.
+
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.DoNotUseThreads"})
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request";
@@ -122,10 +125,10 @@ final class EstHttpHandler implements HttpHandler {
                 EstResponse response;
                 try {
                     response = runtime.execute(configuration.execution().maximumDeadline(), cancellation -> {
-                        EstResponse routed = route((HttpsExchange) exchange, exactRequestId, cancellation);
+                        EstResponse routed = route((HttpsExchange) exchange, cancellation);
                         if (routed.keygen().isPresent() && routed.status() == 200) {
                             cancellation.throwIfCancelled();
-                            if (!deliveryClaimed.compareAndSet(false, true)) throw new java.io.InterruptedIOException("EST delivery cancelled");
+                            if (!deliveryClaimed.compareAndSet(false, true)) { throw new java.io.InterruptedIOException("EST delivery cancelled"); }
                             sendKeygen(exchange, routed.keygen().orElseThrow(), exactRequestId, cancellation);
                             return null;
                         }
@@ -142,7 +145,7 @@ final class EstHttpHandler implements HttpHandler {
                     if (!deliveryClaimed.compareAndSet(false, true)) { exchange.close(); return; }
                     response = protocolFailure(failure.getCause());
                 }
-                if (response == null) return;
+                if (response == null) { return; }
                 response.retryAfterSeconds().ifPresent(value -> exchange.getResponseHeaders().set("Retry-After", Long.toString(value)));
                 send(exchange, response.status(), response.contentType(), response.body(), requestId);
             } catch (RejectedExecutionException overloaded) {
@@ -157,7 +160,7 @@ final class EstHttpHandler implements HttpHandler {
         }
     }
 
-    private EstResponse route(HttpsExchange exchange, String requestId, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
+    private EstResponse route(HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws IOException, EstProtocolException {
         if (exchange.getRequestURI().getRawQuery() != null) {
             return errorResponse(400, "EST requests must not include query parameters");
         }
@@ -167,15 +170,15 @@ final class EstHttpHandler implements HttpHandler {
         }
         String remainder = path.substring(WELL_KNOWN_EST.length());
         // remainder is either "", "/{operation}", or "/{label}/{operation}"
-        String[] segments = remainder.isEmpty() ? new String[0] : remainder.substring(1).split("/", -1);
+        String[] segments = remainder.isEmpty() ? new String[0] : remainder.substring(BOUND_1).split("/", -BOUND_1);
         String label;
         String operation;
-        if (segments.length == 1) {
+        if (segments.length == BOUND_1) {
             label = "default";
             operation = segments[0];
-        } else if (segments.length == 2) {
+        } else if (segments.length == BOUND_2) {
             label = segments[0];
-            operation = segments[1];
+            operation = segments[BOUND_1];
         } else {
             return errorResponse(404, "EST path not recognized");
         }
@@ -195,47 +198,47 @@ final class EstHttpHandler implements HttpHandler {
     }
 
     private EstResponse handleCacerts(String method, EstEndpoint endpoint, String label) throws EstProtocolException {
-        if (!"GET".equals(method)) return errorResponse(405, "Only GET is allowed for /cacerts");
-        if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
+        if (!"GET".equals(method)) { return errorResponse(405, "Only GET is allowed for /cacerts"); }
+        if (endpoint == null) { return errorResponse(404, "EST label not registered: " + label); }
         byte[] body = service.cacerts(endpoint);
         return new EstResponse(200, CERTS_ONLY, body);
     }
 
     private EstResponse handleSimpleenroll(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
-        if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /simpleenroll");
-        if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws IOException, EstProtocolException {
+        if (!"POST".equals(method)) { return errorResponse(405, "Only POST is allowed for /simpleenroll"); }
+        if (endpoint == null) { return errorResponse(404, "EST label not registered: " + label); }
         X509Certificate clientCert = extractClientCert(exchange);
-        if (clientCert == null) return errorResponse(401, "EST simpleenroll requires a valid mTLS client certificate");
+        if (clientCert == null) { return errorResponse(401, "EST simpleenroll requires a valid mTLS client certificate"); }
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
         EstService.EnrollmentResult result = service.simpleenroll(endpoint, csrBody, clientCert, cancellation);
         return new EstResponse(result.status(), result.status() == 200 ? CERTS_ONLY : TEXT_PLAIN, result.body(), result.retryAfterSeconds());
     }
 
     private EstResponse handleSimplereenroll(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
-        if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /simplereenroll");
-        if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws IOException, EstProtocolException {
+        if (!"POST".equals(method)) { return errorResponse(405, "Only POST is allowed for /simplereenroll"); }
+        if (endpoint == null) { return errorResponse(404, "EST label not registered: " + label); }
         X509Certificate clientCert = extractClientCert(exchange);
-        if (clientCert == null) return errorResponse(401, "EST simplereenroll requires a valid mTLS client certificate");
+        if (clientCert == null) { return errorResponse(401, "EST simplereenroll requires a valid mTLS client certificate"); }
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
         EstService.EnrollmentResult result = service.simplereenroll(endpoint, csrBody, clientCert, cancellation);
         return new EstResponse(result.status(), result.status() == 200 ? CERTS_ONLY : TEXT_PLAIN, result.body(), result.retryAfterSeconds());
     }
 
     private EstResponse handleCsrattrs(String method, EstEndpoint endpoint, String label) {
-        if (!"GET".equals(method)) return errorResponse(405, "Only GET is allowed for /csrattrs");
-        if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
+        if (!"GET".equals(method)) { return errorResponse(405, "Only GET is allowed for /csrattrs"); }
+        if (endpoint == null) { return errorResponse(404, "EST label not registered: " + label); }
         byte[] body = service.csrattrs(endpoint);
         return new EstResponse(200, CSRATTRS, body);
     }
 
     private EstResponse handleServerkeygen(String method, EstEndpoint endpoint, String label,
-            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws Exception {
-        if (!"POST".equals(method)) return errorResponse(405, "Only POST is allowed for /serverkeygen");
-        if (endpoint == null) return errorResponse(404, "EST label not registered: " + label);
+            HttpsExchange exchange, zeroecho.core.io.CancellationSignal cancellation) throws IOException, EstProtocolException {
+        if (!"POST".equals(method)) { return errorResponse(405, "Only POST is allowed for /serverkeygen"); }
+        if (endpoint == null) { return errorResponse(404, "EST label not registered: " + label); }
         X509Certificate clientCert = extractClientCert(exchange);
-        if (clientCert == null) return errorResponse(401, "EST serverkeygen requires a valid mTLS client certificate");
+        if (clientCert == null) { return errorResponse(401, "EST serverkeygen requires a valid mTLS client certificate"); }
         byte[] csrBody = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
         EstServerKeygenResponse keygen = service.serverkeygen(endpoint, csrBody, clientCert, cancellation);
         return new EstResponse(keygen.status(), keygen.contentType(), new byte[0], keygen.retryAfterSeconds(), java.util.Optional.of(keygen));
@@ -244,8 +247,8 @@ final class EstHttpHandler implements HttpHandler {
     private static X509Certificate extractClientCert(HttpsExchange exchange) {
         try {
             Certificate[] certs = exchange.getSSLSession().getPeerCertificates();
-            if (certs == null || certs.length == 0) return null;
-            if (!(certs[0] instanceof X509Certificate x509)) return null;
+            if (certs == null || certs.length == 0) { return null; }
+            if (!(certs[0] instanceof X509Certificate x509)) { return null; }
             return x509;
         } catch (SSLPeerUnverifiedException absent) {
             return null;
@@ -265,23 +268,24 @@ final class EstHttpHandler implements HttpHandler {
 
     private static byte[] readBody(InputStream input, int maximum) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maximum, 16_384));
-        byte[] buffer = new byte[8192];
+        byte[] buffer = new byte[8_192];
         int total = 0;
-        for (int count; (count = input.read(buffer)) >= 0;) {
-            if (count == 0) continue;
+        int count;
+        while ((count = input.read(buffer)) >= 0) {
+            if (count == 0) { continue; }
             total = Math.addExact(total, count);
-            if (total > maximum) throw new IllegalArgumentException("EST request body is too large");
+            if (total > maximum) { throw new IllegalArgumentException("EST request body is too large"); }
             output.write(buffer, 0, count);
         }
         return output.toByteArray();
     }
 
-    private void requireHeaders(Headers headers) {
+    private void requireHeaders(Map<String, List<String>> headers) {
         long count = 0;
         for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
             count += entry.getKey().length();
-            for (String value : entry.getValue()) count += value.length();
-            if (count > configuration.maximumHeaderBytes()) throw new IllegalArgumentException("EST headers too large");
+            for (String value : entry.getValue()) { count += value.length(); }
+            if (count > configuration.maximumHeaderBytes()) { throw new IllegalArgumentException("EST headers too large"); }
         }
     }
 
@@ -291,7 +295,7 @@ final class EstHttpHandler implements HttpHandler {
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Content-Type", contentType);
-        if (CERTS_ONLY.equals(contentType)) exchange.getResponseHeaders().set("Content-Transfer-Encoding", "base64");
+        if (CERTS_ONLY.equals(contentType)) { exchange.getResponseHeaders().set("Content-Transfer-Encoding", "base64"); }
         exchange.sendResponseHeaders(status, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
@@ -316,11 +320,11 @@ final class EstHttpHandler implements HttpHandler {
 
     private record EstResponse(int status, String contentType, byte[] body, java.util.Optional<Long> retryAfterSeconds,
             java.util.Optional<EstServerKeygenResponse> keygen) {
-        EstResponse(int status, String contentType, byte[] body) { this(status, contentType, body, java.util.Optional.empty()); }
-        EstResponse(int status, String contentType, byte[] body, java.util.Optional<Long> retryAfterSeconds) {
+        /* default */ EstResponse(int status, String contentType, byte[] body) { this(status, contentType, body, java.util.Optional.empty()); }
+        /* default */ EstResponse(int status, String contentType, byte[] body, java.util.Optional<Long> retryAfterSeconds) {
             this(status, contentType, body, retryAfterSeconds, java.util.Optional.empty());
         }
-        EstResponse {
+        /* default */ EstResponse {
             body = body.clone();
         }
 

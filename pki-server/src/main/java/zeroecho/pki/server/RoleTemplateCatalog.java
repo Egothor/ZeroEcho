@@ -51,9 +51,7 @@ import tools.jackson.core.json.JsonFactory;
 /**
  * Strict deterministic loader for versioned built-in role templates.
  */
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ControlStatementBraces",
-        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.ExceptionAsFlowControl",
-        "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace", "PMD.UseEnumCollections" })
+@SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.ExceptionAsFlowControl", "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace", "PMD.UseEnumCollections"})
 public final class RoleTemplateCatalog {
     /**
      * Classpath resource holding the normative role templates.
@@ -81,9 +79,9 @@ public final class RoleTemplateCatalog {
          */
         public Template {
             Permission.requireId(templateId, "role template");
-            if (version <= 0) throw new IllegalArgumentException("Role template version must be positive");
+            if (version <= 0) { throw new IllegalArgumentException("Role template version must be positive"); }
             actions = Set.copyOf(Objects.requireNonNull(actions, "actions"));
-            if (actions.isEmpty()) throw new IllegalArgumentException("Role template actions must not be empty");
+            if (actions.isEmpty()) { throw new IllegalArgumentException("Role template actions must not be empty"); }
         }
     }
 
@@ -117,7 +115,7 @@ public final class RoleTemplateCatalog {
             Permission.requireId(assignmentId, "assignment");
             Permission.requirePrincipal(principalId);
             Permission.requireId(templateId, "role template");
-            if (templateVersion <= 0) throw new IllegalArgumentException("Template version must be positive");
+            if (templateVersion <= 0) { throw new IllegalArgumentException("Template version must be positive"); }
             Objects.requireNonNull(scope, "scope");
             expiresAt = Objects.requireNonNull(expiresAt, "expiresAt");
         }
@@ -191,9 +189,9 @@ public final class RoleTemplateCatalog {
                 require(parser.currentToken(), JsonToken.PROPERTY_NAME);
                 String field = parser.currentName();
                 parser.nextToken();
-                if ("schemaVersion".equals(field) && schema == null) schema = parser.getIntValue();
-                else if ("roles".equals(field) && result == null) result = readTemplates(parser);
-                else throw new IllegalArgumentException("Unknown or duplicate role-template field");
+                if ("schemaVersion".equals(field) && schema == null) { schema = parser.getIntValue(); }
+                else if ("roles".equals(field) && result == null) { result = readTemplates(parser); }
+                else { throw new IllegalArgumentException("Unknown or duplicate role-template field"); }
             }
             if (parser.nextToken() != null || !Integer.valueOf(1).equals(schema) || result == null) {
                 throw new IllegalArgumentException("Role-template resource framing is invalid");
@@ -205,7 +203,7 @@ public final class RoleTemplateCatalog {
             }
             return new RoleTemplateCatalog(result);
         } catch (IOException | RuntimeException failure) {
-            if (failure instanceof IllegalArgumentException invalid) throw invalid;
+            if (failure instanceof IllegalArgumentException invalid) { throw invalid; }
             throw new IllegalArgumentException("Role-template resource is malformed");
         }
     }
@@ -240,7 +238,7 @@ public final class RoleTemplateCatalog {
      */
     public List<Permission.Grant> instantiate(Assignment assignment) {
         Assignment exact = Objects.requireNonNull(assignment, "assignment");
-        if (!exact.enabled()) return List.of();
+        if (!exact.enabled()) { return List.of(); }
         Template template = require(exact.templateId(), exact.templateVersion());
         return template.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))
                 .flatMap(action -> {
@@ -260,26 +258,26 @@ public final class RoleTemplateCatalog {
 
     private static Permission.ResourceType resourceType(Permission.Action action) {
         String name = action.name();
-        if (action == Permission.Action.APPROVAL_DECIDE_OWN) return Permission.ResourceType.APPROVAL;
-        if (name.startsWith("AUTHORITY")) return Permission.ResourceType.AUTHORITY;
-        if (name.startsWith("ISSUER") || name.startsWith("CA_CHAIN")) return Permission.ResourceType.ISSUER;
-        if (name.startsWith("PROFILE")) return Permission.ResourceType.PROFILE;
-        if (name.startsWith("POLICY")) return Permission.ResourceType.POLICY;
-        if (name.startsWith("X509_BINDING")) return Permission.ResourceType.X509_BINDING;
-        if (name.startsWith("REQUEST")) return Permission.ResourceType.REQUEST;
-        if (name.startsWith("CERTIFICATE")) return Permission.ResourceType.CERTIFICATE;
-        if (name.startsWith("REVOCATION")) return Permission.ResourceType.REVOCATION;
-        if (name.startsWith("CRL") || name.startsWith("OCSP")) return Permission.ResourceType.STATUS_OBJECT;
-        if (name.startsWith("PUBLICATION")) return Permission.ResourceType.PUBLICATION;
-        if (name.startsWith("AUDIT")) return Permission.ResourceType.AUDIT;
-        if (name.startsWith("BACKUP")) return Permission.ResourceType.BACKUP;
-        if (name.startsWith("RESTORE")) return Permission.ResourceType.RESTORE;
-        if (name.startsWith("DISCLOSURE_CAPABILITY")) return Permission.ResourceType.CAPABILITY;
-        if (name.startsWith("DISCLOSURE")) return Permission.ResourceType.DISCLOSURE;
-        if (name.startsWith("PRINCIPAL")) return Permission.ResourceType.PRINCIPAL;
-        if (name.startsWith("ROLE")) return Permission.ResourceType.ROLE;
-        if (name.startsWith("PERMISSION")) return Permission.ResourceType.GRANT;
-        if (name.startsWith("SERVER_CONFIGURATION")) return Permission.ResourceType.SERVER_CONFIGURATION;
+        if (action == Permission.Action.APPROVAL_DECIDE_OWN) { return Permission.ResourceType.APPROVAL; }
+        if (name.startsWith("AUTHORITY")) { return Permission.ResourceType.AUTHORITY; }
+        if (name.startsWith("ISSUER") || name.startsWith("CA_CHAIN")) { return Permission.ResourceType.ISSUER; }
+        if (name.startsWith("PROFILE")) { return Permission.ResourceType.PROFILE; }
+        if (name.startsWith("POLICY")) { return Permission.ResourceType.POLICY; }
+        if (name.startsWith("X509_BINDING")) { return Permission.ResourceType.X509_BINDING; }
+        if (name.startsWith("REQUEST")) { return Permission.ResourceType.REQUEST; }
+        if (name.startsWith("CERTIFICATE")) { return Permission.ResourceType.CERTIFICATE; }
+        if (name.startsWith("REVOCATION")) { return Permission.ResourceType.REVOCATION; }
+        if (name.startsWith("CRL") || name.startsWith("OCSP")) { return Permission.ResourceType.STATUS_OBJECT; }
+        if (name.startsWith("PUBLICATION")) { return Permission.ResourceType.PUBLICATION; }
+        if (name.startsWith("AUDIT")) { return Permission.ResourceType.AUDIT; }
+        if (name.startsWith("BACKUP")) { return Permission.ResourceType.BACKUP; }
+        if (name.startsWith("RESTORE")) { return Permission.ResourceType.RESTORE; }
+        if (name.startsWith("DISCLOSURE_CAPABILITY")) { return Permission.ResourceType.CAPABILITY; }
+        if (name.startsWith("DISCLOSURE")) { return Permission.ResourceType.DISCLOSURE; }
+        if (name.startsWith("PRINCIPAL")) { return Permission.ResourceType.PRINCIPAL; }
+        if (name.startsWith("ROLE")) { return Permission.ResourceType.ROLE; }
+        if (name.startsWith("PERMISSION")) { return Permission.ResourceType.GRANT; }
+        if (name.startsWith("SERVER_CONFIGURATION")) { return Permission.ResourceType.SERVER_CONFIGURATION; }
         return Permission.ResourceType.REALM;
     }
 
@@ -299,7 +297,7 @@ public final class RoleTemplateCatalog {
         if (action == Permission.Action.CERTIFICATE_READ_PII || action == Permission.Action.AUDIT_READ_PII) {
             return Permission.DataView.PII_FULL;
         }
-        if (action == Permission.Action.AUDIT_READ_FULL) return Permission.DataView.METADATA_FULL;
+        if (action == Permission.Action.AUDIT_READ_FULL) { return Permission.DataView.METADATA_FULL; }
         return Permission.DataView.METADATA_REDACTED;
     }
 
@@ -315,12 +313,12 @@ public final class RoleTemplateCatalog {
                 require(parser.currentToken(), JsonToken.PROPERTY_NAME);
                 String field = parser.currentName();
                 parser.nextToken();
-                if ("id".equals(field) && id == null) id = parser.getString();
-                else if ("version".equals(field) && version == null) version = parser.getIntValue();
-                else if ("actions".equals(field) && actions == null) actions = readActions(parser);
-                else throw new IllegalArgumentException("Unknown or duplicate role field");
+                if ("id".equals(field) && id == null) { id = parser.getString(); }
+                else if ("version".equals(field) && version == null) { version = parser.getIntValue(); }
+                else if ("actions".equals(field) && actions == null) { actions = readActions(parser); }
+                else { throw new IllegalArgumentException("Unknown or duplicate role field"); }
             }
-            if (id == null || version == null || actions == null) throw new IllegalArgumentException("Role incomplete");
+            if (id == null || version == null || actions == null) { throw new IllegalArgumentException("Role incomplete"); }
             result.add(new Template(id, version, actions));
         }
         return result;
@@ -332,12 +330,12 @@ public final class RoleTemplateCatalog {
         while (parser.nextToken() != JsonToken.END_ARRAY) {
             require(parser.currentToken(), JsonToken.VALUE_STRING);
             Permission.Action action = Permission.Action.valueOf(parser.getString());
-            if (!result.add(action)) throw new IllegalArgumentException("Duplicate role action");
+            if (!result.add(action)) { throw new IllegalArgumentException("Duplicate role action"); }
         }
         return result;
     }
 
     private static void require(JsonToken actual, JsonToken expected) {
-        if (actual != expected) throw new IllegalArgumentException("Unexpected role-template token");
+        if (actual != expected) { throw new IllegalArgumentException("Unexpected role-template token"); }
     }
 }

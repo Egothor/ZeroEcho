@@ -33,6 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest;
+import zeroecho.pki.api.profile.SubjectPolicy;
+import zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter;
+import zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads;
+import zeroecho.pkix.AlgorithmIdentifier;
+
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
@@ -103,8 +114,8 @@ final class CertificateProfileValidator {
      * @throws PkiException if subject, SAN, key, transport evidence, or validity violates policy
      */
     /* package */ static ValidatedCertificateRequest validateManagedOcsp(
-            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
-            zeroecho.pki.api.EncodedObject publicKey, CertificateProfile profile, CertificateProfileRef reference,
+            ManagedOcspResponderIssuanceRequest request,
+            EncodedObject publicKey, CertificateProfile profile, CertificateProfileRef reference,
             Credential issuer, Instant time, X509AuthoritySnapshot authority) {
         List<SubjectRdn> subject = validateSubject(request.subject(), profile, false);
         LeafCertificatePolicy policy = profile.leafPolicy();
@@ -208,7 +219,7 @@ final class CertificateProfileValidator {
 
     private static void requireCanonicalRequestAttributes(ParsedCertificationRequest request) {
         try {
-            zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(request);
+            BcX509RequestPayloads.extract(request);
         } catch (IllegalArgumentException invalid) {
             throw reject("REQUEST_ATTRIBUTE_UNSUPPORTED"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
@@ -250,7 +261,7 @@ final class CertificateProfileValidator {
         if (approved.isEmpty() && !profile.subjectPolicy().allowEmpty()) {
             throw reject("SUBJECT_EMPTY");
         }
-        if (approved.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
+        if (approved.size() > SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
             throw reject("SUBJECT_TOO_MANY_RDNS");
         }
         return List.copyOf(approved);
@@ -264,7 +275,7 @@ final class CertificateProfileValidator {
         if (reconstructed && rule.fixedValue().isPresent() && !rule.fixedValue().orElseThrow().equals(canonical)) {
             throw reject("SUBJECT_FIXED_RDN_MISMATCH");
         }
-        if (canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > rule.maximumUtf8Bytes()) {
+        if (canonical.getBytes(StandardCharsets.UTF_8).length > rule.maximumUtf8Bytes()) {
             throw reject("SUBJECT_RDN_TOO_LARGE");
         }
         return canonical;
@@ -310,7 +321,7 @@ final class CertificateProfileValidator {
                 throw reject("SAN_IP_FAMILY_FORBIDDEN");
             }
             if (san instanceof SubjectAlternativeName.UriName uri) {
-                String scheme = java.net.URI.create(uri.value()).getScheme();
+                String scheme = URI.create(uri.value()).getScheme();
                 if (!sanPolicy.allowedUriSchemes().contains(scheme)) {
                     throw reject("SAN_URI_SCHEME_FORBIDDEN");
                 }
@@ -342,8 +353,9 @@ final class CertificateProfileValidator {
      * @param authority frozen X.509 authority snapshot; must not be null
      * @throws PkiException if subject-key encoding, parameters, algorithm, or profile permission is invalid
      */
+    /* default */
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidRethrowingException" })
-    /* package */ static void requireSubjectKeyAllowed(zeroecho.pki.api.EncodedObject exactPublicKey,
+    static void requireSubjectKeyAllowed(EncodedObject exactPublicKey,
             Set<String> allowedAlgorithms, X509AuthoritySnapshot authority) {
         if (exactPublicKey.encoding() != Encoding.DER) {
             throw reject("SUBJECT_KEY_UNSUPPORTED");
@@ -351,7 +363,7 @@ final class CertificateProfileValidator {
         byte[] encoded = exactPublicKey.bytes();
         try {
             new StreamingDerReader().validateSubjectPublicKeyInfo(encoded, MAXIMUM_SPKI_BYTES);
-            zeroecho.pkix.AlgorithmIdentifier spkiAlgorithm = Pkix.subjectPublicKeyAlgorithm(encoded);
+            AlgorithmIdentifier spkiAlgorithm = Pkix.subjectPublicKeyAlgorithm(encoded);
             AlgorithmIdentity identity;
             try {
                 identity = new BcX509AlgorithmAdapter(authority.bindings()).decode(spkiAlgorithm,
@@ -366,7 +378,7 @@ final class CertificateProfileValidator {
             if (!allowedAlgorithms.contains(algorithm.profileId())) {
                 throw reject("SUBJECT_KEY_ALGORITHM_FORBIDDEN");
             }
-            byte[] nativeEncoded = new zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter(
+            byte[] nativeEncoded = new BcX509PublicKeyAdapter(
                     authority.bindings()).unwrap(encoded);
             KeyFactory keyFactory = KeyFactory.getInstance(algorithm.jcaName());
             PublicKey reconstructed = keyFactory.generatePublic(new X509EncodedKeySpec(nativeEncoded));
@@ -376,9 +388,9 @@ final class CertificateProfileValidator {
                     throw reject("SUBJECT_KEY_NOT_CANONICAL");
                 }
             } finally {
-                java.util.Arrays.fill(nativeEncoded, (byte) 0);
+                Arrays.fill(nativeEncoded, (byte) 0);
                 if (canonical != null) {
-                    java.util.Arrays.fill(canonical, (byte) 0);
+                    Arrays.fill(canonical, (byte) 0);
                 }
             }
         } catch (PkiException exception) {
@@ -386,7 +398,7 @@ final class CertificateProfileValidator {
         } catch (GeneralSecurityException | IllegalArgumentException | IOException exception) {
             throw reject("SUBJECT_KEY_UNSUPPORTED");
         } finally {
-            java.util.Arrays.fill(encoded, (byte) 0);
+            Arrays.fill(encoded, (byte) 0);
         }
     }
 
@@ -418,8 +430,8 @@ final class CertificateProfileValidator {
     private static Validity approvedFrozenValidity(Validity exact, CertificateProfile profile,
             Credential issuer, Instant now) {
         Duration duration = Duration.between(exact.notBefore(), exact.notAfter());
-        if (!exact.notBefore().equals(exact.notBefore().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
-                || !exact.notAfter().equals(exact.notAfter().truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
+        if (!exact.notBefore().equals(exact.notBefore().truncatedTo(ChronoUnit.SECONDS))
+                || !exact.notAfter().equals(exact.notAfter().truncatedTo(ChronoUnit.SECONDS))
                 || duration.isZero() || duration.isNegative() || duration.compareTo(profile.maximumValidity()) > 0
                 || !exact.notAfter().isAfter(now) || exact.notBefore().isBefore(issuer.validity().notBefore())
                 || exact.notAfter().isAfter(issuer.validity().notAfter())) {
@@ -451,11 +463,11 @@ final class CertificateProfileValidator {
         try {
             // X.509 Time represents whole seconds. Preserve the largest interval
             // inside the already-approved bounds, without extending either end.
-            Instant notBefore = evaluationTime.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            Instant notBefore = evaluationTime.truncatedTo(ChronoUnit.SECONDS);
             if (!notBefore.equals(evaluationTime)) {
                 notBefore = notBefore.plusSeconds(1);
             }
-            Instant encodedNotAfter = notAfter.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            Instant encodedNotAfter = notAfter.truncatedTo(ChronoUnit.SECONDS);
             if (!encodedNotAfter.isAfter(notBefore)) {
                 throw reject("VALIDITY_INVALID");
             }

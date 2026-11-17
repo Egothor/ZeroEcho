@@ -169,7 +169,7 @@ final class BackupTransferService implements AutoCloseable {
      * @return live ready-to-download artifact descriptor
      * @throws IOException if capacity, backup preparation, copying, verification or publication fails
      */
-    @SuppressWarnings("PMD.UseTryWithResources")
+    /* default */ @SuppressWarnings("PMD.UseTryWithResources")
     /* default */ BackupArtifactRepository.Descriptor export(String owner, BackupRequest request) throws IOException {
         try (BackupArtifactRepository.PreparationJob job = repository.prepare()) {
             BackupSource source = backup.createBackupSource(request);

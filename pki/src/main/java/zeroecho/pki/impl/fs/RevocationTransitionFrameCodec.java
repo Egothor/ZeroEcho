@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -114,7 +116,8 @@ final class RevocationTransitionFrameCodec {
             .getBytes(StandardCharsets.US_ASCII);
 
     /**
-     * Writes the store-bound authenticated preamble at the current position of the borrowed channel, without forcing or closing it.
+     * Writes the store-bound authenticated preamble at the current position of the borrowed channel,
+     * without forcing or closing it.
      *
      * @param channel borrowed channel, which remains open
      * @param storeId exact authoritative store identity
@@ -141,7 +144,8 @@ final class RevocationTransitionFrameCodec {
     }
 
     /**
-     * Reads and authenticates the preamble from offset zero of the borrowed channel, rejecting incomplete, corrupt or unsupported framing.
+     * Reads and authenticates the preamble from offset zero of the borrowed channel, rejecting
+     * incomplete, corrupt or unsupported framing.
      *
      * @param channel borrowed channel, which remains open
      * @return authenticated store identity
@@ -178,7 +182,9 @@ final class RevocationTransitionFrameCodec {
     }
 
     /**
-     * Appends one validated, authenticated transition at the current channel position. The returned record captures its byte boundaries and chain commitment; forcing remains the caller's responsibility.
+     * Appends one validated, authenticated transition at the current channel position. The returned
+     * record captures its byte boundaries and chain commitment; forcing remains the caller's
+     * responsibility.
      *
      * @param channel borrowed channel, which remains open
      * @param data validated transition data to append
@@ -207,7 +213,8 @@ final class RevocationTransitionFrameCodec {
     }
 
     /**
-     * Reads one authenticated transition from the specified offset. The result distinguishes a complete record, end of input, an incomplete tail and corruption; the borrowed channel remains open.
+     * Reads one authenticated transition from the specified offset. The result distinguishes a complete
+     * record, end of input, an incomplete tail and corruption; the borrowed channel remains open.
      *
      * @param channel borrowed channel, which remains open
      * @param recordOffset byte offset of the next record
@@ -223,7 +230,9 @@ final class RevocationTransitionFrameCodec {
     }
 
     /**
-     * Reads one authenticated transition from the specified offset. The result distinguishes a complete record, end of input, an incomplete tail and corruption; the borrowed channel remains open. Scratch is borrowed exclusively and released before return, including on failure.
+     * Reads one authenticated transition from the specified offset. The result distinguishes a complete
+     * record, end of input, an incomplete tail and corruption; the borrowed channel remains open.
+     * Scratch is borrowed exclusively and released before return, including on failure.
      *
      * @param channel borrowed channel, which remains open
      * @param recordOffset byte offset of the next record
@@ -391,10 +400,13 @@ final class RevocationTransitionFrameCodec {
          * @param globalRevision authoritative global revocation revision
          * @param previousGlobalCommitment global revocation commitment immediately before this transition
          * @param credentialId exact credential identity
-         * @param previousCredentialGlobalRevision global revision of the credential's prior transition, or empty if none
+         * @param previousCredentialGlobalRevision global revision of the credential's prior
+         * transition, or empty if none
          * @param previousCredentialCommitment commitment of the credential's prior transition, or empty if none
          * @param transition immutable revocation transition retained for the credential
-         * @throws NullPointerException if {@code previousGlobalCommitment} is null; or if {@code credentialId} is null; or if {@code previousCredentialGlobalRevision} is null; or if {@code previousCredentialCommitment} is null; or if {@code transition} is null
+         * @throws NullPointerException if {@code previousGlobalCommitment} is null; or if {@code
+         * credentialId} is null; or if {@code previousCredentialGlobalRevision} is null; or if
+         * {@code previousCredentialCommitment} is null; or if {@code transition} is null
          */
         TransitionData {
             Objects.requireNonNull(previousGlobalCommitment, "previousGlobalCommitment");
@@ -496,7 +508,8 @@ final class RevocationTransitionFrameCodec {
          * @param classification closed structural classification of the read attempt
          * @param record complete validated record, or empty for incomplete or invalid input
          * @throws NullPointerException if {@code classification} is null; or if {@code record} is null
-         * @throws IllegalArgumentException if {@code (classification == Classification.COMPLETE_RECORD != record.isPresent())}
+         * @throws IllegalArgumentException if {@code (classification ==
+         * Classification.COMPLETE_RECORD != record.isPresent())}
          */
         ReadResult {
             Objects.requireNonNull(classification, "classification");
@@ -1247,7 +1260,7 @@ final class RevocationTransitionFrameCodec {
         private static boolean attributeValuesEqual(AttributeValue first, AttributeValue second) {
             if (first instanceof AttributeValue.BytesValue firstBytes
                     && second instanceof AttributeValue.BytesValue secondBytes) {
-                return java.util.Arrays.equals(firstBytes.value(), secondBytes.value());
+                return Arrays.equals(firstBytes.value(), secondBytes.value());
             }
             return first.equals(second);
         }
@@ -1273,7 +1286,7 @@ final class RevocationTransitionFrameCodec {
 
         private static int attributeValueHash(AttributeValue value) {
             if (value instanceof AttributeValue.BytesValue bytesValue) {
-                return java.util.Arrays.hashCode(bytesValue.value());
+                return Arrays.hashCode(bytesValue.value());
             }
             return value.hashCode();
         }

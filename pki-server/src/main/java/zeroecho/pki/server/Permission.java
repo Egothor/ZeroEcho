@@ -44,8 +44,7 @@ import zeroecho.pki.api.PkiId;
 /**
  * Closed permission vocabulary and immutable scoped grant model.
  */
-@SuppressWarnings({ "PMD.ExcessivePublicCount", "PMD.ControlStatementBraces",
-        "PMD.AvoidLiteralsInIfCondition", "PMD.CommentDefaultAccessModifier", "PMD.LongVariable" })
+@SuppressWarnings({"PMD.ExcessivePublicCount", "PMD.AvoidLiteralsInIfCondition", "PMD.LongVariable"})
 public final class Permission {
     private Permission() {
     }
@@ -413,7 +412,7 @@ public final class Permission {
 
         private final int code;
 
-        Action(int code) {
+        /* default */ Action(int code) {
             this.code = code;
         }
 
@@ -456,7 +455,7 @@ public final class Permission {
          */
         DENY(2);
         private final int code;
-        Effect(int code) { this.code = code; }
+        /* default */ Effect(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -613,7 +612,7 @@ public final class Permission {
          */
         MANAGED_KEY(47);
         private final int code;
-        ResourceType(int code) { this.code = code; }
+        /* default */ ResourceType(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -628,7 +627,7 @@ public final class Permission {
          * @throws IllegalArgumentException if the code does not identify a supported resource type
          */
         public static ResourceType fromCode(int code) {
-            for (ResourceType candidate : values()) if (candidate.code == code) return candidate;
+            for (ResourceType candidate : values()) { if (candidate.code == code) { return candidate; } }
             throw new IllegalArgumentException("Unknown resource type code");
         }
     }
@@ -646,7 +645,7 @@ public final class Permission {
          */
         ANY(2);
         private final int code;
-        Relationship(int code) { this.code = code; }
+        /* default */ Relationship(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -687,7 +686,7 @@ public final class Permission {
          */
         PII_FULL(4);
         private final int code;
-        DataView(int code) { this.code = code; }
+        /* default */ DataView(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -745,7 +744,7 @@ public final class Permission {
          */
         PROFILE_MATCH_REQUIRED(5);
         private final int code;
-        Condition(int code) { this.code = code; }
+        /* default */ Condition(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -760,7 +759,7 @@ public final class Permission {
          * @throws IllegalArgumentException if the code does not identify a supported grant condition
          */
         public static Condition fromCode(int code) {
-            for (Condition candidate : values()) if (candidate.code == code) return candidate;
+            for (Condition candidate : values()) { if (candidate.code == code) { return candidate; } }
             throw new IllegalArgumentException("Unknown condition code");
         }
     }
@@ -924,7 +923,7 @@ public final class Permission {
             operatorJustification = Objects.requireNonNull(operatorJustification, "operatorJustification")
                     .map(value -> requireBounded(value, 1024, "operator justification"));
             safeAttributes = Map.copyOf(Objects.requireNonNull(safeAttributes, "safeAttributes"));
-            if (safeAttributes.size() > 32) throw new IllegalArgumentException("Too many context attributes");
+            if (safeAttributes.size() > 32) { throw new IllegalArgumentException("Too many context attributes"); }
         }
 
         /**
@@ -944,7 +943,7 @@ public final class Permission {
      * @param label safe diagnostic name of the identity kind
      * @throws IllegalArgumentException if the value is null, oversized or noncanonical
      */
-    static void requireId(String value, String label) {
+    /* default */ static void requireId(String value, String label) {
         if (value == null || !value.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) {
             throw new IllegalArgumentException(label + " identity is not canonical");
         }
@@ -957,7 +956,7 @@ public final class Permission {
      * @return the supplied value unchanged
      * @throws IllegalArgumentException if the value is null, oversized or noncanonical
      */
-    static String requirePrincipal(String value) { requireId(value, "principal"); return value; }
+    /* default */ static String requirePrincipal(String value) { requireId(value, "principal"); return value; }
     /**
      * Validates nonblank profile text against the 256-character server bound.
      *
@@ -965,7 +964,7 @@ public final class Permission {
      * @return the supplied value unchanged
      * @throws IllegalArgumentException if the value is null, blank or longer than 256 characters
      */
-    static String requireProfile(String value) { return requireBounded(value, 256, "profile"); }
+    /* default */ static String requireProfile(String value) { return requireBounded(value, 256, "profile"); }
     /**
      * Requires nonblank text whose Java string length does not exceed the supplied limit.
      *
@@ -975,7 +974,7 @@ public final class Permission {
      * @return the supplied text unchanged
      * @throws IllegalArgumentException if the value is null, blank or exceeds the limit
      */
-    static String requireBounded(String value, int limit, String label) {
+    /* default */ static String requireBounded(String value, int limit, String label) {
         if (value == null || value.isBlank() || value.length() > limit) {
             throw new IllegalArgumentException(label + " is invalid");
         }

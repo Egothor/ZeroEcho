@@ -185,7 +185,7 @@ final class SigningWorkProjection implements AutoCloseable {
             SigningHybridCrlDependencies.View dependencies) throws IOException {
         Objects.requireNonNull(admissionClass, "admissionClass");
         if (payload.kind() != SigningTransactionPayloadCodec.Kind.COMMIT
-                && payload.kind() != SigningTransactionPayloadCodec.Kind.DIRECT_COMMIT) return new Prepared();
+                && payload.kind() != SigningTransactionPayloadCodec.Kind.DIRECT_COMMIT) { return new Prepared(); }
         List<SigningDueWorkIndex.PreparedChange> orderedChanges = new ArrayList<>();
         List<SigningRetentionIndex.PreparedChange> retentionChanges = new ArrayList<>();
         List<AdmittedIdentity> admitted = new ArrayList<>();
@@ -195,17 +195,17 @@ final class SigningWorkProjection implements AutoCloseable {
         boolean transferred = false;
         Set<String> handoffIds = new HashSet<>();
         Map<String, Boolean> residentChanges = new HashMap<>();
+        MutationPreparation preparation = new MutationPreparation(pointer, orderedChanges, retentionChanges,
+                admitted, touched, dueAdmission, admissionClass, dependencies, handoffIds, residentChanges);
         try {
-            for (var handoff : dependencies.handoffs().entrySet()) {
+            for (Map.Entry<String,String> handoff : dependencies.handoffs().entrySet()) {
                 String receiverId = handoff.getKey();
                 String donorId = handoff.getValue();
-                var receiverMutation = payload.mutations().stream().filter(value ->
-                        value.key().equals(new MetadataKey(STATE_NAMESPACE, receiverId)))
-                        .findFirst().orElseThrow(() -> new IllegalArgumentException("Hybrid CRL handoff has no receiver state"));
-                var state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE, receiverMutation.contentInternal());
+                SigningTransactionPayloadCodec.Mutation receiverMutation = receiverMutation(payload, receiverId);
+                SignWorkflowStore.MutableState state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE, receiverMutation.contentInternal());
                 IdentitySlot receiver = admit(receiverId, scheduling.get(receiverId), admitted, admissionClass);
                 IdentitySlot donor = identities.get(donorId);
-                if (donor == null) throw new IllegalArgumentException("Hybrid CRL handoff has no resident donor");
+                if (donor == null) { throw new IllegalArgumentException("Hybrid CRL handoff has no resident donor"); }
                 orderedChanges.add(due.prepareHandoff(donor.identity, receiver.identity,
                         effectiveEligibility(state), state.state(), pointer,
                         receiver.scheduling.forStage(state.stage()), admissionClass));
@@ -215,9 +215,7 @@ final class SigningWorkProjection implements AutoCloseable {
             for (SigningTransactionPayloadCodec.Mutation mutation : payload.mutations()) {
                 MetadataKey key = mutation.key();
                 if (STATE_NAMESPACE.equals(key.namespace())) {
-                    prepareRecordMutation(mutation, pointer, orderedChanges, retentionChanges,
-                            admitted, touched, dueAdmission, admissionClass,
-                            scheduling.get(key.key()), dependencies, handoffIds, residentChanges);
+                    preparation.process(mutation, scheduling.get(key.key()));
                 }
             }
             Prepared result = new Prepared(List.copyOf(orderedChanges),
@@ -225,77 +223,11 @@ final class SigningWorkProjection implements AutoCloseable {
             transferred = true;
             return result;
         } finally {
-            if (!transferred) rollback(orderedChanges, retentionChanges, admitted);
+            if (!transferred) { rollback(orderedChanges, retentionChanges, admitted); }
         }
     }
 
-    private void prepareRecordMutation(SigningTransactionPayloadCodec.Mutation mutation,
-            SigningMvccIndex.RecordPointer pointer,
-            List<SigningDueWorkIndex.PreparedChange> orderedChanges,
-            List<SigningRetentionIndex.PreparedChange> retentionChanges,
-            List<AdmittedIdentity> admitted, List<IdentitySlot> touched,
-            SigningDueWorkIndex.Admission dueAdmission,
-            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass,
-            SignWorkflowStore.SchedulingPlan scheduling,
-            SigningHybridCrlDependencies.View dependencies, Set<String> handoffIds,
-            Map<String, Boolean> residentChanges) {
-        String operationId = mutation.key().key();
-        IdentitySlot slot = identities.get(operationId);
-        if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
-            if (slot != null) {
-                if (due.contains(slot.identity)) {
-                    orderedChanges.add(due.prepareRemove(slot.identity));
-                }
-                if (retention.contains(slot.identity)) {
-                    retentionChanges.add(retention.prepareRemove(slot.identity));
-                }
-                touch(touched, slot);
-            }
-            return;
-        }
-        slot = admit(operationId, scheduling, admitted, admissionClass);
-        touch(touched, slot);
-        SignWorkflowStore.MutableState state;
-        try {
-            state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE,
-                    Objects.requireNonNull(mutation.contentInternal(), "content"));
-        } catch (RuntimeException malformed) {
-            if (retention.contains(slot.identity)) {
-                retentionChanges.add(retention.prepareRemove(slot.identity));
-            }
-            boolean initialDue = !due.contains(slot.identity);
-            if (initialDue && dueAdmission != null) {
-                dueAdmission.bind(slot.identity);
-                orderedChanges.add(due.prepareMalformed(dueAdmission, slot.identity, pointer,
-                        slot.scheduling.certificate()));
-            } else {
-                orderedChanges.add(due.prepareMalformed(slot.identity, pointer, slot.scheduling.certificate()));
-            }
-            return;
-        }
-        if (!operationId.equals(state.operationId().value())) return;
-        residentChanges.put(operationId, dependencies.suppressed().contains(operationId)
-                && !RecoveryBuilder.isRetained(state.state()));
-        if (handoffIds.contains(operationId)) return;
-        if (RecoveryBuilder.isRetained(state.state()) || dependencies.suppressed().contains(operationId)) {
-            if (due.contains(slot.identity)) orderedChanges.add(due.prepareRemove(slot.identity));
-        } else {
-            if (retention.contains(slot.identity)) {
-                retentionChanges.add(retention.prepareRemove(slot.identity));
-            }
-            Instant nextEligibleAt = effectiveEligibility(state);
-            boolean initialDue = !due.contains(slot.identity);
-            if (initialDue && dueAdmission != null) {
-                dueAdmission.bind(slot.identity);
-                orderedChanges.add(due.prepareUpdate(dueAdmission, slot.identity,
-                        nextEligibleAt, state.state(), pointer, slot.scheduling.forStage(state.stage())));
-            } else {
-                orderedChanges.add(due.prepareUpdate(slot.identity,
-                        nextEligibleAt, state.state(), pointer, admissionClass,
-                        slot.scheduling.forStage(state.stage())));
-            }
-        }
-    }
+
 
     private Map<String, SignWorkflowStore.SchedulingPlan> schedulingCoordinates(
             SigningTransactionPayloadCodec.Payload payload) {
@@ -378,7 +310,7 @@ final class SigningWorkProjection implements AutoCloseable {
             due.recoverAll(recovered.dueEntries);
             identities.putAll(recovered.identities);
             reservedIdentityBytes = recovered.identityBytes;
-            for (String id : dependencies.suppressed()) if (identities.containsKey(id)) residentOnly.add(id);
+            for (String id : dependencies.suppressed()) if (identities.containsKey(id)) { residentOnly.add(id); }
             reservation.transfer();
         } finally {
             reservation.close();
@@ -456,7 +388,7 @@ final class SigningWorkProjection implements AutoCloseable {
     }
 
     private static void touch(List<IdentitySlot> touched, IdentitySlot slot) {
-        for (IdentitySlot value : touched) if (value == slot) return;
+        for (IdentitySlot value : touched) if (value == slot) { return; }
         touched.add(slot);
     }
 
@@ -525,7 +457,7 @@ final class SigningWorkProjection implements AutoCloseable {
      * separately owned prepared changes retain their own rollback obligations.</p>
      */
     @Override public void close() {
-        if (reservedIdentityBytes > 0L) capacity.releaseCommitted(reservedIdentityBytes);
+        if (reservedIdentityBytes > 0L) { capacity.releaseCommitted(reservedIdentityBytes); }
         reservedIdentityBytes = 0L;
         identities.clear();
         residentOnly.clear();
@@ -593,7 +525,7 @@ final class SigningWorkProjection implements AutoCloseable {
             long bytes = identityResidentBytes(identity, coordinates);
             identities.put(operationId, new IdentitySlot(identity, coordinates, bytes));
             identityBytes = Math.addExact(identityBytes, bytes);
-            if (dependencies.suppressed().contains(operationId)) return;
+            if (dependencies.suppressed().contains(operationId)) { return; }
             dueEntries.add(new SigningDueWorkIndex.RecoveryEntry(identity,
                     malformed ? Instant.MIN : effectiveEligibility(state),
                     malformed ? SignWorkflowStore.State.INTENT : state.state(),
@@ -676,7 +608,7 @@ final class SigningWorkProjection implements AutoCloseable {
         /**
          * Closes attached prepared dependency changes when present; leaves unrelated collaborators open.
          */
-        /* default */ void closeDependencies() { if (dependencies != null) dependencies.close(); }
+        /* default */ void closeDependencies() { if (dependencies != null) { dependencies.close(); } }
 
         /**
          * Publishes all ordered changes, commits identity reservations, and publishes attached dependencies.
@@ -684,16 +616,16 @@ final class SigningWorkProjection implements AutoCloseable {
          * @throws IllegalStateException if this preparation is inactive or child publication ownership differs
          */
         /* default */ void publish() {
-            if (!active) throw new IllegalStateException("Signing work projection is closed");
-            for (SigningDueWorkIndex.PreparedChange change : orderedChanges) change.publish();
-            for (SigningRetentionIndex.PreparedChange change : retentionChanges) change.publish();
+            if (!active) { throw new IllegalStateException("Signing work projection is closed"); }
+            for (SigningDueWorkIndex.PreparedChange change : orderedChanges) { change.publish(); }
+            for (SigningRetentionIndex.PreparedChange change : retentionChanges) { change.publish(); }
             commitAdmissions(admitted);
-            for (var change : residentChanges.entrySet()) {
-                if (change.getValue()) residentOnly.add(change.getKey());
-                else residentOnly.remove(change.getKey());
+            for (Map.Entry<String,Boolean> change : residentChanges.entrySet()) {
+                if (change.getValue()) { residentOnly.add(change.getKey()); }
+                else { residentOnly.remove(change.getKey()); }
             }
             discardUnreferenced(touched);
-            if (dependencies != null) dependencies.publish();
+            if (dependencies != null) { dependencies.publish(); }
             active = false;
         }
 
@@ -705,7 +637,7 @@ final class SigningWorkProjection implements AutoCloseable {
          * Borrowed indexes, budgets, and content stores remain open.</p>
          */
         @Override public void close() {
-            if (!active) return;
+            if (!active) { return; }
             active = false;
             rollback(orderedChanges, retentionChanges, admitted);
         }
@@ -734,7 +666,8 @@ final class SigningWorkProjection implements AutoCloseable {
          * @param key exact logical metadata identity
          * @param content exact encoded metadata content bytes
          * @param pointer exact retained physical record pointer
-         * @throws NullPointerException if {@code key} is null; or if {@code content} is null; or if {@code pointer} is null
+         * @throws NullPointerException if {@code key} is null; or if {@code content} is null; or if
+         * {@code pointer} is null
          */
         RecoveredState {
             Objects.requireNonNull(key, "key");
@@ -752,4 +685,107 @@ final class SigningWorkProjection implements AutoCloseable {
     /* default */ record RecoveryStatistics(long statesVisited, long activeEntriesBuilt,
             long statePointersRetained) {
     }
+
+    /** Owns the borrowed projection lists for one prepared transaction. */
+    private final class MutationPreparation {
+        private final SigningMvccIndex.RecordPointer pointer;
+        private final List<SigningDueWorkIndex.PreparedChange> orderedChanges;
+        private final List<SigningRetentionIndex.PreparedChange> retentionChanges;
+        private final List<AdmittedIdentity> admitted;
+        private final List<IdentitySlot> touched;
+        private final SigningDueWorkIndex.Admission dueAdmission;
+        private final SigningTransitionWorkspaceSizing.AdmissionClass admissionClass;
+        private final SigningHybridCrlDependencies.View dependencies;
+        private final Set<String> handoffIds;
+        private final Map<String, Boolean> residentChanges;
+        private MutationPreparation(SigningMvccIndex.RecordPointer pointer,
+                List<SigningDueWorkIndex.PreparedChange> orderedChanges,
+                List<SigningRetentionIndex.PreparedChange> retentionChanges,
+                List<AdmittedIdentity> admitted,
+                List<IdentitySlot> touched,
+                SigningDueWorkIndex.Admission dueAdmission,
+                SigningTransitionWorkspaceSizing.AdmissionClass admissionClass,
+                SigningHybridCrlDependencies.View dependencies,
+                Set<String> handoffIds,
+                Map<String, Boolean> residentChanges) {
+            this.pointer = pointer;
+            this.orderedChanges = orderedChanges;
+            this.retentionChanges = retentionChanges;
+            this.admitted = admitted;
+            this.touched = touched;
+            this.dueAdmission = dueAdmission;
+            this.admissionClass = admissionClass;
+            this.dependencies = dependencies;
+            this.handoffIds = handoffIds;
+            this.residentChanges = residentChanges;
+        }
+        private void process(SigningTransactionPayloadCodec.Mutation mutation, SignWorkflowStore.SchedulingPlan scheduling) {
+
+        String operationId = mutation.key().key();
+        IdentitySlot slot = identities.get(operationId);
+        if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
+            if (slot != null) {
+                if (due.contains(slot.identity)) {
+                    orderedChanges.add(due.prepareRemove(slot.identity));
+                }
+                if (retention.contains(slot.identity)) {
+                    retentionChanges.add(retention.prepareRemove(slot.identity));
+                }
+                touch(touched, slot);
+            }
+            return;
+        }
+        slot = admit(operationId, scheduling, admitted, admissionClass);
+        touch(touched, slot);
+        SignWorkflowStore.MutableState state;
+        try {
+            state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE,
+                    Objects.requireNonNull(mutation.contentInternal(), "content"));
+        } catch (RuntimeException malformed) {
+            if (retention.contains(slot.identity)) {
+                retentionChanges.add(retention.prepareRemove(slot.identity));
+            }
+            boolean initialDue = !due.contains(slot.identity);
+            if (initialDue && dueAdmission != null) {
+                dueAdmission.bind(slot.identity);
+                orderedChanges.add(due.prepareMalformed(dueAdmission, slot.identity, pointer,
+                        slot.scheduling.certificate()));
+            } else {
+                orderedChanges.add(due.prepareMalformed(slot.identity, pointer, slot.scheduling.certificate()));
+            }
+            return;
+        }
+        if (!operationId.equals(state.operationId().value())) { return; }
+        residentChanges.put(operationId, dependencies.suppressed().contains(operationId)
+                && !RecoveryBuilder.isRetained(state.state()));
+        if (handoffIds.contains(operationId)) { return; }
+        if (RecoveryBuilder.isRetained(state.state()) || dependencies.suppressed().contains(operationId)) {
+            if (due.contains(slot.identity)) { orderedChanges.add(due.prepareRemove(slot.identity)); }
+        } else {
+            if (retention.contains(slot.identity)) {
+                retentionChanges.add(retention.prepareRemove(slot.identity));
+            }
+            Instant nextEligibleAt = effectiveEligibility(state);
+            boolean initialDue = !due.contains(slot.identity);
+            if (initialDue && dueAdmission != null) {
+                dueAdmission.bind(slot.identity);
+                orderedChanges.add(due.prepareUpdate(dueAdmission, slot.identity,
+                        nextEligibleAt, state.state(), pointer, slot.scheduling.forStage(state.stage())));
+            } else {
+                orderedChanges.add(due.prepareUpdate(slot.identity,
+                        nextEligibleAt, state.state(), pointer, admissionClass,
+                        slot.scheduling.forStage(state.stage())));
+            }
+        }
+            }
+    }
+
+
+    private static SigningTransactionPayloadCodec.Mutation receiverMutation(SigningTransactionPayloadCodec.Payload payload,
+            String receiverId) {
+        MetadataKey expected = new MetadataKey(STATE_NAMESPACE, receiverId);
+        return payload.mutations().stream().filter(value -> value.key().equals(expected)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Hybrid CRL handoff has no receiver state"));
+    }
+
 }

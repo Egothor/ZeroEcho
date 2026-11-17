@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import java.util.Map;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -73,11 +75,11 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
     /**
      * Administrative operation identity permitted to own responder-provisioning claims.
      */
-    static final String OPERATION = "ocsp.responder.issue-certificate";
+    /* default */ static final String OPERATION = "ocsp.responder.issue-certificate";
     /**
      * Durable provisioning claim lifecycle.
      */
-    enum State {
+    /* default */ enum State {
         /**
          * The canonical target is claimed without an accepted signing receipt.
          */
@@ -118,7 +120,7 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
      * @throws IllegalArgumentException if a digest, revision, derived identity or lifecycle invariant is
      *         inconsistent
      */
-    OcspProvisioningSlot {
+    /* default */ OcspProvisioningSlot {
         Objects.requireNonNull(realmId); Objects.requireNonNull(authorityId); Objects.requireNonNull(issuerId);
         Objects.requireNonNull(state); Objects.requireNonNull(receipt); Objects.requireNonNull(credentialId);
         Objects.requireNonNull(certificateSha256); Objects.requireNonNull(predecessorCredentialId);
@@ -128,12 +130,12 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
                 || !coreSlotId.equals(coreIdentity(authorityId, issuerId, primarySpkiSha256, alternativeSpkiSha256))
                 || !serverSlotId.equals(ManagedOcspProvisioningIdentity.serverSlotId(realmId.value(), coreSlotId))
                 || !canonicalRequestId.equals(ManagedOcspProvisioningIdentity.serverRequestId(serverSlotId, revision))
-                || (revision == 1) == predecessorCredentialId.isPresent()) throw invalid();
+                || revision == 1 == predecessorCredentialId.isPresent()) { throw invalid(); }
         boolean complete = state == State.COMPLETED;
         if (credentialId.isPresent() != complete || certificateSha256.isPresent() != complete
                 || state == State.CLAIMED && receipt.isPresent()
                 || (state == State.ACCEPTED || complete) && receipt.isEmpty()
-                || complete && !credentialId.orElseThrow().value().equals("x509:" + certificateSha256.orElseThrow())) throw invalid();
+                || complete && !credentialId.orElseThrow().value().equals("x509:" + certificateSha256.orElseThrow())) { throw invalid(); }
     }
 
     /**
@@ -143,7 +145,7 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
      * @throws IllegalArgumentException if coordinates change, renewal skips a revision,
      *         a receipt is replaced or a terminal state changes
      */
-    void requireTransition(Optional<OcspProvisioningSlot> previous) { requireTransition(previous, false); }
+    /* default */ void requireTransition(Optional<OcspProvisioningSlot> previous) { requireTransition(previous, false); }
 
     /**
      * Validates immutable slot coordinates and the sole permitted explicit renewal transition.
@@ -152,25 +154,15 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
      * @param definiteAttachment whether the store's verified attachment path permits receipt replacement
      * @throws IllegalArgumentException if coordinates, revision or lifecycle invariants are violated
      */
-    void requireTransition(Optional<OcspProvisioningSlot> previous, boolean definiteAttachment) {
+    /* default */ void requireTransition(Optional<OcspProvisioningSlot> previous, boolean definiteAttachment) {
         if (previous.isEmpty()) {
-            if (revision != 1 || state != State.CLAIMED) throw invalid();
+            if (revision != 1 || state != State.CLAIMED) { throw invalid(); }
             return;
         }
-        var old = previous.orElseThrow();
-        if (!realmId.equals(old.realmId) || !serverSlotId.equals(old.serverSlotId) || !coreSlotId.equals(old.coreSlotId)
-                || !authorityId.equals(old.authorityId) || !issuerId.equals(old.issuerId)
-                || !primarySpkiSha256.equals(old.primarySpkiSha256) || !alternativeSpkiSha256.equals(old.alternativeSpkiSha256)) throw invalid();
-        if (revision != old.revision) {
-            if (old.state != State.COMPLETED || old.revision == Long.MAX_VALUE || revision != old.revision + 1
-                    || state != State.CLAIMED || !predecessorCredentialId.equals(old.credentialId)) throw invalid();
-            return;
-        }
-        if (!canonicalRequestId.equals(old.canonicalRequestId) || !targetCommitment.equals(old.targetCommitment)
-                || !predecessorCredentialId.equals(old.predecessorCredentialId)
-                || old.receipt.isPresent() && !receipt.equals(old.receipt) && !definiteAttachment
-                || old.state == State.ACCEPTED && state == State.CLAIMED
-                || (old.state == State.COMPLETED || old.state == State.FAILED) && !equals(old)) throw invalid();
+        OcspProvisioningSlot old = previous.orElseThrow();
+        requireCoordinates(old);
+        if (revision != old.revision) { requireRenewal(old); return; }
+        requireSameRevision(old, definiteAttachment);
     }
 
     /**
@@ -180,27 +172,24 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
      * @throws IllegalArgumentException if operation, request identity, scope, receipt,
      *         target, SDK-proof absence or terminal result differs
      */
-    void requireRequest(AdministrativeRequest request) {
-        if (!request.operation().equals(OPERATION) || !request.requestId().equals(canonicalRequestId)
-                || !request.scope().realmId().equals(realmId) || !request.scope().authorityId().equals(Optional.of(authorityId))
-                || !request.scope().issuerId().equals(Optional.of(issuerId)) || !request.targetCommitment().equals(targetCommitment)
-                || !request.receipt().equals(receipt) || request.sdkProof().isPresent()) throw invalid();
+    /* default */ void requireRequest(AdministrativeRequest request) {
+        requireRequestIdentity(request);
         boolean terminalFailure = switch (request.state()) {
             case FAILED, REJECTED, EXPIRED -> true;
             default -> false;
         };
         if (state == State.COMPLETED && request.state() != AdministrativeRequest.State.SUCCEEDED
                 || state == State.FAILED != terminalFailure
-                || request.state() == AdministrativeRequest.State.SUCCEEDED && state != State.COMPLETED) throw invalid();
+                || request.state() == AdministrativeRequest.State.SUCCEEDED && state != State.COMPLETED) { throw invalid(); }
         if (state == State.COMPLETED) {
-            var result = request.result().orElseThrow(OcspProvisioningSlot::invalid).fields();
+            Map<String,zeroecho.pki.application.PkiOperationValue> result = request.result().orElseThrow(OcspProvisioningSlot::invalid).fields();
             if (!(result.get("credentialId") instanceof zeroecho.pki.application.PkiOperationValue.Text id)
-                    || !id.value().equals(credentialId.orElseThrow().value())) throw invalid();
+                    || !id.value().equals(credentialId.orElseThrow().value())) { throw invalid(); }
         }
     }
 
     private static String coreIdentity(PkiId authority, PkiId issuer, String primary, String alternative) {
-        try (var bytes = new ByteArrayOutputStream(); var out = new DataOutputStream(bytes)) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bytes)) {
             for (byte[] field : new byte[][] { "zeroecho:ocsp-responder-core-slot:v1".getBytes(StandardCharsets.UTF_8),
                     authority.value().getBytes(StandardCharsets.UTF_8), issuer.value().getBytes(StandardCharsets.UTF_8),
                     HexFormat.of().parseHex(primary), HexFormat.of().parseHex(alternative) }) {
@@ -209,6 +198,34 @@ record OcspProvisioningSlot(RealmId realmId, String serverSlotId, String coreSlo
             out.flush(); return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
         } catch (IOException | NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
-    private static void digest(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) throw invalid(); }
+    private static void digest(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) { throw invalid(); } }
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("OCSP provisioning slot is inconsistent"); }
+
+    private void requireCoordinates(OcspProvisioningSlot old) {
+        if (!realmId.equals(old.realmId) || !serverSlotId.equals(old.serverSlotId) || !coreSlotId.equals(old.coreSlotId)
+                || !authorityId.equals(old.authorityId) || !issuerId.equals(old.issuerId)
+                || !primarySpkiSha256.equals(old.primarySpkiSha256) || !alternativeSpkiSha256.equals(old.alternativeSpkiSha256)) { throw invalid(); }
+    }
+
+    private void requireRenewal(OcspProvisioningSlot old) {
+
+            if (old.state != State.COMPLETED || old.revision == Long.MAX_VALUE || revision != old.revision + 1
+                    || state != State.CLAIMED || !predecessorCredentialId.equals(old.credentialId)) { throw invalid(); }
+
+    }
+
+    private void requireSameRevision(OcspProvisioningSlot old, boolean definiteAttachment) {
+        if (!canonicalRequestId.equals(old.canonicalRequestId) || !targetCommitment.equals(old.targetCommitment)
+                || !predecessorCredentialId.equals(old.predecessorCredentialId)
+                || old.receipt.isPresent() && !receipt.equals(old.receipt) && !definiteAttachment
+                || old.state == State.ACCEPTED && state == State.CLAIMED
+                || (old.state == State.COMPLETED || old.state == State.FAILED) && !equals(old)) { throw invalid(); }
+    }
+
+    private void requireRequestIdentity(AdministrativeRequest request) {
+        if (!OPERATION.equals(request.operation()) || !request.requestId().equals(canonicalRequestId)
+                || !request.scope().realmId().equals(realmId) || !request.scope().authorityId().equals(Optional.of(authorityId))
+                || !request.scope().issuerId().equals(Optional.of(issuerId)) || !request.targetCommitment().equals(targetCommitment)
+                || !request.receipt().equals(receipt) || request.sdkProof().isPresent()) { throw invalid(); }
+    }
 }

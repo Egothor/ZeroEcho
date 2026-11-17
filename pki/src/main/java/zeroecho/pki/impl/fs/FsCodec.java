@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Comparator;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.store.CrlHybridExecution;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -582,7 +586,7 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 writeSignMutableState(writer, value);
                 writer.writeBoolean(value.alternativeProofOutcome().isPresent());
                 if (value.alternativeProofOutcome().isPresent()) {
-                    var outcome = value.alternativeProofOutcome().orElseThrow();
+                    SignWorkflowStore.CaSubjectProofOutcome outcome = value.alternativeProofOutcome().orElseThrow();
                     writer.writeValue(STRING, outcome.disposition().name());
                     writer.writeValue(STRING, outcome.detailCode().name());
                     writer.writeValue(OPTIONAL_INSTANT, outcome.providerUpdatedAt());
@@ -598,7 +602,7 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     /**
      * Versioned top-level binary schema for {@code zeroecho.pki.spi.store.CrlHybridExecution} values.
      */
-    /* default */ static final Schema<zeroecho.pki.spi.store.CrlHybridExecution> CRL_HYBRID_EXECUTION = topLevel(
+    /* default */ static final Schema<CrlHybridExecution> CRL_HYBRID_EXECUTION = topLevel(
             23, "CRL_HYBRID_EXECUTION", valueSchema(135, FsCodec::writeCrlHybridExecution, FsCodec::readCrlHybridExecution));
 
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
@@ -639,7 +643,7 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
      * @throws IOException if the encoded variant is too short or differs from the accepted proof roles
      */
     /* default */ static void requireSigningStateVariant(SignWorkflowStore.AcceptanceEnvelope envelope, byte[] bytes) throws IOException {
-        if (bytes.length < 6 || (Byte.toUnsignedInt(bytes[5]) == 22) != envelope.alternativeProofStep().isPresent()) {
+        if (bytes.length < 6 || Byte.toUnsignedInt(bytes[5]) == 22 != envelope.alternativeProofStep().isPresent()) {
             throw new IOException("Signing mutable-state variant differs from accepted proof roles");
         }
     }
@@ -681,7 +685,8 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     }
 
     /**
-     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an illegal state. Durable content references require their owning staged-content store.
+     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an
+     * illegal state. Durable content references require their owning staged-content store.
      *
      * @param <T> value type represented by the schema
      * @param schema top-level schema defining the encoded value
@@ -695,7 +700,8 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     }
 
     /**
-     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an illegal state. Durable content references require their owning staged-content store.
+     * Decodes a current-schema payload, wrapping malformed data and content-resolution failures as an
+     * illegal state. Durable content references require their owning staged-content store.
      *
      * @param <T> value type represented by the schema
      * @param schema top-level schema defining the encoded value
@@ -718,7 +724,8 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     }
 
     /**
-     * Decodes durable data at recovery, classifying malformed payloads without retaining their input-bearing cause. Operational content-resolution I/O failures retain their original identity.
+     * Decodes durable data at recovery, classifying malformed payloads without retaining their
+     * input-bearing cause. Operational content-resolution I/O failures retain their original identity.
      *
      * @param <T> value type represented by the schema
      * @param schema top-level schema defining the encoded value
@@ -734,12 +741,15 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
 
     /* package */ // Operational I/O identity is unwrapped; malformed durable data is deliberately reclassified without an unsafe cause.
                   /**
-                   * Decodes durable data at recovery, classifying malformed payloads without retaining their input-bearing cause. Operational content-resolution I/O failures retain their original identity.
+                   * Decodes durable data at recovery, classifying malformed payloads
+                   * without retaining their input-bearing cause. Operational
+                   * content-resolution I/O failures retain their original identity.
                    *
                    * @param <T> value type represented by the schema
                    * @param schema top-level schema defining the encoded value
                    * @param encoded complete encoded payload
-                   * @param stagedContent owning content store for durable references, or null when no such references are present
+                   * @param stagedContent owning content store for durable references, or
+                   * null when no such references are present
                    * @return decoded schema value
                    * @throws IOException if durable data is malformed or owning content cannot be resolved
                    * @throws NullPointerException if schema or the input value/encoded bytes are null
@@ -895,7 +905,7 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
     private static void writeAttributeSet(Writer writer, AttributeSet value) throws IOException {
         // AttributeSet exposes a set, whose iteration order is not a persistence contract.
         List<AttributeId> ids = value.ids().stream()
-                .sorted(java.util.Comparator.comparing(AttributeId::value)).toList();
+                .sorted(Comparator.comparing(AttributeId::value)).toList();
         writer.writeCount(ids.size());
         for (AttributeId id : ids) {
             writer.writeValue(ATTRIBUTE_ID, id);
@@ -1162,9 +1172,9 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
                 SignWorkflowStore.AcceptanceCommitment.parse(reader.readValue(STRING));
         String namespace = reader.readValue(STRING);
         byte[] encodedConfigCommitment = reader.readValue(BYTES);
-        zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment configurationCommitment;
+        SigningProvider.ConfigurationCommitment configurationCommitment;
         try {
-            configurationCommitment = new zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment(
+            configurationCommitment = new SigningProvider.ConfigurationCommitment(
                     encodedConfigCommitment);
         } finally {
             Arrays.fill(encodedConfigCommitment, (byte) 0);
@@ -1230,12 +1240,12 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
 
     private static Optional<SignWorkflowStore.CaSubjectProofOutcome> readCaProofOutcome(Reader reader) throws IOException {
         return reader.readBoolean() ? Optional.of(new SignWorkflowStore.CaSubjectProofOutcome(
-                zeroecho.pki.spi.crypto.SigningProvider.ObservationState.valueOf(reader.readValue(STRING)),
-                zeroecho.pki.spi.crypto.SigningProvider.DetailCode.valueOf(reader.readValue(STRING)),
+                SigningProvider.ObservationState.valueOf(reader.readValue(STRING)),
+                SigningProvider.DetailCode.valueOf(reader.readValue(STRING)),
                 reader.readValue(OPTIONAL_INSTANT))) : Optional.empty();
     }
 
-    private static void writeCrlHybridExecution(Writer writer, zeroecho.pki.spi.store.CrlHybridExecution value) throws IOException {
+    private static void writeCrlHybridExecution(Writer writer, CrlHybridExecution value) throws IOException {
         writer.writeInt(value.version()); writer.writeValue(PKI_ID, value.parentId());
         writer.writeValue(STRING, value.parentCommandCommitment()); writer.writeValue(STRING, value.issuerBindingCommitment());
         writer.writeValue(STRING, value.roleTupleCommitment()); writer.writeValue(PKI_ID, value.nativeChildId());
@@ -1248,17 +1258,19 @@ final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatc
         }
     }
 
-    private static zeroecho.pki.spi.store.CrlHybridExecution readCrlHybridExecution(Reader reader) throws IOException {
+    private static CrlHybridExecution readCrlHybridExecution(Reader reader) throws IOException {
         int version = reader.readInt(); PkiId parent = reader.readValue(PKI_ID);
-        String command = reader.readValue(STRING), binding = reader.readValue(STRING), tuple = reader.readValue(STRING);
+        String command = reader.readValue(STRING);
+        String binding = reader.readValue(STRING);
+        String tuple = reader.readValue(STRING);
         PkiId child = reader.readValue(PKI_ID);
-        var phase = SignWorkflowStore.CrlHybridPhase.fromPersistentCode(reader.readInt()); long revision = reader.readValue(LONG);
+        SignWorkflowStore.CrlHybridPhase phase = SignWorkflowStore.CrlHybridPhase.fromPersistentCode(reader.readInt()); long revision = reader.readValue(LONG);
         boolean linked = reader.readBoolean();
         Optional<SignWorkflowStore.AcceptanceCommitment> acceptance = linked
                 ? Optional.of(SignWorkflowStore.AcceptanceCommitment.parse(reader.readValue(STRING))) : Optional.empty();
         Optional<DurableContentReference> tbs = linked ? Optional.of(reader.readValue(DURABLE_CONTENT)) : Optional.empty();
         Optional<String> signature = linked ? Optional.of(reader.readValue(STRING)) : Optional.empty();
-        return new zeroecho.pki.spi.store.CrlHybridExecution(version, parent, command, binding, tuple, child, phase, revision,
+        return new CrlHybridExecution(version, parent, command, binding, tuple, child, phase, revision,
                 acceptance, tbs, signature);
     }
 

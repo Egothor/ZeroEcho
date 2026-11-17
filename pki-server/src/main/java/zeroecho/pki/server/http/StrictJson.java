@@ -33,26 +33,27 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.ObjectReadContext;
+import tools.jackson.core.ObjectWriteContext;
+import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.json.JsonFactoryBuilder;
+import tools.jackson.core.json.JsonReadFeature;
+
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.server.PkiServerConfiguration;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.JsonGenerator;
-import tools.jackson.core.ObjectWriteContext;
-import tools.jackson.core.JsonParser;
-import tools.jackson.core.JsonToken;
-import tools.jackson.core.ObjectReadContext;
-import tools.jackson.core.StreamReadConstraints;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.core.json.JsonFactory;
-import tools.jackson.core.json.JsonFactoryBuilder;
-import tools.jackson.core.json.JsonReadFeature;
-import zeroecho.pki.application.PkiOperationValue;
-import zeroecho.pki.server.PkiServerConfiguration;
 
 /**
  * Strict bounded UTF-8 JSON framing shared by server configuration and HTTP.
@@ -77,15 +78,24 @@ public final class StrictJson {
      * @throws IllegalArgumentException if framing, size, encoding, or JSON syntax is invalid
      */
     public static PkiOperationValue parse(byte[] document, int maximumBytes) {
-        if (document == null || document.length == 0 || maximumBytes < 1
-                || maximumBytes > MAXIMUM_DOCUMENT_BYTES || document.length > maximumBytes || hasBom(document)) {
+        if (document == null
+                || document.length == 0
+                || maximumBytes < 1
+                || maximumBytes > MAXIMUM_DOCUMENT_BYTES
+                || document.length > maximumBytes
+                || hasBom(document)) {
             throw invalid();
         }
-        try (JsonParser parser = FACTORY.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
+        try (JsonParser parser =
+                FACTORY.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
             JsonToken first = parser.nextToken();
-            if (first == null) throw invalid();
+            if (first == null) {
+                throw invalid();
+            }
             PkiOperationValue result = read(parser, first);
-            if (parser.nextToken() != null) throw invalid();
+            if (parser.nextToken() != null) {
+                throw invalid();
+            }
             return result;
         } catch (JacksonException failure) {
             throw invalid(failure);
@@ -99,10 +109,13 @@ public final class StrictJson {
      * @return newly allocated UTF-8 JSON bytes
      * @throws IllegalStateException if the in-memory response cannot be encoded
      */
+    // Untrusted transport/parser failures retain the existing finite safe HTTP diagnostics.
+    @SuppressWarnings({"PMD.PreserveStackTrace"})
     public static byte[] encode(PkiOperationValue value) {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
-            try (JsonGenerator generator = FACTORY.createGenerator(ObjectWriteContext.empty(), output)) {
+            try (JsonGenerator generator =
+                    FACTORY.createGenerator(ObjectWriteContext.empty(), output)) {
                 write(generator, value);
             }
             return output.toByteArray();
@@ -127,10 +140,14 @@ public final class StrictJson {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
         while (parser.nextToken() != JsonToken.END_OBJECT) {
             if (parser.currentToken() != JsonToken.PROPERTY_NAME
-                    || fields.size() >= MAXIMUM_CONTAINER_ENTRIES) throw invalid();
+                    || fields.size() >= MAXIMUM_CONTAINER_ENTRIES) {
+                throw invalid();
+            }
             String name = parser.currentName();
             JsonToken token = parser.nextToken();
-            if (token == null || fields.putIfAbsent(name, read(parser, token)) != null) throw invalid();
+            if (token == null || fields.putIfAbsent(name, read(parser, token)) != null) {
+                throw invalid();
+            }
         }
         return new PkiOperationValue.ObjectValue(fields);
     }
@@ -139,7 +156,9 @@ public final class StrictJson {
         List<PkiOperationValue> values = new ArrayList<>();
         JsonToken token;
         while ((token = parser.nextToken()) != JsonToken.END_ARRAY) {
-            if (token == null || values.size() >= MAXIMUM_CONTAINER_ENTRIES) throw invalid();
+            if (token == null || values.size() >= MAXIMUM_CONTAINER_ENTRIES) {
+                throw invalid();
+            }
             values.add(read(parser, token));
         }
         return new PkiOperationValue.ListValue(values);
@@ -153,7 +172,8 @@ public final class StrictJson {
      * @throws IOException if the generator cannot write the value
      * @throws NullPointerException if a required argument is null
      */
-    static void write(JsonGenerator generator, PkiOperationValue value) throws IOException {
+    /* default */ static void write(JsonGenerator generator, PkiOperationValue value)
+            throws IOException {
         switch (value) {
             case PkiOperationValue.Text text -> generator.writeString(text.value());
             case PkiOperationValue.IntegerValue integer -> generator.writeNumber(integer.value());
@@ -168,20 +188,34 @@ public final class StrictJson {
             }
             case PkiOperationValue.ListValue list -> {
                 generator.writeStartArray();
-                for (PkiOperationValue item : list.values()) write(generator, item);
+                for (PkiOperationValue item : list.values()) {
+                    write(generator, item);
+                }
                 generator.writeEndArray();
             }
         }
     }
 
     private static JsonFactory createFactory() {
-        StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(16)
-                .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES).maxTokenCount(65_536).maxNumberLength(20)
-                .maxStringLength(PkiServerConfiguration.Listener.MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS)
-                .maxNameLength(128).build();
-        JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
-                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
-        for (JsonReadFeature feature : JsonReadFeature.values()) builder.disable(feature);
+        StreamReadConstraints constraints =
+                StreamReadConstraints.builder()
+                        .maxNestingDepth(16)
+                        .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES)
+                        .maxTokenCount(65_536)
+                        .maxNumberLength(20)
+                        .maxStringLength(
+                                PkiServerConfiguration.Listener
+                                        .MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS)
+                        .maxNameLength(128)
+                        .build();
+        JsonFactoryBuilder builder =
+                JsonFactory.builder()
+                        .streamReadConstraints(constraints)
+                        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+                        .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+        for (JsonReadFeature feature : JsonReadFeature.values()) {
+            builder.disable(feature);
+        }
         return builder.build();
     }
 

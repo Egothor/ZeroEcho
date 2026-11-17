@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.InterruptedIOException;
+import java.util.Properties;
+import java.util.concurrent.CancellationException;
+import org.h2.Driver;
+
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.file.Files;
@@ -132,8 +137,8 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
         }
         Connection opened = null;
         try {
-            opened = new org.h2.Driver().connect("jdbc:h2:file:" + location
-                    + ";AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE;TRACE_LEVEL_FILE=0", new java.util.Properties());
+            opened = new Driver().connect("jdbc:h2:file:" + location
+                    + ";AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE;TRACE_LEVEL_FILE=0", new Properties());
             opened.setAutoCommit(false);
             try (Statement statement = opened.createStatement()) {
                 statement.execute("SET CACHE_SIZE " + options.cacheKiB());
@@ -331,12 +336,12 @@ final class CredentialSearchIndex implements AutoCloseable { // NOPMD Cyclomatic
             return searchPages(request, after.orElse(""));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Restores caller cancellation after interruption; this standalone component creates no thread.
-            throw new java.util.concurrent.CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
-        } catch (java.io.InterruptedIOException interrupted) {
-            throw new java.util.concurrent.CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
+            throw new CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
+        } catch (InterruptedIOException interrupted) {
+            throw new CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
         } catch (SQLException | IOException failure) {
             if (cancellation.isCancelled()) {
-                throw new java.util.concurrent.CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
+                throw new CancellationException("Credential search cancelled"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
             }
             throw new IllegalStateException("Credential search failed"); // NOPMD PreserveStackTrace - Search failures omit SQL values, stored certificate content and provider diagnostics.
         } finally {

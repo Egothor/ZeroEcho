@@ -73,7 +73,8 @@ final class X509ProfileBindingMatcher {
      * @param reference exact contributed profile reference, or empty to select the standard binding
      * @return exact resolved algorithm identifier
      * @throws NullPointerException if a required argument is null
-     * @throws IllegalArgumentException if selection is unavailable, mismatched or ambiguously names a standard rule as contributed
+     * @throws IllegalArgumentException if selection is unavailable, mismatched or ambiguously names a standard rule as
+     * contributed
      */
     /* default */ AlgorithmIdentifier select(AlgorithmIdentity algorithm, X509AlgorithmBinding.Role role,
             Optional<X509AlgorithmBindingPolicy.BindingReference> reference) {

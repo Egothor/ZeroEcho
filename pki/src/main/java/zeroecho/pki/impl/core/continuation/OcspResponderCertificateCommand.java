@@ -34,25 +34,25 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.IssuerKeyBinding;
-import zeroecho.pki.api.profile.CertificateProfileRef;
-import zeroecho.pki.api.request.SubjectRdn;
-import zeroecho.pki.api.profile.SubjectRdnType;
-import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.api.orch.SigningSubmissionId;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.SubjectRdnType;
+import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * Retains the strict internal version-one command for a managed responder certificate.
@@ -91,7 +91,7 @@ public record OcspResponderCertificateCommand(List<String> fields) {
      */
     public OcspResponderCertificateCommand {
         fields = List.copyOf(fields);
-        if (fields.size() != FIELD_COUNT || !fields.getFirst().equals("1")) {
+        if (fields.size() != FIELD_COUNT || !"1".equals(fields.getFirst())) {
             throw invalid();
         }
         for (int index : new int[] {1, 2, 3, 4}) {
@@ -121,9 +121,7 @@ public record OcspResponderCertificateCommand(List<String> fields) {
             throw invalid();
         }
         for (int index : new int[] {20, 22}) {
-            PkiId id = new PkiId(fields.get(index));
-            SigningSubmissionId submission = SigningSubmissionId.parse(id);
-            ManagedKeyProofChallenge.requireOperation(id, submission.namespace());
+            requireProofOperation(fields.get(index));
         }
         if (fields.get(20).equals(fields.get(22))) {
             throw invalid();
@@ -131,7 +129,8 @@ public record OcspResponderCertificateCommand(List<String> fields) {
         for (int index : new int[] {21, 23}) {
             ManagedKeyProofCommand.validateComplete(decodeNested(fields.get(index), ManagedKeyProofCommand.OPERATION, 14));
         }
-        if (!fields.get(24).matches("[1-9][0-9]{0,48}") || new java.math.BigInteger(fields.get(24)).bitLength() > 159) {
+        if (!fields.get(24).matches("[1-9][0-9]{0,48}")
+                || new java.math.BigInteger(fields.get(24)).bitLength() > 159) {
             throw invalid();
         }
         // Reuse the actual bounded domain encoder; this is not a new storage budget.
@@ -159,7 +158,7 @@ public record OcspResponderCertificateCommand(List<String> fields) {
      */
     public static OcspResponderCertificateCommand decode(EncodedObject encoded) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(encoded).requireFields(FIELD_COUNT);
-        if (!command.operation().equals(OPERATION)) {
+        if (!OPERATION.equals(command.operation())) {
             throw invalid();
         }
         return new OcspResponderCertificateCommand(command.fields());
@@ -199,11 +198,12 @@ public record OcspResponderCertificateCommand(List<String> fields) {
     public DomainCommandEncoding.Decoded proofCommand(SubjectKeyRole role) {
         return decodeNested(fields.get(role == SubjectKeyRole.PRIMARY ? 21 : 23), ManagedKeyProofCommand.OPERATION, 14);
     }
+
     /**
      * Decodes the frozen execution attributes without consulting current server state.
      *
-     * <p>Trust in these attributes comes from the original authenticated preparation,
-     * not from the act of decoding this public carrier.
+     * <p>Trust in these attributes comes from the original authenticated preparation, not from the
+     * act of decoding this public carrier.
      *
      * @return the exact retained immutable execution attributes
      */
@@ -242,7 +242,7 @@ public record OcspResponderCertificateCommand(List<String> fields) {
         return hash(encoded("OCSP_RESPONDER_FROZEN_TARGET_V1", parentFields()).bytes());
     }
     private List<String> parentFields() {
-        ArrayList<String> selected = new ArrayList<>(fields.subList(0, 20));
+        List<String> selected = new ArrayList<>(fields.subList(0, 20));
         selected.add(fields.get(24));
         return selected;
     }
@@ -255,27 +255,40 @@ public record OcspResponderCertificateCommand(List<String> fields) {
      * @throws IllegalArgumentException if the bounded domain encoding cannot represent the binding
      */
     public static String encodeKey(IssuerKeyBinding key) {
-        return base64(encoded("OCSP_RESPONDER_SUBJECT_BINDING_V1", List.of(key.keyRef().value(), key.publicKeyAlgorithm().canonicalForm(),
-                key.signatureAlgorithm().canonicalForm(), HexFormat.of().formatHex(key.signatureAlgorithmIdentifier().bytes()),
-                key.subjectSpkiSha256())));
+        return base64(
+                encoded(
+                        "OCSP_RESPONDER_SUBJECT_BINDING_V1",
+                        List.of(
+                                key.keyRef().value(),
+                                key.publicKeyAlgorithm().canonicalForm(),
+                                key.signatureAlgorithm().canonicalForm(),
+                                HexFormat.of()
+                                        .formatHex(key.signatureAlgorithmIdentifier().bytes()),
+                                key.subjectSpkiSha256())));
     }
+
     /**
      * Decodes a canonical role descriptor and checks its public algorithm representation.
      *
-     * <p>The exact AlgorithmIdentifier must be canonical DER and re-encoding the
-     * reconstructed binding must reproduce the supplied descriptor. No managed key
-     * lookup, SPKI possession proof or operation authorization occurs.
+     * <p>The exact AlgorithmIdentifier must be canonical DER and re-encoding the reconstructed
+     * binding must reproduce the supplied descriptor. No managed key lookup, SPKI possession proof
+     * or operation authorization occurs.
      *
      * @param text canonical unpadded Base64url role descriptor
      * @return independently reconstructed immutable public role binding
      * @throws IllegalArgumentException if text is null, oversized, noncanonical or malformed
      */
+    // Malformed role descriptors must retain the stable safe diagnostic boundary.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public static IssuerKeyBinding decodeKey(String text) {
-        DomainCommandEncoding.Decoded command = decodeNested(text, "OCSP_RESPONDER_SUBJECT_BINDING_V1", 5);
+        DomainCommandEncoding.Decoded command =
+                decodeNested(text, "OCSP_RESPONDER_SUBJECT_BINDING_V1", 5);
         byte[] algorithm = ManagedKeyProofCommand.hex(command.field(3), 1, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
         try {
-            new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(algorithm, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
-            if (!java.util.Arrays.equals(algorithm,
+            new zeroecho.pki.impl.framework.x509.StreamingDerReader()
+                    .validate(algorithm, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES);
+            if (!java.util.Arrays.equals(
+                    algorithm,
                     zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(zeroecho.pkix.Pkix.parseAlgorithmIdentifier(algorithm)))) {
                 throw invalid();
             }
@@ -301,7 +314,7 @@ public record OcspResponderCertificateCommand(List<String> fields) {
         if (subject.isEmpty() || subject.size() > 32) {
             throw invalid();
         }
-        ArrayList<String> fields = new ArrayList<String>();
+        List<String> fields = new ArrayList<>();
         for (SubjectRdn rdn : subject) {
             fields.add(rdn.type().name());
             fields.add(rdn.value());
@@ -317,11 +330,13 @@ public record OcspResponderCertificateCommand(List<String> fields) {
      */
     public static List<SubjectRdn> decodeSubject(String text) {
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(binary(text));
-        if (!command.operation().equals("OCSP_RESPONDER_SUBJECT_V1") || command.fields().isEmpty()
-                || command.fields().size() > 64 || command.fields().size() % 2 != 0) {
+        if (!"OCSP_RESPONDER_SUBJECT_V1".equals(command.operation())
+                || command.fields().isEmpty()
+                || command.fields().size() > 64
+                || command.fields().size() % 2 != 0) {
             throw invalid();
         }
-        ArrayList<SubjectRdn> subject = new ArrayList<SubjectRdn>();
+        List<SubjectRdn> subject = new ArrayList<>();
         for (int index = 0; index < command.fields().size(); index += 2) {
             subject.add(new SubjectRdn(SubjectRdnType.valueOf(command.field(index)), command.field(index + 1)));
         }
@@ -386,5 +401,11 @@ public record OcspResponderCertificateCommand(List<String> fields) {
     }
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("Managed responder certificate command invalid");
+    }
+
+    private static void requireProofOperation(String value) {
+        PkiId id = new PkiId(value);
+        SigningSubmissionId submission = SigningSubmissionId.parse(id);
+        ManagedKeyProofChallenge.requireOperation(id, submission.namespace());
     }
 }

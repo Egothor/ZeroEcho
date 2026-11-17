@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
@@ -40,15 +44,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
-
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
-
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;

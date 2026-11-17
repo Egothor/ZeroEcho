@@ -33,14 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.io.IOException;
-import java.util.Objects;
-
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 import zeroecho.pki.impl.framework.x509.X509BindingRule;
+
+import java.io.IOException;
+import java.util.Objects;
 
 /**
  * Adapter for binding-owned {@code SubjectPublicKeyInfo} encodings, expressed
@@ -72,8 +72,12 @@ public final class BcX509PublicKeyAdapter {
      */
     public byte[] wrap(byte[] nativeSpki, AlgorithmIdentity identity, String bindingId) throws IOException {
         requireCanonical(nativeSpki);
-        zeroecho.pkix.AlgorithmIdentifier algorithm = BcX509AlgorithmAdapter.toLib(
-                catalog.resolve(bindingId, identity, X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM));
+        zeroecho.pkix.AlgorithmIdentifier algorithm =
+                BcX509AlgorithmAdapter.toLib(
+                        catalog.resolve(
+                                bindingId,
+                                identity,
+                                X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM));
         byte[] wrapped = zeroecho.pkix.Pkix.buildSubjectPublicKeyInfo(algorithm, nativeSpki);
         requireCanonical(wrapped);
         return wrapped;
@@ -89,11 +93,18 @@ public final class BcX509PublicKeyAdapter {
      */
     public byte[] unwrap(byte[] input) throws IOException {
         Objects.requireNonNull(input, "input");
-        String bindingId = catalog.bindingId(
-                BcX509AlgorithmAdapter.fromLib(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(input)),
-                X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-        X509BindingRule rule = catalog.rules().stream().filter(candidate -> candidate.id().equals(bindingId))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("SPKI binding rule is unavailable"));
+        String bindingId =
+                catalog.bindingId(
+                        BcX509AlgorithmAdapter.fromLib(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(input)),
+                        X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+        X509BindingRule rule =
+                catalog.rules().stream()
+                        .filter(candidate -> candidate.id().equals(bindingId))
+                        .findFirst()
+                        .orElseThrow(
+                                () ->
+                                        new IllegalArgumentException(
+                                                "SPKI binding rule is unavailable"));
         if (rule.publicKeyEncoding() != X509BindingRule.PublicKeyEncoding.NESTED_SPKI_DER) {
             return input;
         }

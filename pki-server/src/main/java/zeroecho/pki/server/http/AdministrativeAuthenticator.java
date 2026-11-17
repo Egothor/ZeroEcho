@@ -43,9 +43,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-
 import javax.net.ssl.X509TrustManager;
-
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
 import zeroecho.pki.server.AuthorizationEngine;
 import zeroecho.pki.server.PkiServerConfiguration;

@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.time.Duration;
+import zeroecho.pki.api.PkiFailureReason;
+import zeroecho.pki.api.profile.SubjectPolicy;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
@@ -98,7 +103,7 @@ final class CaCertificateProfileValidator {
             ActiveCertificateProfile activeProfile, CertificateProfileKind expectedKind, FormatId formatId,
             PkiId issuerCaId, PkiId subjectCaId, SubjectRef requestedSubject, EncodedObject exactPublicKey,
             Optional<Validity> requestedValidity, Instant evaluationTime, Optional<Instant> issuerNotAfter,
-            BigInteger serial, zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority) {
+            BigInteger serial, X509AuthoritySnapshot authority) {
         CertificateProfileDefinition definition = activeProfile.definition();
         requireProfileShape(definition, expectedKind, formatId);
         List<SubjectRdn> approvedSubject = validateSubject(requestedSubject, definition);
@@ -135,7 +140,7 @@ final class CaCertificateProfileValidator {
             CertificateProfileKind expectedKind, FormatId formatId, PkiId issuerCaId, PkiId subjectCaId,
             List<SubjectRdn> approvedSubject, EncodedObject exactPublicKey, Optional<Validity> requestedValidity,
             Instant evaluationTime, Optional<Instant> issuerNotAfter, BigInteger serial,
-            zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority) {
+            X509AuthoritySnapshot authority) {
         CertificateProfileDefinition definition = activeProfile.definition();
         requireProfileShape(definition, expectedKind, formatId);
         List<SubjectRdn> subjectSnapshot = requireApprovedSubject(approvedSubject);
@@ -216,7 +221,7 @@ final class CaCertificateProfileValidator {
                 throw reject("CA_SUBJECT_RDN_REQUIRED");
             }
         }
-        if (approved.isEmpty() || approved.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
+        if (approved.isEmpty() || approved.size() > SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
             throw reject("CA_SUBJECT_INVALID");
         }
         if (BcX509ProfileSupport.subject(approved).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
@@ -313,7 +318,7 @@ final class CaCertificateProfileValidator {
 
     private static List<SubjectRdn> requireApprovedSubject(List<SubjectRdn> approvedSubject) {
         List<SubjectRdn> snapshot = List.copyOf(approvedSubject);
-        if (snapshot.isEmpty() || snapshot.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
+        if (snapshot.isEmpty() || snapshot.size() > SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
             throw reject("CA_SUBJECT_INVALID");
         }
         if (BcX509ProfileSupport.subject(snapshot).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
@@ -347,7 +352,7 @@ final class CaCertificateProfileValidator {
             boolean invalidStart = imported ? validity.notBefore().isAfter(evaluationTime)
                     : !validity.notBefore().equals(evaluationTime);
             if (invalidStart || !validity.notAfter().isAfter(evaluationTime)
-                    || java.time.Duration.between(validity.notBefore(), validity.notAfter())
+                    || Duration.between(validity.notBefore(), validity.notAfter())
                             .compareTo(definition.maximumValidity()) > 0
                     || !imported && validity.notAfter().isAfter(ceiling)
                     || !validity.notAfter().isAfter(validity.notBefore())) {
@@ -361,6 +366,6 @@ final class CaCertificateProfileValidator {
 
     private static PkiException reject(String code) {
         return new PkiException("CA certificate profile rejected: code=" + code,
-                "CA_SUBJECT_INVALID".equals(code) ? zeroecho.pki.api.PkiFailureReason.CA_SUBJECT_INVALID : null);
+                "CA_SUBJECT_INVALID".equals(code) ? PkiFailureReason.CA_SUBJECT_INVALID : null);
     }
 }

@@ -35,6 +35,7 @@ package zeroecho.pkix.bc;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.math.BigInteger;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -44,7 +45,12 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
 
+import org.bouncycastle.asn1.ASN1BitString;
+import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.ASN1TaggedObject;
+import org.bouncycastle.asn1.DERTaggedObject;
 import org.bouncycastle.asn1.ASN1Primitive;
 import org.bouncycastle.asn1.DERIA5String;
 import org.bouncycastle.asn1.DERPrintableString;
@@ -60,6 +66,7 @@ import org.bouncycastle.cert.ocsp.OCSPException;
 import org.bouncycastle.operator.DigestCalculator;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
 import java.io.ByteArrayOutputStream;
 import java.security.GeneralSecurityException;
@@ -137,11 +144,11 @@ public final class BcPkixProvider implements PkixProvider {
             SubjectPublicKeyInfo alternativeKey = SubjectPublicKeyInfo.getInstance(
                     holder.getExtension(Extension.subjectAltPublicKeyInfo).getParsedValue());
             if (alternativeKey.getPublicKeyData().getPadBits() != 0) { return false; }
-            org.bouncycastle.asn1.ASN1BitString alternativeValue = org.bouncycastle.asn1.ASN1BitString.getInstance(
+            ASN1BitString alternativeValue = ASN1BitString.getInstance(
                     holder.getExtension(Extension.altSignatureValue).getParsedValue());
             if (alternativeValue.getPadBits() != 0 || alternativeValue.getOctets().length == 0) { return false; }
             return holder.isAlternativeSignatureValid(
-                    new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
+                    new JcaContentVerifierProviderBuilder()
                             .setProvider("BC").build(issuerAlternativeKey));
         } catch (IOException | GeneralSecurityException | org.bouncycastle.cert.CertException
                 | OperatorCreationException | IllegalArgumentException malformed) {
@@ -154,47 +161,7 @@ public final class BcPkixProvider implements PkixProvider {
      */
     @Override
     public boolean verifyAlternativeSignatureCor3(X509Certificate certificate, PublicKey issuerAlternativeKey) {
-        java.util.Objects.requireNonNull(certificate, "certificate");
-        java.util.Objects.requireNonNull(issuerAlternativeKey, "issuerAlternativeKey");
-        try {
-            X509CertificateHolder holder = new X509CertificateHolder(certificate.getEncoded());
-            if (holder.getExtension(Extension.subjectAltPublicKeyInfo) == null
-                    || holder.getExtension(Extension.altSignatureAlgorithm) == null
-                    || holder.getExtension(Extension.altSignatureValue) == null
-                    || !holder.getSignatureAlgorithm().equals(holder.toASN1Structure().getTBSCertificate().getSignature())) {
-                return false;
-            }
-            SubjectPublicKeyInfo key = SubjectPublicKeyInfo.getInstance(
-                    holder.getExtension(Extension.subjectAltPublicKeyInfo).getParsedValue());
-            var signature = org.bouncycastle.asn1.ASN1BitString.getInstance(
-                    holder.getExtension(Extension.altSignatureValue).getParsedValue());
-            if (key.getPublicKeyData().getPadBits() != 0 || signature.getPadBits() != 0
-                    || signature.getOctets().length == 0) return false;
-            var original = org.bouncycastle.asn1.ASN1Sequence.getInstance(holder.toASN1Structure().getTBSCertificate());
-            var fields = new org.bouncycastle.asn1.ASN1EncodableVector();
-            for (int index = 0; index < original.size(); index++) {
-                var field = original.getObjectAt(index);
-                if (field instanceof org.bouncycastle.asn1.ASN1TaggedObject tagged && tagged.hasContextTag(3)) {
-                    var extensions = org.bouncycastle.asn1.x509.Extensions.getInstance(tagged.getExplicitBaseObject());
-                    var retained = new org.bouncycastle.asn1.ASN1EncodableVector();
-                    for (var oid : extensions.getExtensionOIDs()) {
-                        if (!oid.equals(Extension.altSignatureValue)) retained.add(extensions.getExtension(oid));
-                    }
-                    fields.add(new org.bouncycastle.asn1.DERTaggedObject(true, 3,
-                            new org.bouncycastle.asn1.DERSequence(retained)));
-                } else fields.add(field);
-            }
-            byte[] transcript = new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
-                    new org.bouncycastle.asn1.DERSequence(fields), holder.getSignatureAlgorithm()}).getEncoded("DER");
-            var algorithm = org.bouncycastle.asn1.x509.AlgorithmIdentifier.getInstance(
-                    holder.getExtension(Extension.altSignatureAlgorithm).getParsedValue());
-            var verifier = new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
-                    .setProvider("BC").build(issuerAlternativeKey).get(algorithm);
-            try (var output = verifier.getOutputStream()) { output.write(transcript); }
-            return verifier.verify(signature.getOctets());
-        } catch (IOException | GeneralSecurityException | OperatorCreationException | IllegalArgumentException malformed) {
-            return false;
-        }
+        return Cor3Verification.verify(certificate, issuerAlternativeKey);
     }
 
     /**
@@ -309,13 +276,13 @@ public final class BcPkixProvider implements PkixProvider {
     public ContentVerifier verifier(byte[] subjectPublicKeyInfoDer, zeroecho.pkix.AlgorithmIdentifier algorithm) {
         try {
             org.bouncycastle.operator.ContentVerifier bcVerifier =
-                    new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
+                    new JcaContentVerifierProviderBuilder()
                             .setProvider(org.bouncycastle.jce.provider.BouncyCastleProvider.PROVIDER_NAME)
                             .build(SubjectPublicKeyInfo.getInstance(subjectPublicKeyInfoDer))
                             .get(BcAlgorithmIdentifiers.toBc(algorithm));
             return new ContentVerifier() {
                 @Override
-                public java.io.OutputStream contentStream() {
+                public OutputStream contentStream() {
                     return bcVerifier.getOutputStream();
                 }
 
@@ -385,7 +352,7 @@ public final class BcPkixProvider implements PkixProvider {
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
         for (zeroecho.pkix.RelativeDistinguishedName rdn : relativeNames) {
             ASN1ObjectIdentifier oid = new ASN1ObjectIdentifier(rdn.attributeTypeOid());
-            org.bouncycastle.asn1.ASN1Encodable value = switch (rdn.stringType()) {
+            ASN1Encodable value = switch (rdn.stringType()) {
                 case PRINTABLE -> new DERPrintableString(rdn.value(), true);
                 case IA5 -> new DERIA5String(rdn.value(), true);
                 case UTF8 -> new DERUTF8String(rdn.value());
@@ -459,7 +426,7 @@ public final class BcPkixProvider implements PkixProvider {
                 throw new IllegalArgumentException("Multi-valued or empty relative distinguished name");
             }
             String oid = rdn.getFirst().getType().getId();
-            org.bouncycastle.asn1.ASN1Encodable value = rdn.getFirst().getValue();
+            ASN1Encodable value = rdn.getFirst().getValue();
             zeroecho.pkix.DirectoryStringType type;
             if (value instanceof DERUTF8String) {
                 type = zeroecho.pkix.DirectoryStringType.UTF8;
@@ -547,12 +514,12 @@ public final class BcPkixProvider implements PkixProvider {
     @Override
     public byte[] assembleCertificateOrCrl(byte[] tbs, byte[] signature, boolean crl) {
         try {
-            org.bouncycastle.asn1.ASN1Sequence sequence = org.bouncycastle.asn1.ASN1Sequence.getInstance(
+            ASN1Sequence sequence = ASN1Sequence.getInstance(
                     ASN1Primitive.fromByteArray(tbs));
             int algorithmIndex = crl ? 1
-                    : sequence.getObjectAt(0) instanceof org.bouncycastle.asn1.ASN1TaggedObject ? 2 : 1;
-            org.bouncycastle.asn1.ASN1Encodable algorithm = sequence.getObjectAt(algorithmIndex);
-            byte[] encoded = new DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
+                    : sequence.getObjectAt(0) instanceof ASN1TaggedObject ? 2 : 1;
+            ASN1Encodable algorithm = sequence.getObjectAt(algorithmIndex);
+            byte[] encoded = new DERSequence(new ASN1Encodable[] {
                     sequence, algorithm, new org.bouncycastle.asn1.DERBitString(signature) }).getEncoded();
             if (crl) {
                 parseCrl(encoded);
@@ -660,7 +627,7 @@ public final class BcPkixProvider implements PkixProvider {
                     for (byte[] v : attr.derValues()) {
                         vals.add(ASN1Primitive.fromByteArray(v));
                     }
-                    seq.add(new DERSequence(new org.bouncycastle.asn1.ASN1Encodable[]{ // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
+                    seq.add(new DERSequence(new ASN1Encodable[]{ // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
                             oid, new DERSet(vals) })); // NOPMD AvoidInstantiatingObjectsInLoops - Each wire response/certificate/extension requires its own distinct immutable encoding object.
                 }
             }
@@ -758,7 +725,7 @@ public final class BcPkixProvider implements PkixProvider {
 
             byte[] preTbsDer = rebuildTbs(tbs, extGen.generate());
 
-            try (java.io.OutputStream out = signer.contentStream()) {
+            try (OutputStream out = signer.contentStream()) {
                 out.write(preTbsDer);
             }
             byte[] sig = signer.signature();
@@ -807,12 +774,12 @@ public final class BcPkixProvider implements PkixProvider {
         tbsGen.setSubject(tbs.getSubject());
         tbsGen.setSubjectPublicKeyInfo(tbs.getSubjectPublicKeyInfo());
         if (tbs.getIssuerUniqueId() != null) {
-            org.bouncycastle.asn1.ASN1BitString uid = tbs.getIssuerUniqueId();
+            ASN1BitString uid = tbs.getIssuerUniqueId();
             tbsGen.setIssuerUniqueID(
                     new org.bouncycastle.asn1.DERBitString(uid.getBytes(), uid.getPadBits()));
         }
         if (tbs.getSubjectUniqueId() != null) {
-            org.bouncycastle.asn1.ASN1BitString sid = tbs.getSubjectUniqueId();
+            ASN1BitString sid = tbs.getSubjectUniqueId();
             tbsGen.setSubjectUniqueID(
                     new org.bouncycastle.asn1.DERBitString(sid.getBytes(), sid.getPadBits()));
         }
@@ -872,11 +839,11 @@ public final class BcPkixProvider implements PkixProvider {
     @Override
     public zeroecho.pkix.ct.SignedCertificateTimestamp parseSct(byte[] jsonResponseBody) {
         String json = new String(jsonResponseBody, java.nio.charset.StandardCharsets.UTF_8).trim();
-        int version = extractJsonInt(json, "sct_version");
-        String idBase64 = extractJsonString(json, "id");
-        long timestampMs = extractJsonLong(json, "timestamp");
-        String extensionsBase64 = extractJsonString(json, "extensions");
-        String sigBase64 = extractJsonString(json, "signature");
+        int version = SctJson.extractJsonInt(json, "sct_version");
+        String idBase64 = SctJson.extractJsonString(json, "id");
+        long timestampMs = SctJson.extractJsonLong(json, "timestamp");
+        String extensionsBase64 = SctJson.extractJsonString(json, "extensions");
+        String sigBase64 = SctJson.extractJsonString(json, "signature");
 
         byte[] logId = java.util.Base64.getDecoder().decode(idBase64);
         java.time.Instant timestamp = java.time.Instant.ofEpochMilli(timestampMs);
@@ -898,66 +865,6 @@ public final class BcPkixProvider implements PkixProvider {
 
         return new zeroecho.pkix.ct.SignedCertificateTimestamp(version, logId, timestamp, extensions,
                 jcaAlg, sigBytes);
-    }
-
-    /**
-     * Extracts a quoted string value from a flat JSON object by key name.
-     */
-    private static String extractJsonString(String json, String key) {
-        String search = "\"" + key + "\"";
-        int keyIdx = json.indexOf(search);
-        if (keyIdx < 0) {
-            throw new IllegalArgumentException("SCT JSON missing field: " + key);
-        }
-        int colonIdx = json.indexOf(':', keyIdx + search.length());
-        if (colonIdx < 0) {
-            throw new IllegalArgumentException("SCT JSON malformed at field: " + key);
-        }
-        int quoteStart = json.indexOf('"', colonIdx + 1);
-        if (quoteStart < 0) {
-            throw new IllegalArgumentException("SCT JSON field not a string: " + key);
-        }
-        int quoteEnd = json.indexOf('"', quoteStart + 1);
-        if (quoteEnd < 0) {
-            throw new IllegalArgumentException("SCT JSON unterminated string: " + key);
-        }
-        return json.substring(quoteStart + 1, quoteEnd);
-    }
-
-    /**
-     * Extracts an integer value from a flat JSON object by key name.
-     */
-    private static int extractJsonInt(String json, String key) {
-        return (int) extractJsonLong(json, key);
-    }
-
-    /**
-     * Extracts a long value from a flat JSON object by key name.
-     */
-    private static long extractJsonLong(String json, String key) {
-        String search = "\"" + key + "\"";
-        int keyIdx = json.indexOf(search);
-        if (keyIdx < 0) {
-            throw new IllegalArgumentException("SCT JSON missing field: " + key);
-        }
-        int colonIdx = json.indexOf(':', keyIdx + search.length());
-        if (colonIdx < 0) {
-            throw new IllegalArgumentException("SCT JSON malformed at field: " + key);
-        }
-        int valueStart = colonIdx + 1;
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
-            valueStart++;
-        }
-        int valueEnd = valueStart;
-        while (valueEnd < json.length() && (Character.isDigit(json.charAt(valueEnd))
-                || json.charAt(valueEnd) == '-')) {
-            valueEnd++;
-        }
-        try {
-            return Long.parseLong(json.substring(valueStart, valueEnd));
-        } catch (NumberFormatException failure) {
-            throw new IllegalArgumentException("SCT JSON field not a number: " + key, failure);
-        }
     }
 
     /**
@@ -1048,5 +955,129 @@ public final class BcPkixProvider implements PkixProvider {
             sig = 0;
         }
         return new int[]{hash, sig};
+    }
+    /** Extracts the flat JSON values returned by the CT log endpoint. */
+    private static final class SctJson {
+        /**
+         * Extracts a quoted string value from a flat JSON object by key name.
+         */
+        private static String extractJsonString(String json, String key) {
+            String search = "\"" + key + "\"";
+            int keyIdx = json.indexOf(search);
+            if (keyIdx < 0) {
+                throw new IllegalArgumentException("SCT JSON missing field: " + key);
+            }
+            int colonIdx = json.indexOf(':', keyIdx + search.length());
+            if (colonIdx < 0) {
+                throw new IllegalArgumentException("SCT JSON malformed at field: " + key);
+            }
+            int quoteStart = json.indexOf('"', colonIdx + 1);
+            if (quoteStart < 0) {
+                throw new IllegalArgumentException("SCT JSON field not a string: " + key);
+            }
+            int quoteEnd = json.indexOf('"', quoteStart + 1);
+            if (quoteEnd < 0) {
+                throw new IllegalArgumentException("SCT JSON unterminated string: " + key);
+            }
+            return json.substring(quoteStart + 1, quoteEnd);
+        }
+
+        /**
+         * Extracts an integer value from a flat JSON object by key name.
+         */
+        private static int extractJsonInt(String json, String key) {
+            return (int) extractJsonLong(json, key);
+        }
+
+        /**
+         * Extracts a long value from a flat JSON object by key name.
+         */
+        private static long extractJsonLong(String json, String key) {
+            String search = "\"" + key + "\"";
+            int keyIdx = json.indexOf(search);
+            if (keyIdx < 0) {
+                throw new IllegalArgumentException("SCT JSON missing field: " + key);
+            }
+            int colonIdx = json.indexOf(':', keyIdx + search.length());
+            if (colonIdx < 0) {
+                throw new IllegalArgumentException("SCT JSON malformed at field: " + key);
+            }
+            int valueStart = colonIdx + 1;
+            while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
+                valueStart++;
+            }
+            int valueEnd = valueStart;
+            while (valueEnd < json.length() && (Character.isDigit(json.charAt(valueEnd))
+                    || json.charAt(valueEnd) == '-')) {
+                valueEnd++;
+            }
+            try {
+                return Long.parseLong(json.substring(valueStart, valueEnd));
+            } catch (NumberFormatException failure) {
+                throw new IllegalArgumentException("SCT JSON field not a number: " + key, failure);
+            }
+        }
+
+    }
+    /** Reconstructs and verifies the Cor3 alternative-signature transcript. */
+    private static final class Cor3Verification {
+        private static boolean verify(X509Certificate certificate, PublicKey issuerAlternativeKey) {
+            java.util.Objects.requireNonNull(certificate, "certificate");
+            java.util.Objects.requireNonNull(issuerAlternativeKey, "issuerAlternativeKey");
+            try {
+                X509CertificateHolder holder = new X509CertificateHolder(certificate.getEncoded());
+                if (holder.getExtension(Extension.subjectAltPublicKeyInfo) == null
+                        || holder.getExtension(Extension.altSignatureAlgorithm) == null
+                        || holder.getExtension(Extension.altSignatureValue) == null
+                        || !holder.getSignatureAlgorithm().equals(holder.toASN1Structure().getTBSCertificate().getSignature())) {
+                    return false;
+                }
+                SubjectPublicKeyInfo key = SubjectPublicKeyInfo.getInstance(
+                        holder.getExtension(Extension.subjectAltPublicKeyInfo).getParsedValue());
+                ASN1BitString signature = ASN1BitString.getInstance(
+                        holder.getExtension(Extension.altSignatureValue).getParsedValue());
+                if (key.getPublicKeyData().getPadBits() != 0 || signature.getPadBits() != 0
+                        || signature.getOctets().length == 0) {
+                    return false;
+                }
+                byte[] transcript = transcript(holder);
+                AlgorithmIdentifier algorithm = AlgorithmIdentifier.getInstance(
+                        holder.getExtension(Extension.altSignatureAlgorithm).getParsedValue());
+                org.bouncycastle.operator.ContentVerifier verifier = new JcaContentVerifierProviderBuilder()
+                        .setProvider("BC").build(issuerAlternativeKey).get(algorithm);
+                try (OutputStream output = verifier.getOutputStream()) {
+                    output.write(transcript);
+                }
+                return verifier.verify(signature.getOctets());
+            } catch (IOException | GeneralSecurityException | OperatorCreationException | IllegalArgumentException malformed) {
+                return false;
+            }
+        }
+
+        private static byte[] transcript(X509CertificateHolder holder) throws IOException {
+            ASN1Sequence original = ASN1Sequence.getInstance(holder.toASN1Structure().getTBSCertificate());
+            ASN1EncodableVector fields = new ASN1EncodableVector();
+            for (int index = 0; index < original.size(); index++) {
+                ASN1Encodable field = original.getObjectAt(index);
+                if (field instanceof ASN1TaggedObject tagged && tagged.hasContextTag(3)) {
+                    fields.add(retainedExtensions(tagged));
+                } else {
+                    fields.add(field);
+                }
+            }
+            return new DERSequence(new ASN1Encodable[] {
+                    new DERSequence(fields), holder.getSignatureAlgorithm()}).getEncoded(ASN1Encoding.DER);
+        }
+
+        private static ASN1TaggedObject retainedExtensions(ASN1TaggedObject tagged) {
+            Extensions extensions = Extensions.getInstance(tagged.getExplicitBaseObject());
+            ASN1EncodableVector retained = new ASN1EncodableVector();
+            for (ASN1ObjectIdentifier oid : extensions.getExtensionOIDs()) {
+                if (!oid.equals(Extension.altSignatureValue)) {
+                    retained.add(extensions.getExtension(oid));
+                }
+            }
+            return new DERTaggedObject(true, 3, new DERSequence(retained));
+        }
     }
 }

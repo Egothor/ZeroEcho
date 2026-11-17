@@ -94,22 +94,22 @@ public record EnrollmentSdkAdmission(EnrollmentCoordinator.Admission admission, 
         Objects.requireNonNull(admission, "admission"); EnrollmentTransaction.digest(expectedEndpointCommitment);
         HybridSdkFrame.requireOrigin(canonicalOrigin); Objects.requireNonNull(authenticationContext, "authenticationContext");
         Objects.requireNonNull(target, "target"); Objects.requireNonNull(cmpManifest, "cmpManifest");
-        nativeWire = Objects.requireNonNull(nativeWire, "nativeWire").map(bytes -> bytes.clone());
+        nativeWire = Objects.requireNonNull(nativeWire, "nativeWire").map(byte[]::clone);
         boolean protectedWire = admission.protocol() == EnrollmentTransaction.Protocol.SCEP || admission.protocol() == EnrollmentTransaction.Protocol.CMP;
-        if (protectedWire != nativeWire.isPresent() || nativeWire.filter(bytes -> bytes.length == 0 || bytes.length > 524_288).isPresent()) throw EnrollmentTransaction.invalid();
+        if (protectedWire != nativeWire.isPresent() || nativeWire.filter(bytes -> bytes.length == 0 || bytes.length > 524_288).isPresent()) { throw EnrollmentTransaction.invalid(); }
         if (authenticationContext.kind() != 6 || admission.operation() == EnrollmentTransaction.Operation.SERVER_KEYGEN
                 || !admission.protocol().name().equals(target.protocol())
                 || admission.protocol() != EnrollmentTransaction.Protocol.ACME && !admission.endpointId().equals(target.endpointId())
                 || !expectedEndpointCommitment.equals(target.endpointCommitment())
                 || !admission.operation().name().equals(target.operation()) || admission.payload().kind() != target.requestKind()
                 || !admission.transactionId().equals(target.transactionIdSha256())
-                || (admission.protocol() == EnrollmentTransaction.Protocol.CMP) != cmpManifest.isPresent()) throw EnrollmentTransaction.invalid();
+                || admission.protocol() == EnrollmentTransaction.Protocol.CMP != cmpManifest.isPresent()) { throw EnrollmentTransaction.invalid(); }
         if (cmpManifest.isPresent()) {
-            var manifest = cmpManifest.orElseThrow();
+            CmpTransaction.Frozen manifest = cmpManifest.orElseThrow();
             if (!manifest.enrollment() || !manifest.requester().equals(admission.requester())
                     || !manifest.source().label().equals(admission.endpointId())
                     || !manifest.source().commitment().equals(expectedEndpointCommitment)
-                    || !manifest.transactionSha256().equals(admission.transactionId())) throw EnrollmentTransaction.invalid();
+                    || !manifest.transactionSha256().equals(admission.transactionId())) { throw EnrollmentTransaction.invalid(); }
         }
     }
     /**
@@ -117,7 +117,7 @@ public record EnrollmentSdkAdmission(EnrollmentCoordinator.Admission admission, 
      *
      * @return independent copy of the protected native wire, when required
      */
-    @Override public Optional<byte[]> nativeWire() { return nativeWire.map(bytes -> bytes.clone()); }
+    @Override public Optional<byte[]> nativeWire() { return nativeWire.map(byte[]::clone); }
     /**
      * Returns redacted trusted input description.
      *
@@ -144,9 +144,9 @@ public record EnrollmentSdkAdmission(EnrollmentCoordinator.Admission admission, 
          *     frame kinds differ
          */
         public Challenge {
-            if (intentId == null || !intentId.matches("[0-9a-f]{64}")) throw EnrollmentTransaction.invalid();
+            if (intentId == null || !intentId.matches("[0-9a-f]{64}")) { throw EnrollmentTransaction.invalid(); }
             Objects.requireNonNull(primaryFrame, "primaryFrame"); Objects.requireNonNull(targetFrame, "targetFrame");
-            if (primaryFrame.kind() != 1 || targetFrame.kind() != 7) throw EnrollmentTransaction.invalid();
+            if (primaryFrame.kind() != 1 || targetFrame.kind() != 7) { throw EnrollmentTransaction.invalid(); }
         }
         /**
          * Returns redacted challenge description.

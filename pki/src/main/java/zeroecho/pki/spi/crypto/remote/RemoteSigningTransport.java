@@ -301,13 +301,16 @@ public interface RemoteSigningTransport extends AutoCloseable {
          * @param inputMode explicit original-message or prehashed-digest mode
          * @param digestId canonical digest identity only for prehashed input; empty otherwise
          * @param configurationCommitment expected client-effective configuration
-         * @throws NullPointerException if a required textual field, content, deadline optional, input mode, digest identity or configuration commitment is null
-         * @throws IllegalArgumentException if required text is blank or exceeds 8192 characters, the protocol or fencing token is invalid, the content length/digest is invalid, the raw payload exceeds the wire ceiling, or input mode and digest identity disagree
+         * @throws NullPointerException if a required textual field, content, deadline optional, input
+         * mode, digest identity or configuration commitment is null
+         * @throws IllegalArgumentException if required text is blank or exceeds 8192 characters, the
+         * protocol or fencing token is invalid, the content length/digest is invalid, the raw payload
+         * exceeds the wire ceiling, or input mode and digest identity disagree
          */
         public RemoteSignRequest {
             for (String value : List.of(submissionId, namespace, semanticFingerprint, keyHandle, algorithmId,
                     contentSha256, principalType, principalName, purpose)) {
-                if (value.isBlank() || value.length() > 8192) {
+                if (value.isBlank() || value.length() > 8_192) {
                     throw new IllegalArgumentException("Remote request field exceeds its finite bound");
                 }
             }
@@ -319,7 +322,7 @@ public interface RemoteSigningTransport extends AutoCloseable {
             if (protocolVersion != SigningInputCapabilities.PROTOCOL_VERSION || fencingToken <= 0
                     || contentLength < 0 || contentSha256.length() != 64
                     || !HexFormat.of().formatHex(HexFormat.of().parseHex(contentSha256)).equals(contentSha256)
-                    || content.length > SigningInputCapabilities.REMOTE_RAW_LIMIT || digestId.length() > 8192
+                    || content.length > SigningInputCapabilities.REMOTE_RAW_LIMIT || digestId.length() > 8_192
                     || inputMode == SigningInputCapabilities.Mode.RAW_MESSAGE != digestId.isEmpty()) {
                 throw new IllegalArgumentException("Invalid remote signing input contract");
             }
@@ -416,8 +419,11 @@ public interface RemoteSigningTransport extends AutoCloseable {
          * @param configurationCommitment 32-byte remote configuration commitment
          * @param protocolVersion exact explicit-input protocol version
          * @param inputCapabilities finite server input capability snapshot
-         * @throws NullPointerException if supportedAlgorithms, any advertised algorithm, configurationCommitment or inputCapabilities is null
-         * @throws IllegalArgumentException if the protocol version is unsupported, the configuration commitment is not 32 bytes, or advertised algorithms violate the finite input-capability contract
+         * @throws NullPointerException if supportedAlgorithms, any advertised algorithm,
+         * configurationCommitment or inputCapabilities is null
+         * @throws IllegalArgumentException if the protocol version is unsupported, the configuration
+         * commitment is not 32 bytes, or advertised algorithms violate the finite input-capability
+         * contract
          */
         public RemoteCapabilities {
             supportedAlgorithms = Set.copyOf(supportedAlgorithms);

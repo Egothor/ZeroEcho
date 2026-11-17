@@ -34,22 +34,23 @@
 
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.orch.SigningSubmissionId;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
+import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
+
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.time.Instant;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.orch.SigningSubmissionId;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader;
-import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
 
 /**
  * Encodes and decodes the version-two, version-three and version-four managed-key proof challenges.
@@ -62,6 +63,8 @@ import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
  * memory are O(challenge bytes), with finite bounds checked before allocation.
  */
 public final class ManagedKeyProofChallenge {
+    private static final String OCSP_CANDIDATE_KIND = "OCSP_RESPONDER_CANDIDATE_KEY";
+    private static final int CHALLENGE_VERSION = 1;
     private static final int CONTEXT_PRESENT = 1;
     private static final byte[] MAGIC = "ZEROECHO-MANAGED-KEY-PROOF\0".getBytes(StandardCharsets.US_ASCII);
     private static final int VERSION = 2;
@@ -93,7 +96,7 @@ public final class ManagedKeyProofChallenge {
         DomainCommandEncoding.Decoded command = new DomainCommandEncoding.Decoded(ManagedKeyProofCommand.OPERATION,
                 metadata).requireFields(10);
         ManagedKeyProofCommand.validateMetadata(command);
-        if (command.field(0).equals("OCSP_RESPONDER_CANDIDATE_KEY")) {
+        if (OCSP_CANDIDATE_KIND.equals(command.field(0))) {
             throw invalid();
         }
         requireOperation(operationId, command.field(6));
@@ -131,8 +134,12 @@ public final class ManagedKeyProofChallenge {
             write(output, context.orElseThrow().parentId().value().getBytes(StandardCharsets.UTF_8));
             output.put(HexFormat.of().parseHex(context.orElseThrow().intentCommitment().substring("ca-intent:v1:".length())));
             if (roleContext) {
-                output.put((byte) (context.orElseThrow().role().orElseThrow()
-                        == zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY ? 1 : 2));
+                output.put(
+                        (byte)
+                                (context.orElseThrow().role().orElseThrow()
+                                                == zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY
+                                        ? 1
+                                        : 2));
                 output.put(HexFormat.of().parseHex(context.orElseThrow().lifecycleContextCommitment().orElseThrow()));
             }
         }
@@ -172,7 +179,7 @@ public final class ManagedKeyProofChallenge {
                 metadata).requireFields(10);
         ManagedKeyProofCommand.validateMetadata(command);
         if (!(ManagedKeyProofCommand.decodePrefix(command)
-                instanceof zeroecho.pki.api.signing.ManagedKeyProofRequest.OcspResponderCandidate candidate)
+                        instanceof zeroecho.pki.api.signing.ManagedKeyProofRequest.OcspResponderCandidate candidate)
                 || !candidate.target().equals(context.target())) {
             throw invalid();
         }
@@ -221,62 +228,7 @@ public final class ManagedKeyProofChallenge {
      * @throws IllegalArgumentException if framing, UTF-8, schema, bounds or DER are invalid
      */
     public static Decoded decode(byte[] challenge) {
-        Objects.requireNonNull(challenge, "challenge");
-        if (challenge.length == 0 || challenge.length > ManagedKeyProofCommand.MAX_CHALLENGE_BYTES) {
-            throw invalid();
-        }
-        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(challenge))) {
-            if (!Arrays.equals(input.readNBytes(MAGIC.length), MAGIC)) {
-                throw invalid();
-            }
-            int version = input.readInt();
-            if (version != VERSION && version != ROLE_CONTEXT_VERSION && version != RESPONDER_CONTEXT_VERSION) {
-                throw invalid();
-            }
-            PkiId operationId = new PkiId(readText(input, 4096));
-            long seconds = input.readLong();
-            int nanos = input.readInt();
-            if (nanos < 0 || nanos >= 1_000_000_000) {
-                throw invalid();
-            }
-            Instant deadline = Instant.ofEpochSecond(seconds, nanos);
-            Optional<ResponderCandidateContext> candidateContext = version == RESPONDER_CONTEXT_VERSION
-                    ? Optional.of(readResponderContext(input)) : Optional.empty();
-            Optional<CaContext> context = version == RESPONDER_CONTEXT_VERSION ? Optional.empty() : readContext(input, version);
-            if (candidateContext.isPresent()) {
-                requireResponderContext(operationId, deadline, candidateContext.orElseThrow());
-            } else {
-                requireContext(operationId, deadline, context);
-            }
-            byte[] nonce = exact(input, NONCE_BYTES);
-            List<String> metadata = new ArrayList<>(10);
-            for (int index = 0; index <= 6; index++) {
-                metadata.add(readText(input, ManagedKeyProofCommand.MAX_COMMAND_BYTES));
-            }
-            metadata.add(HexFormat.of().formatHex(exact(input, 32)));
-            metadata.add(readText(input, 8192));
-            metadata.add(HexFormat.of().formatHex(read(input, ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES)));
-            byte[] spki = read(input, ManagedKeyProofCommand.MAX_SPKI_BYTES);
-            if (input.available() != 0) {
-                throw invalid();
-            }
-            requireSpki(spki);
-            requireOperation(operationId, metadata.get(6));
-            DomainCommandEncoding.Decoded command = complete(metadata, spki, challenge.length,
-                    ContentCommitment.sha256(challenge).sha256());
-            ManagedKeyProofCommand.validateComplete(command);
-            boolean candidate = command.field(0).equals("OCSP_RESPONDER_CANDIDATE_KEY");
-            if (candidate != candidateContext.isPresent()) {
-                throw invalid();
-            }
-            if (candidate && !Arrays.equals(challenge, encodeCandidate(operationId, deadline,
-                    candidateContext.orElseThrow(), metadata, nonce, spki))) {
-                throw invalid();
-            }
-            return new Decoded(operationId, deadline, context, nonce, command, spki, candidateContext);
-        } catch (IOException | java.time.DateTimeException malformed) {
-            throw new IllegalArgumentException("Managed key proof challenge is truncated or invalid", malformed);
-        }
+        return Decoder.decode(challenge);
     }
 
     /**
@@ -371,17 +323,19 @@ public final class ManagedKeyProofChallenge {
     /**
      * Retains the parent context for an internal CA subject-key proof challenge.
      *
-     * <p>Version two omits both role-specific coordinates. Version three supplies both
-     * the subject role and its lifecycle commitment. Encoding or decoding the complete
-     * challenge additionally checks that child and parent are distinct and share a
-     * signing namespace; this record alone cannot establish that relationship.
+     * <p>Version two omits both role-specific coordinates. Version three supplies both the subject
+     * role and its lifecycle commitment. Encoding or decoding the complete challenge additionally
+     * checks that child and parent are distinct and share a signing namespace; this record alone
+     * cannot establish that relationship.
      *
      * @param parentId canonical parent signing-operation identity
      * @param intentCommitment exact domain-separated final CA/TBS intent commitment
      * @param role absent for byte-exact v2; explicit subject role for v3
      * @param lifecycleContextCommitment absent for v2; frozen lifecycle/TBS context SHA-256 for v3
      */
-    public record CaContext(PkiId parentId, String intentCommitment,
+    public record CaContext(
+            PkiId parentId,
+            String intentCommitment,
             Optional<zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole> role,
             Optional<String> lifecycleContextCommitment) {
         /**
@@ -398,15 +352,19 @@ public final class ManagedKeyProofChallenge {
          * @param lifecycleContextCommitment absent for v2; frozen lifecycle/TBS context SHA-256 for v3
          */
         public CaContext {
-            SigningSubmissionId parent = SigningSubmissionId.parse(Objects.requireNonNull(parentId, "parentId"));
+            SigningSubmissionId parent =
+                    SigningSubmissionId.parse(Objects.requireNonNull(parentId, "parentId"));
             requireOperation(parentId, parent.namespace());
-            if (intentCommitment == null || !intentCommitment.matches("ca-intent:v1:[0-9a-f]{64}")) {
+            if (intentCommitment == null
+                    || !intentCommitment.matches("ca-intent:v1:[0-9a-f]{64}")) {
                 throw invalid();
             }
             Objects.requireNonNull(role, "role");
             Objects.requireNonNull(lifecycleContextCommitment, "lifecycleContextCommitment");
             if (role.isPresent() != lifecycleContextCommitment.isPresent()
-                    || lifecycleContextCommitment.filter(value -> !value.matches("[0-9a-f]{64}")).isPresent()) {
+                    || lifecycleContextCommitment
+                            .filter(value -> !value.matches("[0-9a-f]{64}"))
+                            .isPresent()) {
                 throw invalid();
             }
         }
@@ -435,17 +393,20 @@ public final class ManagedKeyProofChallenge {
     /**
      * Retains the version-four responder proof context before a certificate exists.
      *
-     * <p>The context binds a real parent signing operation and frozen candidate, rather
-     * than representing the candidate as an already-issued responder credential.
+     * <p>The context binds a real parent signing operation and frozen candidate, rather than
+     * representing the candidate as an already-issued responder credential.
      *
      * @param parentOperationId canonical parent signing-operation identity
      * @param parentIntentCommitment exact {@code ocsp-intent:v1:} responder-command commitment
      * @param role primary or alternative subject-key role being proved
-     * @param frozenTargetCommitment final TBS and selection digest as 64 lowercase
-     *        hexadecimal characters
+     * @param frozenTargetCommitment final TBS and selection digest as 64 lowercase hexadecimal
+     *     characters
      */
-    public record ResponderCandidateContext(PkiId parentOperationId, String parentIntentCommitment,
-            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role, String frozenTargetCommitment) {
+    public record ResponderCandidateContext(
+            PkiId parentOperationId,
+            String parentIntentCommitment,
+            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role,
+            String frozenTargetCommitment) {
         /**
          * Validates the coordinates using the managed responder proof-target contract.
          *
@@ -457,17 +418,18 @@ public final class ManagedKeyProofChallenge {
          * @param frozenTargetCommitment final TBS and selection digest as 64 lowercase hexadecimal characters
          */
         public ResponderCandidateContext {
-            new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(parentOperationId, parentIntentCommitment,
-                    frozenTargetCommitment, role);
+            new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(
+                    parentOperationId, parentIntentCommitment, frozenTargetCommitment, role);
         }
+
         /**
          * Reconstructs the exact typed scope target represented by this context.
          *
          * @return a new immutable proof target with the same parent, commitments and role
          */
         public zeroecho.pki.api.signing.ManagedOcspResponderProofTarget target() {
-            return new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(parentOperationId, parentIntentCommitment,
-                    frozenTargetCommitment, role);
+            return new zeroecho.pki.api.signing.ManagedOcspResponderProofTarget(
+                    parentOperationId, parentIntentCommitment, frozenTargetCommitment, role);
         }
     }
     private static void requireResponderContext(PkiId stepId, Instant deadline, ResponderCandidateContext context) {
@@ -480,19 +442,7 @@ public final class ManagedKeyProofChallenge {
             throw invalid();
         }
     }
-    private static ResponderCandidateContext readResponderContext(DataInputStream input) throws IOException {
-        if (input.readUnsignedByte() != 1) {
-            throw invalid();
-        }
-        PkiId parent = new PkiId(readText(input, 4096));
-        String intent = "ocsp-intent:v1:" + HexFormat.of().formatHex(exact(input, 32));
-        zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role = switch (input.readUnsignedByte()) {
-            case 1 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY;
-            case 2 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE;
-            default -> throw invalid();
-        };
-        return new ResponderCandidateContext(parent, intent, role, HexFormat.of().formatHex(exact(input, 32)));
-    }
+
 
     private static void requireContext(PkiId stepId, Instant deadline, Optional<CaContext> context) {
         SigningSubmissionId step = SigningSubmissionId.parse(stepId);
@@ -528,8 +478,15 @@ public final class ManagedKeyProofChallenge {
     /* default */ static void requireOperation(PkiId id, String namespace) {
         ManagedKeyProofCommand.utf8Length(id.value(), 4096);
         SigningSubmissionId parsed = SigningSubmissionId.parse(id);
-        String exact = "zsign:v1:" + parsed.namespace() + ':' + parsed.createdAt().toEpochMilli() + ':'
-                + id.value().substring(id.value().lastIndexOf(':') + 1).toLowerCase(java.util.Locale.ROOT);
+        String exact =
+                "zsign:v1:"
+                        + parsed.namespace()
+                        + ':'
+                        + parsed.createdAt().toEpochMilli()
+                        + ':'
+                        + id.value()
+                                .substring(id.value().lastIndexOf(':') + 1)
+                                .toLowerCase(java.util.Locale.ROOT);
         if (!namespace.equals(parsed.namespace()) || !exact.equals(id.value())) {
             throw invalid();
         }
@@ -543,13 +500,138 @@ public final class ManagedKeyProofChallenge {
         try {
             new StreamingDerReader().validateSubjectPublicKeyInfo(spki, ManagedKeyProofCommand.MAX_SPKI_BYTES);
         } catch (IOException malformed) {
-            throw new IllegalArgumentException("Managed key proof public key is not canonical DER", malformed);
+            throw new IllegalArgumentException(
+                    "Managed key proof public key is not canonical DER", malformed);
         }
     }
 
     private static void write(ByteBuffer output, byte[] bytes) {
         output.putInt(bytes.length).put(bytes);
     }
+
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("Managed key proof challenge is invalid");
+    }
+
+    private record DecodingContext(
+            PkiId operationId,
+            Instant deadline,
+            Optional<ResponderCandidateContext> candidateContext,
+            Optional<CaContext> context) {}
+
+    /** Bounded binary challenge decoding, separate from challenge construction. */
+    private static final class Decoder {
+        private static DecodingContext readIdentity(DataInputStream input) throws IOException {
+            if (!Arrays.equals(input.readNBytes(MAGIC.length), MAGIC)) {
+                throw invalid();
+            }
+            int version = input.readInt();
+            if (version != VERSION
+                    && version != ROLE_CONTEXT_VERSION
+                    && version != RESPONDER_CONTEXT_VERSION) {
+                throw invalid();
+            }
+            PkiId operationId = new PkiId(readText(input, 4096));
+            long seconds = input.readLong();
+            int nanos = input.readInt();
+            if (nanos < 0 || nanos >= 1_000_000_000) {
+                throw invalid();
+            }
+            Instant deadline = Instant.ofEpochSecond(seconds, nanos);
+            Optional<ResponderCandidateContext> candidateContext =
+                    version == RESPONDER_CONTEXT_VERSION
+                            ? Optional.of(readResponderContext(input))
+                            : Optional.empty();
+            Optional<CaContext> context =
+                    version == RESPONDER_CONTEXT_VERSION
+                            ? Optional.empty()
+                            : readContext(input, version);
+            if (candidateContext.isPresent()) {
+                requireResponderContext(operationId, deadline, candidateContext.orElseThrow());
+            } else {
+                requireContext(operationId, deadline, context);
+            }
+            return new DecodingContext(operationId, deadline, candidateContext, context);
+        }
+
+        private static Decoded decode(byte[] challenge) {
+            Objects.requireNonNull(challenge, "challenge");
+            if (challenge.length == 0
+                    || challenge.length > ManagedKeyProofCommand.MAX_CHALLENGE_BYTES) {
+                throw invalid();
+            }
+            try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(challenge))) {
+                DecodingContext identity = readIdentity(input);
+                PkiId operationId = identity.operationId();
+                Instant deadline = identity.deadline();
+                Optional<ResponderCandidateContext> candidateContext = identity.candidateContext();
+                Optional<CaContext> context = identity.context();
+                byte[] nonce = exact(input, NONCE_BYTES);
+                List<String> metadata = new ArrayList<>(10);
+                for (int index = 0; index <= 6; index++) {
+                    metadata.add(readText(input, ManagedKeyProofCommand.MAX_COMMAND_BYTES));
+                }
+                metadata.add(HexFormat.of().formatHex(exact(input, 32)));
+                metadata.add(readText(input, 8192));
+                metadata.add(
+                        HexFormat.of()
+                                .formatHex(
+                                        read(
+                                                input,
+                                                ManagedKeyProofCommand.MAX_ALGORITHM_DER_BYTES)));
+                byte[] spki = read(input, ManagedKeyProofCommand.MAX_SPKI_BYTES);
+                if (input.available() != 0) {
+                    throw invalid();
+                }
+                requireSpki(spki);
+                requireOperation(operationId, metadata.get(6));
+                DomainCommandEncoding.Decoded command =
+                        complete(
+                                metadata,
+                                spki,
+                                challenge.length,
+                                ContentCommitment.sha256(challenge).sha256());
+                ManagedKeyProofCommand.validateComplete(command);
+                boolean candidate = OCSP_CANDIDATE_KIND.equals(command.field(0));
+                if (candidate != candidateContext.isPresent()) {
+                    throw invalid();
+                }
+                if (candidate
+                        && !Arrays.equals(
+                                challenge,
+                                encodeCandidate(
+                                        operationId,
+                                        deadline,
+                                        candidateContext.orElseThrow(),
+                                        metadata,
+                                        nonce,
+                                        spki))) {
+                    throw invalid();
+                }
+                return new Decoded(
+                        operationId, deadline, context, nonce, command, spki, candidateContext);
+            } catch (IOException | java.time.DateTimeException malformed) {
+                throw new IllegalArgumentException(
+                        "Managed key proof challenge is truncated or invalid", malformed);
+            }
+        }
+
+        private static ResponderCandidateContext readResponderContext(DataInputStream input)
+                throws IOException {
+            if (input.readUnsignedByte() != CHALLENGE_VERSION) {
+                throw invalid();
+            }
+            PkiId parent = new PkiId(readText(input, 4096));
+            String intent = "ocsp-intent:v1:" + HexFormat.of().formatHex(exact(input, 32));
+            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role =
+                    switch (input.readUnsignedByte()) {
+                        case 1 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY;
+                        case 2 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE;
+                        default -> throw invalid();
+                    };
+            return new ResponderCandidateContext(
+                    parent, intent, role, HexFormat.of().formatHex(exact(input, 32)));
+        }
 
     private static byte[] read(DataInputStream input, int maximum) throws IOException {
         int length = input.readInt();
@@ -558,14 +640,12 @@ public final class ManagedKeyProofChallenge {
         }
         return exact(input, length);
     }
-
     private static byte[] exact(DataInputStream input, int length) throws IOException {
         if (length > input.available()) {
             throw invalid();
         }
         return input.readNBytes(length);
     }
-
     private static String readText(DataInputStream input, int maximum) throws IOException {
         byte[] bytes = read(input, maximum);
         String value = new String(bytes, StandardCharsets.UTF_8);
@@ -574,11 +654,6 @@ public final class ManagedKeyProofChallenge {
         }
         return value;
     }
-
-    private static IllegalArgumentException invalid() {
-        return new IllegalArgumentException("Managed key proof challenge is invalid");
-    }
-
     private static Optional<CaContext> readContext(DataInputStream input, int version) throws IOException {
         int contextFlag = input.readUnsignedByte();
         if (contextFlag > CONTEXT_PRESENT || version == ROLE_CONTEXT_VERSION && contextFlag != CONTEXT_PRESENT) {
@@ -592,11 +667,13 @@ public final class ManagedKeyProofChallenge {
         if (version == VERSION) {
             return Optional.of(new CaContext(parent, intent));
         }
-        zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role = switch (input.readUnsignedByte()) {
-            case 1 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY;
-            case 2 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE;
-            default -> throw invalid();
-        };
+            zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole role =
+                    switch (input.readUnsignedByte()) {
+                        case 1 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY;
+                        case 2 -> zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE;
+                        default -> throw invalid();
+                    };
         return Optional.of(new CaContext(parent, intent, Optional.of(role), Optional.of(HexFormat.of().formatHex(exact(input, 32)))));
+    }
     }
 }

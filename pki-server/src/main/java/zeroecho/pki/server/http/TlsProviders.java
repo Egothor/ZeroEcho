@@ -40,16 +40,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.ServiceLoader;
 import java.util.Set;
-
 import javax.net.ssl.SSLContext;
-
 import zeroecho.pki.server.spi.PkiServerTlsProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
 /**
  * Deterministic explicit TLS-provider selection.
  */
-final class TlsProviders {
+/* default */ final class TlsProviders {
     private TlsProviders() {
     }
 
@@ -63,6 +61,9 @@ final class TlsProviders {
      * @throws IllegalStateException if provider identities are ambiguous, the configured provider
      *         is unavailable or initialization fails
      */
+    /* default */
+    // Provider plugins may throw arbitrary failures; keep the original finite safe diagnostic boundary.
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace"})
     static SSLContext create(ProviderConfig configuration, ClassLoader loader) {
         Objects.requireNonNull(configuration, "configuration");
         List<PkiServerTlsProvider> providers = new ArrayList<>();

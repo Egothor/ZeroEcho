@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import java.util.Set;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -44,9 +46,7 @@ import java.util.Optional;
 /**
  * Durable, scoped, mandatory-expiry emergency authorization service.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.ExcessiveParameterList" })
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel", "PMD.ExcessiveParameterList"})
 public final class BreakGlassService {
     /**
      * Break-glass lifecycle states.
@@ -69,7 +69,7 @@ public final class BreakGlassService {
          */
         PENDING(4);
         private final int code;
-        State(int code) { this.code = code; }
+        /* default */ State(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -186,7 +186,7 @@ public final class BreakGlassService {
      * @param grants immutable active grants
      * @param grantIds immutable identifiers of the active grants
      */
-    public record ActiveGrants(List<Permission.Grant> grants, java.util.Set<String> grantIds) {
+    public record ActiveGrants(List<Permission.Grant> grants, Set<String> grantIds) {
         /**
          * Defensively snapshots active grants.
          * @param grants immutable active grants
@@ -195,7 +195,7 @@ public final class BreakGlassService {
          */
         public ActiveGrants {
             grants = List.copyOf(Objects.requireNonNull(grants, "grants"));
-            grantIds = java.util.Set.copyOf(Objects.requireNonNull(grantIds, "grantIds"));
+            grantIds = Set.copyOf(Objects.requireNonNull(grantIds, "grantIds"));
         }
     }
 
@@ -278,7 +278,7 @@ public final class BreakGlassService {
      */
     public synchronized Record revoke(String breakGlassId, String actorPrincipalId) {
         Record current = requireCurrent(breakGlassId);
-        if (current.state() != State.ACTIVE) throw new IllegalStateException("Break-glass grant is not active");
+        if (current.state() != State.ACTIVE) { throw new IllegalStateException("Break-glass grant is not active"); }
         Record revoked = copy(current, State.REVOKED);
         store.replaceBreakGlass(current, revoked);
         audit.record("BREAK_GLASS_REVOKE", actorPrincipalId, Optional.empty(), Map.of("state", "REVOKED"));

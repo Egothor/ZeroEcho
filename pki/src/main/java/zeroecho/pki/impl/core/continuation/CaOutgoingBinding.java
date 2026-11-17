@@ -34,18 +34,19 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.ca.IssuerKeyBinding;
 import zeroecho.pki.spi.store.DomainContinuationStore;
+
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Retains the exact outgoing CA signer evidence captured before certificate signing.
@@ -95,7 +96,7 @@ public record CaOutgoingBinding(IssuerKeyBinding primary, Optional<IssuerKeyBind
      * @throws IllegalArgumentException if the encoded domain command exceeds its bounds
      */
     public String encode() {
-        ArrayList<String> fields = new ArrayList<String>();
+        List<String> fields = new ArrayList<>();
         append(fields, primary);
         fields.add(alternative.isPresent() ? "1" : "0");
         alternative.ifPresent(value -> append(fields, value));
@@ -114,7 +115,7 @@ public record CaOutgoingBinding(IssuerKeyBinding primary, Optional<IssuerKeyBind
      * @throws IllegalArgumentException if the encoded domain command exceeds its bounds
      */
     public String encodeForSubject() {
-        ArrayList<String> fields = new ArrayList<String>();
+        List<String> fields = new ArrayList<>();
         append(fields, primary);
         fields.removeFirst();
         fields.add(alternative.isPresent() ? "1" : "0");
@@ -148,7 +149,7 @@ public record CaOutgoingBinding(IssuerKeyBinding primary, Optional<IssuerKeyBind
             throw new IllegalArgumentException("Noncanonical CA binding");
         }
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(new EncodedObject(Encoding.BINARY, bytes));
-        if (!command.operation().equals("CA_OUTGOING_SUBJECT_V1")) {
+        if (!"CA_OUTGOING_SUBJECT_V1".equals(command.operation())) {
             throw new IllegalArgumentException("Unknown CA binding schema");
         }
         boolean alternative = switch (command.field(4)) {
@@ -157,10 +158,11 @@ public record CaOutgoingBinding(IssuerKeyBinding primary, Optional<IssuerKeyBind
             default -> throw new IllegalArgumentException("Unknown alternative discriminator");
         };
         command.requireFields(alternative ? 11 : 6);
-        ArrayList<String> fields = new ArrayList<String>();
+        List<String> fields = new ArrayList<>();
         fields.add(primaryReference.value());
         fields.addAll(command.fields());
-        DomainCommandEncoding.Decoded expanded = new DomainCommandEncoding.Decoded("CA_OUTGOING_BINDING_V1", fields);
+        DomainCommandEncoding.Decoded expanded =
+                new DomainCommandEncoding.Decoded("CA_OUTGOING_BINDING_V1", fields);
         return new CaOutgoingBinding(key(expanded, 0), alternative ? Optional.of(key(expanded, 6)) : Optional.empty(),
                 expanded.field(alternative ? 11 : 6));
     }
@@ -184,7 +186,7 @@ public record CaOutgoingBinding(IssuerKeyBinding primary, Optional<IssuerKeyBind
             throw new IllegalArgumentException("Noncanonical CA binding");
         }
         DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(new EncodedObject(Encoding.BINARY, bytes));
-        if (!command.operation().equals("CA_OUTGOING_BINDING_V1")) {
+        if (!"CA_OUTGOING_BINDING_V1".equals(command.operation())) {
             throw new IllegalArgumentException("Unknown CA binding schema");
         }
         boolean alternative = switch (command.field(5)) {

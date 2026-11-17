@@ -74,11 +74,7 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
  * payload and audit input getters are not generic secret-redaction functions.</p>
  */
 // Realm services share one lifecycle and authorization boundary; splitting them would duplicate state.
-@SuppressWarnings({ "PMD.CommentDefaultAccessModifier", "PMD.CloseResource", "PMD.UseProperClassLoader",
-        "PMD.AvoidCatchingGenericException", "PMD.LinguisticNaming", "PMD.ControlStatementBraces",
-        "PMD.PreserveStackTrace", "PMD.CommentRequired",
-        "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops",
-        "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects" })
+@SuppressWarnings({"PMD.CloseResource", "PMD.UseProperClassLoader", "PMD.AvoidCatchingGenericException", "PMD.LinguisticNaming", "PMD.PreserveStackTrace", "PMD.CommentRequired", "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops", "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects"})
 public final class ServerRealmContext implements AutoCloseable { // NOPMD TooManyMethods - One cohesive gateway, realm ownership boundary, or durable store SPI implementation.
     /**
      * Closed lifecycle states.
@@ -234,7 +230,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IllegalArgumentException if storage topology, control-log path is invalid
      * @throws IllegalStateException if control/session recovery or provider/integrity initialization fails
      */
-    static ServerRealmContext open(ServerRealmConfiguration configuration,
+    /* default */ static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random) {
         return open(configuration, dependencies, clock, random, Optional.empty());
     }
@@ -252,7 +248,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IllegalArgumentException if storage topology, control-log path or SDK origin is invalid
      * @throws IllegalStateException if control/session recovery or provider/integrity initialization fails
      */
-    static ServerRealmContext open(ServerRealmConfiguration configuration,
+    /* default */ static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random, Optional<String> sdkOrigin) {
         Objects.requireNonNull(sdkOrigin, "sdkOrigin").ifPresent(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame::requireOrigin);
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
@@ -326,9 +322,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
         zeroecho.pki.spi.ProviderConfig store = configuration.pkiSessionConfiguration().store();
         if (!"fs".equals(Objects.requireNonNull(store.backendId()))) { return; }
         Path root = Path.of(store.require("root")).toAbsolutePath().normalize();
-        if (root.getParent() == null) return;
+        if (root.getParent() == null) { return; }
         Path journal = root.getParent().resolve("." + root.getFileName() + ".restore-control/journal");
-        if (!Files.exists(journal)) return;
+        if (!Files.exists(journal)) { return; }
         if (configuration.controlLogPath().startsWith(root)) {
             throw new IllegalArgumentException("RESTORE_COLOCATED_SERVER_AUTHORITY");
         }
@@ -353,8 +349,8 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IOException if topology validation, spool recovery or restore reconciliation fails
      * @throws IllegalStateException if a companion is already installed or streaming backup is unavailable
      */
-    void installBackupTransfer(BackupTransferConfiguration transfer, Clock clock, SecureRandom random) throws IOException {
-        if (backupTransfers != null) throw new IllegalStateException("Backup transfer already installed");
+    /* default */ void installBackupTransfer(BackupTransferConfiguration transfer, Clock clock, SecureRandom random) throws IOException {
+        if (backupTransfers != null) { throw new IllegalStateException("Backup transfer already installed"); }
         validateTransferTopology(transfer);
         BackupArtifactRepository repository = new BackupArtifactRepository(transfer,
                 configuration.realmId().value(), clock, random);
@@ -378,10 +374,10 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @param clock enrollment expiry and audit time source
      * @throws IllegalStateException if the realm is not open or the runtime is already installed
      */
-    void installEnrollmentRuntime(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration configured,
+    /* default */ void installEnrollmentRuntime(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration configured,
             PkiSessionRuntimeDependencies dependencies, Clock clock) {
         requireOpen();
-        if (enrollmentRuntime != null) throw new IllegalStateException("Enrollment runtime already installed");
+        if (enrollmentRuntime != null) { throw new IllegalStateException("Enrollment runtime already installed"); }
         enrollmentRuntime = zeroecho.pki.server.enrollment.EnrollmentRuntime.open(configured, configuration,
                 session.repository(), control, enrollmentEndpoints, dependencies, clock, backupTransferConfiguration());
     }
@@ -405,9 +401,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IllegalStateException if the realm is not open or coordination is already installed
      * @throws java.util.NoSuchElementException if the required enrollment runtime is absent
      */
-    void installEnrollmentCoordinator(PkiServerConfiguration.Authentication authentication, Clock clock) {
+    /* default */ void installEnrollmentCoordinator(PkiServerConfiguration.Authentication authentication, Clock clock) {
         requireOpen();
-        if (enrollmentCoordinator != null) throw new IllegalStateException("Enrollment coordinator already installed");
+        if (enrollmentCoordinator != null) { throw new IllegalStateException("Enrollment coordinator already installed"); }
         enrollmentCoordinator = new zeroecho.pki.server.enrollment.EnrollmentCoordinator(control, configuration, session,
                 enrollmentEndpoints, enrollmentProfiles, acmeControl, enrollmentRuntime().orElseThrow(),
                 new zeroecho.pki.server.enrollment.EnrollmentIdentityAliases(configuration.realmId(), authentication), clock);
@@ -435,10 +431,10 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
 
     private void validateTransferTopology(BackupTransferConfiguration transfer) throws IOException {
         zeroecho.pki.spi.ProviderConfig store = configuration.pkiSessionConfiguration().store();
-        if (!"fs".equals(store.backendId())) throw new IOException("Backup transfer requires the filesystem store");
+        if (!"fs".equals(store.backendId())) { throw new IOException("Backup transfer requires the filesystem store"); }
         Path root = Path.of(store.require("root")).toRealPath();
         Path spool = transfer.directory().toRealPath();
-        if (spool.startsWith(root) || root.startsWith(spool)) throw new IOException("BACKUP_STORAGE_OVERLAP");
+        if (spool.startsWith(root) || root.startsWith(spool)) { throw new IOException("BACKUP_STORAGE_OVERLAP"); }
         java.util.List<Path> authorities = new java.util.ArrayList<>();
         authorities.add(configuration.controlLogPath());
         configuration.pkiSessionConfiguration().audit().get("root").ifPresent(value -> authorities.add(Path.of(value)));
@@ -460,7 +456,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @return replacement dependencies carrying the exact signature-proof provider and policy
      * @throws NullPointerException if either argument is null
      */
-    static PkiSessionRuntimeDependencies confirmationProofRuntime(
+    /* default */ static PkiSessionRuntimeDependencies confirmationProofRuntime(
             ServerRealmConfiguration configuration, PkiSessionRuntimeDependencies dependencies) {
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
         PkiSessionRuntimeDependencies runtime = Objects.requireNonNull(dependencies, "dependencies");
@@ -515,7 +511,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IllegalStateException if the realm is not open
      * @throws SecurityException if configured or previously pinned administrator identity differs
      */
-    void recordInitialAdministrator(String administrator) {
+    /* default */ void recordInitialAdministrator(String administrator) {
         requireOpen();
         ManagedKeyGenerationService.pinInitialAdministrator(configuration, control, administrator);
     }
@@ -647,7 +643,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @param cancellation cooperative projection cancellation
      * @return combined immediate/earliest retry scheduling hints
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // A projector failure must not stop scheduling.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // A projector failure must not stop scheduling.
     /* default */ AuditProjectionWorker.EvidenceHint runEvidenceProjections(int maximumRecords,
             int maximumSinkCalls, zeroecho.core.io.CancellationSignal cancellation) {
         boolean immediate = false;
@@ -744,7 +740,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
                 Permission.Action.OCSP_STATUS_QUERY, resource, Permission.Relationship.ANY,
                 Permission.DataView.METADATA_REDACTED, Permission.Context.empty(), grants,
                 emergency.grantIds()));
-        if (decision.usedBreakGlass()) breakGlass.auditUse(principalId);
+        if (decision.usedBreakGlass()) { breakGlass.auditUse(principalId); }
         return decision;
     }
     /**
@@ -775,13 +771,13 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      *
      * @return nonnegative request count including rejected requests
      */
-    long adminRequestsTotal() { return adminRequests.get(); }
+    /* default */ long adminRequestsTotal() { return adminRequests.get(); }
     /**
      * Returns the saturating count of recorded status-schedule failures.
      *
      * @return nonnegative cumulative schedule-failure count
      */
-    long scheduleFailureTotal() { return scheduleFailures.get(); }
+    /* default */ long scheduleFailureTotal() { return scheduleFailures.get(); }
     /**
      * Counts approvals still pending at the supplied observation time.
      *
@@ -789,7 +785,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @return current pending-approval count
      * @throws IllegalStateException if the realm is not open
      */
-    long pendingApprovalCount(java.time.Instant now) { requireOpen(); return control.pendingApprovalCount(now); }
+    /* default */ long pendingApprovalCount(java.time.Instant now) { requireOpen(); return control.pendingApprovalCount(now); }
 
     /**
      * Sums current consecutive failure counts across revocation and evidence audit projections.
@@ -798,10 +794,10 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @throws IllegalStateException if the realm is not open
      * @throws ArithmeticException if the sum exceeds the signed-long range
      */
-    long auditProjectionFailureTotal() {
+    /* default */ long auditProjectionFailureTotal() {
         requireOpen();
         long count = RevocationAuditProjectionState.load(control).map(value -> (long) value.state().failureCount()).orElse(0L);
-        for (AuditEvidenceProjector projector : evidenceProjectors) count = Math.addExact(count, projector.failureCount());
+        for (AuditEvidenceProjector projector : evidenceProjectors) { count = Math.addExact(count, projector.failureCount()); }
         return count;
     }
 
@@ -811,7 +807,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @param code safe stable failure code, used in the warning log and audit details
      * @throws NullPointerException if code is null
      */
-    void recordScheduleFailure(String code) {
+    /* default */ void recordScheduleFailure(String code) {
         scheduleFailures.updateAndGet(value -> value == Long.MAX_VALUE ? value : value + 1);
         SCHEDULE_LOG.log(java.util.logging.Level.WARNING, "Status schedule failure: code={0}", code);
         audit.record("STATUS_SCHEDULE_FAILURE", "system", Optional.empty(), Map.of("code", code));
@@ -975,7 +971,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
      * @param workerThread whether closure originates from an owned server worker
      * @throws IOException if checked resource closure fails
      */
-    void closeFromServerWorker(boolean workerThread) throws IOException {
+    /* default */ void closeFromServerWorker(boolean workerThread) throws IOException {
         closeGate.close(workerThread, this::quiesce, this::closeAttempt);
     }
 
@@ -985,9 +981,9 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
 
     private Throwable closeAttempt() {
         quiesce();
-        Throwable primary = null;
         try { administrativeRequests.close(); }
         catch (Throwable failure) { return failure; }
+        Throwable primary = null;
         if (closeAuditAttempted.compareAndSet(false, true)) {
             try {
                 audit.record("REALM_CLOSE", "system", Optional.empty(),
@@ -1032,7 +1028,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     }
 
     private void requireOpen() {
-        if (state.get() != State.OPEN) throw new IllegalStateException("Server realm is not open");
+        if (state.get() != State.OPEN) { throw new IllegalStateException("Server realm is not open"); }
     }
 
     private static DurableTransactionalMetadataStore openControl(ServerRealmConfiguration configuration) {
@@ -1068,12 +1064,12 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
     private static void closeAfterFailure(PkiSession session, AuditSink audit, ServerControlStore control,
             Throwable primary) {
         Throwable result = closeOne(session, primary);
-        if (session == null) result = closeOne(audit, result);
+        if (session == null) { result = closeOne(audit, result); }
         closeOne(control, result);
     }
 
     private static Throwable closeOne(AutoCloseable resource, Throwable primary) {
-        if (resource == null) return primary;
+        if (resource == null) { return primary; }
         try {
             resource.close();
         } catch (Throwable failure) {
@@ -1111,7 +1107,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          * {@inheritDoc}
          */
         @Override public synchronized void record(zeroecho.pki.api.audit.AuditEvent event) {
-            if (closed) throw new IllegalStateException("Audit sink is closed");
+            if (closed) { throw new IllegalStateException("Audit sink is closed"); }
             delegate.record(event);
         }
         /**
@@ -1126,7 +1122,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          *
          * @return whether the underlying sink supports bounded search and hash-chain verification
          */
-        synchronized boolean supportsQuery() {
+        /* default */ synchronized boolean supportsQuery() {
             return delegate instanceof zeroecho.pki.api.audit.AuditService
                     && delegate instanceof zeroecho.pki.api.audit.AuditIntegrityService;
         }
@@ -1137,7 +1133,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          */
         @Override public synchronized java.util.List<zeroecho.pki.api.audit.AuditEvent> search(
                 zeroecho.pki.api.audit.AuditQuery query) {
-            if (closed) throw new IllegalStateException("Audit sink is closed");
+            if (closed) { throw new IllegalStateException("Audit sink is closed"); }
             return ((zeroecho.pki.api.audit.AuditService) delegate).search(query);
         }
         /**
@@ -1145,7 +1141,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          */
         @Override public synchronized Optional<zeroecho.pki.api.audit.AuditEvent> get(
                 zeroecho.pki.api.PkiId eventId) {
-            if (closed) throw new IllegalStateException("Audit sink is closed");
+            if (closed) { throw new IllegalStateException("Audit sink is closed"); }
             return ((zeroecho.pki.api.audit.AuditService) delegate).get(eventId);
         }
         /**
@@ -1153,7 +1149,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          */
         @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyIntegrity(
                 Optional<zeroecho.pki.api.audit.AuditChainHead> expectedHead) {
-            if (closed) throw new IllegalStateException("Audit sink is closed");
+            if (closed) { throw new IllegalStateException("Audit sink is closed"); }
             return ((zeroecho.pki.api.audit.AuditIntegrityService) delegate).verifyIntegrity(expectedHead);
         }
         /**
@@ -1161,7 +1157,7 @@ public final class ServerRealmContext implements AutoCloseable { // NOPMD TooMan
          */
         @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyAnchoredPrefix(
                 zeroecho.pki.api.audit.AuditChainHead anchor) {
-            if (closed) throw new IllegalStateException("Audit sink is closed");
+            if (closed) { throw new IllegalStateException("Audit sink is closed"); }
             return ((zeroecho.pki.api.audit.AuditIntegrityService) delegate).verifyAnchoredPrefix(anchor);
         }
     }

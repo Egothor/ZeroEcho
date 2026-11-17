@@ -93,7 +93,8 @@ final class SigningProjectionCutoverGate {
     /**
      * Excludes new projection captures and waits interruptibly for existing captures to drain.
      *
-     * @throws InterruptedException if lock acquisition or draining is interrupted; an already closed cutover remains closed until explicitly reopened
+     * @throws InterruptedException if lock acquisition or draining is interrupted; an already closed
+     * cutover remains closed until explicitly reopened
      * @throws IllegalStateException if the gate is closed or another cutover already owns exclusion
      */
     /* default */ void closeCutoverAndDrain() throws InterruptedException {

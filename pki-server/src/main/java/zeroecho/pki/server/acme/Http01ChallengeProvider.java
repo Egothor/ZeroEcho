@@ -45,6 +45,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.Comparator;
 import java.util.Set;
 
@@ -66,6 +67,7 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
      * Creates the stateless built-in HTTP-01 challenge provider.
      */
     public Http01ChallengeProvider() {
+        // Stateless provider; all settings belong to the individual validation invocation.
     }
 
     /**
@@ -96,12 +98,11 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
             boolean probeCompleted = false;
             for (InetAddress address : resolved) {
                 cancellation.throwIfCancelled();
-                try {
-                    Result result = probe(address, context, settings, cancellation);
+                Optional<Result> observed = availableProbe(address, context, settings, cancellation);
+                if (observed.isPresent()) {
+                    Result result = observed.orElseThrow();
                     probeCompleted = true;
-                    if (result.valid()) return result;
-                } catch (java.io.IOException unavailable) {
-                    // Continue across the complete bounded, policy-validated DNS answer set.
+                    if (result.valid()) { return result; }
                 }
             }
             return invalid(context, probeCompleted ? "KEY_AUTHORIZATION_MISMATCH" : "HTTP_VALIDATION_FAILED");
@@ -111,7 +112,7 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
     }
 
     private static Result probe(InetAddress address, Context context, Settings settings,
-            CancellationSignal cancellation) throws Exception {
+            CancellationSignal cancellation) throws java.io.IOException {
         long remaining = Math.max(1L, Duration.between(context.validationTime(), context.deadline()).toMillis());
         int timeout = Math.toIntExact(Math.min(settings.timeoutMillis(), remaining));
         try (Socket socket = new Socket()) {
@@ -119,11 +120,11 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
             String request = "GET /.well-known/acme-challenge/" + context.token()
                     + " HTTP/1.1\r\nHost: " + context.identifier().value()
                     + "\r\nConnection: close\r\nAccept: text/plain\r\n\r\n";
-            OutputStream output = socket.getOutputStream(); output.write(request.getBytes(StandardCharsets.US_ASCII));
-            output.flush(); cancellation.throwIfCancelled();
+            writeRequest(socket.getOutputStream(), request);
+            cancellation.throwIfCancelled();
             byte[] response = bounded(socket.getInputStream(), settings.maximumBodyBytes() + 16_384, cancellation);
             int boundary = indexOf(response, "\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-            if (boundary < 0 || boundary > 16_384) return invalid(context, "HTTP_RESPONSE_MALFORMED");
+            if (boundary < 0 || boundary > 16_384) { return invalid(context, "HTTP_RESPONSE_MALFORMED"); }
             String headers = new String(response, 0, boundary, StandardCharsets.US_ASCII);
             if (!headers.startsWith("HTTP/1.1 200 ") && !headers.startsWith("HTTP/1.0 200 ")) {
                 return invalid(context, "HTTP_STATUS_REJECTED");
@@ -136,20 +137,21 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
         }
     }
 
-    private static byte[] bounded(InputStream input, int maximum, CancellationSignal cancellation) throws Exception {
+    private static byte[] bounded(InputStream input, int maximum, CancellationSignal cancellation) throws java.io.IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(Math.min(maximum, 8_192)); byte[] buffer = new byte[4_096];
         int read; while ((read = input.read(buffer)) >= 0) { cancellation.throwIfCancelled();
-            if (bytes.size() + read > maximum) throw new IllegalArgumentException("HTTP response bound exceeded");
+            if (bytes.size() + read > maximum) { throw new IllegalArgumentException("HTTP response bound exceeded"); }
             bytes.write(buffer, 0, read); }
         return bytes.toByteArray();
     }
 
     private static boolean globallyRoutable(InetAddress address) {
         if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress() || address.isMulticastAddress()) return false;
+                || address.isSiteLocalAddress() || address.isMulticastAddress()) { return false; }
         byte[] raw = address.getAddress();
         if (address instanceof Inet4Address) {
-            int first = Byte.toUnsignedInt(raw[0]), second = Byte.toUnsignedInt(raw[1]);
+            int first = Byte.toUnsignedInt(raw[0]);
+            int second = Byte.toUnsignedInt(raw[1]);
             return first != 0 && first != 127 && !(first == 100 && second >= 64 && second <= 127)
                     && !(first == 169 && second == 254) && first < 224;
         }
@@ -181,12 +183,40 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
     private static int integer(ProviderConfig config, String key, int minimum, int maximum) {
         return integer(config.require(key), minimum, maximum);
     }
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static int integer(String source, int minimum, int maximum) {
-        try { int value = Integer.parseInt(source); if (value < minimum || value > maximum) throw new NumberFormatException(); return value; }
+        try { int value = Integer.parseInt(source); return requireBound(value, minimum, maximum); }
         catch (NumberFormatException failure) { throw new IllegalArgumentException("HTTP-01 provider bound is invalid"); }
     }
-    private static int indexOf(byte[] value, byte[] needle) { outer: for (int i = 0; i <= value.length - needle.length; i++) { for (int j = 0; j < needle.length; j++) if (value[i + j] != needle[j]) continue outer; return i; } return -1; }
+    private static int indexOf(byte[] value, byte[] needle) {
+        for (int i = 0; i <= value.length - needle.length; i++) {
+            if (matchesAt(value, needle, i)) { return i; }
+        }
+        return -1;
+    }
+    private static boolean matchesAt(byte[] value, byte[] needle, int offset) {
+        for (int j = 0; j < needle.length; j++) {
+            if (value[offset + j] != needle[j]) { return false; }
+        }
+        return true;
+    }
+
     private static Result invalid(Context context, String code) { Instant now = context.validationTime(); return new Result(false, code, now, now.plus(Duration.ofMinutes(5))); }
     private record Settings(boolean allowPrivate, int timeoutMillis, int maximumBodyBytes, int maximumAddresses,
             int targetPort) { }
+
+    private static void writeRequest(OutputStream output, String request) throws java.io.IOException {
+        output.write(request.getBytes(StandardCharsets.US_ASCII)); output.flush();
+    }
+    private static Optional<Result> availableProbe(InetAddress address, Context context, Settings settings,
+            CancellationSignal cancellation) {
+        try { return Optional.of(probe(address, context, settings, cancellation)); }
+        catch (java.io.IOException unavailable) { return Optional.empty(); }
+    }
+    private static int requireBound(int value, int minimum, int maximum) {
+        if (value < minimum || value > maximum) { throw new NumberFormatException(); }
+        return value;
+    }
+
 }

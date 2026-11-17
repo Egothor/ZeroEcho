@@ -40,11 +40,9 @@ import java.security.KeyStore;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
-
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
-
 import zeroecho.pki.server.spi.PkiServerClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -62,6 +60,7 @@ public final class Pkcs12ClientTrustProvider implements PkiServerClientTrustProv
      * Creates the stateless PKCS#12 client-trust provider.
      */
     public Pkcs12ClientTrustProvider() {
+        // Provider instances hold no mutable session state.
     }
 
     /**
@@ -102,17 +101,20 @@ public final class Pkcs12ClientTrustProvider implements PkiServerClientTrustProv
             TrustManagerFactory factory = TrustManagerFactory.getInstance(
                     TrustManagerFactory.getDefaultAlgorithm());
             factory.init(store);
-            X509TrustManager result = null;
-            for (TrustManager manager : factory.getTrustManagers()) {
-                if (manager instanceof X509TrustManager candidate) {
-                    if (result != null) throw new IllegalStateException("Administrative-client trust is ambiguous");
-                    result = candidate;
-                }
-            }
-            if (result == null) throw new IllegalStateException("Administrative-client trust is unavailable");
-            return result;
+            return selectTrustManager(factory.getTrustManagers());
         } finally {
             Arrays.fill(password, '\0');
         }
+    }
+    private static X509TrustManager selectTrustManager(TrustManager... managers) {
+            X509TrustManager result = null;
+            for (TrustManager manager : managers) {
+                if (manager instanceof X509TrustManager candidate) {
+                    if (result != null) { throw new IllegalStateException("Administrative-client trust is ambiguous"); }
+                    result = candidate;
+                }
+            }
+            if (result == null) { throw new IllegalStateException("Administrative-client trust is unavailable"); }
+            return result;
     }
 }

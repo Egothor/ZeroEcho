@@ -48,10 +48,13 @@ import zeroecho.pki.server.http.StrictJson;
  * Strict private codec: ordinary records stay version one; SDK references require version two.
  */
 final class AdministrativeRequestCodec {
+    private static final String VERSION = "version";
+    private static final String REALM_ID = "realmId";
+
     /**
      * Maximum retained administrative-request JSON payload size, in bytes.
      */
-    static final int MAXIMUM_BYTES = 524288;
+    /* default */ static final int MAXIMUM_BYTES = 524_288;
     private AdministrativeRequestCodec() { }
     /**
      * Encodes a private administrative request with version selected by its SDK-proof presence.
@@ -61,9 +64,9 @@ final class AdministrativeRequestCodec {
      * @throws NullPointerException if value is null
      * @throws IllegalArgumentException if the encoded payload exceeds 524,288 bytes
      */
-    static ServerControlStore.ProtocolRecord encode(AdministrativeRequest value) {
+    /* default */ static ServerControlStore.ProtocolRecord encode(AdministrativeRequest value) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
-        fields.put("version", number(value.sdkProof().isPresent() ? 2 : 1)); fields.put("requestId", text(value.requestId())); fields.put("revision", number(value.revision()));
+        fields.put(VERSION, number(value.sdkProof().isPresent() ? 2 : 1)); fields.put("requestId", text(value.requestId())); fields.put("revision", number(value.revision()));
         fields.put("operation", text(value.operation())); fields.put("envelope", value.envelope()); fields.put("scope", scope(value.scope()));
         fields.put("operationCommitment", text(value.operationCommitment())); fields.put("targetCommitment", text(value.targetCommitment()));
         fields.put("state", text(value.state().name())); fields.put("createdAt", text(value.createdAt().toString())); fields.put("updatedAt", text(value.updatedAt().toString()));
@@ -75,7 +78,7 @@ final class AdministrativeRequestCodec {
         value.result().ifPresent(v -> fields.put("result", v)); value.failureCode().ifPresent(v -> fields.put("failureCode", text(v)));
         value.sdkProof().ifPresent(v -> fields.put("sdkProof", object(Map.of("intentId", text(v.intentId()), "proofCommitment", text(v.proofCommitment())))));
         byte[] encoded = StrictJson.encode(object(fields));
-        if (encoded.length > MAXIMUM_BYTES) throw new IllegalArgumentException("Administrative request is too large");
+        if (encoded.length > MAXIMUM_BYTES) { throw new IllegalArgumentException("Administrative request is too large"); }
         return new ServerControlStore.ProtocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST, value.requestId(),
                 ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(encoded)), encoded);
     }
@@ -88,51 +91,51 @@ final class AdministrativeRequestCodec {
      *         invalid
      * @throws NullPointerException if a required record or nested field is absent
      */
-    static AdministrativeRequest decode(ServerControlStore.ProtocolRecord record) {
-        if (!record.namespace().equals(ServerControlStore.ADMINISTRATIVE_REQUEST)
-                || !record.commitment().equals(ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(record.payload())))) throw new IllegalArgumentException("Request record commitment differs");
-        var f = fields(StrictJson.parse(record.payload(), MAXIMUM_BYTES));
-        if (!f.keySet().containsAll(Set.of("version","requestId","revision","operation","envelope","actor","scope","operationCommitment","targetCommitment","state","createdAt","updatedAt","executionTimeoutMillis"))
-                || !Set.of("version","requestId","revision","operation","envelope","actor","scope","operationCommitment","targetCommitment","state","createdAt","updatedAt","executionTimeoutMillis","approvalId","policyCommitment","receipt","result","failureCode","profileCommitment","sdkProof").containsAll(f.keySet())
-                || (integer(f,"version") != 1 && integer(f,"version") != 2)
-                || (integer(f,"version") == 2) != f.containsKey("sdkProof")) throw new IllegalArgumentException("Request record framing is invalid");
-        var a = fields(f.get("actor"));
+    /* default */ static AdministrativeRequest decode(ServerControlStore.ProtocolRecord record) {
+        if (!ServerControlStore.ADMINISTRATIVE_REQUEST.equals(record.namespace())
+                || !record.commitment().equals(ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(record.payload())))) { throw new IllegalArgumentException("Request record commitment differs"); }
+        Map<String,PkiOperationValue> f = fields(StrictJson.parse(record.payload(), MAXIMUM_BYTES));
+        if (!f.keySet().containsAll(Set.of(VERSION,"requestId","revision","operation","envelope","actor","scope","operationCommitment","targetCommitment","state","createdAt","updatedAt","executionTimeoutMillis"))
+                || !Set.of(VERSION,"requestId","revision","operation","envelope","actor","scope","operationCommitment","targetCommitment","state","createdAt","updatedAt","executionTimeoutMillis","approvalId","policyCommitment","receipt","result","failureCode","profileCommitment","sdkProof").containsAll(f.keySet())
+                || (integer(f,VERSION) != 1 && integer(f,VERSION) != 2)
+                || integer(f,VERSION) == 2 != f.containsKey("sdkProof")) { throw new IllegalArgumentException("Request record framing is invalid"); }
+        Map<String,PkiOperationValue> a = fields(f.get("actor"));
         requireFields(a,Set.of("principalId","mode"),Set.of("principalId","mode","transportPrincipalId","evidence"));
         Optional<CertificateIdentityEvidence> evidence = Optional.ofNullable(a.get("evidence")).map(value -> {
-            var e = fields(value);
-            var evidenceFields=Set.of("realmId","certificateSha256","canonicalKeySha256","issuerSerialSha256","legacySpkiSha256");
+            Map<String,PkiOperationValue> e = fields(value);
+            Set<String> evidenceFields=Set.of(REALM_ID,"certificateSha256","canonicalKeySha256","issuerSerialSha256","legacySpkiSha256");
             requireFields(e,evidenceFields,evidenceFields);
             Set<String> spki = new TreeSet<>();
             ((PkiOperationValue.ListValue)e.get("legacySpkiSha256")).values().forEach(v -> spki.add(((PkiOperationValue.Text)v).value()));
-            return new CertificateIdentityEvidence(new RealmId(string(e,"realmId")), string(e,"certificateSha256"), string(e,"canonicalKeySha256"), spki, string(e,"issuerSerialSha256"));
+            return new CertificateIdentityEvidence(new RealmId(string(e,REALM_ID)), string(e,"certificateSha256"), string(e,"canonicalKeySha256"), spki, string(e,"issuerSerialSha256"));
         });
-        var actor = new AdministrativeRequest.Actor(string(a,"principalId"), AdministrativeAuthenticationMode.valueOf(string(a,"mode")), optional(a,"transportPrincipalId"), evidence);
-        var s = fields(f.get("scope"));
-        requireFields(s,Set.of("realmId"),Set.of("realmId","authorityId","issuerId","profileId","responderId"));
-        var scope = new Permission.Scope(new RealmId(string(s,"realmId")), optional(s,"authorityId").map(PkiId::new), optional(s,"issuerId").map(PkiId::new), optional(s,"profileId"), optional(s,"responderId"));
-        var receipt = Optional.ofNullable(f.get("receipt")).map(v -> { var r=fields(v);requireFields(r,Set.of("operationId","commitment"),Set.of("operationId","commitment"));return SigningAcceptanceReceipt.parse(new PkiId(string(r,"operationId")),string(r,"commitment")); });
+        AdministrativeRequest.Actor actor = new AdministrativeRequest.Actor(string(a,"principalId"), AdministrativeAuthenticationMode.valueOf(string(a,"mode")), optional(a,"transportPrincipalId"), evidence);
+        Map<String,PkiOperationValue> s = fields(f.get("scope"));
+        requireFields(s,Set.of(REALM_ID),Set.of(REALM_ID,"authorityId","issuerId","profileId","responderId"));
+        Permission.Scope scope = new Permission.Scope(new RealmId(string(s,REALM_ID)), optional(s,"authorityId").map(PkiId::new), optional(s,"issuerId").map(PkiId::new), optional(s,"profileId"), optional(s,"responderId"));
+        Optional<SigningAcceptanceReceipt> receipt = Optional.ofNullable(f.get("receipt")).map(v -> { Map<String,PkiOperationValue> r=fields(v);requireFields(r,Set.of("operationId","commitment"),Set.of("operationId","commitment"));return SigningAcceptanceReceipt.parse(new PkiId(string(r,"operationId")),string(r,"commitment")); });
         Optional<AdministrativeRequest.SdkProof> sdkProof = Optional.ofNullable(f.get("sdkProof")).map(v -> {
-            var proof=fields(v); requireFields(proof,Set.of("intentId","proofCommitment"),Set.of("intentId","proofCommitment"));
+            Map<String,PkiOperationValue> proof=fields(v); requireFields(proof,Set.of("intentId","proofCommitment"),Set.of("intentId","proofCommitment"));
             return new AdministrativeRequest.SdkProof(string(proof,"intentId"),string(proof,"proofCommitment"));
         });
-        var result = new AdministrativeRequest(string(f,"requestId"), integer(f,"revision"), string(f,"operation"), (PkiOperationValue.ObjectValue)f.get("envelope"), actor, scope,
+        AdministrativeRequest result = new AdministrativeRequest(string(f,"requestId"), integer(f,"revision"), string(f,"operation"), (PkiOperationValue.ObjectValue)f.get("envelope"), actor, scope,
                 string(f,"operationCommitment"),optional(f,"profileCommitment"),string(f,"targetCommitment"), AdministrativeRequest.State.valueOf(string(f,"state")),Instant.parse(string(f,"createdAt")),Instant.parse(string(f,"updatedAt")),integer(f,"executionTimeoutMillis"),
                 optional(f,"approvalId"),optional(f,"policyCommitment"),receipt,Optional.ofNullable(f.get("result")).map(PkiOperationValue.ObjectValue.class::cast),optional(f,"failureCode"),sdkProof);
-        if (!result.requestId().equals(record.recordId())) throw new IllegalArgumentException("Request key differs");
+        if (!result.requestId().equals(record.recordId())) { throw new IllegalArgumentException("Request key differs"); }
         return result;
     }
     private static PkiOperationValue.ObjectValue scope(Permission.Scope scope) {
-        var values=new LinkedHashMap<String,PkiOperationValue>();values.put("realmId",text(scope.realmId().value()));
+        Map<String,PkiOperationValue> values=new LinkedHashMap<>();values.put(REALM_ID,text(scope.realmId().value()));
         scope.authorityId().ifPresent(v->values.put("authorityId",text(v.value())));scope.issuerId().ifPresent(v->values.put("issuerId",text(v.value())));
         scope.profileId().ifPresent(v->values.put("profileId",text(v)));scope.responderId().ifPresent(v->values.put("responderId",text(v)));return object(values);
     }
     private static PkiOperationValue.ObjectValue actor(AdministrativeRequest.Actor actor) {
-        var values=new LinkedHashMap<String,PkiOperationValue>();values.put("principalId",text(actor.principalId()));values.put("mode",text(actor.mode().name()));actor.transportPrincipalId().ifPresent(v->values.put("transportPrincipalId",text(v)));
-        actor.evidence().ifPresent(e -> values.put("evidence",object(Map.of("realmId",text(e.realmId().value()),"certificateSha256",text(e.certificateSha256()),"canonicalKeySha256",text(e.canonicalKeySha256()),"issuerSerialSha256",text(e.issuerSerialSha256()),"legacySpkiSha256",new PkiOperationValue.ListValue(e.legacySpkiSha256().stream().sorted().map(v->(PkiOperationValue)text(v)).toList())))));
+        Map<String,PkiOperationValue> values=new LinkedHashMap<>();values.put("principalId",text(actor.principalId()));values.put("mode",text(actor.mode().name()));actor.transportPrincipalId().ifPresent(v->values.put("transportPrincipalId",text(v)));
+        actor.evidence().ifPresent(e -> values.put("evidence",object(Map.of(REALM_ID,text(e.realmId().value()),"certificateSha256",text(e.certificateSha256()),"canonicalKeySha256",text(e.canonicalKeySha256()),"issuerSerialSha256",text(e.issuerSerialSha256()),"legacySpkiSha256",new PkiOperationValue.ListValue(e.legacySpkiSha256().stream().sorted().map(v->(PkiOperationValue)text(v)).toList())))));
         return object(values);
     }
     private static void requireFields(Map<String,PkiOperationValue> fields,Set<String> required,Set<String> allowed) {
-        if(!fields.keySet().containsAll(required)||!allowed.containsAll(fields.keySet())) throw new IllegalArgumentException("Unexpected administrative request fields");
+        if(!fields.keySet().containsAll(required)||!allowed.containsAll(fields.keySet())) { throw new IllegalArgumentException("Unexpected administrative request fields"); }
     }
     private static Map<String,PkiOperationValue> fields(PkiOperationValue value) { return ((PkiOperationValue.ObjectValue)value).fields(); }
     private static String string(Map<String,PkiOperationValue> values,String key) { return ((PkiOperationValue.Text)values.get(key)).value(); }

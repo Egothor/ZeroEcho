@@ -46,7 +46,7 @@ import java.util.Objects;
  */
 public final class PkiStoreRuntimeDependencies {
     private final Clock clock;
-    private final java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier;
+    private final java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerEvidenceVerifier;
     private final java.util.Optional<CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier;
 
     /**
@@ -57,7 +57,7 @@ public final class PkiStoreRuntimeDependencies {
      */
     public PkiStoreRuntimeDependencies(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.empty();
+        this.issuerEvidenceVerifier = java.util.Optional.empty();
         this.crlHybridNativeChildVerifier = java.util.Optional.empty();
     }
 
@@ -70,7 +70,7 @@ public final class PkiStoreRuntimeDependencies {
      */
     public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier) {
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
+        this.issuerEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
         this.crlHybridNativeChildVerifier = java.util.Optional.empty();
     }
 
@@ -87,7 +87,7 @@ public final class PkiStoreRuntimeDependencies {
     public PkiStoreRuntimeDependencies(Clock clock, IssuerAlgorithmEvidenceVerifier verifier,
             CrlHybridNativeChildVerifier crlVerifier) {
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.issuerAlgorithmEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
+        this.issuerEvidenceVerifier = java.util.Optional.of(Objects.requireNonNull(verifier, "verifier"));
         this.crlHybridNativeChildVerifier = java.util.Optional.of(Objects.requireNonNull(crlVerifier, "crlVerifier"));
     }
 
@@ -106,7 +106,7 @@ public final class PkiStoreRuntimeDependencies {
      * @return the configured verifier; empty for the clock-only constructor
      */
     public java.util.Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier() {
-        return issuerAlgorithmEvidenceVerifier;
+        return issuerEvidenceVerifier;
     }
 
     /**

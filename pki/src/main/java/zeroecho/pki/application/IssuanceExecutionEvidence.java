@@ -233,8 +233,10 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      * @param issuerCaId issuing authority identity
      * @param profileId frozen certificate-profile identity governing issuance
      * @param outcome outcome committed atomically with the credential
-     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath, operationCommitment, outcome is null
-     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment classifications do not form a supported issuance-evidence combination
+     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath,
+     * operationCommitment, outcome is null
+     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment
+     * classifications do not form a supported issuance-evidence combination
      */
     public IssuanceExecutionEvidence {
         Objects.requireNonNull(actorType, "actorType");

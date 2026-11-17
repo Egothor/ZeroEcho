@@ -33,24 +33,23 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import zeroecho.pkix.cmp.CrmfRequest;
-import zeroecho.pki.api.request.X509EnrollmentPayload;
-import java.util.Optional;
-
-import zeroecho.pkix.Pkix;
-
-import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionReason;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
+import zeroecho.pki.api.request.X509EnrollmentPayload;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.cmp.CrmfRequest;
+
+import java.util.Optional;
 
 /**
  * Immutable proof verifier for exact PKCS#10 and signing-key CRMF requests.
@@ -114,7 +113,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
         try {
             payload = BcX509RequestPayloads.extract(request);
         } catch (IllegalArgumentException invalid) {
-            return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_PAYLOAD_MISSING, "CSR payload not present");
+            return ProofOfPossessionResult.of(
+                    ProofOfPossessionReason.CSR_PAYLOAD_MISSING, "CSR payload not present");
         }
         byte[] csrDer = payload.der();
 
@@ -140,7 +140,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
                     signature = crmf.signature();
                 }
             } catch (Exception ex) {
-                return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_MALFORMED, "Invalid CSR");
+                return ProofOfPossessionResult.of(
+                        ProofOfPossessionReason.CSR_MALFORMED, "Invalid CSR");
             }
             BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
             try {
@@ -166,7 +167,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
             }
             return ProofOfPossessionResult.of(ProofOfPossessionReason.VERIFIED);
         } catch (Exception ex) {
-            return ProofOfPossessionResult.of(ProofOfPossessionReason.INTERNAL_FAILURE, "Verification failed");
+            return ProofOfPossessionResult.of(
+                    ProofOfPossessionReason.INTERNAL_FAILURE, "Verification failed");
         }
     }
 }

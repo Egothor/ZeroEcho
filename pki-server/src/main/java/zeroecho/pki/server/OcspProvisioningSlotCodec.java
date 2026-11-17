@@ -47,6 +47,8 @@ import zeroecho.pki.server.http.StrictJson;
  * Canonical closed version-one slot payload; no private keys or signing content are retained here.
  */
 final class OcspProvisioningSlotCodec {
+    private static final int SCHEMA_VERSION = 1;
+
     private static final int MAXIMUM_BYTES = 16_384;
     private OcspProvisioningSlotCodec() { }
     /**
@@ -57,8 +59,8 @@ final class OcspProvisioningSlotCodec {
      * @throws IllegalArgumentException if the canonical payload exceeds 16,384 bytes
      * @throws NullPointerException if value is null
      */
-    static ServerControlStore.ProtocolRecord encode(OcspProvisioningSlot value) {
-        var f = new LinkedHashMap<String, PkiOperationValue>();
+    /* default */ static ServerControlStore.ProtocolRecord encode(OcspProvisioningSlot value) {
+        Map<String,PkiOperationValue> f= new LinkedHashMap<>();
         f.put("version", number(1)); f.put("realmId", text(value.realmId().value()));
         f.put("serverSlotId", text(value.serverSlotId())); f.put("coreSlotId", text(value.coreSlotId()));
         f.put("authorityId", text(value.authorityId().value())); f.put("issuerId", text(value.issuerId().value()));
@@ -71,7 +73,7 @@ final class OcspProvisioningSlotCodec {
         value.certificateSha256().ifPresent(v -> f.put("certificateSha256", text(v)));
         value.predecessorCredentialId().ifPresent(v -> f.put("predecessorCredentialId", text(v.value())));
         byte[] bytes = StrictJson.encode(new PkiOperationValue.ObjectValue(f));
-        if (bytes.length > MAXIMUM_BYTES) throw invalid();
+        if (bytes.length > MAXIMUM_BYTES) { throw invalid(); }
         return new ServerControlStore.ProtocolRecord(ServerControlStore.OCSP_PROVISIONING, value.serverSlotId(),
                 ApprovalService.digest(java.util.Base64.getEncoder().encodeToString(bytes)), bytes);
     }
@@ -84,23 +86,23 @@ final class OcspProvisioningSlotCodec {
      * @throws ClassCastException if a required JSON field has another value type
      * @throws NullPointerException if a required record or field is absent
      */
-    static OcspProvisioningSlot decode(ServerControlStore.ProtocolRecord record) {
-        if (!record.namespace().equals(ServerControlStore.OCSP_PROVISIONING)) throw invalid();
-        var f = ((PkiOperationValue.ObjectValue)StrictJson.parse(record.payload(), MAXIMUM_BYTES)).fields();
-        if (((PkiOperationValue.IntegerValue)f.get("version")).value() != 1) throw invalid();
+    /* default */ static OcspProvisioningSlot decode(ServerControlStore.ProtocolRecord record) {
+        if (!ServerControlStore.OCSP_PROVISIONING.equals(record.namespace())) { throw invalid(); }
+        Map<String,PkiOperationValue> f = ((PkiOperationValue.ObjectValue)StrictJson.parse(record.payload(), MAXIMUM_BYTES)).fields();
+        if (((PkiOperationValue.IntegerValue)f.get("version")).value() != SCHEMA_VERSION) { throw invalid(); }
         Optional<SigningAcceptanceReceipt> receipt = Optional.ofNullable(f.get("receipt")).map(v -> {
-            var r = ((PkiOperationValue.ObjectValue)v).fields();
-            if (!r.keySet().equals(Set.of("operationId", "commitment"))) throw invalid();
+            Map<String,PkiOperationValue> r = ((PkiOperationValue.ObjectValue)v).fields();
+            if (!r.keySet().equals(Set.of("operationId", "commitment"))) { throw invalid(); }
             return SigningAcceptanceReceipt.parse(new PkiId(string(r,"operationId")), string(r,"commitment"));
         });
-        var value = new OcspProvisioningSlot(new RealmId(string(f,"realmId")), string(f,"serverSlotId"), string(f,"coreSlotId"),
+        OcspProvisioningSlot value = new OcspProvisioningSlot(new RealmId(string(f,"realmId")), string(f,"serverSlotId"), string(f,"coreSlotId"),
                 new PkiId(string(f,"authorityId")), new PkiId(string(f,"issuerId")), string(f,"primarySpkiSha256"), string(f,"alternativeSpkiSha256"),
                 ((PkiOperationValue.IntegerValue)f.get("revision")).value(), OcspProvisioningSlot.State.valueOf(string(f,"state")),
                 string(f,"canonicalRequestId"), string(f,"targetCommitment"), receipt, optional(f,"credentialId").map(PkiId::new),
                 optional(f,"certificateSha256"), optional(f,"predecessorCredentialId").map(PkiId::new));
-        var canonical = encode(value);
+        ServerControlStore.ProtocolRecord canonical = encode(value);
         if (!canonical.recordId().equals(record.recordId()) || !canonical.commitment().equals(record.commitment())
-                || !Arrays.equals(canonical.payload(), record.payload())) throw invalid();
+                || !Arrays.equals(canonical.payload(), record.payload())) { throw invalid(); }
         return value;
     }
     private static String string(Map<String,PkiOperationValue> fields, String key) { return ((PkiOperationValue.Text)fields.get(key)).value(); }

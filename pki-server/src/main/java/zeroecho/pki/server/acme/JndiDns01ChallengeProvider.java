@@ -68,6 +68,7 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
      * Creates the stateless built-in JNDI DNS-01 challenge provider.
      */
     public JndiDns01ChallengeProvider() {
+        // Stateless provider; all settings belong to the individual validation invocation.
     }
 
     /**
@@ -96,7 +97,7 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
                 }
                 Lookup lookup = lookup(name, settings);
                 for (String value : lookup.txt()) {
-                    if (MessageDigestSupport.equalAscii(value, expected)) return valid(context);
+                    if (MessageDigestSupport.equalAscii(value, expected)) { return valid(context); }
                 }
                 if (lookup.cname().isEmpty() || depth == settings.maximumCnameDepth()) {
                     return invalid(context, "DNS_VALUE_MISMATCH");
@@ -108,7 +109,9 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
         }
     }
 
-    private static Lookup lookup(String name, Settings settings) throws Exception {
+    // InitialDirContext requires Hashtable; replacing its mandated input with Map is not source-compatible.
+    @SuppressWarnings({ "PMD.LooseCoupling", "PMD.ReplaceHashtableWithMap" })
+    private static Lookup lookup(String name, Settings settings) throws javax.naming.NamingException {
         Hashtable<String, String> environment = new Hashtable<>();
         environment.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
         environment.put("java.naming.provider.url", settings.providerUrl());
@@ -126,12 +129,12 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
         }
     }
 
-    private static List<String> values(Attribute attribute, int maximum, int maximumBytes, boolean txt) throws Exception {
-        if (attribute == null) return List.of(); List<String> result = new ArrayList<>();
+    private static List<String> values(Attribute attribute, int maximum, int maximumBytes, boolean txt) throws javax.naming.NamingException {
+        if (attribute == null) { return List.of(); } List<String> result = new ArrayList<>();
         NamingEnumeration<?> values = attribute.getAll();
         try {
             while (values.hasMore()) {
-                if (result.size() >= maximum) throw new IllegalArgumentException("DNS record bound exceeded");
+                if (result.size() >= maximum) { throw new IllegalArgumentException("DNS record bound exceeded"); }
                 String value = String.valueOf(values.next());
                 String canonical = txt ? txt(value) : value;
                 if (canonical.getBytes(StandardCharsets.US_ASCII).length > maximumBytes) {
@@ -147,23 +150,17 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
 
     private static String txt(String value) {
         // JNDI leaves a simple single character-string unquoted; quoted chunks retain their existing parser.
-        if (value.indexOf('"') < 0) {
-            for (int index = 0; index < value.length(); index++) {
-                char character = value.charAt(index);
-                if (character == '\\' || character < 0x21 || character > 0x7e) throw new IllegalArgumentException("DNS TXT value invalid");
-            }
-            return value;
-        }
+        if (value.indexOf('"') < 0) { return unquotedTxt(value); }
         StringBuilder result = new StringBuilder(); int index = 0;
         while (index < value.length()) {
-            while (index < value.length() && value.charAt(index) == ' ') index++;
-            if (index >= value.length() || value.charAt(index++) != '"') throw new IllegalArgumentException("DNS TXT framing invalid");
+            while (index < value.length() && value.charAt(index) == ' ') { index++; }
+            if (index >= value.length() || value.charAt(index++) != '"') { throw new IllegalArgumentException("DNS TXT framing invalid"); }
             while (index < value.length() && value.charAt(index) != '"') {
                 char character = value.charAt(index++);
-                if (character == '\\' || character < 0x21 || character > 0x7e) throw new IllegalArgumentException("DNS TXT value invalid");
+                if (character == '\\' || character < 0x21 || character > 0x7e) { throw new IllegalArgumentException("DNS TXT value invalid"); }
                 result.append(character);
             }
-            if (index >= value.length() || value.charAt(index++) != '"') throw new IllegalArgumentException("DNS TXT framing invalid");
+            if (index >= value.length() || value.charAt(index++) != '"') { throw new IllegalArgumentException("DNS TXT framing invalid"); }
         }
         return result.toString();
     }
@@ -189,8 +186,10 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
                 integer(config, "maximumRecords", 1, 64), integer(config, "maximumRecordBytes", 43, 4_096),
                 integer(config, "maximumCnameDepth", 0, 8));
     }
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static int integer(ProviderConfig config, String key, int minimum, int maximum) {
-        try { int value = Integer.parseInt(config.require(key)); if (value < minimum || value > maximum) throw new NumberFormatException(); return value; }
+        try { int value = Integer.parseInt(config.require(key)); return requireBound(value, minimum, maximum); }
         catch (NumberFormatException failure) { throw new IllegalArgumentException("DNS-01 provider bound is invalid"); }
     }
     private static String digest(String value) { try { return Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.US_ASCII))); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
@@ -198,4 +197,21 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
     private static Result invalid(Context context, String code) { Instant now = context.validationTime(); return new Result(false, code, now, now.plus(Duration.ofMinutes(5))); }
     private record Settings(String providerUrl, int timeoutMillis, int maximumRecords, int maximumRecordBytes, int maximumCnameDepth) { }
     private record Lookup(List<String> txt, List<String> cname) { }
+
+    private static int requireBound(int value, int minimum, int maximum) {
+        if (value < minimum || value > maximum) { throw new NumberFormatException(); }
+        return value;
+    }
+
+
+    private static String unquotedTxt(String value) {
+
+            for (int index = 0; index < value.length(); index++) {
+                char character = value.charAt(index);
+                if (character == '\\' || character < 0x21 || character > 0x7e) { throw new IllegalArgumentException("DNS TXT value invalid"); }
+            }
+            return value;
+
+    }
+
 }

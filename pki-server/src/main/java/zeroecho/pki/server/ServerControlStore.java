@@ -33,6 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.store.MetadataCommitResult;
+import zeroecho.pki.spi.store.MetadataCursor;
+import zeroecho.pki.spi.store.MetadataKey;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataStoreId;
+import zeroecho.pki.spi.store.MetadataTransaction;
+import zeroecho.pki.spi.store.TransactionalMetadataStore;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -55,32 +66,32 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.core.io.RepeatableContent;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.spi.store.MetadataCommitResult;
-import zeroecho.pki.spi.store.MetadataCursor;
-import zeroecho.pki.spi.store.MetadataKey;
-import zeroecho.pki.spi.store.MetadataSnapshot;
-import zeroecho.pki.spi.store.MetadataStoreId;
-import zeroecho.pki.spi.store.MetadataTransaction;
-import zeroecho.pki.spi.store.TransactionalMetadataStore;
-
 /**
- * Dedicated durable authority for finite server security and disclosure control
- * metadata.
+ * Dedicated durable authority for finite server security and disclosure control metadata.
  *
- * <p>All public operations are synchronized to serialize compare-and-replace
- * within one realm process. Cross-process exclusion and durability remain the
- * responsibility of the composed {@link TransactionalMetadataStore}. No PKI
- * certificate, CRL, CSR, key, secret, or unrestricted exception data is stored.</p>
+ * <p>All public operations are synchronized to serialize compare-and-replace within one realm
+ * process. Cross-process exclusion and durability remain the responsibility of the composed {@link
+ * TransactionalMetadataStore}. No PKI certificate, CRL, CSR, key, secret, or unrestricted exception
+ * data is stored.
  */
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity",
-        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.ControlStatementBraces", "PMD.PreserveStackTrace", "PMD.CloseResource",
-        "PMD.UseEnumCollections", "PMD.CommentRequired", "PMD.UncommentedEmptyMethodBody",
-        "PMD.TooManyMethods", "PMD.ExcessivePublicCount", "PMD.AvoidInstantiatingObjectsInLoops" })
+@SuppressWarnings({
+    "PMD.CouplingBetweenObjects",
+    "PMD.CyclomaticComplexity",
+    "PMD.FieldDeclarationsShouldBeAtStartOfClass",
+    "PMD.AvoidSynchronizedAtMethodLevel",
+    "PMD.PreserveStackTrace",
+    "PMD.CloseResource",
+    "PMD.UseEnumCollections",
+    "PMD.CommentRequired",
+    "PMD.UncommentedEmptyMethodBody",
+    "PMD.TooManyMethods",
+    "PMD.ExcessivePublicCount",
+    "PMD.AvoidInstantiatingObjectsInLoops"
+})
 public final class ServerControlStore implements AutoCloseable {
+    private static final int MAXIMUM_PROTOCOL_MUTATIONS = 256;
+    private static final int MAXIMUM_PROTOCOL_PAGE_SIZE = 256;
+
     /**
      * Stable namespace for the realm record.
      */
@@ -145,10 +156,10 @@ public final class ServerControlStore implements AutoCloseable {
      * Stable namespace for durable OCSP responder bindings.
      */
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
-    /**
-     * Private canonical responder-certificate provisioning claims.
-     */
-    static final String OCSP_PROVISIONING = "io.zeroecho.server.ocsp-provisioning";
+
+    /** Private canonical responder-certificate provisioning claims. */
+    /* default */ static final String OCSP_PROVISIONING = "io.zeroecho.server.ocsp-provisioning";
+
     /**
      * Stable namespace for durable enrollment policy profiles.
      */
@@ -198,10 +209,10 @@ public final class ServerControlStore implements AutoCloseable {
      * Private retained dual-subject-key challenges and consumed proof tombstones.
      */
     public static final String HYBRID_SDK_INTENT = "io.zeroecho.server.hybrid-sdk-intent";
-    /**
-     * Stable namespace for per-family success-evidence audit-projection cursors.
-     */
-    public static final String AUDIT_EVIDENCE_PROJECTION = "io.zeroecho.server.audit-evidence-projection";
+
+    /** Stable namespace for per-family success-evidence audit-projection cursors. */
+    public static final String AUDIT_EVIDENCE_PROJECTION =
+            "io.zeroecho.server.audit-evidence-projection";
 
     private static final int MAGIC = 0x5a455331;
     private static final int SCHEMA = 6;
@@ -350,7 +361,8 @@ public final class ServerControlStore implements AutoCloseable {
             return expected;
         }
         if (existing.size() != 1 || !existing.getFirst().equals(expected)) {
-            throw new IllegalStateException("Persisted realm control identity or commitment differs");
+            throw new IllegalStateException(
+                    "Persisted realm control identity or commitment differs");
         }
         return existing.getFirst();
     }
@@ -564,12 +576,19 @@ public final class ServerControlStore implements AutoCloseable {
             while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
                 try (MetadataSnapshot.Record record = next.orElseThrow()) {
                     ApprovalService.Request request = decode(record, KIND_APPROVAL, ServerControlStore::readApproval);
-                    if (!record.key().equals(key(APPROVAL, request.approvalId()))) throw new IllegalStateException("Approval metadata identity differs");
-                    if (request.state() == ApprovalService.State.PENDING && request.expiresAt().isAfter(now)) count++;
+                    if (!record.key().equals(key(APPROVAL, request.approvalId()))) {
+                        throw new IllegalStateException("Approval metadata identity differs");
+                    }
+                    if (request.state() == ApprovalService.State.PENDING
+                            && request.expiresAt().isAfter(now)) {
+                        count++;
+                    }
                 }
             }
             return count;
-        } catch (IOException failure) { throw new IllegalStateException("Approval count unavailable", failure); }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Approval count unavailable", failure);
+        }
     }
 
     /**
@@ -600,7 +619,8 @@ public final class ServerControlStore implements AutoCloseable {
      */
     public synchronized BreakGlassService.Record requireBreakGlass(String breakGlassId) {
         return read(BREAK_GLASS, breakGlassId, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass)
-                .orElseThrow(() -> new IllegalArgumentException("Break-glass record is unavailable"));
+                .orElseThrow(
+                        () -> new IllegalArgumentException("Break-glass record is unavailable"));
     }
 
     /**
@@ -652,8 +672,13 @@ public final class ServerControlStore implements AutoCloseable {
      * @return exact disclosure record
      */
     public synchronized DisclosureService.Record requireDisclosure(PkiId objectId) {
-        return read(DISCLOSURE, objectId.value(), KIND_DISCLOSURE, ServerControlStore::readDisclosure)
-                .orElseThrow(() -> new IllegalArgumentException("Disclosure record is unavailable"));
+        return read(
+                        DISCLOSURE,
+                        objectId.value(),
+                        KIND_DISCLOSURE,
+                        ServerControlStore::readDisclosure)
+                .orElseThrow(
+                        () -> new IllegalArgumentException("Disclosure record is unavailable"));
     }
 
     /**
@@ -728,7 +753,9 @@ public final class ServerControlStore implements AutoCloseable {
          */
         public Page {
             values = List.copyOf(Objects.requireNonNull(values, "values"));
-            if (nextOffset < 0) throw new IllegalArgumentException("Next offset is negative");
+            if (nextOffset < 0) {
+                throw new IllegalArgumentException("Next offset is negative");
+            }
         }
     }
 
@@ -823,10 +850,14 @@ public final class ServerControlStore implements AutoCloseable {
          * @throws IllegalStateException if closed or if a record cannot be validated
          */
         public Optional<ProtocolRecord> next() {
-            if (closed) throw new IllegalStateException("Protocol snapshot is closed");
+            if (closed) {
+                throw new IllegalStateException("Protocol snapshot is closed");
+            }
             try {
                 Optional<MetadataSnapshot.Record> next = cursor.next(CancellationSignal.NONE);
-                if (next.isEmpty()) return Optional.empty();
+                if (next.isEmpty()) {
+                    return Optional.empty();
+                }
                 try (MetadataSnapshot.Record record = next.orElseThrow()) {
                     ProtocolRecord value = decode(record, KIND_PROTOCOL, input -> readProtocol(input, namespace));
                     if (!record.key().equals(key(namespace, value.recordId()))) {
@@ -844,7 +875,9 @@ public final class ServerControlStore implements AutoCloseable {
          * @throws IllegalStateException if the owned protocol snapshot cannot be closed
          */
         @Override public void close() {
-            if (closed) return;
+            if (closed) {
+                return;
+            }
             closed = true;
             try (snapshot) {
                 cursor.close();
@@ -871,8 +904,9 @@ public final class ServerControlStore implements AutoCloseable {
 
     private void mutateProtocol(List<ProtocolMutation> requested, ProtocolSnapshotValidation validation) {
         requireOpen();
-        List<ProtocolMutation> mutations = List.copyOf(Objects.requireNonNull(requested, "requested"));
-        if (mutations.isEmpty() || mutations.size() > 256) {
+        List<ProtocolMutation> mutations =
+                List.copyOf(Objects.requireNonNull(requested, "requested"));
+        if (mutations.isEmpty() || mutations.size() > MAXIMUM_PROTOCOL_MUTATIONS) {
             throw new IllegalArgumentException("Protocol transaction size is invalid");
         }
         Set<String> keys = new HashSet<>();
@@ -890,11 +924,16 @@ public final class ServerControlStore implements AutoCloseable {
                 byte[] encoded = encode(output -> writeProtocol(output, value));
                 RepeatableContent content = new ByteContent(encoded);
                 if (mutation.expectedCommitment().isEmpty()) {
-                    if (existing.isPresent()) throw new IllegalStateException("Protocol record already exists");
+                    if (existing.isPresent()) {
+                        throw new IllegalStateException("Protocol record already exists");
+                    }
                     transaction.create(metadataKey, content, CancellationSignal.NONE);
                 } else {
-                    MetadataSnapshot.Record current = existing
-                            .orElseThrow(() -> new IllegalStateException("Protocol record is unavailable"));
+                    MetadataSnapshot.Record current =
+                            existing.orElseThrow(
+                                    () ->
+                                            new IllegalStateException(
+                                                    "Protocol record is unavailable"));
                     ProtocolRecord decoded = decode(current, KIND_PROTOCOL,
                             input -> readProtocol(input, value.namespace()));
                     if (!mutation.expectedCommitment().orElseThrow().equals(decoded.commitment())) {
@@ -934,9 +973,13 @@ public final class ServerControlStore implements AutoCloseable {
      */
     public synchronized int openSdkIntentCount(Instant now) {
         requireOpen(); Objects.requireNonNull(now, "now"); int count = 0;
-        try (var cursor = protocolSnapshot(HYBRID_SDK_INTENT)) {
+        try (ProtocolCursor cursor = protocolSnapshot(HYBRID_SDK_INTENT)) {
             Optional<ProtocolRecord> next;
-            while ((next = cursor.next()).isPresent()) if (HybridSdkAdmissionService.openAt(next.orElseThrow(), now)) count = Math.incrementExact(count);
+            while ((next = cursor.next()).isPresent()) {
+                if (HybridSdkAdmissionService.openAt(next.orElseThrow(), now)) {
+                    count = Math.incrementExact(count);
+                }
+            }
         }
         return count;
     }
@@ -965,74 +1008,144 @@ public final class ServerControlStore implements AutoCloseable {
             Optional<zeroecho.pki.server.enrollment.CmpTransaction> expectedCmp,
             Optional<zeroecho.pki.server.enrollment.CmpTransaction> linkedCmp) {
         requireOpen();
-        var codecPrior = zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(prior);
-        var codecConsumed = zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(consumed);
-        var enrollment = zeroecho.pki.server.enrollment.EnrollmentTransactionCodec.record(proposed);
-        var proof = proposed.intent().sdkProof().orElseThrow(() -> new IllegalArgumentException("SDK enrollment proof missing"));
-        var source = proposed.intent().source(); var target = prior.admission().target();
+        ProtocolRecord codecPrior =
+                zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(prior);
+        ProtocolRecord codecConsumed =
+                zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.record(consumed);
+        ProtocolRecord enrollment =
+                zeroecho.pki.server.enrollment.EnrollmentTransactionCodec.record(proposed);
+        zeroecho.pki.server.enrollment.EnrollmentTransaction.SdkProofReference proof =
+                proposed.intent()
+                        .sdkProof()
+                        .orElseThrow(
+                                () -> new IllegalArgumentException("SDK enrollment proof missing"));
+        zeroecho.pki.server.enrollment.EnrollmentTransaction.Source source =
+                proposed.intent().source();
+        zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget target = prior.admission().target();
         if (prior.state() != zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN
-                || consumed.state() != zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED
-                || !prior.id().equals(consumed.id()) || consumed.revision() != Math.incrementExact(prior.revision())
-                || !consumed.enrollmentId().equals(Optional.of(proposed.id())) || proposed.revision() != 1
-                || !proposed.decisions().isEmpty() || proposed.receipt().isPresent() || proposed.credentialId().isPresent()
-                || proposed.state() != (proposed.intent().approvalPolicy().isPresent()
-                        ? zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING
-                        : zeroecho.pki.server.enrollment.EnrollmentTransaction.State.APPROVED)
+                || consumed.state()
+                        != zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED
+                || !prior.id().equals(consumed.id())
+                || consumed.revision() != Math.incrementExact(prior.revision())
+                || !consumed.enrollmentId().equals(Optional.of(proposed.id()))
+                || proposed.revision() != 1
+                || !proposed.decisions().isEmpty()
+                || proposed.receipt().isPresent()
+                || proposed.credentialId().isPresent()
+                || proposed.state()
+                        != (proposed.intent().approvalPolicy().isPresent()
+                                ? zeroecho.pki.server.enrollment.EnrollmentTransaction.State.PENDING
+                                : zeroecho.pki.server.enrollment.EnrollmentTransaction.State
+                                        .APPROVED)
                 || !source.protocol().name().equals(target.protocol())
-                || !proof.intentId().equals(prior.id()) || !consumed.proofCommitment().equals(Optional.of(proof.proofCommitment()))
+                || !proof.intentId().equals(prior.id())
+                || !consumed.proofCommitment().equals(Optional.of(proof.proofCommitment()))
                 || !consumed.acceptedAt().equals(Optional.of(proof.acceptedAt()))
-                || !proof.authenticationContextSha512().equals("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(prior.authenticationContext().encode())))
-                || !proof.targetSha512().equals("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(prior.targetFrame().encode())))
+                || !proof.authenticationContextSha512()
+                        .equals(
+                                "sha512:"
+                                        + HexFormat.of()
+                                                .formatHex(
+                                                        zeroecho.pki.api.hybrid.sdk.HybridSdkFrame
+                                                                .hash(
+                                                                        prior.authenticationContext()
+                                                                                .encode())))
+                || !proof.targetSha512()
+                        .equals(
+                                "sha512:"
+                                        + HexFormat.of()
+                                                .formatHex(
+                                                        zeroecho.pki.api.hybrid.sdk.HybridSdkFrame
+                                                                .hash(
+                                                                        prior.targetFrame()
+                                                                                .encode())))
                 || !proposed.intent().realmId().equals(prior.realmId())
                 || !proposed.intent().requester().equals(prior.admission().admission().requester())
-                || !proposed.intent().transactionId().equals(prior.admission().admission().transactionId())
+                || !proposed.intent()
+                        .transactionId()
+                        .equals(prior.admission().admission().transactionId())
                 || proposed.intent().operation() != prior.admission().admission().operation()
                 || proposed.intent().requestKind() != prior.originalPayload().kind()
-                || !proposed.intent().requestSha256().equals(digestBytes(prior.originalPayload().der()))
+                || !proposed.intent()
+                        .requestSha256()
+                        .equals(digestBytes(prior.originalPayload().der()))
                 || proposed.intent().requestBytes() != prior.originalPayload().der().length
-                || !(source.protocol() == zeroecho.pki.server.enrollment.EnrollmentTransaction.Protocol.ACME
-                        ? source.recordId() : source.label()).equals(prior.admission().admission().endpointId())
-                || !source.label().equals(target.endpointId()) || !source.commitment().equals(target.endpointCommitment())
-                || source.revision() != target.sourceRevision() || !source.enrollmentProfileId().equals(target.enrollmentPolicyId())
-                || !source.enrollmentCommitment().equals(target.enrollmentPolicyCommitment())) throw new IllegalArgumentException("SDK enrollment linkage differs");
-        var normalized = new zeroecho.pki.server.enrollment.EnrollmentSdkIntent(consumed.id(), consumed.version(), consumed.realmId(),
-                consumed.admission(), consumed.originalPayload(), consumed.nativeWire(), consumed.primaryFrame(), consumed.authenticationContext(),
-                consumed.targetFrame(), consumed.issuedAt(), consumed.expiresAt(), zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN,
-                prior.revision(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+                || !(source.protocol()
+                                        == zeroecho.pki.server.enrollment.EnrollmentTransaction
+                                                .Protocol.ACME
+                                ? source.recordId()
+                                : source.label())
+                        .equals(prior.admission().admission().endpointId())
+                || !source.label().equals(target.endpointId())
+                || !source.commitment().equals(target.endpointCommitment())
+                || source.revision() != target.sourceRevision()
+                || !source.enrollmentProfileId().equals(target.enrollmentPolicyId())
+                || !source.enrollmentCommitment().equals(target.enrollmentPolicyCommitment())) {
+            throw new IllegalArgumentException("SDK enrollment linkage differs");
+        }
+        zeroecho.pki.server.enrollment.EnrollmentSdkIntent normalized =
+                new zeroecho.pki.server.enrollment.EnrollmentSdkIntent(
+                        consumed.id(),
+                        consumed.version(),
+                        consumed.realmId(),
+                        consumed.admission(),
+                        consumed.originalPayload(),
+                        consumed.nativeWire(),
+                        consumed.primaryFrame(),
+                        consumed.authenticationContext(),
+                        consumed.targetFrame(),
+                        consumed.issuedAt(),
+                        consumed.expiresAt(),
+                        zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.OPEN,
+                        prior.revision(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty());
         if (!java.util.Arrays.equals(codecPrior.payload(), zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.encode(normalized))) {
             throw new IllegalArgumentException("SDK enrollment frozen intent differs");
         }
-        var mutations = new ArrayList<ProtocolMutation>();
+        List<ProtocolMutation> mutations = new ArrayList<>();
         mutations.add(new ProtocolMutation(codecConsumed, Optional.of(codecPrior.commitment())));
         mutations.add(new ProtocolMutation(enrollment, Optional.empty()));
         boolean cmp = proposed.intent().source().protocol() == zeroecho.pki.server.enrollment.EnrollmentTransaction.Protocol.CMP;
-        if (cmp != linkedCmp.isPresent() || !cmp && expectedCmp.isPresent()) throw new IllegalArgumentException("SDK CMP linkage differs");
-        if (cmp) {
-            var linked = linkedCmp.orElseThrow();
-            if (!prior.admission().cmpManifest().equals(Optional.of(linked.frozen())) || !linked.enrollmentId().equals(Optional.of(proposed.id()))) {
-                throw new IllegalArgumentException("SDK CMP manifest differs");
-            }
-            if (expectedCmp.isPresent()) {
-                var expected = expectedCmp.orElseThrow();
-                if (!expected.id().equals(linked.id()) || !expected.frozen().equals(linked.frozen()) || expected.enrollmentId().isPresent()
-                        || linked.revision() != Math.incrementExact(expected.revision())) throw new IllegalArgumentException("SDK CMP predecessor differs");
-                mutations.add(new ProtocolMutation(zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpRecord(linked), Optional.of(expected.commitment())));
-            } else {
-                mutations.addAll(zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpCreation(linked));
-            }
+        if (cmp != linkedCmp.isPresent() || !cmp && expectedCmp.isPresent()) {
+            throw new IllegalArgumentException("SDK CMP linkage differs");
         }
-        if (mutations.size() > 256) throw new IllegalArgumentException("SDK_TOO_LARGE");
+        if (cmp) {
+            stageSdkCmpLinkage(mutations, linkedCmp, expectedCmp, prior, proposed);
+        }
+        if (mutations.size() > MAXIMUM_PROTOCOL_MUTATIONS) {
+            throw new IllegalArgumentException("SDK_TOO_LARGE");
+        }
         requireSdkProtocolBudget(mutations);
-        mutateProtocol(mutations, snapshot -> {
-            try (var row = snapshot.get(key(HYBRID_SDK_INTENT, prior.id())).orElseThrow(() -> new IllegalStateException("SDK intent unavailable"))) {
-                var retained = decode(row, KIND_PROTOCOL, input -> readProtocol(input, HYBRID_SDK_INTENT));
-                zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.requireTarget(proposed.intent(),
-                        zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.decode(retained));
-                if (!retained.commitment().equals(codecPrior.commitment()) || !java.util.Arrays.equals(retained.payload(), codecPrior.payload())) {
-                    throw new IllegalStateException("SDK intent commitment conflict");
-                }
-            }
-        });
+        mutateProtocol(
+                mutations,
+                snapshot -> {
+                    try (MetadataSnapshot.Record row =
+                            snapshot.get(key(HYBRID_SDK_INTENT, prior.id()))
+                                    .orElseThrow(
+                                            () ->
+                                                    new IllegalStateException(
+                                                            "SDK intent unavailable"))) {
+                        ProtocolRecord retained =
+                                decode(
+                                        row,
+                                        KIND_PROTOCOL,
+                                        input -> readProtocol(input, HYBRID_SDK_INTENT));
+                        zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.requireTarget(
+                                proposed.intent(),
+                                zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.decode(
+                                        retained));
+                        if (!retained.commitment().equals(codecPrior.commitment())
+                                || !java.util.Arrays.equals(
+                                        retained.payload(), codecPrior.payload())) {
+                            throw new IllegalStateException("SDK intent commitment conflict");
+                        }
+                    }
+                });
     }
 
     /**
@@ -1043,15 +1156,18 @@ public final class ServerControlStore implements AutoCloseable {
      */
     public static void requireSdkProtocolBudget(List<ProtocolMutation> mutations) {
         long total = 256;
-        for (var mutation : mutations) {
-            var record = mutation.record(); var metadataKey = key(record.namespace(), record.recordId());
+        for (ProtocolMutation mutation : mutations) {
+            ProtocolRecord record = mutation.record();
+            MetadataKey metadataKey = key(record.namespace(), record.recordId());
             int valueBytes = encode(output -> writeProtocol(output, record)).length;
             long framing = 72L + 8L + metadataKey.namespace().getBytes(StandardCharsets.UTF_8).length
                     + metadataKey.key().getBytes(StandardCharsets.UTF_8).length
                     + (mutation.expectedCommitment().isPresent() ? 16L : 8L);
             total = Math.addExact(total, Math.addExact(framing, valueBytes));
         }
-        if (total > MAXIMUM_RECORD_BYTES / 2 || mutations.size() > 256) throw new IllegalArgumentException("SDK_TOO_LARGE");
+        if (total > MAXIMUM_RECORD_BYTES / 2 || mutations.size() > MAXIMUM_PROTOCOL_MUTATIONS) {
+            throw new IllegalArgumentException("SDK_TOO_LARGE");
+        }
     }
 
     /**
@@ -1061,36 +1177,50 @@ public final class ServerControlStore implements AutoCloseable {
      * @param expectedRequest exact previous request commitment, or empty for initial creation
      * @param expectedApproval previous approval snapshot, or empty before approval creation
      * @param approval next approval snapshot, or empty when approval is unchanged
-     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary transitions
-     * @throws IllegalArgumentException if request, approval or SDK-consumption invariants are invalid
+     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary
+     *     transitions
+     * @throws IllegalArgumentException if request, approval or SDK-consumption invariants are
+     *     invalid
      * @throws IllegalStateException if the store is closed or a compare-and-set precondition fails
      */
-    synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
-            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
+    /* default */ synchronized void mutateAdministrativeRequest(
+            ProtocolRecord request,
+            Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval,
+            Optional<ApprovalService.Request> approval,
             Optional<ProtocolMutation> sdkConsumption) {
         mutateAdministrativeRequest(request, expectedRequest, expectedApproval, approval, sdkConsumption, Optional.empty());
     }
 
     /**
-     * Atomically binds a purpose-specific provisioning claim to its exact request and ordinary approval.
+     * Atomically binds a purpose-specific provisioning claim to its exact request and ordinary
+     * approval.
      *
      * @param request next private administrative-request record
      * @param expectedRequest exact previous request commitment, or empty for initial creation
      * @param expectedApproval previous approval snapshot, or empty before approval creation
      * @param approval next approval snapshot, or empty when approval is unchanged
-     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary transitions
-     * @param provisioning responder-provisioning claim mutation, absent for other operation families
-     * @throws IllegalArgumentException if atomic request, claim, approval or SDK invariants are invalid
+     * @param sdkConsumption exact open-to-consumed SDK intent mutation, absent for ordinary
+     *     transitions
+     * @param provisioning responder-provisioning claim mutation, absent for other operation
+     *     families
+     * @throws IllegalArgumentException if atomic request, claim, approval or SDK invariants are
+     *     invalid
      * @throws IllegalStateException if the store is closed or a compare-and-set precondition fails
      */
-    synchronized void mutateAdministrativeRequest(ProtocolRecord request, Optional<String> expectedRequest,
-            Optional<ApprovalService.Request> expectedApproval, Optional<ApprovalService.Request> approval,
-            Optional<ProtocolMutation> sdkConsumption, Optional<ProtocolMutation> provisioning) {
+    /* default */ synchronized void mutateAdministrativeRequest(
+            ProtocolRecord request,
+            Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval,
+            Optional<ApprovalService.Request> approval,
+            Optional<ProtocolMutation> sdkConsumption,
+            Optional<ProtocolMutation> provisioning) {
         mutateAdministrativeRequest(request,expectedRequest,expectedApproval,approval,sdkConsumption,provisioning,Optional.empty());
     }
 
     /**
-     * Publishes a verified winning receipt after durable observations prove the loser was not accepted.
+     * Publishes a verified winning receipt after durable observations prove the loser was not
+     * accepted.
      *
      * @param request replacement administrative-request record carrying the winning receipt
      * @param expectedRequest exact prior administrative-request commitment
@@ -1099,8 +1229,11 @@ public final class ServerControlStore implements AutoCloseable {
      * @throws IllegalArgumentException if request or slot coordinates are inconsistent
      * @throws IllegalStateException if attachment proof or a compare-and-set precondition fails
      */
-    synchronized void attachOcspProvisioningReceipt(ProtocolRecord request, String expectedRequest,
-            ProtocolMutation slot, OcspResponderProvisioningService.Attachment attachment) {
+    /* default */ synchronized void attachOcspProvisioningReceipt(
+            ProtocolRecord request,
+            String expectedRequest,
+            ProtocolMutation slot,
+            OcspResponderProvisioningService.Attachment attachment) {
         mutateAdministrativeRequest(request,Optional.of(expectedRequest),Optional.empty(),Optional.empty(),Optional.empty(),
                 Optional.of(slot),Optional.of(attachment));
     }
@@ -1110,127 +1243,34 @@ public final class ServerControlStore implements AutoCloseable {
             Optional<ProtocolMutation> sdkConsumption, Optional<ProtocolMutation> provisioning,
             Optional<OcspResponderProvisioningService.Attachment> attachment) {
         requireOpen();
-        if (!request.namespace().equals(ADMINISTRATIVE_REQUEST) || expectedApproval.isPresent() && approval.isEmpty()) {
+        if (!ADMINISTRATIVE_REQUEST.equals(request.namespace())
+                || expectedApproval.isPresent() && approval.isEmpty()) {
             throw new IllegalArgumentException("Administrative request transition is invalid");
         }
         AdministrativeRequest retained = AdministrativeRequestCodec.decode(request);
-        if (retained.operation().equals(OcspProvisioningSlot.OPERATION) != provisioning.isPresent()
-                || provisioning.isPresent() && sdkConsumption.isPresent()) throw new IllegalArgumentException("OCSP provisioning requires atomic slot authority");
-        provisioning.ifPresent(mutation -> OcspProvisioningSlotCodec.decode(mutation.record()).requireRequest(retained));
-        if (expectedRequest.isEmpty() && retained.sdkProof().isPresent() != sdkConsumption.isPresent()) {
-            throw new IllegalArgumentException("SDK admission requires atomic consumption");
-        }
-        sdkConsumption.ifPresent(mutation -> {
-            if (!mutation.record().namespace().equals(HYBRID_SDK_INTENT) || mutation.expectedCommitment().isEmpty()
-                    || retained.sdkProof().isEmpty() || !retained.sdkProof().orElseThrow().intentId().equals(mutation.record().recordId())) {
-                throw new IllegalArgumentException("SDK consumption does not bind administrative request");
-            }
-        });
-        approval.ifPresent(value -> {
-            if (!retained.approvalId().equals(Optional.of(value.approvalId()))
-                    || !retained.policyCommitment().equals(Optional.of(value.policyCommitment()))
-                    || !retained.actor().principalId().equals(value.requesterPrincipalId())
-                    || !retained.operation().equals(value.operationId())
-                    || !retained.operationCommitment().equals(value.operationCommitment())
-                    || !retained.scope().equals(value.scope())
-                    || expectedApproval.filter(previous -> !previous.approvalId().equals(value.approvalId())).isPresent()) {
-                throw new IllegalArgumentException("Approval does not bind administrative request");
-            }
-        });
-        if (provisioning.isPresent()) {
-            long combined = encode(output -> writeProtocol(output, request)).length
-                    + encode(output -> writeProtocol(output, provisioning.orElseThrow().record())).length;
-            if (approval.isPresent()) combined += encode(output -> writeApproval(output, approval.orElseThrow())).length;
-            if (combined > MAXIMUM_RECORD_BYTES / 2) throw new IllegalArgumentException("OCSP provisioning is too large");
-        }
-        if (sdkConsumption.isPresent()) {
-            // Reserve half the transaction ceiling for framing/keys; measure actual private payloads before staging.
-            long combined = encode(output -> writeProtocol(output, request)).length
-                    + encode(output -> writeProtocol(output, sdkConsumption.orElseThrow().record())).length;
-            if (approval.isPresent()) combined += encode(output -> writeApproval(output, approval.orElseThrow())).length;
-            if (combined > MAXIMUM_RECORD_BYTES / 2) throw new IllegalArgumentException("SDK_TOO_LARGE");
-        }
+        requireAdministrativeBinding(
+                expectedRequest,
+                expectedApproval,
+                approval,
+                sdkConsumption,
+                provisioning,
+                retained);
+        requireAdministrativeBudget(
+                request, provisioning, approval, "OCSP provisioning is too large");
+        requireAdministrativeBudget(request, sdkConsumption, approval, "SDK_TOO_LARGE");
         try (MetadataSnapshot snapshot = metadata.snapshot(); MetadataTransaction transaction = metadata.beginTransaction()) {
-            MetadataKey requestKey = key(ADMINISTRATIVE_REQUEST, request.recordId());
-            Optional<MetadataSnapshot.Record> previous = snapshot.get(requestKey);
-            RepeatableContent next = new ByteContent(encode(output -> writeProtocol(output, request)));
-            if (expectedRequest.isEmpty()) {
-                if (previous.isPresent()) throw new IllegalStateException("Administrative request already exists");
-                transaction.create(requestKey, next, CancellationSignal.NONE);
-            } else {
-                MetadataSnapshot.Record existing = previous.orElseThrow(() -> new IllegalStateException("Administrative request unavailable"));
-                ProtocolRecord decoded = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, ADMINISTRATIVE_REQUEST));
-                if (!decoded.commitment().equals(expectedRequest.orElseThrow())) throw new IllegalStateException("Administrative request changed");
-                if (!AdministrativeRequestCodec.decode(decoded).sdkProof().equals(retained.sdkProof())) throw new IllegalStateException("SDK_REFERENCE_CHANGED");
-                if (provisioning.isPresent()) {
-                    var priorRequest = AdministrativeRequestCodec.decode(decoded);
-                    if (!priorRequest.actor().equals(retained.actor()) || !priorRequest.envelope().equals(retained.envelope())
-                            || !priorRequest.operationCommitment().equals(retained.operationCommitment())
-                            || !priorRequest.approvalId().equals(retained.approvalId())
-                            || !priorRequest.policyCommitment().equals(retained.policyCommitment())
-                            || !priorRequest.profileCommitment().equals(retained.profileCommitment())
-                            || priorRequest.executionTimeoutMillis() != retained.executionTimeoutMillis()) {
-                        throw new IllegalStateException("OCSP provisioning execution changed");
-                    }
-                }
-                transaction.replace(requestKey, existing.recordRevision(), next, CancellationSignal.NONE);
+            stageAdministrativeRecord(
+                    snapshot, transaction, request, expectedRequest, provisioning, retained);
+            stageAdministrativeApproval(snapshot, transaction, approval, expectedApproval);
+            stageAdministrativeConsumption(snapshot, transaction, sdkConsumption, retained);
+            stageAdministrativeProvisioning(snapshot, transaction, provisioning, attachment);
+            if (transaction.commit().outcome() != MetadataCommitResult.Outcome.COMMITTED) {
+                throw new IllegalStateException(
+                        "Administrative transition requires reconciliation");
             }
-            if (approval.isPresent()) {
-                var value = approval.orElseThrow(); MetadataKey approvalKey = key(APPROVAL, value.approvalId());
-                Optional<MetadataSnapshot.Record> prior = snapshot.get(approvalKey);
-                RepeatableContent encoded = new ByteContent(encode(output -> writeApproval(output, value)));
-                if (expectedApproval.isEmpty()) {
-                    if (prior.isPresent()) throw new IllegalStateException("Linked approval already exists");
-                    transaction.create(approvalKey, encoded, CancellationSignal.NONE);
-                } else {
-                    var observed = prior.orElseThrow(() -> new IllegalStateException("Linked approval unavailable"));
-                    if (!decode(observed, KIND_APPROVAL, ServerControlStore::readApproval).equals(expectedApproval.orElseThrow())) {
-                        throw new IllegalStateException("Linked approval changed");
-                    }
-                    transaction.replace(approvalKey, observed.recordRevision(), encoded, CancellationSignal.NONE);
-                }
-            }
-            if (sdkConsumption.isPresent()) {
-                ProtocolMutation mutation = sdkConsumption.orElseThrow();
-                ProtocolRecord value = mutation.record();
-                MetadataKey intentKey = key(HYBRID_SDK_INTENT, value.recordId());
-                var existing = snapshot.get(intentKey).orElseThrow(() -> new IllegalStateException("SDK intent unavailable"));
-                ProtocolRecord previousIntent = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, HYBRID_SDK_INTENT));
-                if (!previousIntent.commitment().equals(mutation.expectedCommitment().orElseThrow())) {
-                    throw new IllegalStateException("SDK intent changed");
-                }
-                HybridSdkAdmissionService.requireConsumption(previousIntent, value, retained);
-                transaction.replace(intentKey, existing.recordRevision(), new ByteContent(encode(output -> writeProtocol(output, value))), CancellationSignal.NONE);
-            }
-            if (provisioning.isPresent()) {
-                var mutation = provisioning.orElseThrow();
-                var slot = OcspProvisioningSlotCodec.decode(mutation.record());
-                MetadataKey slotKey = key(OCSP_PROVISIONING, slot.serverSlotId());
-                var observed = snapshot.get(slotKey);
-                Optional<OcspProvisioningSlot> previousSlot = Optional.empty();
-                if (mutation.expectedCommitment().isEmpty()) {
-                    if (observed.isPresent()) throw new IllegalStateException("OCSP provisioning slot already exists");
-                } else {
-                    var existing = observed.orElseThrow(() -> new IllegalStateException("OCSP provisioning slot unavailable"));
-                    ProtocolRecord previousSlotRecord = decode(existing, KIND_PROTOCOL, input -> readProtocol(input, OCSP_PROVISIONING));
-                    if (!previousSlotRecord.commitment().equals(mutation.expectedCommitment().orElseThrow())) throw new IllegalStateException("OCSP provisioning slot changed");
-                    previousSlot = Optional.of(OcspProvisioningSlotCodec.decode(previousSlotRecord));
-                }
-                if (attachment.isPresent()) attachment.orElseThrow().require(previousSlot,slot);
-                slot.requireTransition(previousSlot,attachment.isPresent());
-                if (previousSlot.isPresent() && previousSlot.orElseThrow().revision() != slot.revision()) {
-                    var oldSlot = previousSlot.orElseThrow();
-                    var priorRequestRecord = snapshot.get(key(ADMINISTRATIVE_REQUEST, oldSlot.canonicalRequestId()))
-                            .orElseThrow(() -> new IllegalStateException("OCSP provisioning predecessor request unavailable"));
-                    oldSlot.requireRequest(AdministrativeRequestCodec.decode(decode(priorRequestRecord, KIND_PROTOCOL,
-                            input -> readProtocol(input, ADMINISTRATIVE_REQUEST))));
-                }
-                var encoded = new ByteContent(encode(output -> writeProtocol(output, mutation.record())));
-                if (observed.isEmpty()) transaction.create(slotKey, encoded, CancellationSignal.NONE);
-                else transaction.replace(slotKey, observed.orElseThrow().recordRevision(), encoded, CancellationSignal.NONE);
-            }
-            if (transaction.commit().outcome() != MetadataCommitResult.Outcome.COMMITTED) throw new IllegalStateException("Administrative transition requires reconciliation");
-        } catch (IOException failure) { throw new IllegalStateException("Administrative transition failed"); }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Administrative transition failed");
+        }
     }
 
     /**
@@ -1251,9 +1291,12 @@ public final class ServerControlStore implements AutoCloseable {
             Optional<String> after, int limit, CancellationSignal cancellation) {
         requireOpen();
         Objects.requireNonNull(objectId, "objectId");
-        Objects.requireNonNull(after, "after").ifPresent(value -> Permission.requireId(value, "capability cursor"));
+        Objects.requireNonNull(after, "after")
+                .ifPresent(value -> Permission.requireId(value, "capability cursor"));
         Objects.requireNonNull(cancellation, "cancellation");
-        if (limit < 1 || limit > 1001) { throw new IllegalArgumentException("Capability selection limit is invalid"); }
+        if (limit < 1 || limit > 1001) {
+            throw new IllegalArgumentException("Capability selection limit is invalid");
+        }
         Comparator<DisclosureService.Capability> order = Comparator.comparing(DisclosureService.Capability::capabilityId);
         java.util.Queue<DisclosureService.Capability> selected = new java.util.PriorityQueue<>(limit, order.reversed());
         try (MetadataSnapshot snapshot = metadata.snapshot();
@@ -1274,7 +1317,9 @@ public final class ServerControlStore implements AutoCloseable {
             return selected.stream().sorted(order).toList();
         } catch (java.io.InterruptedIOException cancelled) {
             throw new java.util.concurrent.CancellationException("Capability selection cancelled");
-        } catch (IOException failure) { throw new IllegalStateException("Capability selection failed"); }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Capability selection failed");
+        }
     }
 
     /**
@@ -1435,7 +1480,9 @@ public final class ServerControlStore implements AutoCloseable {
         MetadataKey key = key(namespace, identity);
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
             Optional<MetadataSnapshot.Record> record = snapshot.get(key);
-            if (record.isEmpty()) return Optional.empty();
+            if (record.isEmpty()) {
+                return Optional.empty();
+            }
             T decoded = decode(record.orElseThrow(), kind, decoder);
             requireSame(identity, identityOf(decoded));
             return Optional.of(decoded);
@@ -1459,7 +1506,8 @@ public final class ServerControlStore implements AutoCloseable {
                 }
                 values.add(decoded);
                 if (values.size() > MAXIMUM_COLLECTION) {
-                    throw new IllegalStateException("Server-control metadata population exceeds technical bound");
+                    throw new IllegalStateException(
+                            "Server-control metadata population exceeds technical bound");
                 }
             }
             return List.copyOf(values);
@@ -1470,7 +1518,7 @@ public final class ServerControlStore implements AutoCloseable {
 
     private <T> Page<T> scanPage(String namespace, int kind, Decoder<T> decoder, int offset, int limit) {
         requireOpen();
-        if (offset < 0 || limit <= 0 || limit > 256) {
+        if (offset < 0 || limit <= 0 || limit > MAXIMUM_PROTOCOL_PAGE_SIZE) {
             throw new IllegalArgumentException("Control page bounds are invalid");
         }
         List<T> values = new ArrayList<>(limit);
@@ -1486,7 +1534,9 @@ public final class ServerControlStore implements AutoCloseable {
                 if (!record.key().equals(key(namespace, identityOf(decoded)))) {
                     throw new IllegalStateException("Server-control metadata key mismatch");
                 }
-                if (seen++ < offset) continue;
+                if (seen++ < offset) {
+                    continue;
+                }
                 if (values.size() == limit) { more = true; break; }
                 values.add(decoded);
             }
@@ -1512,11 +1562,16 @@ public final class ServerControlStore implements AutoCloseable {
                 RepeatableContent content = new ByteContent(value)) {
             Optional<MetadataSnapshot.Record> existing = snapshot.get(key);
             if (create) {
-                if (existing.isPresent()) throw new IllegalStateException("Server-control record already exists");
+                if (existing.isPresent()) {
+                    throw new IllegalStateException("Server-control record already exists");
+                }
                 transaction.create(key, content, CancellationSignal.NONE);
             } else {
-                MetadataSnapshot.Record record = existing
-                        .orElseThrow(() -> new IllegalStateException("Server-control record is unavailable"));
+                MetadataSnapshot.Record record =
+                        existing.orElseThrow(
+                                () ->
+                                        new IllegalStateException(
+                                                "Server-control record is unavailable"));
                 transaction.replace(key, record.recordRevision(), content, CancellationSignal.NONE);
             }
             MetadataCommitResult result = transaction.commit();
@@ -1535,7 +1590,9 @@ public final class ServerControlStore implements AutoCloseable {
             encoder.write(output);
             output.flush();
             byte[] result = bytes.toByteArray();
-            if (result.length > MAXIMUM_RECORD_BYTES) throw new IllegalArgumentException("Control record too large");
+            if (result.length > MAXIMUM_RECORD_BYTES) {
+                throw new IllegalArgumentException("Control record too large");
+            }
             return result;
         } catch (IOException impossible) {
             throw new IllegalStateException("In-memory control encoding failed", impossible);
@@ -1553,7 +1610,9 @@ public final class ServerControlStore implements AutoCloseable {
                     throw new IllegalArgumentException("Control record framing or kind is invalid");
                 }
                 T result = decoder.read(input);
-                if (input.read() != -1) throw new IllegalArgumentException("Trailing control record input");
+                if (input.read() != -1) {
+                    throw new IllegalArgumentException("Trailing control record input");
+                }
                 return result;
             }
         }
@@ -1565,7 +1624,9 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static String digestBytes(byte[] value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
-        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
+        catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 
     private static String digest(String value) {
@@ -1600,17 +1661,22 @@ public final class ServerControlStore implements AutoCloseable {
     }
 
     private static void requireSame(String first, String second) {
-        if (!Objects.equals(first, second)) throw new IllegalArgumentException("Control record identity mismatch");
+        if (!Objects.equals(first, second)) {
+            throw new IllegalArgumentException("Control record identity mismatch");
+        }
     }
 
     private static void requirePrincipalReference(Set<String> principals, String principalId) {
         if (!principals.contains(principalId)) {
-            throw new IllegalStateException("Server-control record references an unavailable principal");
+            throw new IllegalStateException(
+                    "Server-control record references an unavailable principal");
         }
     }
 
     private void requireOpen() {
-        if (closed) throw new IllegalStateException("Server-control store is closed");
+        if (closed) {
+            throw new IllegalStateException("Server-control store is closed");
+        }
     }
 
     private static void writeRealm(DataOutputStream out, RealmRecord value) throws IOException {
@@ -1637,7 +1703,9 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static ProtocolRecord readProtocol(DataInputStream in, String expectedNamespace) throws IOException {
         String namespace = readString(in);
-        if (!expectedNamespace.equals(namespace)) throw new IllegalArgumentException("ACME namespace mismatch");
+        if (!expectedNamespace.equals(namespace)) {
+            throw new IllegalArgumentException("ACME namespace mismatch");
+        }
         return new ProtocolRecord(namespace, readString(in), readString(in),
                 readBoundedBytes(in, MAXIMUM_RECORD_BYTES / 2));
     }
@@ -1675,7 +1743,10 @@ public final class ServerControlStore implements AutoCloseable {
         out.writeInt(value.action().code()); out.writeInt(value.resourceType().code()); writeScope(out, value.scope());
         out.writeInt(value.relationship().code()); out.writeInt(value.dataView().code());
         List<Permission.Condition> conditions = value.conditions().stream().sorted(Comparator.comparingInt(Permission.Condition::code)).toList();
-        out.writeInt(conditions.size()); for (Permission.Condition item : conditions) out.writeInt(item.code());
+        out.writeInt(conditions.size());
+        for (Permission.Condition item : conditions) {
+            out.writeInt(item.code());
+        }
         writeOptionalInstant(out, value.expiresAt()); out.writeBoolean(value.enabled());
     }
 
@@ -1684,7 +1755,11 @@ public final class ServerControlStore implements AutoCloseable {
         Permission.Action action = Permission.Action.fromCode(in.readInt()); Permission.ResourceType type = Permission.ResourceType.fromCode(in.readInt());
         Permission.Scope scope = readScope(in); Permission.Relationship relationship = Permission.Relationship.fromCode(in.readInt());
         Permission.DataView view = Permission.DataView.fromCode(in.readInt()); int count = readCount(in); Set<Permission.Condition> conditions = new HashSet<>();
-        for (int index = 0; index < count; index++) if (!conditions.add(Permission.Condition.fromCode(in.readInt()))) throw new IllegalArgumentException("Duplicate grant condition");
+        for (int index = 0; index < count; index++) {
+            if (!conditions.add(Permission.Condition.fromCode(in.readInt()))) {
+                throw new IllegalArgumentException("Duplicate grant condition");
+            }
+        }
         return new Permission.Grant(id, principal, effect, action, type, scope, relationship, view, conditions,
                 readOptionalInstant(in), in.readBoolean());
     }
@@ -1704,7 +1779,14 @@ public final class ServerControlStore implements AutoCloseable {
         String requester = readString(in); Instant created = readInstant(in); Instant expires = readInstant(in); ApprovalService.Policy policy = readApprovalPolicy(in);
         String policyCommitment = readString(in); ApprovalService.State state = ApprovalService.State.fromCode(in.readInt()); int count = readCount(in);
         List<ApprovalService.Decision> decisions = new ArrayList<>();
-        for (int index = 0; index < count; index++) decisions.add(new ApprovalService.Decision(readString(in), ApprovalService.Choice.fromCode(in.readInt()), readString(in), readInstant(in)));
+        for (int index = 0; index < count; index++) {
+            decisions.add(
+                    new ApprovalService.Decision(
+                            readString(in),
+                            ApprovalService.Choice.fromCode(in.readInt()),
+                            readString(in),
+                            readInstant(in)));
+        }
         return new ApprovalService.Request(id, operation, commitment, scope, requester, created, expires, policy,
                 policyCommitment, state, decisions, readOptionalString(in));
     }
@@ -1798,39 +1880,141 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static void writeString(DataOutputStream out, String value) throws IOException {
         byte[] bytes = Objects.requireNonNull(value, "value").getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAXIMUM_STRING_BYTES) throw new IllegalArgumentException("Control string too long");
+        if (bytes.length > MAXIMUM_STRING_BYTES) {
+            throw new IllegalArgumentException("Control string too long");
+        }
         out.writeInt(bytes.length); out.write(bytes);
     }
 
     private static String readString(DataInputStream in) throws IOException {
-        int length = in.readInt(); if (length < 0 || length > MAXIMUM_STRING_BYTES) throw new IllegalArgumentException("Control string length invalid");
-        byte[] bytes = in.readNBytes(length); if (bytes.length != length) throw new IllegalArgumentException("Truncated control string");
+        int length = in.readInt();
+        if (length < 0 || length > MAXIMUM_STRING_BYTES) {
+            throw new IllegalArgumentException("Control string length invalid");
+        }
+        byte[] bytes = in.readNBytes(length);
+        if (bytes.length != length) {
+            throw new IllegalArgumentException("Truncated control string");
+        }
         String result = new String(bytes, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(bytes, result.getBytes(StandardCharsets.UTF_8))) throw new IllegalArgumentException("Control string UTF-8 invalid");
+        if (!java.util.Arrays.equals(bytes, result.getBytes(StandardCharsets.UTF_8))) {
+            throw new IllegalArgumentException("Control string UTF-8 invalid");
+        }
         return result;
     }
 
     private static void writeOptionalString(DataOutputStream out, Optional<String> value) throws IOException {
-        out.writeBoolean(value.isPresent()); if (value.isPresent()) writeString(out, value.orElseThrow());
+        out.writeBoolean(value.isPresent());
+        if (value.isPresent()) {
+            writeString(out, value.orElseThrow());
+        }
     }
     private static Optional<String> readOptionalString(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(readString(in)) : Optional.empty(); }
     private static void writeOptionalPki(DataOutputStream out, Optional<PkiId> value) throws IOException { writeOptionalString(out, value.map(PkiId::value)); }
     private static Optional<PkiId> readOptionalPki(DataInputStream in) throws IOException { return readOptionalString(in).map(PkiId::new); }
     private static void writeInstant(DataOutputStream out, Instant value) throws IOException { out.writeLong(value.toEpochMilli()); }
     private static Instant readInstant(DataInputStream in) throws IOException { return Instant.ofEpochMilli(in.readLong()); }
-    private static void writeOptionalInstant(DataOutputStream out, Optional<Instant> value) throws IOException { out.writeBoolean(value.isPresent()); if (value.isPresent()) writeInstant(out, value.orElseThrow()); }
+
+    private static void writeOptionalInstant(DataOutputStream out, Optional<Instant> value)
+            throws IOException {
+        out.writeBoolean(value.isPresent());
+        if (value.isPresent()) {
+            writeInstant(out, value.orElseThrow());
+        }
+    }
+
     private static Optional<Instant> readOptionalInstant(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(readInstant(in)) : Optional.empty(); }
-    private static void writePkiSet(DataOutputStream out, Set<PkiId> values) throws IOException { List<PkiId> sorted = values.stream().sorted(Comparator.comparing(PkiId::value)).toList(); out.writeInt(sorted.size()); for (PkiId value : sorted) writeString(out, value.value()); }
-    private static Set<PkiId> readPkiSet(DataInputStream in) throws IOException { int count = readCount(in); Set<PkiId> result = new HashSet<>(); for (int index = 0; index < count; index++) if (!result.add(new PkiId(readString(in)))) throw new IllegalArgumentException("Duplicate authority identity"); return result; }
-    private static void writeStringSet(DataOutputStream out, Set<String> values) throws IOException { List<String> sorted = values.stream().sorted().toList(); out.writeInt(sorted.size()); for (String value : sorted) writeString(out, value); }
-    private static Set<String> readStringSet(DataInputStream in) throws IOException { int count = readCount(in); Set<String> result = new HashSet<>(); for (int index = 0; index < count; index++) if (!result.add(readString(in))) throw new IllegalArgumentException("Duplicate control set value"); return result; }
+
+    private static void writePkiSet(DataOutputStream out, Set<PkiId> values) throws IOException {
+        List<PkiId> sorted = values.stream().sorted(Comparator.comparing(PkiId::value)).toList();
+        out.writeInt(sorted.size());
+        for (PkiId value : sorted) {
+            writeString(out, value.value());
+        }
+    }
+
+    private static Set<PkiId> readPkiSet(DataInputStream in) throws IOException {
+        int count = readCount(in);
+        Set<PkiId> result = new HashSet<>();
+        for (int index = 0; index < count; index++) {
+            if (!result.add(new PkiId(readString(in)))) {
+                throw new IllegalArgumentException("Duplicate authority identity");
+            }
+        }
+        return result;
+    }
+
+    private static void writeStringSet(DataOutputStream out, Set<String> values)
+            throws IOException {
+        List<String> sorted = values.stream().sorted().toList();
+        out.writeInt(sorted.size());
+        for (String value : sorted) {
+            writeString(out, value);
+        }
+    }
+
+    private static Set<String> readStringSet(DataInputStream in) throws IOException {
+        int count = readCount(in);
+        Set<String> result = new HashSet<>();
+        for (int index = 0; index < count; index++) {
+            if (!result.add(readString(in))) {
+                throw new IllegalArgumentException("Duplicate control set value");
+            }
+        }
+        return result;
+    }
+
     private static void writeStringMap(DataOutputStream out, Map<String, String> values) throws IOException { List<Map.Entry<String, String>> sorted = values.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList(); out.writeInt(sorted.size()); for (Map.Entry<String, String> entry : sorted) { writeString(out, entry.getKey()); writeString(out, entry.getValue()); } }
-    private static Map<String, String> readStringMap(DataInputStream in) throws IOException { int count = readCount(in); Map<String, String> result = new LinkedHashMap<>(); for (int index = 0; index < count; index++) if (result.put(readString(in), readString(in)) != null) throw new IllegalArgumentException("Duplicate control map key"); return Map.copyOf(result); }
-    private static int readCount(DataInputStream in) throws IOException { int count = in.readInt(); if (count < 0 || count > MAXIMUM_COLLECTION) throw new IllegalArgumentException("Control collection size invalid"); return count; }
+
+    private static Map<String, String> readStringMap(DataInputStream in) throws IOException {
+        int count = readCount(in);
+        Map<String, String> result = new LinkedHashMap<>();
+        for (int index = 0; index < count; index++) {
+            if (result.put(readString(in), readString(in)) != null) {
+                throw new IllegalArgumentException("Duplicate control map key");
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private static int readCount(DataInputStream in) throws IOException {
+        int count = in.readInt();
+        if (count < 0 || count > MAXIMUM_COLLECTION) {
+            throw new IllegalArgumentException("Control collection size invalid");
+        }
+        return count;
+    }
+
     private static void writeBytes(DataOutputStream out, byte[] value) throws IOException { out.writeInt(value.length); out.write(value); }
-    private static byte[] readBytes(DataInputStream in, int expected) throws IOException { int length = in.readInt(); if (length != expected) throw new IllegalArgumentException("Control byte value length invalid"); byte[] value = in.readNBytes(length); if (value.length != length) throw new IllegalArgumentException("Truncated control byte value"); return value; }
-    private static byte[] readBoundedBytes(DataInputStream in, int maximum) throws IOException { int length = in.readInt(); if (length <= 0 || length > maximum) throw new IllegalArgumentException("Control byte value bound invalid"); byte[] value = in.readNBytes(length); if (value.length != length) throw new IllegalArgumentException("Truncated control byte value"); return value; }
-    private static void requireDigest(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Control commitment invalid"); }
+
+    private static byte[] readBytes(DataInputStream in, int expected) throws IOException {
+        int length = in.readInt();
+        if (length != expected) {
+            throw new IllegalArgumentException("Control byte value length invalid");
+        }
+        byte[] value = in.readNBytes(length);
+        if (value.length != length) {
+            throw new IllegalArgumentException("Truncated control byte value");
+        }
+        return value;
+    }
+
+    private static byte[] readBoundedBytes(DataInputStream in, int maximum) throws IOException {
+        int length = in.readInt();
+        if (length <= 0 || length > maximum) {
+            throw new IllegalArgumentException("Control byte value bound invalid");
+        }
+        byte[] value = in.readNBytes(length);
+        if (value.length != length) {
+            throw new IllegalArgumentException("Truncated control byte value");
+        }
+        return value;
+    }
+
+    private static void requireDigest(String value) {
+        if (value == null || !value.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Control commitment invalid");
+        }
+    }
 
     @FunctionalInterface private interface Encoder { void write(DataOutputStream output) throws IOException; }
     @FunctionalInterface private interface Decoder<T> { T read(DataInputStream input) throws IOException; }
@@ -1853,5 +2037,295 @@ public final class ServerControlStore implements AutoCloseable {
          * {@inheritDoc}
          */
         @Override public void close() { }
+    }
+
+    private static void requireAdministrativeBinding(
+            Optional<String> expectedRequest,
+            Optional<ApprovalService.Request> expectedApproval,
+            Optional<ApprovalService.Request> approval,
+            Optional<ProtocolMutation> sdkConsumption,
+            Optional<ProtocolMutation> provisioning,
+            AdministrativeRequest retained) {
+        if (OcspProvisioningSlot.OPERATION.equals(retained.operation()) != provisioning.isPresent()
+                || provisioning.isPresent() && sdkConsumption.isPresent()) {
+            throw new IllegalArgumentException("OCSP provisioning requires atomic slot authority");
+        }
+        provisioning.ifPresent(
+                mutation ->
+                        OcspProvisioningSlotCodec.decode(mutation.record())
+                                .requireRequest(retained));
+        if (expectedRequest.isEmpty()
+                && retained.sdkProof().isPresent() != sdkConsumption.isPresent()) {
+            throw new IllegalArgumentException("SDK admission requires atomic consumption");
+        }
+        sdkConsumption.ifPresent(
+                mutation -> {
+                    if (!HYBRID_SDK_INTENT.equals(mutation.record().namespace())
+                            || mutation.expectedCommitment().isEmpty()
+                            || retained.sdkProof().isEmpty()
+                            || !retained.sdkProof()
+                                    .orElseThrow()
+                                    .intentId()
+                                    .equals(mutation.record().recordId())) {
+                        throw new IllegalArgumentException(
+                                "SDK consumption does not bind administrative request");
+                    }
+                });
+        approval.ifPresent(
+                value -> {
+                    if (!retained.approvalId().equals(Optional.of(value.approvalId()))
+                            || !retained.policyCommitment()
+                                    .equals(Optional.of(value.policyCommitment()))
+                            || !retained.actor().principalId().equals(value.requesterPrincipalId())
+                            || !retained.operation().equals(value.operationId())
+                            || !retained.operationCommitment().equals(value.operationCommitment())
+                            || !retained.scope().equals(value.scope())
+                            || expectedApproval
+                                    .filter(
+                                            previous ->
+                                                    !previous.approvalId()
+                                                            .equals(value.approvalId()))
+                                    .isPresent()) {
+                        throw new IllegalArgumentException(
+                                "Approval does not bind administrative request");
+                    }
+                });
+    }
+
+    private static void requireAdministrativeBudget(
+            ProtocolRecord request,
+            Optional<ProtocolMutation> linked,
+            Optional<ApprovalService.Request> approval,
+            String code) {
+        if (linked.isPresent()) {
+
+            long combined =
+                    encode(output -> writeProtocol(output, request)).length
+                            + encode(output -> writeProtocol(output, linked.orElseThrow().record()))
+                                    .length;
+            if (approval.isPresent()) {
+                combined += encode(output -> writeApproval(output, approval.orElseThrow())).length;
+            }
+            if (combined > MAXIMUM_RECORD_BYTES / 2) {
+                throw new IllegalArgumentException(code);
+            }
+        }
+    }
+
+    private static void stageAdministrativeRecord(
+            MetadataSnapshot snapshot,
+            MetadataTransaction transaction,
+            ProtocolRecord request,
+            Optional<String> expectedRequest,
+            Optional<ProtocolMutation> provisioning,
+            AdministrativeRequest retained)
+            throws IOException {
+        MetadataKey requestKey = key(ADMINISTRATIVE_REQUEST, request.recordId());
+        Optional<MetadataSnapshot.Record> previous = snapshot.get(requestKey);
+        RepeatableContent next = new ByteContent(encode(output -> writeProtocol(output, request)));
+        if (expectedRequest.isEmpty()) {
+            if (previous.isPresent()) {
+                throw new IllegalStateException("Administrative request already exists");
+            }
+            transaction.create(requestKey, next, CancellationSignal.NONE);
+        } else {
+            MetadataSnapshot.Record existing =
+                    previous.orElseThrow(
+                            () -> new IllegalStateException("Administrative request unavailable"));
+            ProtocolRecord decoded =
+                    decode(
+                            existing,
+                            KIND_PROTOCOL,
+                            input -> readProtocol(input, ADMINISTRATIVE_REQUEST));
+            if (!decoded.commitment().equals(expectedRequest.orElseThrow())) {
+                throw new IllegalStateException("Administrative request changed");
+            }
+            if (!AdministrativeRequestCodec.decode(decoded)
+                    .sdkProof()
+                    .equals(retained.sdkProof())) {
+                throw new IllegalStateException("SDK_REFERENCE_CHANGED");
+            }
+            if (provisioning.isPresent()) {
+                requireProvisioningExecution(retained, decoded);
+            }
+            transaction.replace(
+                    requestKey, existing.recordRevision(), next, CancellationSignal.NONE);
+        }
+    }
+
+    private static void stageAdministrativeApproval(
+            MetadataSnapshot snapshot,
+            MetadataTransaction transaction,
+            Optional<ApprovalService.Request> approval,
+            Optional<ApprovalService.Request> expectedApproval)
+            throws IOException {
+        if (approval.isEmpty()) {
+            return;
+        }
+
+        ApprovalService.Request value = approval.orElseThrow();
+        MetadataKey approvalKey = key(APPROVAL, value.approvalId());
+        Optional<MetadataSnapshot.Record> prior = snapshot.get(approvalKey);
+        RepeatableContent encoded = new ByteContent(encode(output -> writeApproval(output, value)));
+        if (expectedApproval.isEmpty()) {
+            if (prior.isPresent()) {
+                throw new IllegalStateException("Linked approval already exists");
+            }
+            transaction.create(approvalKey, encoded, CancellationSignal.NONE);
+        } else {
+            MetadataSnapshot.Record observed =
+                    prior.orElseThrow(
+                            () -> new IllegalStateException("Linked approval unavailable"));
+            if (!decode(observed, KIND_APPROVAL, ServerControlStore::readApproval)
+                    .equals(expectedApproval.orElseThrow())) {
+                throw new IllegalStateException("Linked approval changed");
+            }
+            transaction.replace(
+                    approvalKey, observed.recordRevision(), encoded, CancellationSignal.NONE);
+        }
+    }
+
+    private static void stageAdministrativeConsumption(
+            MetadataSnapshot snapshot,
+            MetadataTransaction transaction,
+            Optional<ProtocolMutation> sdkConsumption,
+            AdministrativeRequest retained)
+            throws IOException {
+        if (sdkConsumption.isPresent()) {
+            ProtocolMutation mutation = sdkConsumption.orElseThrow();
+            ProtocolRecord value = mutation.record();
+            MetadataKey intentKey = key(HYBRID_SDK_INTENT, value.recordId());
+            MetadataSnapshot.Record existing =
+                    snapshot.get(intentKey)
+                            .orElseThrow(() -> new IllegalStateException("SDK intent unavailable"));
+            ProtocolRecord previousIntent =
+                    decode(
+                            existing,
+                            KIND_PROTOCOL,
+                            input -> readProtocol(input, HYBRID_SDK_INTENT));
+            if (!previousIntent.commitment().equals(mutation.expectedCommitment().orElseThrow())) {
+                throw new IllegalStateException("SDK intent changed");
+            }
+            HybridSdkAdmissionService.requireConsumption(previousIntent, value, retained);
+            transaction.replace(
+                    intentKey,
+                    existing.recordRevision(),
+                    new ByteContent(encode(output -> writeProtocol(output, value))),
+                    CancellationSignal.NONE);
+        }
+    }
+
+    private static void stageAdministrativeProvisioning(
+            MetadataSnapshot snapshot,
+            MetadataTransaction transaction,
+            Optional<ProtocolMutation> provisioning,
+            Optional<OcspResponderProvisioningService.Attachment> attachment)
+            throws IOException {
+        if (provisioning.isEmpty()) {
+            return;
+        }
+
+        ProtocolMutation mutation = provisioning.orElseThrow();
+        OcspProvisioningSlot slot = OcspProvisioningSlotCodec.decode(mutation.record());
+        MetadataKey slotKey = key(OCSP_PROVISIONING, slot.serverSlotId());
+        Optional<MetadataSnapshot.Record> observed = snapshot.get(slotKey);
+        Optional<OcspProvisioningSlot> previousSlot = Optional.empty();
+        if (mutation.expectedCommitment().isEmpty()) {
+            if (observed.isPresent()) {
+                throw new IllegalStateException("OCSP provisioning slot already exists");
+            }
+        } else {
+            MetadataSnapshot.Record existing =
+                    observed.orElseThrow(
+                            () -> new IllegalStateException("OCSP provisioning slot unavailable"));
+            ProtocolRecord previousSlotRecord =
+                    decode(
+                            existing,
+                            KIND_PROTOCOL,
+                            input -> readProtocol(input, OCSP_PROVISIONING));
+            if (!previousSlotRecord
+                    .commitment()
+                    .equals(mutation.expectedCommitment().orElseThrow())) {
+                throw new IllegalStateException("OCSP provisioning slot changed");
+            }
+            previousSlot = Optional.of(OcspProvisioningSlotCodec.decode(previousSlotRecord));
+        }
+        if (attachment.isPresent()) {
+            attachment.orElseThrow().require(previousSlot, slot);
+        }
+        slot.requireTransition(previousSlot, attachment.isPresent());
+        if (previousSlot.isPresent() && previousSlot.orElseThrow().revision() != slot.revision()) {
+            OcspProvisioningSlot oldSlot = previousSlot.orElseThrow();
+            MetadataSnapshot.Record priorRequestRecord =
+                    snapshot.get(key(ADMINISTRATIVE_REQUEST, oldSlot.canonicalRequestId()))
+                            .orElseThrow(
+                                    () ->
+                                            new IllegalStateException(
+                                                    "OCSP provisioning predecessor request"
+                                                        + " unavailable"));
+            oldSlot.requireRequest(
+                    AdministrativeRequestCodec.decode(
+                            decode(
+                                    priorRequestRecord,
+                                    KIND_PROTOCOL,
+                                    input -> readProtocol(input, ADMINISTRATIVE_REQUEST))));
+        }
+        ByteContent encoded =
+                new ByteContent(encode(output -> writeProtocol(output, mutation.record())));
+        if (observed.isEmpty()) {
+            transaction.create(slotKey, encoded, CancellationSignal.NONE);
+        } else {
+            transaction.replace(
+                    slotKey,
+                    observed.orElseThrow().recordRevision(),
+                    encoded,
+                    CancellationSignal.NONE);
+        }
+    }
+
+    private static void stageSdkCmpLinkage(
+            List<ProtocolMutation> mutations,
+            Optional<zeroecho.pki.server.enrollment.CmpTransaction> linkedCmp,
+            Optional<zeroecho.pki.server.enrollment.CmpTransaction> expectedCmp,
+            zeroecho.pki.server.enrollment.EnrollmentSdkIntent prior,
+            zeroecho.pki.server.enrollment.EnrollmentTransaction proposed) {
+
+        zeroecho.pki.server.enrollment.CmpTransaction linked = linkedCmp.orElseThrow();
+        if (!prior.admission().cmpManifest().equals(Optional.of(linked.frozen()))
+                || !linked.enrollmentId().equals(Optional.of(proposed.id()))) {
+            throw new IllegalArgumentException("SDK CMP manifest differs");
+        }
+        if (expectedCmp.isPresent()) {
+            zeroecho.pki.server.enrollment.CmpTransaction expected = expectedCmp.orElseThrow();
+            if (!expected.id().equals(linked.id())
+                    || !expected.frozen().equals(linked.frozen())
+                    || expected.enrollmentId().isPresent()
+                    || linked.revision() != Math.incrementExact(expected.revision())) {
+                throw new IllegalArgumentException("SDK CMP predecessor differs");
+            }
+            mutations.add(
+                    new ProtocolMutation(
+                            zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpRecord(
+                                    linked),
+                            Optional.of(expected.commitment())));
+        } else {
+            mutations.addAll(
+                    zeroecho.pki.server.enrollment.EnrollmentSdkIntentCodec.cmpCreation(linked));
+        }
+    }
+
+    private static void requireProvisioningExecution(
+            AdministrativeRequest retained, ProtocolRecord decoded) {
+
+        AdministrativeRequest priorRequest = AdministrativeRequestCodec.decode(decoded);
+        if (!priorRequest.actor().equals(retained.actor())
+                || !priorRequest.envelope().equals(retained.envelope())
+                || !priorRequest.operationCommitment().equals(retained.operationCommitment())
+                || !priorRequest.approvalId().equals(retained.approvalId())
+                || !priorRequest.policyCommitment().equals(retained.policyCommitment())
+                || !priorRequest.profileCommitment().equals(retained.profileCommitment())
+                || priorRequest.executionTimeoutMillis() != retained.executionTimeoutMillis()) {
+            throw new IllegalStateException("OCSP provisioning execution changed");
+        }
     }
 }

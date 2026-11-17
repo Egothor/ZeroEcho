@@ -57,7 +57,7 @@ public final class PkiRootAdmin {
      */
     public static void main(String[] arguments) {
         int code = run(arguments);
-        if (code != 0) System.exit(code);
+        if (code != 0) { System.exit(code); }
     }
 
     /**
@@ -67,7 +67,10 @@ public final class PkiRootAdmin {
      * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
      * @throws NullPointerException if the arguments array is null
      */
-    static int run(String[] arguments) {
+    // Preserve the original bounded failure result when an external operation is unavailable.
+    /* default */
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException"})
+    static int run(String... arguments) {
         if (arguments.length == 1 && "--help".equals(arguments[0])) { System.out.print(HELP); return 0; }
         try {
             Map<String, String> options = options(arguments);
@@ -84,9 +87,9 @@ public final class PkiRootAdmin {
         }
     }
 
-    private static Map<String, String> options(String[] arguments) {
+    private static Map<String, String> options(String... arguments) {
         Set<String> names = Set.of("--config", "--admin-id", "--approver-id", "--proxy-id");
-        if (arguments.length != names.size() * 2) throw new IllegalArgumentException(HELP.strip());
+        if (arguments.length != names.size() * 2) { throw new IllegalArgumentException(HELP.strip()); }
         Map<String, String> result = new HashMap<>();
         for (int index = 0; index < arguments.length; index += 2) {
             if (!names.contains(arguments[index]) || result.putIfAbsent(arguments[index], arguments[index + 1]) != null) {

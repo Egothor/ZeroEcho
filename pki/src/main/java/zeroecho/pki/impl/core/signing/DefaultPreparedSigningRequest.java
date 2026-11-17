@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core.signing;
 
+import java.util.ArrayList;
+
 import java.util.Objects;
 import java.util.List;
 import java.util.Optional;
@@ -151,7 +153,7 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
      * @return immutable list containing primary content followed by present proof challenges
      */
     /* default */ List<DurableContentReference> candidates() {
-        var candidates = new java.util.ArrayList<DurableContentReference>(); candidates.add(candidate);
+        List<DurableContentReference> candidates = new ArrayList<>(); candidates.add(candidate);
         proofStep.ifPresent(step -> candidates.add(step.challenge()));
         alternativeProofStep.ifPresent(step -> candidates.add(step.challenge()));
         return List.copyOf(candidates);
@@ -186,8 +188,9 @@ public final class DefaultPreparedSigningRequest implements PreparedSigningReque
      * @param expectedOwner preparing-service token to compare with the retained token
      * @return true only for the identical owner object
      */
+    /* default */
     @SuppressWarnings("PMD.CompareObjectsWithEquals")
-    /* default */ boolean ownedBy(Object expectedOwner) { return owner == expectedOwner; }
+    boolean ownedBy(Object expectedOwner) { return owner == expectedOwner; }
 
     /**
      * Requires exclusive prepared custody before an operation may begin.

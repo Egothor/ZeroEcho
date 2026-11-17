@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.File;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -73,7 +75,7 @@ final class FsRestoreInventory {
                 Path path = iterator.next();
                 if (path.equals(root)) { continue; }
                 if (++count > limits.entryCount()) { throw new IOException("RESTORE_LIVE_INVENTORY_LIMIT"); }
-                String name = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
+                String name = root.relativize(path).toString().replace(File.separatorChar, '/');
                 if (name.getBytes(StandardCharsets.UTF_8).length > limits.pathBytes() || Files.isSymbolicLink(path)) {
                     throw new IOException("RESTORE_EXTERNAL_AUTHORITY");
                 }

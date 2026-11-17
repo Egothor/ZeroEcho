@@ -382,7 +382,7 @@ final class RevocationAuditProjector {
          * @throws IllegalArgumentException if a counter is negative or exceeds the examined count
          * @throws NullPointerException if the retry container or observed source head is null
          */
-        PassResult {
+        /* default */ PassResult {
             if (examined < 0 || sinkCalls < 0 || advanced < 0
                     || sinkCalls > examined || advanced > examined) {
                 throw new IllegalArgumentException("Revocation audit projection result is invalid");

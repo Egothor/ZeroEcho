@@ -53,7 +53,7 @@ import java.util.TreeMap;
  * outstanding nonces. Expiry buckets are removed eagerly on every issue and
  * consume operation, so retained state cannot grow beyond the configured bound.</p>
  */
-@SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel", "PMD.ControlStatementBraces",
+@SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.UselessParentheses" })
 public final class AcmeNonceService {
     private static final int NONCE_BYTES = 32;
@@ -135,12 +135,12 @@ public final class AcmeNonceService {
         Instant now = clock.instant();
         expire(now);
         if (nonce == null || !nonce.matches("[A-Za-z0-9_-]{43}")
-                || nonceScope == null || nonceScope.isBlank()) return false;
+                || nonceScope == null || nonceScope.isBlank()) { return false; }
         String key = commitment(nonce, nonceScope);
         Instant expiry = byCommitment.remove(key);
-        if (expiry == null) return false;
+        if (expiry == null) { return false; }
         java.util.Set<String> bucket = byExpiry.get(expiry);
-        if (bucket != null && (bucket.remove(key) && bucket.isEmpty())) byExpiry.remove(expiry);
+        if (bucket != null && (bucket.remove(key) && bucket.isEmpty())) { byExpiry.remove(expiry); }
         return expiry.isAfter(now);
     }
 

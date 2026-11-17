@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -95,7 +98,8 @@ final class SigningManifestCodec {
      * @param manifest manifest to encode
      * @return newly allocated complete encoded bytes
      * @throws NullPointerException if manifest is null
-     * @throws IllegalArgumentException if descriptor bounds, generation identities, names or sequence continuity are invalid
+     * @throws IllegalArgumentException if descriptor bounds, generation identities, names or sequence
+     * continuity are invalid
      */
     /* default */ static byte[] encode(Manifest manifest) {
         validate(manifest);
@@ -130,7 +134,8 @@ final class SigningManifestCodec {
     }
 
     /**
-     * Authenticates and decodes the complete manifest, rejecting unsupported framing, invalid descriptors and trailing bytes.
+     * Authenticates and decodes the complete manifest, rejecting unsupported framing, invalid
+     * descriptors and trailing bytes.
      *
      * @param encoded complete encoded payload
      * @return authenticated decoded value
@@ -193,7 +198,7 @@ final class SigningManifestCodec {
             throw new IllegalArgumentException("signing manifest fields are invalid");
         }
         long expected = 0L;
-        java.util.Set<Long> generationIdentities = new java.util.HashSet<>();
+        Set<Long> generationIdentities = new HashSet<>();
         if (manifest.checkpoint().isPresent()) {
             Checkpoint checkpoint = manifest.checkpoint().orElseThrow();
             requireLengthAndCommitment(checkpoint.length(), checkpoint.commitment());
@@ -429,8 +434,10 @@ final class SigningManifestCodec {
          * @param checkpoint selected checkpoint descriptor, or empty when recovery starts from WAL segments
          * @param sealedSegments ordered immutable sealed segment descriptors
          * @param activeWal active-WAL descriptor selected by the manifest
-         * @throws NullPointerException if {@code checkpoint} is null; or if {@code sealedSegments} is null; or if {@code activeWal} is null
-         * @throws IllegalArgumentException if {@code (committedRevision < 0L || committedSequence < 0L || sealedSegments.size() > MAX_SEGMENTS)}
+         * @throws NullPointerException if {@code checkpoint} is null; or if {@code sealedSegments}
+         * is null; or if {@code activeWal} is null
+         * @throws IllegalArgumentException if {@code (committedRevision < 0L || committedSequence <
+         * 0L || sealedSegments.size() > MAX_SEGMENTS)}
          */
         Manifest {
             checkpoint = Objects.requireNonNull(checkpoint, "checkpoint");
@@ -466,7 +473,9 @@ final class SigningManifestCodec {
          * @param commitment integrity commitment of the exact encoded artifact
          * @param name validated store-local artifact name
          * @throws NullPointerException if {@code commitment} is null
-         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || revision < 0L || coveredSequence < 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES ||
+         * generationIdentity < 0L || revision < 0L || coveredSequence < 0L || length <= 0L || length
+         * > MAX_FILE_BYTES)}
          */
         Checkpoint {
             Objects.requireNonNull(commitment, "commitment");
@@ -515,7 +524,9 @@ final class SigningManifestCodec {
          * @param commitment integrity commitment of the exact encoded artifact
          * @param name validated store-local artifact name
          * @throws NullPointerException if {@code commitment} is null
-         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || generationIdentity < 0L || firstSequence < 0L || sequenceCount <= 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES ||
+         * generationIdentity < 0L || firstSequence < 0L || sequenceCount <= 0L || length <= 0L ||
+         * length > MAX_FILE_BYTES)}
          */
         Segment {
             Objects.requireNonNull(commitment, "commitment");
@@ -564,7 +575,9 @@ final class SigningManifestCodec {
          * @param commitment integrity commitment of the exact encoded artifact
          * @param name validated store-local artifact name
          * @throws NullPointerException if {@code commitment} is null
-         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES || identity < 0L || firstSequence < 0L || baselineRevision < 0L || length <= 0L || length > MAX_FILE_BYTES)}
+         * @throws IllegalArgumentException if {@code (commitment.length != COMMITMENT_BYTES ||
+         * identity < 0L || firstSequence < 0L || baselineRevision < 0L || length <= 0L || length >
+         * MAX_FILE_BYTES)}
          */
         ActiveWal {
             Objects.requireNonNull(commitment, "commitment");

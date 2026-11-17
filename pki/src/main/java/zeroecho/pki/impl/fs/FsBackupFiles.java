@@ -167,7 +167,8 @@ final class FsBackupFiles {
         private final Set<String> names = new HashSet<>();
         private final Set<String> directories = new HashSet<>();
         /**
-         * Accounts for one backup item and rejects duplicate names, portable case-folding collisions or configured resource-limit exhaustion.
+         * Accounts for one backup item and rejects duplicate names, portable case-folding collisions
+         * or configured resource-limit exhaustion.
          *
          * @param path relative backup name or filesystem path being processed
          * @param limits resource and path limits to enforce
@@ -203,7 +204,8 @@ final class FsBackupFiles {
          */
         /* default */ Budget(BackupLimits limits) { this.limits = limits; }
         /**
-         * Accounts for one expanded snapshot file, rejecting negative lengths and per-entry, total-byte or entry-count exhaustion.
+         * Accounts for one expanded snapshot file, rejecting negative lengths and per-entry,
+         * total-byte or entry-count exhaustion.
          *
          * @param bytes encoded mutable-state payload
          * @throws IOException if the entry violates configured limits or collides with an existing name
@@ -217,7 +219,8 @@ final class FsBackupFiles {
     }
 
     /**
-     * Copies one regular source file into a newly created destination, accounting for its size, strictly forcing the source and destination, and preserving its modification time.
+     * Copies one regular source file into a newly created destination, accounting for its size, strictly
+     * forcing the source and destination, and preserving its modification time.
      *
      * @param source source file or borrowed source store
      * @param destination new destination file
@@ -242,7 +245,8 @@ final class FsBackupFiles {
     }
 
     /**
-     * Copies exactly the declared number of bytes using a fixed transfer buffer and rejects premature EOF, lack of progress or trailing source bytes. Neither stream is closed.
+     * Copies exactly the declared number of bytes using a fixed transfer buffer and rejects premature
+     * EOF, lack of progress or trailing source bytes. Neither stream is closed.
      *
      * @param input borrowed input stream
      * @param output destination buffer or output stream, retained by the caller
@@ -302,7 +306,8 @@ final class FsBackupFiles {
         });
     }
     /**
-     * Deletes an existing tree in postorder after fault observation; an absent root is a no-op. Cleanup I/O failures are wrapped with the stable cleanup-failure code.
+     * Deletes an existing tree in postorder after fault observation; an absent root is a no-op. Cleanup
+     * I/O failures are wrapped with the stable cleanup-failure code.
      *
      * @param root filesystem tree or store root
      * @throws IOException if observation or recursive deletion fails

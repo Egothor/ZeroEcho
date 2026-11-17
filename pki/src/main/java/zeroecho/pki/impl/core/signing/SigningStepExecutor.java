@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.signing;
 
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.spi.store.CrlHybridExecution;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -138,7 +141,7 @@ public final class SigningStepExecutor {
             progressed.set(true);
             progress.run();
         };
-        if (terminal(source.state())) {
+        if (TerminalStates.terminal(source.state())) {
             advanceTerminal(source, cancellation, notifyProgress);
             return progressed.get();
         }
@@ -162,7 +165,7 @@ public final class SigningStepExecutor {
     }
 
     private void dispatch(Workflow workflow, CancellationSignal cancellation, Runnable progress) {
-        if (!initialCallBeforeDeadline(workflow, progress)) {
+        if (!ProviderAdmission.initialCallBeforeDeadline(store, workflow, progress)) {
             return;
         }
         RepeatableContent content;
@@ -177,7 +180,7 @@ public final class SigningStepExecutor {
             return;
         }
         try (content) {
-            if (!initialCallBeforeDeadline(workflow, progress)) {
+            if (!ProviderAdmission.initialCallBeforeDeadline(store, workflow, progress)) {
                 return;
             }
             apply(workflow, executor.dispatch(workflow, content, cancellation), Action.DISPATCH, cancellation, progress);
@@ -188,7 +191,7 @@ public final class SigningStepExecutor {
 
     private void reconcile(Workflow workflow, boolean cancelWhenPending,
             CancellationSignal cancellation, Runnable progress) {
-        if (!cancelWhenPending && !initialCallBeforeDeadline(workflow, progress)) {
+        if (!cancelWhenPending && !ProviderAdmission.initialCallBeforeDeadline(store, workflow, progress)) {
             return;
         }
         try {
@@ -203,17 +206,7 @@ public final class SigningStepExecutor {
         }
     }
 
-    private boolean initialCallBeforeDeadline(Workflow workflow, Runnable progress) {
-        if (workflow.mode() != SignWorkflowStore.Mode.BOUNDED_OBSERVATION
-                && workflow.stage() == SignWorkflowStore.Stage.SINGLE
-                || workflow.deadline().isAfter(store.signingNow())) {
-            return true;
-        }
-        // The authoritative lookup performs the existing expiry transition and cleanup.
-        store.getSignWorkflow(workflow.operationId());
-        progress.run();
-        return false;
-    }
+
 
     private void cancelProvider(Workflow workflow, CancellationSignal cancellation, Runnable progress) {
         try {
@@ -255,7 +248,7 @@ public final class SigningStepExecutor {
                     new SignWorkflowStore.CaSubjectProofOutcome(observation.state(), observation.detailCode(),
                             Optional.of(observation.updatedAt())), observation.signature()).ifPresent(changed -> {
                         progress.run();
-                        if (terminal(changed.state())) {
+                        if (TerminalStates.terminal(changed.state())) {
                             advanceTerminal(changed, cancellation, progress);
                         }
                     });
@@ -293,7 +286,7 @@ public final class SigningStepExecutor {
     }
 
     private void transition(Workflow workflow, SignWorkflowStore.State target,
-            Optional<String> detail, Optional<zeroecho.pki.api.EncodedObject> result,
+            Optional<String> detail, Optional<EncodedObject> result,
             Optional<Instant> providerUpdatedAt, CancellationSignal cancellation, Runnable progress) {
         store.transitionSign(workflow.operationId(), workflow.revision(), workflow.fence(),
                 target, detail, result, providerUpdatedAt).ifPresent(terminal -> {
@@ -327,8 +320,8 @@ public final class SigningStepExecutor {
             }
         } else if (store.supportsHybridCrlContinuations()
                 && store.getCrlHybridExecutionForChild(workflow.operationId()).isPresent()) {
-            var execution = store.getCrlHybridExecutionForChild(workflow.operationId()).orElseThrow();
-            var parent = store.getSignWorkflow(execution.parentId()).orElseThrow();
+            CrlHybridExecution execution = store.getCrlHybridExecutionForChild(workflow.operationId()).orElseThrow();
+            SignWorkflowStore.Workflow parent = store.getSignWorkflow(execution.parentId()).orElseThrow();
             try { outerDriver.advance(parent); progress.run(); }
             catch (RuntimeException infrastructureFailure) {
                 if (deferOuterContinuation(parent.operationId(), cancellation)) {
@@ -355,23 +348,14 @@ public final class SigningStepExecutor {
                         SignWorkflowStore.ReconciliationFailureClass.LOCAL_FAILURE).isPresent();
     }
 
-    private boolean providerMatches(Workflow workflow) {
-        return workflow.namespace().equals(store.signingNamespace() + "." + provider.id())
-                && provider.configurationCommitment().matches(workflow.configurationCommitment());
-    }
 
-    private static boolean terminal(SignWorkflowStore.State state) {
-        return state == SignWorkflowStore.State.SUCCEEDED
-                || state == SignWorkflowStore.State.FAILED
-                || state == SignWorkflowStore.State.CANCELLED
-                || state == SignWorkflowStore.State.EXPIRED
-                || state == SignWorkflowStore.State.RETIRED;
-    }
+
+
 
     private enum Action { DISPATCH, RECONCILE, CANCEL }
 
     private void advanceClaimed(Workflow source, Workflow exact, CancellationSignal cancellation, Runnable progress) {
-        if (!providerMatches(exact)) {
+        if (!ProviderAdmission.providerMatches(provider, store, exact)) {
             transitionFailure(exact, PROVIDER_ID_MISMATCH, cancellation, progress);
             return;
         }
@@ -392,6 +376,37 @@ public final class SigningStepExecutor {
             }
         } else if (source.state() == SignWorkflowStore.State.CANCELLING) {
             reconcile(exact, true, cancellation, progress);
+        }
+    }
+
+    /** Classifies retained terminal states without provider or store access. */
+    private static final class TerminalStates {
+        private static boolean terminal(SignWorkflowStore.State state) {
+            return state == SignWorkflowStore.State.SUCCEEDED
+                    || state == SignWorkflowStore.State.FAILED
+                    || state == SignWorkflowStore.State.CANCELLED
+                    || state == SignWorkflowStore.State.EXPIRED
+                    || state == SignWorkflowStore.State.RETIRED;
+        }
+    }
+
+    /** Checks provider binding and the authoritative initial-dispatch deadline. */
+    private static final class ProviderAdmission {
+        private static boolean providerMatches(SigningProvider provider, PkiStore store, Workflow workflow) {
+            return workflow.namespace().equals(store.signingNamespace() + "." + provider.id())
+                    && provider.configurationCommitment().matches(workflow.configurationCommitment());
+        }
+
+        private static boolean initialCallBeforeDeadline(PkiStore store, Workflow workflow, Runnable progress) {
+            if (workflow.mode() != SignWorkflowStore.Mode.BOUNDED_OBSERVATION
+                    && workflow.stage() == SignWorkflowStore.Stage.SINGLE
+                    || workflow.deadline().isAfter(store.signingNow())) {
+                return true;
+            }
+            // The authoritative lookup performs the existing expiry transition and cleanup.
+            store.getSignWorkflow(workflow.operationId());
+            progress.run();
+            return false;
         }
     }
 }

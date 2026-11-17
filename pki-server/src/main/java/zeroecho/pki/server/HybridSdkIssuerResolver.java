@@ -1,3 +1,37 @@
+/*
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
 package zeroecho.pki.server;
 
 import java.nio.ByteBuffer;
@@ -27,6 +61,8 @@ import zeroecho.pki.application.PkiSigningOperation;
  * header or listener binding is used to infer an externally published address.
  */
 final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolver {
+    private static final int TARGET_FRAME_KIND = 7;
+
     private final ServerRealmContext realm;
 
     /**
@@ -35,7 +71,7 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
      * @param realm realm-owned authorization and signing services
      * @throws NullPointerException if realm is null
      */
-    HybridSdkIssuerResolver(ServerRealmContext realm) { this.realm=java.util.Objects.requireNonNull(realm); }
+    /* default */ HybridSdkIssuerResolver(ServerRealmContext realm) { this.realm=java.util.Objects.requireNonNull(realm); }
 
     /**
      * {@inheritDoc}
@@ -55,14 +91,14 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
 
     private HybridSdkAdmissionService.Context resolve(ServerOperationGateway.Request request,
             PkiOperationValue.ObjectValue envelope, ParsedHybridSdkRequest subject, Optional<Validity> frozenValidity) {
-        var decoded=zeroecho.pki.server.http.HttpOperationCodec.decode(request.operation().name(),
-                zeroecho.pki.server.http.StrictJson.encode(envelope),262144,request.realmId(),realm.gateway()::descriptor);
-        if(!decoded.operation().equals(request.operation()))throw new IllegalArgumentException("SDK_OPERATION_ENVELOPE_DIFFERS");
-        var admission=realm.gateway().assessAdministrativeRequest(request);
-        var operation=issue(admission.request());
+        zeroecho.pki.server.http.HttpOperationCodec.Decoded decoded=zeroecho.pki.server.http.HttpOperationCodec.decode(request.operation().name(),
+                zeroecho.pki.server.http.StrictJson.encode(envelope),262_144,request.realmId(),realm.gateway()::descriptor);
+        if(!decoded.operation().equals(request.operation())){ throw new IllegalArgumentException("SDK_OPERATION_ENVELOPE_DIFFERS"); }
+        ServerOperationGateway.Admission admission=realm.gateway().assessAdministrativeRequest(request);
+        PkiSigningOperation operation=issue(admission.request());
         // Importing client metadata through a second operation is unnecessary: the exact SDK CSR is proof-bound here.
         requireRequestId(operation,subject);
-        var preview=realm.session().signingCommands().orElseThrow().previewSdk(operation,access(request),subject,
+        SdkIssuancePreview preview=realm.session().signingCommands().orElseThrow().previewSdk(operation,access(request),subject,
                 frozenValidity,CancellationSignal.NONE);
         return new HybridSdkAdmissionService.Context(admission,target(admission,envelope,preview));
     }
@@ -77,8 +113,8 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
      * @throws UnsupportedOperationException if the issuance operation is unsupported
      * @throws IllegalArgumentException if request identity or retained target validity is invalid
      */
-    SdkIssuancePreview preview(ServerOperationGateway.Request request, ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
-        var operation=issue(request);
+    /* default */ SdkIssuancePreview preview(ServerOperationGateway.Request request, ParsedHybridSdkRequest subject, HybridSdkFrame retainedTarget) {
+        PkiSigningOperation operation=issue(request);
         requireRequestId(operation,subject);
         return realm.session().signingCommands().orElseThrow().previewSdk(operation,access(request),subject,
                 Optional.of(frozenValidity(retainedTarget)),CancellationSignal.NONE);
@@ -91,19 +127,19 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
      * @return issue, renew, reissue or replace operation
      * @throws UnsupportedOperationException if the operation is outside the SDK issuance family
      */
-    static PkiSigningOperation issue(ServerOperationGateway.Request request) {
+    /* default */ static PkiSigningOperation issue(ServerOperationGateway.Request request) {
         if(request.operation() instanceof AdministrativeOperation.Signing signing
                 && (signing.operation() instanceof PkiSigningOperation.IssueCredential
                     || signing.operation() instanceof PkiSigningOperation.RenewCredential
                     || signing.operation() instanceof PkiSigningOperation.ReissueCredential
-                    || signing.operation() instanceof PkiSigningOperation.ReplaceCredential)) return signing.operation();
+                    || signing.operation() instanceof PkiSigningOperation.ReplaceCredential)) { return signing.operation(); }
         throw new UnsupportedOperationException("SDK_ISSUANCE_TARGET_UNSUPPORTED");
     }
 
     private static void requireRequestId(PkiSigningOperation operation, ParsedHybridSdkRequest subject) {
-        var id=operation instanceof PkiSigningOperation.IssueCredential issue?Optional.of(issue.requestId()):
+        Optional<zeroecho.pki.api.PkiId> id=operation instanceof PkiSigningOperation.IssueCredential issue?Optional.of(issue.requestId()):
                 operation instanceof PkiSigningOperation.ReplaceCredential replace?Optional.of(replace.requestId()):Optional.<zeroecho.pki.api.PkiId>empty();
-        if(id.isPresent()&&!id.orElseThrow().equals(subject.primary().requestId()))throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS");
+        if(id.isPresent()&&!id.orElseThrow().equals(subject.primary().requestId())){ throw new IllegalArgumentException("SDK_REQUEST_ID_DIFFERS"); }
     }
 
     /**
@@ -112,13 +148,13 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
      * @param request authenticated administrative request
      * @return access context with the exact operation name as purpose
      */
-    static AccessContext access(ServerOperationGateway.Request request) {
+    /* default */ static AccessContext access(ServerOperationGateway.Request request) {
         return new AccessContext(new Principal("ADMIN_PRINCIPAL",request.principalId()),new Purpose(request.operation().name()),Optional.empty(),Optional.empty());
     }
 
     private static HybridSdkFrame target(ServerOperationGateway.Admission admission,
             PkiOperationValue.ObjectValue envelope, SdkIssuancePreview preview) {
-        var fields=new TreeMap<Integer,byte[]>();
+        Map<Integer,byte[]> fields=new TreeMap<>();
         fields.put(1,text(admission.request().operation().name()));
         fields.put(2,HybridSdkAdmissionService.value(envelope.fields().get("arguments")).encode());
         fields.put(3,text(admission.request().principalId()));fields.put(4,text(preview.issuerCaId().value()));
@@ -143,9 +179,9 @@ final class HybridSdkIssuerResolver implements HybridSdkAdmissionService.Resolve
      * @return retained not-before and not-after instants without rebasing to the current clock
      * @throws IllegalArgumentException if frame kind, subject value or timestamp syntax is invalid
      */
-    static Validity frozenValidity(HybridSdkFrame retainedTarget) {
-        if(retainedTarget.kind()!=7)throw new IllegalArgumentException("SDK_TARGET_INVALID");
-        var fields=HybridSdkValue.decode(retainedTarget.field(15)).objectFields();
+    /* default */ static Validity frozenValidity(HybridSdkFrame retainedTarget) {
+        if(retainedTarget.kind()!=TARGET_FRAME_KIND){ throw new IllegalArgumentException("SDK_TARGET_INVALID"); }
+        Map<String,HybridSdkValue> fields=HybridSdkValue.decode(retainedTarget.field(15)).objectFields();
         return new Validity(Instant.parse(fields.get("notBefore").textValue()),Instant.parse(fields.get("notAfter").textValue()));
     }
     private static byte[] text(String value) { return value.getBytes(StandardCharsets.UTF_8); }

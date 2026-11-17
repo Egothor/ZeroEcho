@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
-import java.util.Base64;
-
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.ObjectReadContext;
@@ -43,12 +41,15 @@ import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.json.JsonFactory;
 import tools.jackson.core.json.JsonFactoryBuilder;
 import tools.jackson.core.json.JsonReadFeature;
+
 import zeroecho.pki.server.acme.AcmeJwsVerifier;
+
+import java.util.Base64;
 
 /**
  * Narrow large-scalar ACME endpoint payload decoder.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity",
+/* default */ @SuppressWarnings({ "PMD.CyclomaticComplexity",
         "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException" })
 /* default */ final class AcmePayloads {
     private AcmePayloads() { }
@@ -63,32 +64,49 @@ import zeroecho.pki.server.acme.AcmeJwsVerifier;
      * @throws AcmeJwsVerifier.AcmeProblem if the document is absent, oversized, malformed,
      *         contains additional fields or does not use canonical unpadded base64url
      */
-    /* default */ static byte[] requiredBase64Url(byte[] document, String requiredField,
-            int maximumDocumentBytes) {
+    /* default */ static byte[] requiredBase64Url(
+            byte[] document, String requiredField, int maximumDocumentBytes) {
         if (document == null || document.length == 0 || document.length > maximumDocumentBytes) {
             throw malformed();
         }
-        StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(1)
-                .maxDocumentLength(maximumDocumentBytes).maxTokenCount(4).maxNameLength(32)
-                .maxStringLength(maximumDocumentBytes).build();
-        JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
-                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-                .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
-        for (JsonReadFeature feature : JsonReadFeature.values()) builder.disable(feature);
+        StreamReadConstraints constraints =
+                StreamReadConstraints.builder()
+                        .maxNestingDepth(1)
+                        .maxDocumentLength(maximumDocumentBytes)
+                        .maxTokenCount(4)
+                        .maxNameLength(32)
+                        .maxStringLength(maximumDocumentBytes)
+                        .build();
+        JsonFactoryBuilder builder =
+                JsonFactory.builder()
+                        .streamReadConstraints(constraints)
+                        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+                        .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+        for (JsonReadFeature feature : JsonReadFeature.values()) {
+            builder.disable(feature);
+        }
         JsonFactory factory = builder.build();
-        try (JsonParser parser = factory.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
-            if (parser.nextToken() != JsonToken.START_OBJECT || parser.nextToken() != JsonToken.PROPERTY_NAME
-                    || !requiredField.equals(parser.currentName()) || parser.nextToken() != JsonToken.VALUE_STRING) {
+        try (JsonParser parser =
+                factory.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT
+                    || parser.nextToken() != JsonToken.PROPERTY_NAME
+                    || !requiredField.equals(parser.currentName())
+                    || parser.nextToken() != JsonToken.VALUE_STRING) {
                 throw malformed();
             }
             String encoded = parser.getString();
-            if (parser.nextToken() != JsonToken.END_OBJECT || parser.nextToken() != null
-                    || encoded.indexOf('=') >= 0 || !encoded.matches("[A-Za-z0-9_-]+")) {
+            if (parser.nextToken() != JsonToken.END_OBJECT
+                    || parser.nextToken() != null
+                    || encoded.indexOf('=') >= 0
+                    || !encoded.matches("[A-Za-z0-9_-]+")) {
                 throw malformed();
             }
             byte[] decoded = Base64.getUrlDecoder().decode(encoded);
             if (decoded.length > maximumDocumentBytes
-                    || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(encoded)) {
+                    || !Base64.getUrlEncoder()
+                            .withoutPadding()
+                            .encodeToString(decoded)
+                            .equals(encoded)) {
                 throw malformed();
             }
             return decoded;
@@ -108,30 +126,62 @@ import zeroecho.pki.server.acme.AcmeJwsVerifier;
      * @throws AcmeJwsVerifier.AcmeProblem if the object shape or certificate encoding is invalid
      */
     /* default */ static RevocationPayload revocation(byte[] document, int maximumDocumentBytes) {
-        if (document == null || document.length == 0 || document.length > maximumDocumentBytes) throw malformed();
-        StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(1)
-                .maxDocumentLength(maximumDocumentBytes).maxTokenCount(7).maxNameLength(32)
-                .maxStringLength(maximumDocumentBytes).maxNumberLength(3).build();
-        JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
-                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
-        for (JsonReadFeature feature : JsonReadFeature.values()) builder.disable(feature);
-        try (JsonParser parser = builder.build().createParser(ObjectReadContext.empty(), document, 0, document.length)) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) throw malformed();
-            String certificate = null; int reason = 0;
+        if (document == null || document.length == 0 || document.length > maximumDocumentBytes) {
+            throw malformed();
+        }
+        StreamReadConstraints constraints =
+                StreamReadConstraints.builder()
+                        .maxNestingDepth(1)
+                        .maxDocumentLength(maximumDocumentBytes)
+                        .maxTokenCount(7)
+                        .maxNameLength(32)
+                        .maxStringLength(maximumDocumentBytes)
+                        .maxNumberLength(3)
+                        .build();
+        JsonFactoryBuilder builder =
+                JsonFactory.builder()
+                        .streamReadConstraints(constraints)
+                        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+                        .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+        for (JsonReadFeature feature : JsonReadFeature.values()) {
+            builder.disable(feature);
+        }
+        try (JsonParser parser =
+                builder.build()
+                        .createParser(ObjectReadContext.empty(), document, 0, document.length)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw malformed();
+            }
+            String certificate = null;
+            int reason = 0;
             while (parser.nextToken() != JsonToken.END_OBJECT) {
-                if (parser.currentToken() != JsonToken.PROPERTY_NAME) throw malformed();
-                String name = parser.currentName(); JsonToken token = parser.nextToken();
-                if ("certificate".equals(name) && token == JsonToken.VALUE_STRING && certificate == null) {
+                if (parser.currentToken() != JsonToken.PROPERTY_NAME) {
+                    throw malformed();
+                }
+                String name = parser.currentName();
+                JsonToken token = parser.nextToken();
+                if ("certificate".equals(name)
+                        && token == JsonToken.VALUE_STRING
+                        && certificate == null) {
                     certificate = parser.getString();
                 } else if ("reason".equals(name) && token == JsonToken.VALUE_NUMBER_INT) {
                     reason = parser.getIntValue();
-                } else throw malformed();
+                } else {
+                    throw malformed();
+                }
             }
-            if (parser.nextToken() != null || certificate == null || certificate.indexOf('=') >= 0
-                    || !certificate.matches("[A-Za-z0-9_-]+")) throw malformed();
+            if (parser.nextToken() != null
+                    || certificate == null
+                    || certificate.indexOf('=') >= 0
+                    || !certificate.matches("[A-Za-z0-9_-]+")) {
+                throw malformed();
+            }
             byte[] decoded = Base64.getUrlDecoder().decode(certificate);
             if (decoded.length > maximumDocumentBytes
-                    || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(certificate)) {
+                    || !Base64.getUrlEncoder()
+                            .withoutPadding()
+                            .encodeToString(decoded)
+                            .equals(certificate)) {
                 throw malformed();
             }
             return new RevocationPayload(decoded, reason);
@@ -156,7 +206,7 @@ import zeroecho.pki.server.acme.AcmeJwsVerifier;
          * @param reasonCode requested revocation reason code
          * @throws NullPointerException if certificate bytes are null
          */
-        RevocationPayload { certificateDer = certificateDer.clone(); }
+        /* default */ RevocationPayload { certificateDer = certificateDer.clone(); }
         /**
          * Copies the certificate bytes supplied in the ACME revocation payload.
          *

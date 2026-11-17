@@ -234,7 +234,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
          * @throws IllegalArgumentException if a coordinate, commitment, length or restore identity is invalid
          * @throws NullPointerException if the manifest is null
          */
-        Descriptor {
+        /* default */ Descriptor {
             if (!token(handle) || !bounded(owner) || !bounded(realm) || backupId == null
                     || !bounded(backupId.value()) || length < 1 || !digest(sha256)
                     || !(manifest.isEmpty() || digest(manifest)) || purpose == null
@@ -301,7 +301,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @return immutable list of staged or uncertain restore descriptors
      * @throws IOException if the repository is closed or fenced
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized java.util.List<Descriptor> unresolvedRestores() throws IOException {
         requireOpen();
         return artifacts.values().stream().filter(value -> value.state() == State.UNCERTAIN
@@ -316,7 +316,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @throws IOException if the repository is unavailable, the snapshot is stale,
      *         work is active or durable publication fails
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void rejectUnpublished(Descriptor expected) throws IOException {
         requireOpen();
         if (!expected.equals(artifacts.get(expected.handle())) || !leases.isEmpty() || preparationJobs != 0) {
@@ -398,7 +398,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @throws IOException if capacity is exhausted or cleanup/publication fails
      * @throws IllegalArgumentException if descriptor inputs are invalid
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor reserve(String owner, Purpose purpose, PkiId backupId,
             long length, String sha256) throws IOException {
         requireOpen();
@@ -431,7 +431,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @return retained, unexpired artifact descriptor
      * @throws IOException if the repository or artifact is unavailable, expired or owned by another principal
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor inspect(String owner, String handle) throws IOException {
         Descriptor descriptor = workflow(owner, handle);
         if (!clock.instant().isBefore(descriptor.expiresAt()) || !descriptor.archiveRetained()) {
@@ -449,7 +449,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @return unconsumed workflow descriptor belonging to this realm and owner
      * @throws IOException if the repository is unavailable or no matching unconsumed workflow exists
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor workflow(String owner, String handle) throws IOException {
         requireOpen();
         Descriptor descriptor = artifacts.get(handle);
@@ -551,7 +551,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @throws IOException if the artifact is unavailable, state differs or concurrency/workspace budgets are
      *         exhausted
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Lease source(String owner, String handle, State expected, boolean workspace) throws IOException {
         Descriptor descriptor = inspect(owner, handle);
         long reservation = configuration.workspaceReservationBytes();
@@ -577,7 +577,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @return preparation owner that must be closed or handed off to an artifact lease
      * @throws IOException if the repository is unavailable or concurrency/workspace budgets are exhausted
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized PreparationJob prepare() throws IOException {
         requireOpen();
         long reservation = configuration.workspaceReservationBytes();
@@ -600,7 +600,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @return current descriptor, or durably updated descriptor when the restore coordinates match
      * @throws IOException if the workflow is unavailable or updated metadata cannot be persisted
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized Descriptor reconcile(String owner, String handle,
             zeroecho.pki.api.backup.RestoreIdentity identity) throws IOException {
         Descriptor current = workflow(owner, handle);
@@ -632,7 +632,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      * @param handle artifact whose workflow is activated or rejected
      * @throws IOException if the workflow is unresolved, leased, unavailable or cannot be durably consumed
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void acknowledge(String owner, String handle) throws IOException {
         Descriptor current = workflow(owner, handle);
         if (leases.containsKey(handle) || current.state() != State.ACTIVATED && current.state() != State.REJECTED) {
@@ -660,7 +660,7 @@ final class BackupArtifactRepository implements AutoCloseable { // NOPMD Cycloma
      *
      * @throws IOException if the repository is unavailable or metadata/file deletion fails
      */
-    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    /* default */ @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
     /* default */ synchronized void cleanup() throws IOException {
         boolean interrupted = Thread.interrupted(); // NOPMD DoNotUseThreads - Temporarily masks caller interruption to finish durable cleanup; creates no thread.
         try { cleanupDurably(); }

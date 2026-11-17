@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.pki.application.PkiOperationValue;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -49,8 +51,7 @@ import zeroecho.pki.api.publication.PublicationTarget;
 /**
  * Immutable security descriptors keyed by existing typed-operation identities.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.AvoidDuplicateLiterals" })
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidDuplicateLiterals"})
 public final class OperationSecurityDescriptors {
     /**
      * Tests current operation availability without changing its security descriptor.
@@ -465,7 +466,7 @@ public final class OperationSecurityDescriptors {
     public Descriptor require(PkiOperation operation) {
         Objects.requireNonNull(operation, "operation");
         Descriptor descriptor = descriptors.get(operation.name());
-        if (descriptor == null) throw new SecurityException("Operation is not exposed by the server gateway");
+        if (descriptor == null) { throw new SecurityException("Operation is not exposed by the server gateway"); }
         validateOperationType(operation, descriptor);
         return descriptor;
     }
@@ -482,13 +483,13 @@ public final class OperationSecurityDescriptors {
     public Descriptor require(AdministrativeOperation operation) {
         Objects.requireNonNull(operation, "operation");
         Descriptor descriptor = descriptors.get(operation.name());
-        if (descriptor == null) throw new SecurityException("Operation is not exposed by the server gateway");
+        if (descriptor == null) { throw new SecurityException("Operation is not exposed by the server gateway"); }
         Family expected = switch (operation) {
             case AdministrativeOperation.Pki ignored -> Family.PKI_OPERATION;
             case AdministrativeOperation.Signing ignored -> Family.SIGNING_OPERATION;
             case AdministrativeOperation.Control ignored -> Family.SERVER_CONTROL_OPERATION;
         };
-        if (descriptor.family() != expected) throw new SecurityException("Operation family differs");
+        if (descriptor.family() != expected) { throw new SecurityException("Operation family differs"); }
         return descriptor;
     }
 
@@ -511,7 +512,7 @@ public final class OperationSecurityDescriptors {
     public Descriptor require(String operationId) {
         Permission.requireBounded(operationId, 256, "operation ID");
         Descriptor descriptor = descriptors.get(operationId);
-        if (descriptor == null) throw new SecurityException("Operation is not exposed by the server gateway");
+        if (descriptor == null) { throw new SecurityException("Operation is not exposed by the server gateway"); }
         return descriptor;
     }
 
@@ -685,7 +686,7 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.QueryServerMetrics ignored -> resource.scope().authorityId().isEmpty()
                     && resource.objectId().isEmpty();
         };
-        if (!valid) throw new SecurityException("Operation security scope does not match typed arguments");
+        if (!valid) { throw new SecurityException("Operation security scope does not match typed arguments"); }
     }
 
     private static boolean matchesAuthorityAndObject(Permission.Resource resource, zeroecho.pki.api.PkiId id) {
@@ -830,13 +831,13 @@ public final class OperationSecurityDescriptors {
                     && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
             case PkiSigningOperation.GenerateStatus value -> resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent();
         };
-        if (!valid) throw new SecurityException("Operation security scope does not match typed arguments");
+        if (!valid) { throw new SecurityException("Operation security scope does not match typed arguments"); }
     }
 
     private static String lifecycleCommitment(AdministrativeOperation operation) {
-        var fields=LifecycleProjection.arguments(new zeroecho.pki.application.PkiOperationValue.ObjectValue(Map.of()),operation);
-        if(fields.fields().isEmpty())return "";
-        return ";lifecycle="+atom(java.util.HexFormat.of().formatHex(zeroecho.pki.server.http.StrictJson.encode(fields)));
+        PkiOperationValue.ObjectValue fields=LifecycleProjection.arguments(new PkiOperationValue.ObjectValue(Map.of()),operation);
+        if(fields.fields().isEmpty()){ return ""; }
+        return ";lifecycle="+atom(HexFormat.of().formatHex(zeroecho.pki.server.http.StrictJson.encode(fields)));
     }
 
     private static String canonicalSigning(PkiSigningOperation operation) {

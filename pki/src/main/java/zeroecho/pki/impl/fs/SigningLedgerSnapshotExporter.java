@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.file.Files;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -50,7 +52,7 @@ import zeroecho.pki.spi.store.MetadataCommitResult;
 /**
  * Streams one pinned logical revision directly into a fresh checkpoint ledger.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExhaustiveSwitchHasDefault" })
+@SuppressWarnings({ "PMD.ExhaustiveSwitchHasDefault" })
 final class SigningLedgerSnapshotExporter {
     private static final long CHECKPOINT_IDENTITY = 1L;
     private static final long ACTIVE_IDENTITY = 2L;
@@ -60,7 +62,9 @@ final class SigningLedgerSnapshotExporter {
     }
 
     /**
-     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested namespaces. This form renumbers retained entries into a compact reconstructed ledger. The method acquires and closes its own pinned snapshot.
+     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested
+     * namespaces. This form renumbers retained entries into a compact reconstructed ledger. The method
+     * acquires and closes its own pinned snapshot.
      *
      * @param engine borrowed source signing-ledger engine
      * @param targetRoot fresh target store root
@@ -75,7 +79,8 @@ final class SigningLedgerSnapshotExporter {
     }
 
     /**
-     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested namespaces. This form renumbers retained entries into a compact reconstructed ledger.
+     * Exports a pinned current ledger view into a fresh metadata root, excluding the requested
+     * namespaces. This form renumbers retained entries into a compact reconstructed ledger.
      *
      * @param engine borrowed source signing-ledger engine
      * @param snapshot borrowed pinned snapshot; its lifetime remains with the caller
@@ -89,7 +94,8 @@ final class SigningLedgerSnapshotExporter {
     }
 
     /**
-     * Exports the supplied pinned snapshot as backup metadata while preserving authoritative revisions and enforcing the checkpoint byte bound.
+     * Exports the supplied pinned snapshot as backup metadata while preserving authoritative revisions
+     * and enforcing the checkpoint byte bound.
      *
      * @param engine borrowed source signing-ledger engine
      * @param snapshot borrowed pinned snapshot; its lifetime remains with the caller
@@ -113,12 +119,12 @@ final class SigningLedgerSnapshotExporter {
             long[] measured = { shape.dataOffset };
             long[] ordinal = { 0L };
             snapshot.visit(record -> {
-                if (excluded.contains(record.key().namespace())) return;
+                if (excluded.contains(record.key().namespace())) { return; }
                 int length = frame(engine, record, ordinal[0]++).length;
-                if (length > maximumCheckpointBytes - measured[0]) throw new IOException("BACKUP_ENTRY_LIMIT");
+                if (length > maximumCheckpointBytes - measured[0]) { throw new IOException("BACKUP_ENTRY_LIMIT"); }
                 measured[0] += length;
             });
-            if (measured[0] > maximumCheckpointBytes) throw new IOException("BACKUP_ENTRY_LIMIT");
+            if (measured[0] > maximumCheckpointBytes) { throw new IOException("BACKUP_ENTRY_LIMIT"); }
         }
         SigningLedgerRecovery.initializeFormat(targetRoot);
         long revision = preserveRevisions ? snapshot.revision() : shape.count;
@@ -141,7 +147,7 @@ final class SigningLedgerSnapshotExporter {
         long[] count = { 0L };
         long[] indexBytes = { SigningCheckpointCodec.HEADER_BYTES };
         snapshot.visit(record -> {
-            if (excluded.contains(record.key().namespace())) return;
+            if (excluded.contains(record.key().namespace())) { return; }
             count[0] = Math.incrementExact(count[0]);
             indexBytes[0] = Math.addExact(indexBytes[0],
                     SigningCheckpointCodec.encodedIndexBytes(record.key().canonical()));
@@ -170,7 +176,7 @@ final class SigningLedgerSnapshotExporter {
             commitment = SigningFileCommitment.sha256(channel);
         }
         return new SigningManifestCodec.Checkpoint(CHECKPOINT_IDENTITY, revision,
-                committedSequence, java.nio.file.Files.size(path), commitment, name);
+                committedSequence, Files.size(path), commitment, name);
     }
 
     private static void writeCheckpoint(SigningLedgerStoreEngine engine,
@@ -180,7 +186,7 @@ final class SigningLedgerSnapshotExporter {
         long[] ordinal = { 0L };
         long[] offset = { header.dataOffset() };
         snapshot.visit(record -> {
-            if (excluded.contains(record.key().namespace())) return;
+            if (excluded.contains(record.key().namespace())) { return; }
             byte[] frame = frame(engine, record, ordinal[0]);
             writer.writeIndex(descriptor(record, frame, ordinal[0], offset[0], preserveRevisions));
             offset[0] = Math.addExact(offset[0], frame.length);
@@ -190,7 +196,7 @@ final class SigningLedgerSnapshotExporter {
         ordinal[0] = 0L;
         offset[0] = header.dataOffset();
         snapshot.visit(record -> {
-            if (excluded.contains(record.key().namespace())) return;
+            if (excluded.contains(record.key().namespace())) { return; }
             byte[] frame = frame(engine, record, ordinal[0]);
             SigningCheckpointCodec.EntryDescriptor descriptor =
                     descriptor(record, frame, ordinal[0], offset[0], preserveRevisions);

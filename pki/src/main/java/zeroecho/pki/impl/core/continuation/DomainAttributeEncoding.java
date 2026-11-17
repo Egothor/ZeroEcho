@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.pki.api.attr.AttributeId;
+import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -40,14 +45,9 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-
-import zeroecho.pki.api.attr.AttributeId;
-import zeroecho.pki.api.attr.AttributeSet;
-import zeroecho.pki.api.attr.AttributeValue;
-import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
 /**
  * Strict bounded encoding of the closed public attribute-value hierarchy.

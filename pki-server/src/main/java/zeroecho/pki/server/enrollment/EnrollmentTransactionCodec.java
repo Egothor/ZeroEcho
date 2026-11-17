@@ -74,6 +74,7 @@ import zeroecho.pki.server.ServerControlStore;
  * encoded records are bounded to 524288 bytes.</p>
  */
 public final class EnrollmentTransactionCodec {
+    private static final int SDK_VERSION = 3;
     private static final int MAXIMUM_TEXT_LENGTH = 8_192;
     /**
      * Maximum canonical enrollment transaction record size, in bytes.
@@ -112,11 +113,9 @@ public final class EnrollmentTransactionCodec {
         }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
             int version = in.readInt();
-            if (version != VERSION && version != 3) {
-                throw invalid();
-            }
+            requireSupportedVersion(version);
             String id = text(in); long revision = in.readLong();
-            var intentFields = intentFields(in);
+            java.util.function.Function<Optional<EnrollmentTransaction.SdkProofReference>,EnrollmentTransaction.Intent> intentFields = intentFields(in);
             // Ordinary v2 validates immediately; SDK v3 must read its mandatory
             // trailing proof before constructing the proof-bound absolute intent.
             EnrollmentTransaction.Intent intent = version == VERSION ? intentFields.apply(Optional.empty()) : null;
@@ -130,7 +129,7 @@ public final class EnrollmentTransactionCodec {
             Optional<SigningAcceptanceReceipt> receipt = in.readBoolean()
                     ? Optional.of(SigningAcceptanceReceipt.parse(new PkiId(text(in)), text(in))) : Optional.empty();
             Optional<PkiId> credential = optional(in).map(PkiId::new);
-            if (version == 3) intent = intentFields.apply(Optional.of(proof(in)));
+            if (version == SDK_VERSION) { intent = intentFields.apply(Optional.of(proof(in))); }
             EnrollmentTransaction value = new EnrollmentTransaction(id, revision, intent, state, decisions, receipt, credential);
             if (in.read() != -1 || !record.recordId().equals(value.id()) || !Arrays.equals(payload, encode(value))) {
                 throw invalid();
@@ -162,7 +161,7 @@ public final class EnrollmentTransactionCodec {
                 text(out, value.receipt().orElseThrow().operationId().value()); text(out, value.receipt().orElseThrow().encodedCommitment());
             }
             optional(out, value.credentialId().map(PkiId::value));
-            if (value.intent().sdkProof().isPresent()) proof(out, value.intent().sdkProof().orElseThrow());
+            if (value.intent().sdkProof().isPresent()) { proof(out, value.intent().sdkProof().orElseThrow()); }
         });
     }
 
@@ -178,7 +177,7 @@ public final class EnrollmentTransactionCodec {
         return sha256(bytes(out -> {
             text(out, value.sdkProof().isPresent() ? "zeroecho.enrollment-intent.sdk.v3" : "zeroecho.enrollment-intent.v2");
             intent(out, value);
-            if (value.sdkProof().isPresent()) proof(out, value.sdkProof().orElseThrow());
+            if (value.sdkProof().isPresent()) { proof(out, value.sdkProof().orElseThrow()); }
         }));
     }
 
@@ -359,7 +358,8 @@ public final class EnrollmentTransactionCodec {
                 strings(in, 4096), strings(in, 4096), in.readBoolean(), Duration.ofSeconds(in.readLong(), in.readInt()), in.readBoolean())) : Optional.empty();
         Optional<EnrollmentTransaction.ArtifactBinding> artifact = in.readBoolean()
                 ? Optional.of(new EnrollmentTransaction.ArtifactBinding(text(in), text(in), text(in), in.readLong())) : Optional.empty();
-        Instant created = instant(in), expires = instant(in);
+        Instant created = instant(in);
+        Instant expires = instant(in);
         return proof -> new EnrollmentTransaction.Intent(realm, source, requester, transaction, operation, request, kind, digest, size, authority,
                 profile, issuer, path, pathDigest, validity, predecessor, predecessorDigest, category, policy, artifact, created, expires, proof);
     }
@@ -512,4 +512,9 @@ public final class EnrollmentTransactionCodec {
          */
         void write(DataOutputStream out) throws IOException;
     }
+
+    private static void requireSupportedVersion(int version) {
+        if (version != VERSION && version != SDK_VERSION) { throw invalid(); }
+    }
+
 }

@@ -168,7 +168,8 @@ public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationO
      * Compares the input chunk size, output chunk size, and maximum finalization-output chunks by value.
      *
      * @param other object to compare, or null
-     * @return true for a compatible value with equal input chunk size, output chunk size, and maximum finalization-output chunks; false otherwise
+     * @return true for a compatible value with equal input chunk size, output chunk size, and maximum
+     * finalization-output chunks; false otherwise
      */
     @Override
     public boolean equals(Object other) {
@@ -183,7 +184,8 @@ public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationO
     }
 
     /**
-     * Hashes the input chunk size, output chunk size, and maximum finalization-output chunks using the same components as equality.
+     * Hashes the input chunk size, output chunk size, and maximum finalization-output chunks using the same
+     * components as equality.
      *
      * @return value-based hash code consistent with equals
      */

@@ -53,7 +53,8 @@ public record DeltaCrlBase(PkiId statusObjectId, BigInteger crlNumber,
      * @param crlNumber signed base CRL number
      * @param provenance authoritative revocation prefix represented by the base
      * @throws NullPointerException if statusObjectId, crlNumber, provenance is null
-     * @throws IllegalArgumentException if statusObjectId is not a canonical CRL identity or crlNumber is negative or exceeds 159 bits
+     * @throws IllegalArgumentException if statusObjectId is not a canonical CRL identity or crlNumber is negative or
+     * exceeds 159 bits
      */
     public DeltaCrlBase {
         Objects.requireNonNull(statusObjectId, "statusObjectId");

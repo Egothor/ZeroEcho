@@ -257,7 +257,7 @@ public final class ScepService {
                     evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.SCEP_CMS, Optional.of(evidence),
                     Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(),
                     new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), Set.of()));
-            String transactionHash = digest(verified.transactionId().getBytes(StandardCharsets.US_ASCII));
+            String transactionHash = ProtocolChecks.digest(verified.transactionId().getBytes(StandardCharsets.US_ASCII));
             EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(); // NOPMD CloseResource - Borrowed realm coordinator; the realm owns its shutdown.
             Optional<EnrollmentTransaction> retained = coordinator.find(EnrollmentTransaction.Protocol.SCEP, endpoint.label(),
                     requester.type(), requester.actorId(), transactionHash, EnrollmentTransaction.Operation.ISSUE);
@@ -269,12 +269,12 @@ public final class ScepService {
                 PrivateKey key = lease.privateKey();
                 ScepPkiMessage request = ScepCodec.decryptRequest(verified, ra, key);
                 if (retained.isPresent()) {
-                    requireRetained(retained.orElseThrow(), requester, lease);
+                    ProtocolChecks.requireRetained(retained.orElseThrow(), requester, lease);
                 }
                 EnrollmentTransaction value;
                 if (request.messageType() == ScepCodec.MSG_GET_CERT_INITIAL) {
                     if (retained.isEmpty()) {
-                        return failure(request, ra, key);
+                        return ProtocolChecks.failure(request, ra, key);
                     }
                     value = retained.orElseThrow();
                     byte[] csr = originalRequest(value);
@@ -284,8 +284,8 @@ public final class ScepService {
                     String expected;
                     if (retained.isEmpty()) {
                         EnrollmentEndpointRegistry.Snapshot snapshot = endpoints.requireCurrent(endpoint);
-                        if (!challengeMatches(ScepCodec.extractChallengePassword(request.innerContent()), endpoint.challengePasswordHash())) {
-                            return failure(request, ra, key);
+                        if (!ProtocolChecks.challengeMatches(ScepCodec.extractChallengePassword(request.innerContent()), endpoint.challengePasswordHash())) {
+                            return ProtocolChecks.failure(request, ra, key);
                         }
                         expected = snapshot.commitment();
                     } else {
@@ -293,20 +293,15 @@ public final class ScepService {
                     }
                     if (retained.isPresent() && retained.orElseThrow().intent().sdkProof().isPresent()) {
                         value = retained.orElseThrow();
-                        var sdk = coordinator.retainedSdkIntent(value.intent().sdkProof().orElseThrow().intentId()).orElseThrow();
-                        if (!Arrays.equals(sdk.nativeWire().orElseThrow(), messageData) || !Arrays.equals(sdk.originalPayload().der(), request.innerContent())) throw new IllegalArgumentException("SCEP SDK original request differs");
-                    } else value = coordinator.admit(new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, endpoint.label(), requester,
+                        zeroecho.pki.server.enrollment.EnrollmentSdkIntent sdk = coordinator.retainedSdkIntent(value.intent().sdkProof().orElseThrow().intentId()).orElseThrow();
+                        requireSdkInput(!(!Arrays.equals(sdk.nativeWire().orElseThrow(), messageData) || !Arrays.equals(sdk.originalPayload().der(), request.innerContent())), "SCEP SDK original request differs");
+                    } else { value = coordinator.admit(new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, endpoint.label(), requester,
                             transactionHash, EnrollmentTransaction.Operation.ISSUE,
-                            new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, request.innerContent()), Optional.empty(), Optional.empty()), expected);
-                    requireRetained(value, requester, lease);
+                            new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, request.innerContent()), Optional.empty(), Optional.empty()), expected); }
+                    ProtocolChecks.requireRetained(value, requester, lease);
                 }
                 value = coordinator.dispatch(value.id(), cancellation);
-                return switch (value.state()) {
-                    case ISSUED -> ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(),
-                            issuedCertificate(value), request.requesterCert(), ra, key);
-                    case REJECTED, EXPIRED, FAILED -> failure(request, ra, key);
-                    default -> ScepCodec.buildCertRepPending(request.transactionId(), request.senderNonce(), ra, key);
-                };
+                return sdkReply(request, value, ra, key);
             }
         } catch (ScepCodecException | IllegalArgumentException invalid) {
             throw new ScepProtocolException(400, "Invalid SCEP enrollment request"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
@@ -322,11 +317,11 @@ public final class ScepService {
      * @throws RuntimeException if required realm/profile state cannot be resolved
      */
     public boolean hybridSdkAvailable(ScepEndpoint endpoint) {
-        var policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
+        Optional<zeroecho.pki.server.enrollment.EnrollmentProfile> policy = realm.enrollmentProfiles().find(endpoint.enrollmentProfileId());
         if (policy.isEmpty() || policy.orElseThrow().state() != zeroecho.pki.server.enrollment.EnrollmentProfileState.ACTIVE
                 || policy.orElseThrow().sdkProfile().isEmpty() || realm.enrollmentCoordinator().isEmpty() || realm.enrollmentRuntime().isEmpty()
-                || realm.session().semanticSigning().isEmpty()) return false;
-        var profile = realm.session().profiles().requireActiveProfile(endpoint.profileId()).definition();
+                || realm.session().semanticSigning().isEmpty()) { return false; }
+        zeroecho.pki.api.profile.CertificateProfileDefinition profile = realm.session().profiles().requireActiveProfile(endpoint.profileId()).definition();
         return profile.hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature alt
                 && alt.subjectKeySource() == zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
     }
@@ -348,14 +343,16 @@ public final class ScepService {
      * @throws ScepProtocolException for malformed, unauthorized or unavailable native input
      * @throws IllegalArgumentException if the endpoint does not support the selected SCEP SDK profile
      */
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challengeSdk(ScepEndpoint endpoint, byte[] messageDer,
             byte[] clientNonce, String canonicalOrigin) throws ScepProtocolException {
         try {
-            if (!hybridSdkAvailable(endpoint)) throw new IllegalArgumentException("SCEP SDK profile unavailable");
-            var verified = ScepCodec.verifyRequest(messageDer); var requester = sdkRequester(verified.requesterCertificate());
+            requireSdkInput(hybridSdkAvailable(endpoint), "SCEP SDK profile unavailable");
+            ScepCodec.VerifiedRequest verified = ScepCodec.verifyRequest(messageDer); EnrollmentTransaction.Requester requester = sdkRequester(verified.requesterCertificate());
             String credential = runtime().activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.SCEP, endpoint.authorityId());
-            try (var lease = runtime().acquire(credential)) {
-                var request = ScepCodec.decryptRequest(verified, lease.responseChain().getFirst(), lease.privateKey());
+            try (EnrollmentRuntime.CredentialLease lease = runtime().acquire(credential)) {
+                ScepPkiMessage request = ScepCodec.decryptRequest(verified, lease.responseChain().getFirst(), lease.privateKey());
                 return realm.enrollmentCoordinator().orElseThrow().challengeSdk(sdkAdmission(endpoint, messageDer, request, requester, lease, canonicalOrigin), clientNonce);
             }
         } catch (ScepCodecException | IllegalArgumentException | zeroecho.pki.api.PkiException invalid) { throw new ScepProtocolException(400, "Invalid SCEP SDK request"); }
@@ -385,31 +382,33 @@ public final class ScepService {
      * @throws IllegalArgumentException if the repeated SCEP wire bytes differ from the retained original or the
      *         authenticated SCEP SDK owner differs from the retained owner
      */
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public byte[] acceptSdk(ScepEndpoint endpoint, byte[] messageDer, String intentId, String sdkRequestId,
             byte[] primaryProof, byte[] alternativeProof, String canonicalOrigin, CancellationSignal cancellation) throws ScepProtocolException {
         try {
-            var coordinator = realm.enrollmentCoordinator().orElseThrow(); var sdk = coordinator.retainedSdkIntent(intentId).orElseThrow();
-            var original = sdk.admission(); var nativeAdmission = original.admission();
-            if (nativeAdmission.protocol() != EnrollmentTransaction.Protocol.SCEP || !nativeAdmission.endpointId().equals(endpoint.label())
-                    || !original.canonicalOrigin().equals(canonicalOrigin) || !Arrays.equals(sdk.nativeWire().orElseThrow(), messageDer)) throw new IllegalArgumentException("SCEP SDK retained wire differs");
-            var verified = ScepCodec.verifyRequest(messageDer); var requester = sdkRequester(verified.requesterCertificate());
-            if (!requester.actorId().equals(nativeAdmission.requester().actorId())
-                    || !requester.certificate().equals(nativeAdmission.requester().certificate())) throw new IllegalArgumentException("SCEP SDK owner differs");
+            EnrollmentCoordinator coordinator = realm.enrollmentCoordinator().orElseThrow(); zeroecho.pki.server.enrollment.EnrollmentSdkIntent sdk = coordinator.retainedSdkIntent(intentId).orElseThrow(); // NOPMD CloseResource - Borrowed realm coordinator; realm owns its shutdown.
+            zeroecho.pki.server.enrollment.EnrollmentSdkAdmission original = sdk.admission(); EnrollmentCoordinator.Admission nativeAdmission = original.admission();
+            requireSdkInput(!(nativeAdmission.protocol() != EnrollmentTransaction.Protocol.SCEP || !nativeAdmission.endpointId().equals(endpoint.label())
+                    || !original.canonicalOrigin().equals(canonicalOrigin) || !Arrays.equals(sdk.nativeWire().orElseThrow(), messageDer)), "SCEP SDK retained wire differs");
+            ScepCodec.VerifiedRequest verified = ScepCodec.verifyRequest(messageDer); EnrollmentTransaction.Requester requester = sdkRequester(verified.requesterCertificate());
+            requireSdkInput(!(!requester.actorId().equals(nativeAdmission.requester().actorId())
+                    || !requester.certificate().equals(nativeAdmission.requester().certificate())), "SCEP SDK owner differs");
             Optional<EnrollmentTransaction> retained = sdk.enrollmentId().flatMap(coordinator::find);
             String credential = retained.map(value -> value.intent().source().credentialId().orElseThrow())
                     .orElseGet(() -> runtime().activeCredentialId(EnrollmentRuntimeConfiguration.Protocol.SCEP, endpoint.authorityId()));
-            try (var lease = runtime().acquire(credential)) {
-                var ra = lease.responseChain().getFirst(); var key = lease.privateKey();
-                var request = ScepCodec.decryptRequest(verified, ra, key); EnrollmentTransaction value;
+            try (EnrollmentRuntime.CredentialLease lease = runtime().acquire(credential)) {
+                X509Certificate ra = lease.responseChain().getFirst(); PrivateKey key = lease.privateKey();
+                ScepPkiMessage request = ScepCodec.decryptRequest(verified, ra, key); EnrollmentTransaction value;
                 if (sdk.state() == zeroecho.pki.server.enrollment.EnrollmentSdkIntent.State.CONSUMED) {
-                    var bound = retained.orElseThrow(); requireRetained(bound, requester, lease);
-                    var read = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, nativeAdmission.endpointId(), requester,
+                    EnrollmentTransaction bound = retained.orElseThrow(); ProtocolChecks.requireRetained(bound, requester, lease);
+                    EnrollmentCoordinator.Admission read = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, nativeAdmission.endpointId(), requester,
                             nativeAdmission.transactionId(), nativeAdmission.operation(), nativeAdmission.payload(), nativeAdmission.validity(), nativeAdmission.predecessorId(), nativeAdmission.protocolDeadline());
-                    var supplied = new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(read, original.expectedEndpointCommitment(), original.canonicalOrigin(), original.authenticationContext(), original.target(), Optional.empty(), Optional.of(messageDer));
+                    zeroecho.pki.server.enrollment.EnrollmentSdkAdmission supplied = new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(read, original.expectedEndpointCommitment(), original.canonicalOrigin(), original.authenticationContext(), original.target(), Optional.empty(), Optional.of(messageDer));
                     value = coordinator.admitSdk(supplied, intentId, sdkRequestId, primaryProof, alternativeProof);
                 } else {
                     value = coordinator.admitSdk(sdkAdmission(endpoint, messageDer, request, requester, lease, canonicalOrigin), intentId, sdkRequestId, primaryProof, alternativeProof);
-                    requireRetained(value, requester, lease); value = coordinator.dispatch(value.id(), cancellation);
+                    ProtocolChecks.requireRetained(value, requester, lease); value = coordinator.dispatch(value.id(), cancellation);
                 }
                 return sdkReply(request, value, ra, key);
             }
@@ -420,62 +419,50 @@ public final class ScepService {
     private byte[] sdkReply(ScepPkiMessage request, EnrollmentTransaction value, X509Certificate ra, PrivateKey key) throws IOException, ScepCodecException {
         return switch (value.state()) {
             case ISSUED -> ScepCodec.buildCertRepSuccess(request.transactionId(), request.senderNonce(), issuedCertificate(value), request.requesterCert(), ra, key);
-            case REJECTED, EXPIRED, FAILED -> failure(request, ra, key);
+            case REJECTED, EXPIRED, FAILED -> ProtocolChecks.failure(request, ra, key);
             default -> ScepCodec.buildCertRepPending(request.transactionId(), request.senderNonce(), ra, key);
         };
     }
     private EnrollmentTransaction.Requester sdkRequester(X509Certificate certificate) throws java.security.cert.CertificateEncodingException {
-        var evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(), certificate);
+        CertificateIdentityEvidence evidence = CertificateIdentityEvidence.fromCertificate(realm.configuration().realmId(), certificate);
         return new EnrollmentTransaction.Requester(IssuanceExecutionEvidence.ActorType.SCEP_SIGNER, evidence.certificateSha256(), IssuanceExecutionEvidence.Authentication.SCEP_CMS,
                 Optional.of(evidence), Optional.of(evidence.canonicalKeySha256()), evidence.legacySpkiSha256(), new EnrollmentIdentityAliases.Snapshot(realm.configuration().realmId(), Set.of()));
     }
     private zeroecho.pki.server.enrollment.EnrollmentSdkAdmission sdkAdmission(ScepEndpoint endpoint, byte[] messageDer,
             ScepPkiMessage request, EnrollmentTransaction.Requester requester, EnrollmentRuntime.CredentialLease lease, String canonicalOrigin) throws ScepCodecException {
-        if (!hybridSdkAvailable(endpoint) || request.messageType() != ScepCodec.MSG_PKCS_REQ
-                || !challengeMatches(ScepCodec.extractChallengePassword(request.innerContent()), endpoint.challengePasswordHash())) throw new IllegalArgumentException("SCEP SDK initial policy rejected");
-        var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, request.innerContent()));
-        var snapshot = endpoints.requireCurrent(endpoint); String credential = lease.configuration().credentialId();
+        requireSdkInput(!(!hybridSdkAvailable(endpoint) || request.messageType() != ScepCodec.MSG_PKCS_REQ
+                || !ProtocolChecks.challengeMatches(ScepCodec.extractChallengePassword(request.innerContent()), endpoint.challengePasswordHash())), "SCEP SDK initial policy rejected");
+        zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(new X509EnrollmentPayload(X509EnrollmentPayload.Kind.PKCS10, request.innerContent()));
+        EnrollmentEndpointRegistry.Snapshot snapshot = endpoints.requireCurrent(endpoint); String credential = lease.configuration().credentialId();
         // Exact allocated policy transcript: full endpoint/challenge policy plus immutable response credential ID.
-        var policyInputs = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of(
+        zeroecho.pki.api.hybrid.sdk.HybridSdkValue policyInputs = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.of(
                 "endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(snapshot.commitment()),
                 "credentialId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(credential)));
-        String transaction = digest(request.transactionId().getBytes(StandardCharsets.US_ASCII));
-        var context = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.ofEntries(
+        String transaction = ProtocolChecks.digest(request.transactionId().getBytes(StandardCharsets.US_ASCII));
+        zeroecho.pki.api.hybrid.sdk.HybridSdkValue context = zeroecho.pki.api.hybrid.sdk.HybridSdkValue.object(java.util.Map.ofEntries(
                 java.util.Map.entry("endpointId", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(endpoint.label())), java.util.Map.entry("endpointCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(snapshot.commitment())),
                 java.util.Map.entry("signerCertificateSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(requester.certificate().orElseThrow().certificateSha256())),
-                java.util.Map.entry("transactionIdSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(transaction)), java.util.Map.entry("senderNonceSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(digest(request.senderNonce()))),
+                java.util.Map.entry("transactionIdSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(transaction)), java.util.Map.entry("senderNonceSha256", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(ProtocolChecks.digest(request.senderNonce()))),
                 java.util.Map.entry("nativeMessageSha512", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(messageDer)))),
-                java.util.Map.entry("challengePolicyCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sha256:" + digest(policyInputs.encode()))),
+                java.util.Map.entry("challengePolicyCommitment", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("sha256:" + ProtocolChecks.digest(policyInputs.encode()))),
                 java.util.Map.entry("challengeAuthenticated", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.bool(true)), java.util.Map.entry("messageType", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text(Integer.toString(request.messageType()))),
                 java.util.Map.entry("requestKind", zeroecho.pki.api.hybrid.sdk.HybridSdkValue.text("PKCS10"))));
-        var auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, java.util.Map.of(1, sdkText(requester.actorId()), 2, sdkText("scep-cms-v1"),
+        zeroecho.pki.api.hybrid.sdk.HybridSdkFrame auth = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(6, java.util.Map.of(1, sdkText(requester.actorId()), 2, sdkText("scep-cms-v1"),
                 3, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(sdkText("sha256:" + requester.certificate().orElseThrow().certificateSha256())), 4, sdkText("scep-v1"), 5, context.encode()));
-        var profiles = realm.enrollmentProfiles(); var policy = profiles.find(endpoint.enrollmentProfileId()).orElseThrow();
-        var target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "SCEP", endpoint.label(), snapshot.revision(), snapshot.commitment(), endpoint.enrollmentProfileId(), profiles.revision(endpoint.enrollmentProfileId()),
+        zeroecho.pki.server.enrollment.EnrollmentProfileService profiles = realm.enrollmentProfiles(); zeroecho.pki.server.enrollment.EnrollmentProfile policy = profiles.find(endpoint.enrollmentProfileId()).orElseThrow();
+        zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget target = new zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget(1, "SCEP", endpoint.label(), snapshot.revision(), snapshot.commitment(), endpoint.enrollmentProfileId(), profiles.revision(endpoint.enrollmentProfileId()),
                 zeroecho.pki.server.enrollment.EnrollmentProfileService.commitment(policy), "ISSUE", X509EnrollmentPayload.Kind.PKCS10, transaction,
                 "sha512:" + HexFormat.of().formatHex(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(auth.encode())));
-        var admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, endpoint.label(), requester, transaction, EnrollmentTransaction.Operation.ISSUE, parsed.originalPayload(), Optional.empty(), Optional.empty());
+        EnrollmentCoordinator.Admission admission = new EnrollmentCoordinator.Admission(EnrollmentTransaction.Protocol.SCEP, endpoint.label(), requester, transaction, EnrollmentTransaction.Operation.ISSUE, parsed.originalPayload(), Optional.empty(), Optional.empty());
         return new zeroecho.pki.server.enrollment.EnrollmentSdkAdmission(admission, snapshot.commitment(), canonicalOrigin, auth, target, Optional.empty(), Optional.of(messageDer));
     }
     private static byte[] sdkText(String value) { return value.getBytes(StandardCharsets.UTF_8); }
 
-    private static void requireRetained(EnrollmentTransaction value, EnrollmentTransaction.Requester requester,
-            EnrollmentRuntime.CredentialLease lease) {
-        EnrollmentRuntimeConfiguration.CredentialSet credential = lease.configuration();
-        if (!value.intent().requester().certificate().equals(requester.certificate())
-                || !value.intent().requester().canonicalKeySha256().equals(requester.canonicalKeySha256())
-                || !value.intent().source().credentialId().equals(Optional.of(credential.credentialId()))
-                || !value.intent().authorityId().value().equals(credential.authorityId())
-                || !value.intent().issuerId().value().equals(credential.issuerId())
-                || !value.intent().pathId().value().equals(credential.chainPathId())) {
-            throw new IllegalStateException("SCEP binding unavailable");
-        }
-    }
 
     private byte[] originalRequest(EnrollmentTransaction value) {
         zeroecho.pki.api.CertificationRequestService requests = realm.session().requests().orElseThrow();
         X509EnrollmentPayload payload = requests.encodedX509Request(requests.get(value.intent().requestId()).orElseThrow());
-        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10 || !digest(payload.der()).equals(value.intent().requestSha256())) {
+        if (payload.kind() != X509EnrollmentPayload.Kind.PKCS10 || !ProtocolChecks.digest(payload.der()).equals(value.intent().requestSha256())) {
             throw new IllegalStateException("SCEP retained request unavailable");
         }
         return payload.der();
@@ -492,19 +479,42 @@ public final class ScepService {
         }
     }
 
-    private static byte[] failure(ScepPkiMessage request, X509Certificate ra, PrivateKey key) throws ScepCodecException {
-        return ScepCodec.buildCertRepFailure(request.transactionId(), request.senderNonce(), ScepCodec.FAIL_BAD_REQUEST, ra, key);
-    }
-
-    private static boolean challengeMatches(String challenge, String expected) {
-        return challenge != null && MessageDigest.isEqual(HexFormat.of().parseHex(expected),
-                HexFormat.of().parseHex(digest(challenge.getBytes(StandardCharsets.UTF_8))));
-    }
-
-    private static String digest(byte[] value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
-        catch (java.security.NoSuchAlgorithmException unavailable) { throw new IllegalStateException("SHA-256 unavailable", unavailable); }
-    }
 
     private EnrollmentRuntime runtime() { return realm.enrollmentRuntime().orElseThrow(); }
+
+    private static void requireSdkInput(boolean valid, String diagnostic) {
+        if (!valid) { throw new IllegalArgumentException(diagnostic); }
+    }
+
+
+    /** Groups one bounded protocol validation responsibility. */
+    private static final class ProtocolChecks {
+        private static void requireRetained(EnrollmentTransaction value, EnrollmentTransaction.Requester requester,
+                EnrollmentRuntime.CredentialLease lease) {
+            EnrollmentRuntimeConfiguration.CredentialSet credential = lease.configuration();
+            if (!value.intent().requester().certificate().equals(requester.certificate())
+                    || !value.intent().requester().canonicalKeySha256().equals(requester.canonicalKeySha256())
+                    || !value.intent().source().credentialId().equals(Optional.of(credential.credentialId()))
+                    || !value.intent().authorityId().value().equals(credential.authorityId())
+                    || !value.intent().issuerId().value().equals(credential.issuerId())
+                    || !value.intent().pathId().value().equals(credential.chainPathId())) {
+                throw new IllegalStateException("SCEP binding unavailable");
+            }
+        }
+
+        private static byte[] failure(ScepPkiMessage request, X509Certificate ra, PrivateKey key) throws ScepCodecException {
+            return ScepCodec.buildCertRepFailure(request.transactionId(), request.senderNonce(), ScepCodec.FAIL_BAD_REQUEST, ra, key);
+        }
+
+        private static boolean challengeMatches(String challenge, String expected) {
+            return challenge != null && MessageDigest.isEqual(HexFormat.of().parseHex(expected),
+                    HexFormat.of().parseHex(digest(challenge.getBytes(StandardCharsets.UTF_8))));
+        }
+
+        private static String digest(byte[] value) {
+            try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
+            catch (java.security.NoSuchAlgorithmException unavailable) { throw new IllegalStateException("SHA-256 unavailable", unavailable); }
+        }
+    }
+
 }

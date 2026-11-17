@@ -34,17 +34,18 @@
 
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.orch.SigningSubmissionId;
+import zeroecho.pki.impl.core.PreparedFullCrlTbs;
+import zeroecho.pki.spi.store.DomainContinuationStore;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.HexFormat;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.orch.SigningSubmissionId;
-import zeroecho.pki.impl.core.PreparedFullCrlTbs;
-import zeroecho.pki.spi.store.DomainContinuationStore;
 
 /**
  * Encodes the version-one role descriptor for the qualified hybrid CRL signing workflow.
@@ -55,42 +56,43 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
  * a signer; continuation validation and configured execution retain those duties.
  */
 public final class CrlHybridSigningCommand {
+    private static final int MAX_ALGORITHM_BYTES = 16_384;
+
     /**
      * Identifier of the qualified CRL alternative-signature transcript, distinct from
      * the certificate Cor3 transcript.
      */
     public static final String PROFILE = "ZEROECHO_CRL_ALT_BC186_V1";
+
     /**
      * Attribute retaining the exact issuer-generation identity after signing records are purged.
      */
     public static final zeroecho.pki.api.attr.AttributeId ISSUER_GENERATION =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.issuer-generation");
-    /**
-     * Attribute retaining the SHA-256 commitment of the immutable two-role issuer binding.
-     */
+
+    /** Attribute retaining the SHA-256 commitment of the immutable two-role issuer binding. */
     public static final zeroecho.pki.api.attr.AttributeId ISSUER_BINDING =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.issuer-binding-sha256");
-    /**
-     * Attribute retaining the commitment of the actual CRL role-presentation tuple.
-     */
+
+    /** Attribute retaining the commitment of the actual CRL role-presentation tuple. */
     public static final zeroecho.pki.api.attr.AttributeId ROLE_TUPLE =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.role-tuple-sha256");
-    /**
-     * Attribute retaining the immutable lineage shared by compatible signer generations.
-     */
+
+    /** Attribute retaining the immutable lineage shared by compatible signer generations. */
     public static final zeroecho.pki.api.attr.AttributeId SIGNER_LINEAGE =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.signer-lineage");
-    /**
-     * Attribute identifying the explicitly qualified alternative CRL signature profile.
-     */
+
+    /** Attribute identifying the explicitly qualified alternative CRL signature profile. */
     public static final zeroecho.pki.api.attr.AttributeId SIGNATURE_PROFILE =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.signature-profile");
+
     /**
-     * Attribute retaining the full-CRL dependency needed to export a delta snapshot
-     * after its signing workflow is purged.
+     * Attribute retaining the full-CRL dependency needed to export a delta snapshot after its
+     * signing workflow is purged.
      */
     public static final zeroecho.pki.api.attr.AttributeId BASE_STATUS_ID =
             new zeroecho.pki.api.attr.AttributeId("zeroecho.pki.crl.base-status-id");
+
     private static final String OPERATION = "CRL_HYBRID_V1";
     private CrlHybridSigningCommand() {
     }
@@ -128,10 +130,19 @@ public final class CrlHybridSigningCommand {
     public static PkiId nativeChildId(PkiId parentId) {
         SigningSubmissionId parent = SigningSubmissionId.parse(parentId);
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                    ("zeroecho-crl-native-child-v1\0" + parentId.value()).getBytes(StandardCharsets.UTF_8));
-            PkiId child = new PkiId("zsign:v1:" + parent.namespace() + ":" + parent.createdAt().toEpochMilli()
-                    + ":" + HexFormat.of().formatHex(digest, 0, 16));
+            byte[] digest =
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(
+                                    ("zeroecho-crl-native-child-v1\0" + parentId.value())
+                                            .getBytes(StandardCharsets.UTF_8));
+            PkiId child =
+                    new PkiId(
+                            "zsign:v1:"
+                                    + parent.namespace()
+                                    + ":"
+                                    + parent.createdAt().toEpochMilli()
+                                    + ":"
+                                    + HexFormat.of().formatHex(digest, 0, 16));
             SigningSubmissionId.parse(child);
             if (child.equals(parentId)) {
                 throw new IllegalArgumentException("CRL parent/child identity collision");
@@ -183,7 +194,7 @@ public final class CrlHybridSigningCommand {
             throw new IllegalArgumentException("Invalid hybrid CRL variant");
         }
         String value = command.field(command.fields().size() - 1);
-        if (value.length() > 16_384) {
+        if (value.length() > MAX_ALGORITHM_BYTES) {
             throw new IllegalArgumentException("Hybrid CRL descriptor is too large");
         }
         byte[] bytes = Base64.getUrlDecoder().decode(value);
@@ -210,22 +221,33 @@ public final class CrlHybridSigningCommand {
     /**
      * Retains bounded issuer, role-plan and internal-child coordinates for hybrid CRL signing.
      *
-     * <p>Every digest is a canonical SHA-256 coordinate. The child identity must parse
-     * as a signing-submission identity; this record alone does not prove that it is
-     * the deterministic child of a particular parent or that a current plan matches.
+     * <p>Every digest is a canonical SHA-256 coordinate. The child identity must parse as a
+     * signing-submission identity; this record alone does not prove that it is the deterministic
+     * child of a particular parent or that a current plan matches.
      *
-     * @param issuerBindingCommitment complete issuer-binding digest as 64 lowercase
-     *        hexadecimal characters
-     * @param roleTupleCommitment compatible signer-tuple digest as 64 lowercase hexadecimal characters
+     * @param issuerBindingCommitment complete issuer-binding digest as 64 lowercase hexadecimal
+     *     characters
+     * @param roleTupleCommitment compatible signer-tuple digest as 64 lowercase hexadecimal
+     *     characters
      * @param nativeChildId predetermined internal child signing identity; must not be null
-     * @param primaryPlanCommitment frozen primary-plan digest as 64 lowercase hexadecimal characters
-     * @param alternativePlanCommitment frozen alternative-plan digest as 64 lowercase hexadecimal characters
-     * @param alternativeMaximumSignatureBytes maximum alternative result, between 1 and 1,048,576 bytes
+     * @param primaryPlanCommitment frozen primary-plan digest as 64 lowercase hexadecimal
+     *     characters
+     * @param alternativePlanCommitment frozen alternative-plan digest as 64 lowercase hexadecimal
+     *     characters
+     * @param alternativeMaximumSignatureBytes maximum alternative result, between 1 and 1,048,576
+     *     bytes
      * @param primaryMaximumSignatureBytes maximum primary result, between 1 and 1,048,576 bytes
      */
-    public record Descriptor(String issuerBindingCommitment, String roleTupleCommitment, PkiId nativeChildId,
-            String primaryPlanCommitment, String alternativePlanCommitment,
-            int alternativeMaximumSignatureBytes, int primaryMaximumSignatureBytes) {
+    // Component accessors are part of the existing public contract.
+    @SuppressWarnings("PMD.LongVariable")
+    public record Descriptor(
+            String issuerBindingCommitment,
+            String roleTupleCommitment,
+            PkiId nativeChildId,
+            String primaryPlanCommitment,
+            String alternativePlanCommitment,
+            int alternativeMaximumSignatureBytes,
+            int primaryMaximumSignatureBytes) {
         /**
          * Validates digest representations, child-identity grammar and signature-size bounds.
          *
@@ -260,10 +282,19 @@ public final class CrlHybridSigningCommand {
          * @return the complete nine-field descriptor encoding
          */
         public String encode() {
-            DomainContinuationTemplate command = DomainCommandEncoding.template(DomainContinuationStore.Kind.STATUS, OPERATION,
-                    "1", PROFILE, issuerBindingCommitment, roleTupleCommitment, nativeChildId.value(),
-                    primaryPlanCommitment, alternativePlanCommitment,
-                    Integer.toString(alternativeMaximumSignatureBytes), Integer.toString(primaryMaximumSignatureBytes));
+            DomainContinuationTemplate command =
+                    DomainCommandEncoding.template(
+                            DomainContinuationStore.Kind.STATUS,
+                            OPERATION,
+                            "1",
+                            PROFILE,
+                            issuerBindingCommitment,
+                            roleTupleCommitment,
+                            nativeChildId.value(),
+                            primaryPlanCommitment,
+                            alternativePlanCommitment,
+                            Integer.toString(alternativeMaximumSignatureBytes),
+                            Integer.toString(primaryMaximumSignatureBytes));
             return Base64.getUrlEncoder().withoutPadding().encodeToString(command.command().bytes());
         }
     }

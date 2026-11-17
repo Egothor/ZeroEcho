@@ -45,6 +45,8 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
  * @param alternativeSubjectPublicKeyInfo requested alternative SUBJECT SPKI, never an issuer key
  * @param originalPayload exact typed original request; construction does not verify it
  */
+// Record component names are established public accessors and remain source compatible.
+@SuppressWarnings("PMD.LongVariable")
 public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, EncodedObject alternativeSubjectPublicKeyInfo,
         zeroecho.pki.api.request.X509EnrollmentPayload originalPayload) {
     /**
@@ -73,7 +75,7 @@ public record ParsedHybridSdkRequest(ParsedCertificationRequest primary, Encoded
     public ParsedHybridSdkRequest {
         Objects.requireNonNull(originalPayload, "originalPayload");
         Objects.requireNonNull(primary, "primary"); Objects.requireNonNull(alternativeSubjectPublicKeyInfo, "alternativeSubjectPublicKeyInfo");
-        if (alternativeSubjectPublicKeyInfo.encoding() != Encoding.DER || alternativeSubjectPublicKeyInfo.byteLength() > 8192) {
+        if (alternativeSubjectPublicKeyInfo.encoding() != Encoding.DER || alternativeSubjectPublicKeyInfo.byteLength() > 8_192) {
             throw new IllegalArgumentException("SDK_SUBJECT_KEY_INVALID");
         }
     }

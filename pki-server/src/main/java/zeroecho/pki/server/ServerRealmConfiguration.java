@@ -65,6 +65,8 @@ import zeroecho.pki.spi.store.MetadataStoreId;
  * @param approvalPolicies closed approval policies by operation category
  * @param initialAdministratorPrincipalId protected identity of the first deployment administrator; empty disables managed generation
  */
+// Component names are established public accessor names.
+@SuppressWarnings({"PMD.LongVariable"})
 public record ServerRealmConfiguration(RealmId realmId, String displayName,
         CredentialConfirmationProofPolicy confirmationProofPolicy,
         PkiSessionConfiguration pkiSessionConfiguration, AuthorityExposurePolicy authorityExposure,
@@ -157,6 +159,8 @@ public record ServerRealmConfiguration(RealmId realmId, String displayName,
      * @param controlStoreId control store identity
      * @param approvalPolicies configured approval policies
      */
+    // Retain the established public compatibility constructor.
+    @SuppressWarnings({"PMD.ExcessiveParameterList"})
     public ServerRealmConfiguration(RealmId realmId, String displayName,
             CredentialConfirmationProofPolicy confirmationProofPolicy,
             PkiSessionConfiguration pkiSessionConfiguration, AuthorityExposurePolicy authorityExposure,

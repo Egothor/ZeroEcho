@@ -33,6 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.UncheckedIOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Stream;
+
 import java.io.FilterOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
@@ -266,8 +274,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
     /* package */ static void validateExistingLayout(Path root) throws IOException {
         Objects.requireNonNull(root, "root");
         long entries = 0L;
-        try (java.util.stream.Stream<Path> paths = Files.list(root)) {
-            java.util.Iterator<Path> iterator = paths.iterator();
+        try (Stream<Path> paths = Files.list(root)) {
+            Iterator<Path> iterator = paths.iterator();
             while (iterator.hasNext()) {
                 Path path = iterator.next();
                 if (++entries > 1_000_000L || Files.isSymbolicLink(path)) {
@@ -281,7 +289,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
                     if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
                         throw new MalformedLayoutException();
                     }
-                    try (java.util.stream.Stream<Path> nested = Files.walk(path)) {
+                    try (Stream<Path> nested = Files.walk(path)) {
                         if (nested.anyMatch(Files::isSymbolicLink)) {
                             throw new MalformedLayoutException();
                         }
@@ -740,7 +748,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             TemporaryUniqueIndex requiredPayload)
             throws IOException {
         Files.createDirectories(target);
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(root, "*.meta")) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(root, "*.meta")) {
             for (Path metadata : entries) {
                 String name = metadata.getFileName().toString();
                 String contentId = name.substring(0, name.length() - ".meta".length());
@@ -953,7 +961,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
 
     private static void createOwnerOnlyFile(Path path) throws IOException {
         if (Files.getFileStore(path.getParent()).supportsFileAttributeView("posix")) {
-            Files.createFile(path, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(OWNER_ONLY));
+            Files.createFile(path, PosixFilePermissions.asFileAttribute(OWNER_ONLY));
         } else {
             Files.createFile(path);
             restrict(path);
@@ -1369,8 +1377,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
                     throw integrityFailure();
                 }
             } finally {
-                java.util.Arrays.fill(actual, (byte) 0);
-                java.util.Arrays.fill(expected, (byte) 0);
+                Arrays.fill(actual, (byte) 0);
+                Arrays.fill(expected, (byte) 0);
             }
         }
 
@@ -1432,8 +1440,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             retained.validateNamespace();
             retainedOwners.validateNamespace();
             transactionalOwners.validateNamespace();
-            try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
-                java.util.Iterator<Path> iterator = paths
+            try (Stream<Path> paths = Files.list(store.root)) {
+                Iterator<Path> iterator = paths
                         .filter(path -> path.getFileName().toString().endsWith(".meta")).iterator();
                 while (iterator.hasNext()) {
                     Path metadata = iterator.next();
@@ -1475,8 +1483,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
 
         private static void cleanupAbandonedTemporaryState(FilesystemStagedContentStore store) throws IOException {
-            try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
-                java.util.Iterator<Path> iterator = paths.iterator();
+            try (Stream<Path> paths = Files.list(store.root)) {
+                Iterator<Path> iterator = paths.iterator();
                 while (iterator.hasNext()) {
                     Path path = iterator.next();
                     String name = path.getFileName().toString();
@@ -1493,8 +1501,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
 
         private static void cleanupOrphanedCompletedFiles(FilesystemStagedContentStore store) throws IOException {
-            try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
-                java.util.Iterator<Path> iterator = paths
+            try (Stream<Path> paths = Files.list(store.root)) {
+                Iterator<Path> iterator = paths
                         .filter(path -> path.getFileName().toString().endsWith(".content")).iterator();
                 while (iterator.hasNext()) {
                     Path content = iterator.next();
@@ -1508,8 +1516,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
 
         private static void cleanupOrphanedOwnerFiles(FilesystemStagedContentStore store) throws IOException {
-            try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
-                java.util.Iterator<Path> iterator = paths
+            try (Stream<Path> paths = Files.list(store.root)) {
+                Iterator<Path> iterator = paths
                         .filter(path -> path.getFileName().toString().endsWith(OWNERS_SUFFIX)).iterator();
                 while (iterator.hasNext()) {
                     Path owners = iterator.next();
@@ -1523,8 +1531,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
         }
 
         private static void deleteIndex(Path directory) throws IOException {
-            try (java.util.stream.Stream<Path> paths = Files.list(directory)) {
-                java.util.Iterator<Path> iterator = paths.iterator();
+            try (Stream<Path> paths = Files.list(directory)) {
+                Iterator<Path> iterator = paths.iterator();
                 while (iterator.hasNext()) {
                     Files.deleteIfExists(iterator.next());
                 }
@@ -1648,7 +1656,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
                 throw new IOException("Staged content owner count exceeds metadata capability");
             }
             Path complete = store.ownerPath(contentId);
-            java.util.List<String> encoded = owners.stream().map(DurableContentOwner::canonicalForm).sorted()
+            List<String> encoded = owners.stream().map(DurableContentOwner::canonicalForm).sorted()
                     .toList();
             DurableMetadataFiles.replace(complete, MAX_OWNER_RECORD_BYTES, output -> {
                 output.writeByte(OWNER_METADATA_VERSION);
@@ -1674,7 +1682,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore { 
             try {
                 return retainedOwners.contains(owner.canonicalForm().getBytes(StandardCharsets.UTF_8));
             } catch (IOException exception) {
-                throw new java.io.UncheckedIOException(exception);
+                throw new UncheckedIOException(exception);
             }
         }
 

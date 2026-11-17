@@ -34,6 +34,10 @@
 
 package zeroecho.pki.impl.core;
 
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -77,7 +81,7 @@ public final class CrlSigningRoleTuple {
         byte[] primary = Pkix.subjectPublicKeyInfo(certificate);
         requireDigest(binding.primary(), primary);
         byte[] alternative = binding.alternative().isPresent() ? alternativeSpki(certificate) : new byte[0];
-        if (binding.alternative().isPresent()) requireDigest(binding.alternative().orElseThrow(), alternative);
+        if (binding.alternative().isPresent()) { requireDigest(binding.alternative().orElseThrow(), alternative); }
         return hash("zeroecho-crl-role-tuple-v1", certificate.getSubjectX500Principal().getEncoded(),
                 keyIdentifier(certificate), primary, nativeAlgorithm,
                 binding.primary().publicKeyAlgorithm().canonicalForm().getBytes(StandardCharsets.UTF_8),
@@ -91,7 +95,7 @@ public final class CrlSigningRoleTuple {
     private static void requireDigest(IssuerKeyBinding binding, byte[] spki) throws IOException {
         try {
             if (!binding.subjectSpkiSha256().equals(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(spki))))
-                throw new IOException("CRL subject public key differs from immutable binding");
+                { throw new IOException("CRL subject public key differs from immutable binding"); }
         } catch (GeneralSecurityException impossible) { throw new IllegalStateException(impossible); }
     }
 
@@ -103,10 +107,10 @@ public final class CrlSigningRoleTuple {
      * @throws IllegalStateException if the key identifier cannot be derived with the required cryptographic engine
      */
     public static byte[] keyIdentifier(X509Certificate certificate) throws IOException {
-        byte[] extension = certificate.getExtensionValue("2.5.29.14");
-        if (extension != null) return FullCrlTbsPreparation.decodeKeyIdentifier(extension);
+        byte[] extension = certificate.getExtensionValue(X509ExtensionOids.subjectKeyIdentifier());
+        if (extension != null) { return FullCrlTbsPreparation.decodeKeyIdentifier(extension); }
         try {
-            byte[] publicBits = org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(
+            byte[] publicBits = SubjectPublicKeyInfo.getInstance(
                     Pkix.subjectPublicKeyInfo(certificate)).getPublicKeyData().getBytes();
             return MessageDigest.getInstance("SHA-1").digest(publicBits);
         } catch (GeneralSecurityException impossible) { throw new IllegalStateException(impossible); }
@@ -151,7 +155,7 @@ public final class CrlSigningRoleTuple {
                 Pkix.publicKeyFromSubjectPublicKeyInfo(nativeSpki), profile.contextSpec())) {
             int bound = context.tagLength();
             if (profile.signatureRepresentation() == SignatureInteropProfile.SignatureRepresentation.ECDSA_DER_EXTERNAL_P1363_INTERNAL)
-                bound = Math.addExact(bound, 8);
+                { bound = Math.addExact(bound, 8); }
             return bound > 0 && bound <= 1_048_576 ? bound : 1_048_576;
         }
     }
@@ -164,7 +168,7 @@ public final class CrlSigningRoleTuple {
      * @return canonical SHA-256 plan commitment
      */
     public static String planCommitment(X509ExecutionPlan<?> plan, String bindingId, String semanticCommitment) {
-        var selected = plan.selection();
+        X509AlgorithmResolver.Selection selected = plan.selection();
         return hash("zeroecho-crl-plan-v1", selected.requested().canonicalForm().getBytes(StandardCharsets.UTF_8),
                 selected.suite().signature().canonicalForm().getBytes(StandardCharsets.UTF_8),
                 selected.suite().publicKey().canonicalForm().getBytes(StandardCharsets.UTF_8),
@@ -174,7 +178,7 @@ public final class CrlSigningRoleTuple {
                 bindingId.getBytes(StandardCharsets.UTF_8), semanticCommitment.getBytes(StandardCharsets.UTF_8),
                 selected.implementation().implementationId().getBytes(StandardCharsets.UTF_8),
                 selected.implementation().domainFingerprint().getBytes(StandardCharsets.UTF_8),
-                Pkix.encodeAlgorithmIdentifier(zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.toLib(selected.binding())));
+                Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(selected.binding())));
     }
 
     /**
@@ -186,8 +190,8 @@ public final class CrlSigningRoleTuple {
      */
     public static String hash(String domain, byte[]... values) {
         try {
-            var buffer = new ByteArrayOutputStream();
-            try (var output = new DataOutputStream(buffer)) {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            try (DataOutputStream output = new DataOutputStream(buffer)) {
                 output.writeUTF(domain);
                 for (byte[] value : values) { output.writeInt(value.length); output.write(value); }
             }

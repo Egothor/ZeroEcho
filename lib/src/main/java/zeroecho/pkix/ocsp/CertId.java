@@ -58,7 +58,8 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
      * @param issuerNameHash the digest of the issuer distinguished name
      * @param issuerKeyHash the digest of the issuer public key
      * @param serialNumber the certificate serial number
-     * @throws NullPointerException if any of {@code hashAlgorithm}, {@code issuerNameHash}, {@code issuerKeyHash}, {@code serialNumber} is null
+     * @throws NullPointerException if any of {@code hashAlgorithm}, {@code issuerNameHash}, {@code
+     * issuerKeyHash}, {@code serialNumber} is null
      */
     public CertId {
         Objects.requireNonNull(hashAlgorithm, "hashAlgorithm");
@@ -93,7 +94,8 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
      * Compares the hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial by value.
      *
      * @param other object to compare, or null
-     * @return true for a compatible value with equal hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial; false otherwise
+     * @return true for a compatible value with equal hash algorithm, issuer-name hash bytes, issuer-key
+     * hash bytes, and certificate serial; false otherwise
      */
     @Override
     public boolean equals(Object other) {
@@ -104,7 +106,8 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
     }
 
     /**
-     * Hashes the hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial using the same components as equality.
+     * Hashes the hash algorithm, issuer-name hash bytes, issuer-key hash bytes, and certificate serial
+     * using the same components as equality.
      *
      * @return value-based hash code consistent with equals
      */
@@ -115,7 +118,8 @@ public record CertId(AlgorithmIdentifier hashAlgorithm, byte[] issuerNameHash, b
     }
 
     /**
-     * Returns a diagnostic representation containing the certificate serial and hash-algorithm OID, omitting issuer hash bytes.
+     * Returns a diagnostic representation containing the certificate serial and hash-algorithm OID,
+     * omitting issuer hash bytes.
      *
      * @return certificate serial and hash-algorithm OID, omitting issuer hash bytes
      */

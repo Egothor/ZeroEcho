@@ -75,11 +75,11 @@ public final class SigningInputCapabilities {
     /**
      * Maximum number of advertised algorithm identities.
      */
-    public static final int MAXIMUM_ALGORITHMS = 1024;
+    public static final int MAXIMUM_ALGORITHMS = 1_024;
     /**
      * Current remote client's inclusive raw input ceiling.
      */
-    public static final long REMOTE_RAW_LIMIT = 16L * 1024 * 1024;
+    public static final long REMOTE_RAW_LIMIT = 16L * 1_024 * 1_024;
 
     /**
      * Meaning of the transmitted signing input.
@@ -168,7 +168,8 @@ public final class SigningInputCapabilities {
      * @param algorithms exact advertised algorithm set
      * @return client-effective configuration commitment
      * @throws NullPointerException if backend, algorithms or an algorithm-set element is null
-     * @throws IllegalArgumentException if algorithms exceeds the finite bound, omits a prehashed mapping or contains an invalid canonical identity
+     * @throws IllegalArgumentException if algorithms exceeds the finite bound, omits a prehashed mapping or
+     * contains an invalid canonical identity
      * @throws IllegalStateException if SHA-256 is unavailable or the in-memory commitment cannot be encoded
      */
     public SigningProvider.ConfigurationCommitment commitment(SigningProvider.ConfigurationCommitment backend,
@@ -266,7 +267,7 @@ public final class SigningInputCapabilities {
     }
 
     private static void requireIdentityBound(String value) {
-        if (value == null || value.isBlank() || value.length() > 8192) {
+        if (value == null || value.isBlank() || value.length() > 8_192) {
             throw new IllegalArgumentException("Algorithm identity exceeds its finite bound");
         }
     }

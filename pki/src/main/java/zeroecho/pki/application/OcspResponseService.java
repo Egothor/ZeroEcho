@@ -56,7 +56,6 @@ import zeroecho.core.io.CancellationSignal;
  * path validation, and retained evidence does not remain fresh independently of
  * the verifier's actual evaluation time.
  */
-@SuppressWarnings("PMD.ControlStatementBraces")
 public interface OcspResponseService {
     /**
      * Checks configured responder key metadata and algorithm binding without signing a challenge.
@@ -79,7 +78,8 @@ public interface OcspResponseService {
      * Frozen server-managed responder role; this value grants no signing authority.
      * @param keyRef existing nonexportable managed key
      * @param signatureAlgorithm exact canonical outgoing signature identity
-     * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw signing carries no binding selector
+     * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw
+     * signing carries no binding selector
      */
     record SdkSigningRole(KeyRef keyRef, String signatureAlgorithm, Optional<String> signatureBindingId) {
         /**
@@ -93,7 +93,8 @@ public interface OcspResponseService {
          * @throws IllegalArgumentException if the signature identity is null or blank
          * @param keyRef existing nonexportable managed key
          * @param signatureAlgorithm exact canonical outgoing signature identity
-         * @param signatureBindingId optional configured binding; must be exactly default-equivalent because raw signing carries no binding selector
+         * @param signatureBindingId optional configured binding; must be exactly default-equivalent
+         * because raw signing carries no binding selector
          */
         public SdkSigningRole {
             Objects.requireNonNull(keyRef, "keyRef");
@@ -214,7 +215,7 @@ public interface OcspResponseService {
             Objects.requireNonNull(originalRequestDer, "originalRequestDer");
             Objects.requireNonNull(clientNonce, "clientNonce");
             Objects.requireNonNull(nextUpdateAfter, "nextUpdateAfter");
-            if (originalRequestDer.length == 0 || originalRequestDer.length > 1048576 || clientNonce.length != 32
+            if (originalRequestDer.length == 0 || originalRequestDer.length > 1_048_576 || clientNonce.length != 32
                     || nextUpdateAfter.isNegative() || nextUpdateAfter.isZero() || nextUpdateAfter.getNano() != 0) {
                 throw new IllegalArgumentException("SDK OCSP query invalid");
             }
@@ -305,6 +306,8 @@ public interface OcspResponseService {
      * @throws UnsupportedOperationException if authoritative capture is unavailable
      * @throws PkiException for inconsistent or unauthorized public evidence
      */
+    // Preserve the established public service signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     default SdkResponderBinding captureSdkResponderBinding(String trustedRealm, String canonicalOrigin, PkiId authorityId,
             PkiId issuerId, PkiId responderCredentialId, PkiId chainPathId, SdkSigningRole primary, SdkSigningRole alternative,
             ResponderId responderId, CancellationSignal cancellation) {
@@ -625,7 +628,8 @@ public interface OcspResponseService {
      * Proves that one configured confined key capability signs as the exact
      * responder certificate before a durable responder is activated.
      *
-     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the responder issuer
+     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the
+     * responder issuer
      * @param responderCredentialId exact responder credential
      * @param signingKeyRef confined signing-key reference under test
      * @param signatureAlgorithm canonical signature algorithm
@@ -643,7 +647,8 @@ public interface OcspResponseService {
     /**
      * Validates responder signing while carrying originating cancellation.
      *
-     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the responder issuer
+     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the
+     * responder issuer
      * @param responderCredentialId exact responder credential
      * @param signingKeyRef confined signing-key reference under test
      * @param signatureAlgorithm canonical signature algorithm
@@ -662,7 +667,7 @@ public interface OcspResponseService {
      * this exception carries no operation identity or provider diagnostic.
      */
     final class SigningPendingException extends PkiException {
-        private static final long serialVersionUID = 825419348201647529L;
+        private static final long serialVersionUID = 825_419_348_201_647_529L;
 
         /**
          * Creates the fixed pending disposition without provider details or an operation identity.

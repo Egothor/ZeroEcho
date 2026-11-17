@@ -33,16 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
-import java.util.HexFormat;
-import java.util.Optional;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaHeadSnapshot;
 import zeroecho.pki.spi.store.DomainContinuationStore;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Optional;
 
 /**
  * Bounded canonical version-one lifecycle context; never consults mutable state.
@@ -59,13 +60,26 @@ public final class CaLifecycleContextCodec {
      * @throws IllegalArgumentException if encoded evidence exceeds the finite field bound
      */
     public static String encode(CaLifecycleContext context) {
-        var head = context.expectedHead();
-        byte[] bytes = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, DOMAIN,
-                context.operation().name(), head.caId().value(), Long.toString(head.epoch()), head.issuerId().value(),
-                head.pathId().value(), head.bindingCommitment(), context.originalCredentialId().value(),
-                context.originalCertificateSha256(), context.transitionId().map(PkiId::value).orElse("")).command().bytes();
+        CaHeadSnapshot head = context.expectedHead();
+        byte[] bytes =
+                DomainCommandEncoding.template(
+                                DomainContinuationStore.Kind.CA,
+                                DOMAIN,
+                                context.operation().name(),
+                                head.caId().value(),
+                                Long.toString(head.epoch()),
+                                head.issuerId().value(),
+                                head.pathId().value(),
+                                head.bindingCommitment(),
+                                context.originalCredentialId().value(),
+                                context.originalCertificateSha256(),
+                                context.transitionId().map(PkiId::value).orElse(""))
+                        .command()
+                        .bytes();
         String text = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        if (text.length() > MAXIMUM_TEXT) throw invalid();
+        if (text.length() > MAXIMUM_TEXT) {
+            throw invalid();
+        }
         return text;
     }
 
@@ -76,16 +90,31 @@ public final class CaLifecycleContextCodec {
      * @throws IllegalArgumentException if encoding, epoch, version or fields are invalid
      */
     public static CaLifecycleContext decode(String text) {
-        if (text == null || text.length() > MAXIMUM_TEXT) throw invalid();
+        if (text == null || text.length() > MAXIMUM_TEXT) {
+            throw invalid();
+        }
         byte[] bytes = Base64.getUrlDecoder().decode(text);
-        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(text)) throw invalid();
-        var fields = DomainCommandEncoding.decode(new EncodedObject(Encoding.BINARY, bytes));
-        if (!fields.operation().equals(DOMAIN)) throw invalid();
+        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(text)) {
+            throw invalid();
+        }
+        DomainCommandEncoding.Decoded fields =
+                DomainCommandEncoding.decode(new EncodedObject(Encoding.BINARY, bytes));
+        if (!DOMAIN.equals(fields.operation())) {
+            throw invalid();
+        }
         fields.requireFields(9);
         long epoch = Long.parseLong(fields.field(2));
-        if (!Long.toString(epoch).equals(fields.field(2))) throw invalid();
-        var head = new CaHeadSnapshot(1, new PkiId(fields.field(1)), epoch, new PkiId(fields.field(3)),
-                new PkiId(fields.field(4)), fields.field(5));
+        if (!Long.toString(epoch).equals(fields.field(2))) {
+            throw invalid();
+        }
+        CaHeadSnapshot head =
+                new CaHeadSnapshot(
+                        1,
+                        new PkiId(fields.field(1)),
+                        epoch,
+                        new PkiId(fields.field(3)),
+                        new PkiId(fields.field(4)),
+                        fields.field(5));
         return new CaLifecycleContext(1, CaLifecycleContext.Operation.valueOf(fields.field(0)), head,
                 new PkiId(fields.field(6)), fields.field(7), fields.field(8).isEmpty()
                         ? Optional.empty() : Optional.of(new PkiId(fields.field(8))));
@@ -103,5 +132,7 @@ public final class CaLifecycleContextCodec {
                     .digest(Base64.getUrlDecoder().decode(encode(context))));
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
-    private static IllegalArgumentException invalid() { return new IllegalArgumentException("Invalid CA lifecycle context encoding"); }
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("Invalid CA lifecycle context encoding");
+    }
 }

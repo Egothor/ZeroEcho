@@ -83,7 +83,8 @@ public record SdkEnrollmentTarget(int version, String protocol, String endpointI
      * @param operation requested lifecycle action: {@code ISSUE}, {@code RENEW} or {@code REPLACE}
      * @param requestKind original request syntax; must not be {@code null}
      * @param transactionIdSha256 native transaction commitment as 64 lowercase hexadecimal characters
-     * @param authenticationContextSha512 F6 commitment as {@code sha512:} followed by 128 lowercase hexadecimal characters
+     * @param authenticationContextSha512 F6 commitment as {@code sha512:} followed by 128 lowercase
+     * hexadecimal characters
      */
     public SdkEnrollmentTarget {
         if (version != 1 || sourceRevision < 0 || enrollmentPolicyVersion <= 0) {
@@ -94,7 +95,7 @@ public record SdkEnrollmentTarget(int version, String protocol, String endpointI
             throw invalid();
         }
         for (String value : new String[] {endpointId, endpointCommitment, enrollmentPolicyId, enrollmentPolicyCommitment}) {
-            if (value == null || value.isEmpty() || value.length() > 8192) {
+            if (value == null || value.isEmpty() || value.length() > 8_192) {
                 throw invalid();
             }
         }
@@ -103,7 +104,7 @@ public record SdkEnrollmentTarget(int version, String protocol, String endpointI
                 || authenticationContextSha512 == null || !authenticationContextSha512.matches("sha512:[0-9a-f]{128}")) {
             throw invalid();
         }
-        if ((protocol.equals("CMP")) != (requestKind == X509EnrollmentPayload.Kind.CRMF)) {
+        if ("CMP".equals(protocol) != (requestKind == X509EnrollmentPayload.Kind.CRMF)) {
             throw invalid();
         }
     }

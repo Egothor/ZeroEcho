@@ -67,7 +67,7 @@ final class RealmReconciliationWakeSignal {
     /**
      * Signals available work without retaining an operation identifier or payload.
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // Foreground committed outcomes must not depend on wakeup.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // Foreground committed outcomes must not depend on wakeup.
     /* default */ void signal() {
         Runnable callback = listener.get();
         if (callback == null) {

@@ -33,15 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.util.Objects;
-
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.FrameworkAttributeMapper;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 import zeroecho.pki.spi.framework.StatusObjectGenerator;
-import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+
+import java.util.Objects;
 
 /**
  * Bouncy Castle backed X.509 implementation of {@link CredentialFramework}.
@@ -90,6 +90,8 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
  * </p>
  */
 public final class BcX509CredentialFramework implements CredentialFramework {
+    private static final String REPRESENTATION_PEM = "pem";
+    private static final String REPRESENTATION_ORIGINAL = "original";
 
     /**
      * X.509 format identifier used by this framework.
@@ -187,34 +189,49 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      */
     @Override
     public SubjectInput subjectInput() {
-        return new SubjectInput("Subject — X.509 distinguished name",
-                "Use attribute=value syntax, for example CN=Example Root CA. Full profile rules are checked by the server.",
-                "CN=Example Root CA", java.util.Optional.of(
+        return new SubjectInput(
+                "Subject — X.509 distinguished name",
+                "Use attribute=value syntax, for example CN=Example Root CA. Full profile rules are"
+                    + " checked by the server.",
+                "CN=Example Root CA",
+                java.util.Optional.of(
                         "^\\s*(?:[A-Za-z][A-Za-z0-9-]*|(?:[Oo][Ii][Dd]\\.)?[0-9]+(?:\\.[0-9]+)+)\\s*=.*$"));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /** {@inheritDoc} */
     @Override
     public java.util.List<CredentialRepresentation> credentialRepresentations(zeroecho.pki.api.Encoding storedEncoding) {
-        if (storedEncoding != zeroecho.pki.api.Encoding.DER) throw new IllegalArgumentException("X.509 stored credential must be DER");
-        return java.util.List.of(new CredentialRepresentation("original", "DER", "application/pkix-cert", "der", storedEncoding),
-                new CredentialRepresentation("pem", "PEM", "application/x-pem-file", "pem", zeroecho.pki.api.Encoding.PEM));
+        if (storedEncoding != zeroecho.pki.api.Encoding.DER) {
+            throw new IllegalArgumentException("X.509 stored credential must be DER");
+        }
+        return java.util.List.of(
+                new CredentialRepresentation(
+                        REPRESENTATION_ORIGINAL,
+                        "DER",
+                        "application/pkix-cert",
+                        "der",
+                        storedEncoding),
+                new CredentialRepresentation(
+                        REPRESENTATION_PEM,
+                        "PEM",
+                        "application/x-pem-file",
+                        REPRESENTATION_PEM,
+                        zeroecho.pki.api.Encoding.PEM));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /** {@inheritDoc} */
     @Override
-    public zeroecho.pki.api.EncodedObject exportCredential(zeroecho.pki.api.EncodedObject stored, String representation,
-            zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
-        java.util.Objects.requireNonNull(stored, "stored");
-        java.util.Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+    public zeroecho.pki.api.EncodedObject exportCredential(
+            zeroecho.pki.api.EncodedObject stored, String representation, zeroecho.core.io.CancellationSignal cancellation)
+            throws java.io.IOException {
+        Objects.requireNonNull(stored, "stored");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         if (stored.encoding() != zeroecho.pki.api.Encoding.DER || stored.byteLength() > 1024 * 1024) {
-            throw new IllegalArgumentException("X.509 stored credential encoding or length is invalid");
+            throw new IllegalArgumentException(
+                    "X.509 stored credential encoding or length is invalid");
         }
-        if (!"original".equals(representation) && !"pem".equals(representation)) {
+        if (!REPRESENTATION_ORIGINAL.equals(representation)
+                && !REPRESENTATION_PEM.equals(representation)) {
             throw new UnsupportedOperationException("Unsupported X.509 credential representation");
         }
         byte[] der = stored.bytes();
@@ -226,38 +243,60 @@ public final class BcX509CredentialFramework implements CredentialFramework {
             throw new java.io.IOException("X.509 credential is not canonical DER", failure);
         }
         cancellation.throwIfCancelled();
-        if ("original".equals(representation)) return stored;
-        var output = new java.io.ByteArrayOutputStream();
+        if (REPRESENTATION_ORIGINAL.equals(representation)) {
+            return stored;
+        }
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
         output.write("-----BEGIN CERTIFICATE-----\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        output.write(java.util.Base64.getMimeEncoder(64, new byte[]{'\n'}).encode(der));
+        output.write(java.util.Base64.getMimeEncoder(64, new byte[] {'\n'}).encode(der));
         output.write("\n-----END CERTIFICATE-----\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         cancellation.throwIfCancelled();
         return new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.PEM, output.toByteArray());
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /** {@inheritDoc} */
     @Override
-    public java.util.List<CredentialRepresentation> statusRepresentations(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding) {
-        if((type==zeroecho.pki.api.status.StatusObjectType.CRL||type==zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)&&encoding==zeroecho.pki.api.Encoding.DER) {
-            return java.util.List.of(new CredentialRepresentation("original","DER","application/pkix-crl","crl",encoding),
-                    new CredentialRepresentation("pem","PEM","application/x-pem-file","pem",zeroecho.pki.api.Encoding.PEM));
+    public java.util.List<CredentialRepresentation> statusRepresentations(
+            zeroecho.pki.api.status.StatusObjectType type, zeroecho.pki.api.Encoding encoding) {
+        if ((type == zeroecho.pki.api.status.StatusObjectType.CRL || type == zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)
+                && encoding == zeroecho.pki.api.Encoding.DER) {
+            return java.util.List.of(
+                    new CredentialRepresentation(
+                            REPRESENTATION_ORIGINAL,
+                            "DER",
+                            "application/pkix-crl",
+                            "crl",
+                            encoding),
+                    new CredentialRepresentation(
+                            REPRESENTATION_PEM,
+                            "PEM",
+                            "application/x-pem-file",
+                            REPRESENTATION_PEM,
+                            zeroecho.pki.api.Encoding.PEM));
         }
         return CredentialFramework.super.statusRepresentations(type,encoding);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /** {@inheritDoc} */
     @Override
-    public zeroecho.core.io.RepeatableContent exportStatusContent(zeroecho.pki.api.status.StatusObjectType type,zeroecho.pki.api.Encoding encoding,
-            zeroecho.core.io.RepeatableContent content,String representation,zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {
-        if((type==zeroecho.pki.api.status.StatusObjectType.CRL||type==zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)&&encoding==zeroecho.pki.api.Encoding.DER) {
-            new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectSignedObject(content,
-                    zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectKind.CRL,cancellation);
-            if("original".equals(representation))return content;
-            if("pem".equals(representation))return new zeroecho.pki.impl.framework.x509.StreamingPemContent(content,"X509 CRL",cancellation);
+    public zeroecho.core.io.RepeatableContent exportStatusContent(
+            zeroecho.pki.api.status.StatusObjectType type,
+            zeroecho.pki.api.Encoding encoding,
+            zeroecho.core.io.RepeatableContent content,
+            String representation,
+            zeroecho.core.io.CancellationSignal cancellation)
+            throws java.io.IOException {
+        if ((type == zeroecho.pki.api.status.StatusObjectType.CRL || type == zeroecho.pki.api.status.StatusObjectType.DELTA_CRL)
+                && encoding == zeroecho.pki.api.Encoding.DER) {
+            new zeroecho.pki.impl.framework.x509.StreamingDerReader()
+                    .inspectSignedObject(
+                            content, zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectKind.CRL, cancellation);
+            if (REPRESENTATION_ORIGINAL.equals(representation)) {
+                return content;
+            }
+            if (REPRESENTATION_PEM.equals(representation)) {
+                return new zeroecho.pki.impl.framework.x509.StreamingPemContent(content, "X509 CRL", cancellation);
+            }
         }
         return CredentialFramework.super.exportStatusContent(type,encoding,content,representation,cancellation);
     }
@@ -321,18 +360,17 @@ public final class BcX509CredentialFramework implements CredentialFramework {
     private static final class UnsupportedStatusObjectGenerator implements StatusObjectGenerator {
 
         /**
-         * Always rejects status-object generation because no concrete X.509
-         * status-object generator has been wired.
+         * Always rejects status-object generation because no concrete X.509 status-object generator
+         * has been wired.
          *
-         * @param command    ignored command parameter
+         * @param command ignored command parameter
          * @param crlEntries ignored structured CRL entries
          * @return never returns normally
          * @throws UnsupportedOperationException always
          */
         @Override
         public zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion generate(
-                zeroecho.pki.api.status.StatusObjectGenerateCommand command,
-                zeroecho.pki.spi.framework.CrlEntrySource crlEntries) {
+                zeroecho.pki.api.status.StatusObjectGenerateCommand command, zeroecho.pki.spi.framework.CrlEntrySource crlEntries) {
             throw new UnsupportedOperationException("X.509 status object generator not wired");
         }
     }

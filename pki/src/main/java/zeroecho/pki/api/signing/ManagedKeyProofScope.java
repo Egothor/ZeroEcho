@@ -76,7 +76,8 @@ public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiI
      * @throws NullPointerException if an argument is null
      * @throws IllegalArgumentException if the combination or credential identity is invalid
      * @param purpose exact managed key role
-     * @param responderCredentialId present exactly for {@link ManagedKeyProofPurpose#OCSP_RESPONDER_KEY}; its identifier is limited to 4,096 strict UTF-8 bytes
+     * @param responderCredentialId present exactly for {@link ManagedKeyProofPurpose#OCSP_RESPONDER_KEY};
+     * its identifier is limited to 4,096 strict UTF-8 bytes
      * @param candidateTarget present exactly for the pre-certificate responder purpose
      */
     public ManagedKeyProofScope {
@@ -86,7 +87,7 @@ public record ManagedKeyProofScope(ManagedKeyProofPurpose purpose, Optional<PkiI
             throw new IllegalArgumentException("Managed key proof purpose and responder scope differ");
         }
         Objects.requireNonNull(candidateTarget, "candidateTarget");
-        if ((purpose == ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY) != candidateTarget.isPresent()) {
+        if (purpose == ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY != candidateTarget.isPresent()) {
             throw new IllegalArgumentException("Managed candidate proof scope differs");
         }
         responderCredentialId.ifPresent(ManagedKeyProofInputs::identifier);

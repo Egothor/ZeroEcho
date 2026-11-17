@@ -71,6 +71,7 @@ import zeroecho.pki.server.RealmId;
  */
 public record EnrollmentTransaction(String id, long revision, Intent intent, State state,
         List<Decision> decisions, Optional<SigningAcceptanceReceipt> receipt, Optional<PkiId> credentialId) {
+    private static final int MAX_LEGACY_KEY_COMMITMENTS = 3;
     /**
      * Immutable retained SDK acceptance reference; construction grants no enrollment authority.
      *
@@ -95,9 +96,9 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
          * @throws IllegalArgumentException if the intent identity or a prefixed SHA-512 commitment is malformed
          */
         public SdkProofReference {
-            if (intentId == null || !intentId.matches("[0-9a-f]{64}")) throw invalid();
+            if (intentId == null || !intentId.matches("[0-9a-f]{64}")) { throw invalid(); }
             for (String value : new String[] {proofCommitment, authenticationContextSha512, targetSha512}) {
-                if (value == null || !value.matches("sha512:[0-9a-f]{128}")) throw invalid();
+                if (value == null || !value.matches("sha512:[0-9a-f]{128}")) { throw invalid(); }
             }
             Objects.requireNonNull(acceptedAt, "acceptedAt");
         }
@@ -109,7 +110,6 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
         @Override public String toString() { return "EnrollmentTransaction.SdkProofReference[redacted]"; }
     }
 
-    private static final int MAX_LEGACY_KEY_COMMITMENTS = 3;
     /**
      * Protocol family determines admission and recovery binding semantics.
      */
@@ -374,6 +374,8 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
          * @throws NullPointerException if a required object or optional container is null
          * @throws IllegalArgumentException if delegated correspondence or operation constraints fail
          */
+        // Retains the existing public source and binary-compatible protocol contract.
+        @SuppressWarnings({ "PMD.ExcessiveParameterList" })
         public Intent(RealmId realmId, Source source, Requester requester, String transactionId, Operation operation,
                 PkiId requestId, X509EnrollmentPayload.Kind requestKind, String requestSha256, int requestBytes,
                 PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId pathId, String pathCommitment,
@@ -430,7 +432,7 @@ public record EnrollmentTransaction(String id, long revision, Intent intent, Sta
          */
         public Intent {
             Objects.requireNonNull(sdkProof, "sdkProof");
-            if (sdkProof.isPresent() && (artifact.isPresent() || operation == Operation.SERVER_KEYGEN)) throw invalid();
+            if (sdkProof.isPresent() && (artifact.isPresent() || operation == Operation.SERVER_KEYGEN)) { throw invalid(); }
             Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(source, "source");
             Objects.requireNonNull(requester, "requester"); digest(transactionId); Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(requestId, "requestId"); Objects.requireNonNull(requestKind, "requestKind"); digest(requestSha256);

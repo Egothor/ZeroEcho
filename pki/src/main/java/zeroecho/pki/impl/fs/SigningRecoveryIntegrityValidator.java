@@ -33,6 +33,18 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Optional;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.ca.IssuerKeyBinding;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.impl.core.continuation.CaSubjectProofBindings;
+import zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand;
+import zeroecho.pki.impl.core.continuation.IntermediateSigningCommand;
+import zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings;
+import zeroecho.pki.spi.store.CrlHybridExecution;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -108,9 +120,11 @@ final class SigningRecoveryIntegrityValidator {
      * @param root exact signing metadata root used for bounded physical frame reads
      * @param manifest validated authoritative artifact manifest
      * @param recovered reconstructed current metadata and retained outcomes
-     * @param stagedContent borrowed content store; may be null for metadata-only recovery without live content references
+     * @param stagedContent borrowed content store; may be null for metadata-only recovery without live
+     * content references
      * @return validated finite projection inputs and tracked workspace counters
-     * @throws IntegrityException if semantic relationships, canonical payloads, exact content ownership or hybrid dependencies are inconsistent
+     * @throws IntegrityException if semantic relationships, canonical payloads, exact content ownership
+     * or hybrid dependencies are inconsistent
      * @throws IOException if referenced physical evidence cannot be read
      */
     /* default */ static ValidatedSigningRecovery validate(Path root,
@@ -122,7 +136,7 @@ final class SigningRecoveryIntegrityValidator {
                     new SigningRecoveryIntegrityValidator(root, manifest, recovered,
                             stagedContent);
             validator.validateGraph();
-            var hybrids = validator.validateHybridGraph();
+            Map<String,CrlHybridExecution> hybrids = validator.validateHybridGraph();
             return new ValidatedSigningRecovery(validator.schedulingByOperation, hybrids,
                     validator.hybridPublications, validator.peakTrackedEnvelopeWorkspaceBytes,
                     validator.currentTrackedEnvelopeWorkspaceBytes);
@@ -132,47 +146,47 @@ final class SigningRecoveryIntegrityValidator {
         }
     }
 
-    private Map<String, zeroecho.pki.spi.store.CrlHybridExecution> validateHybridGraph() throws IOException {
-        Map<String, zeroecho.pki.spi.store.CrlHybridExecution> executions = new HashMap<>();
+    private Map<String, CrlHybridExecution> validateHybridGraph() throws IOException {
+        Map<String, CrlHybridExecution> executions = new HashMap<>();
         Set<MetadataKey> expectedReverse = new HashSet<>();
-        for (var entry : namespace(CrlHybridMetadata.EXECUTION_NAMESPACE).entrySet()) {
-            var execution = FsCodec.decodeRecovery(FsCodec.CRL_HYBRID_EXECUTION,
+        for (Map.Entry<MetadataKey,SigningMvccIndex.RecoveredRecord> entry : namespace(CrlHybridMetadata.EXECUTION_NAMESPACE).entrySet()) {
+            CrlHybridExecution execution = FsCodec.decodeRecovery(FsCodec.CRL_HYBRID_EXECUTION,
                     readValue(entry.getValue()), stagedContent);
             if (!entry.getKey().equals(CrlHybridMetadata.executionKey(execution.parentId()))
-                    || executions.put(execution.parentId().value(), execution) != null) throw malformed();
+                    || executions.put(execution.parentId().value(), execution) != null) { throw malformed(); }
             if (execution.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED) {
                 expectedReverse.add(CrlHybridMetadata.reverseKey(execution.nativeChildId()));
             }
         }
-        if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).keySet().equals(expectedReverse)) throw malformed();
+        if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).keySet().equals(expectedReverse)) { throw malformed(); }
         if (executions.isEmpty()) {
-            if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).isEmpty()) throw malformed();
+            if (!namespace(CrlHybridMetadata.REVERSE_NAMESPACE).isEmpty()) { throw malformed(); }
             return Map.of();
         }
         Map<String, String> parentsByCommand = new HashMap<>();
-        for (var execution : executions.values()) parentsByCommand.put(
-                execution.parentCommandCommitment(), execution.parentId().value());
-        for (var entry : namespace(SigningHybridCrlDependencies.STATUS).entrySet()) {
-            var status = FsCodec.decodeRecovery(FsCodec.STATUS_OBJECT,
+        for (CrlHybridExecution execution : executions.values()) { parentsByCommand.put(
+                execution.parentCommandCommitment(), execution.parentId().value()); }
+        for (Map.Entry<MetadataKey,SigningMvccIndex.RecoveredRecord> entry : namespace(SigningHybridCrlDependencies.STATUS).entrySet()) {
+            StatusObject status = FsCodec.decodeRecovery(FsCodec.STATUS_OBJECT,
                     readValue(entry.getValue()), stagedContent);
             String parent = parentsByCommand.get(SigningHybridCrlDependencies.publicationCommitment(status));
-            if (parent == null) continue;
+            if (parent == null) { continue; }
             if (!entry.getKey().equals(FilesystemPkiStore.statusRecordKey(status.statusObjectId()))
-                    || !records.containsKey(FilesystemPkiStore.statusOwnerKey(status.statusObjectId()))) throw malformed();
-            var domainRecord = records.get(new MetadataKey(DOMAIN_CONTINUATION_NAMESPACE, parent));
-            if (domainRecord == null) throw malformed();
-            var domain = FsCodec.decodeRecovery(FsCodec.DOMAIN_CONTINUATION, readValue(domainRecord), stagedContent);
+                    || !records.containsKey(FilesystemPkiStore.statusOwnerKey(status.statusObjectId()))) { throw malformed(); }
+            SigningMvccIndex.RecoveredRecord domainRecord = records.get(new MetadataKey(DOMAIN_CONTINUATION_NAMESPACE, parent));
+            if (domainRecord == null) { throw malformed(); }
+            DomainContinuationStore.Record domain = FsCodec.decodeRecovery(FsCodec.DOMAIN_CONTINUATION, readValue(domainRecord), stagedContent);
             FullCrlSigningCommand.requirePublicationMetadata(status, domain);
             CrlHybridMetadata.requireOwnedPublication(status, executions.get(parent), key -> {
-                var record = records.get(key);
+                SigningMvccIndex.RecoveredRecord record = records.get(key);
                 return record == null ? null : readValue(record);
             }, stagedContent);
             String old = hybridPublications.put(parent, status.statusObjectId().value());
-            if (old != null && !old.equals(status.statusObjectId().value())) throw malformed();
+            if (old != null && !old.equals(status.statusObjectId().value())) { throw malformed(); }
         }
 
         new SigningHybridCrlDependencies(stagedContent).recover(executions, key -> {
-            var record = records.get(key);
+            SigningMvccIndex.RecoveredRecord record = records.get(key);
             return record == null ? null : readValue(record);
         });
         return Map.copyOf(executions);
@@ -229,7 +243,7 @@ final class SigningRecoveryIntegrityValidator {
         FsCodec.requireSigningStateVariant(envelope, readValue(stateRecord));
         new SignWorkflowStore.Workflow(envelope, state);
 
-        for (zeroecho.pki.api.content.DurableContentReference candidate : new SignWorkflowStore.Workflow(envelope, state).candidates()) {
+        for (DurableContentReference candidate : new SignWorkflowStore.Workflow(envelope, state).candidates()) {
             String candidateId = candidate.contentId();
             MetadataKey bindingKey = new MetadataKey(SIGN_BINDING_NAMESPACE, candidateId);
             SigningMvccIndex.RecoveredRecord bindingRecord = requireRecord(bindings, bindingKey);
@@ -238,16 +252,7 @@ final class SigningRecoveryIntegrityValidator {
             if (!candidateId.equals(binding.candidateId()) || !operationId.equals(binding.operationId())
                     || candidate.length() != binding.length() || !candidate.sha256().equals(binding.sha256())) { throw malformed(); }
         }
-        if (envelope.proofStep().isPresent()) {
-            boolean responder = zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope);
-            if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
-                    SignWorkflowStore.SubjectKeyRole.PRIMARY);
-            else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
-            if (state.state() != SignWorkflowStore.State.RETIRED && state.state() != SignWorkflowStore.State.EXPIRED) {
-                if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
-                else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(stagedContent, envelope);
-            }
-        }
+        validateProofCandidates(envelope, state);
 
         validateOuter(new SignWorkflowStore.Workflow(envelope, state), continuations, correlations, consumedContinuations,
                 consumedCorrelations);
@@ -472,7 +477,7 @@ final class SigningRecoveryIntegrityValidator {
      */
     /* default */ record ValidatedSigningRecovery(
             Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation,
-            Map<String, zeroecho.pki.spi.store.CrlHybridExecution> hybridExecutions,
+            Map<String, CrlHybridExecution> hybridExecutions,
             Map<String, String> hybridPublications,
             long peakTrackedEnvelopeWorkspaceBytes, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
             long currentTrackedEnvelopeWorkspaceBytes) { // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
@@ -483,9 +488,11 @@ final class SigningRecoveryIntegrityValidator {
          * @param hybridExecutions validated retained hybrid CRL execution by operation identity
          * @param hybridPublications validated hybrid publication handoff coordinates by operation identity
          * @param peakTrackedEnvelopeWorkspaceBytes highest tracked envelope validation workspace reservation in bytes
-         * @param currentTrackedEnvelopeWorkspaceBytes current tracked envelope validation workspace reservation in bytes
+         * @param currentTrackedEnvelopeWorkspaceBytes current tracked envelope validation workspace
+         * reservation in bytes
          * @throws NullPointerException if {@code schedulingByOperation} is null
-         * @throws IllegalArgumentException if {@code (peakTrackedEnvelopeWorkspaceBytes < 0 || currentTrackedEnvelopeWorkspaceBytes < 0)}
+         * @throws IllegalArgumentException if {@code (peakTrackedEnvelopeWorkspaceBytes < 0 ||
+         * currentTrackedEnvelopeWorkspaceBytes < 0)}
          */
         ValidatedSigningRecovery {
             hybridExecutions = Map.copyOf(hybridExecutions);
@@ -527,17 +534,17 @@ final class SigningRecoveryIntegrityValidator {
             ManagedKeyProofBindings.requireWorkflow(workflow, continuation);
             if (continuation.state() == DomainContinuationStore.State.SIGNING
                     || continuation.state() == DomainContinuationStore.State.PUBLISHING) {
-                ManagedKeyProofBindings.readChallenge(stagedContent, operationId, envelope.deadline(), java.util.Optional.empty(), command, envelope.candidate());
+                ManagedKeyProofBindings.readChallenge(stagedContent, operationId, envelope.deadline(), Optional.empty(), command, envelope.candidate());
             }
         }
         if (FullCrlSigningCommand.supports(command.operation())) {
             FullCrlSigningCommand.requireTbs(command, envelope.candidate());
-            if (zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(command)) {
+            if (CrlHybridSigningCommand.isHybrid(command)) {
                 validateHybridParentRole(envelope, command);
             } else if (!envelope.algorithmId().equals(command.field(8))) { throw malformed(); }
         }
-        if (zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(command.operation())) {
-            zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.requireEnvelope(envelope);
+        if (IntermediateSigningCommand.supports(command.operation())) {
+            IntermediateSigningCommand.requireEnvelope(envelope);
         }
     }
     /**
@@ -546,19 +553,31 @@ final class SigningRecoveryIntegrityValidator {
     private void validateHybridParentRole(SignWorkflowStore.AcceptanceEnvelope envelope,
             DomainCommandEncoding.Decoded command) throws IOException {
         PkiId issuer = new PkiId(command.field(6));
-        var generationRecord = records.get(AuthorityMetadataCodec.generationKey(issuer));
-        var bindingRecord = records.get(AuthorityMetadataCodec.bindingKey(issuer));
-        if (generationRecord == null || bindingRecord == null) throw malformed();
-        var generation = FsCodec.decodeRecovery(FsCodec.ISSUER_GENERATION,
+        SigningMvccIndex.RecoveredRecord generationRecord = records.get(AuthorityMetadataCodec.generationKey(issuer));
+        SigningMvccIndex.RecoveredRecord bindingRecord = records.get(AuthorityMetadataCodec.bindingKey(issuer));
+        if (generationRecord == null || bindingRecord == null) { throw malformed(); }
+        IssuerGeneration generation = FsCodec.decodeRecovery(FsCodec.ISSUER_GENERATION,
                 readValue(generationRecord), stagedContent);
-        var binding = IssuerBindingStorageCodec.decode(readValue(bindingRecord), generation);
-        var descriptor = zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.descriptor(command);
-        var alternative = binding.alternative().orElseThrow(SigningRecoveryIntegrityValidator::malformed);
+        IssuerCryptographicBinding binding = IssuerBindingStorageCodec.decode(readValue(bindingRecord), generation);
+        CrlHybridSigningCommand.Descriptor descriptor = CrlHybridSigningCommand.descriptor(command);
+        IssuerKeyBinding alternative = binding.alternative().orElseThrow(SigningRecoveryIntegrityValidator::malformed);
         if (!issuer.equals(generation.issuerId())
                 || !binding.commitment().equals(descriptor.issuerBindingCommitment())
                 || !binding.authorityId().equals(envelope.fairnessAuthorityId())
                 || !alternative.keyRef().equals(envelope.keyRef())
-                || !alternative.signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())) throw malformed();
+                || !alternative.signatureAlgorithm().canonicalForm().equals(envelope.algorithmId())) { throw malformed(); }
+    }
+
+
+    private void validateProofCandidates(SignWorkflowStore.AcceptanceEnvelope envelope,
+            SignWorkflowStore.MutableState state) throws IOException {
+        if (envelope.proofStep().isEmpty()) { return; }
+        boolean responder = OcspResponderSubjectProofBindings.supports(envelope);
+        if (responder) { OcspResponderSubjectProofBindings.requireEnvelope(envelope, SignWorkflowStore.SubjectKeyRole.PRIMARY); }
+        else { CaSubjectProofBindings.requireEnvelope(envelope); }
+        if (state.state() == SignWorkflowStore.State.RETIRED || state.state() == SignWorkflowStore.State.EXPIRED) { return; }
+        if (responder) { OcspResponderSubjectProofBindings.requireLiveCandidates(stagedContent, envelope); }
+        else { CaSubjectProofBindings.requireLiveCandidates(stagedContent, envelope); }
     }
 
 }

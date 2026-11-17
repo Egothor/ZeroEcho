@@ -45,6 +45,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
+import java.util.Optional;
 
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.ObjectReadContext;
@@ -119,7 +121,7 @@ public final class PublisherSecretsManagerCli {
      */
     public static void main(String[] arguments) {
         int result = run(arguments, System.out, System.err);
-        if (result != 0) System.exit(result);
+        if (result != 0) { System.exit(result); }
     }
 
     /**
@@ -130,7 +132,7 @@ public final class PublisherSecretsManagerCli {
      * @param err destination for diagnostic output; must not be null
      * @return zero on success, two for invalid invocation, or a command-specific failure status
      */
-    static int run(String[] arguments, PrintStream out, PrintStream err) {
+    /* default */ static int run(String[] arguments, PrintStream out, PrintStream err) {
         try {
             if (arguments.length == 0 || "--help".equals(arguments[0])) {
                 out.print(HELP);
@@ -139,9 +141,9 @@ public final class PublisherSecretsManagerCli {
             String command = arguments[0];
             String[] rest = Arrays.copyOfRange(arguments, 1, arguments.length);
             return switch (command) {
-                case "generate-bike-key" -> generateBikeKey(rest, out, err);
-                case "write-store" -> writeStore(rest, out, err);
-                case "verify-store" -> verifyStore(rest, out, err);
+                case "generate-bike-key" -> generateBikeKey(rest, out);
+                case "write-store" -> writeStore(rest, out);
+                case "verify-store" -> verifyStore(rest, out);
                 default -> {
                     err.println("Unknown command: " + command);
                     err.println("Run with --help for usage.");
@@ -159,7 +161,7 @@ public final class PublisherSecretsManagerCli {
 
     // --- generate-bike-key ---
 
-    private static int generateBikeKey(String[] args, PrintStream out, PrintStream err)
+    private static int generateBikeKey(String[] args, PrintStream out)
             throws IOException, GeneralSecurityException {
         String pubPath = require(args, "--pub");
         String privPath = require(args, "--priv");
@@ -175,7 +177,7 @@ public final class PublisherSecretsManagerCli {
 
     // --- write-store ---
 
-    private static int writeStore(String[] args, PrintStream out, PrintStream err)
+    private static int writeStore(String[] args, PrintStream out)
             throws IOException, GeneralSecurityException {
         String storePath = require(args, "--store");
         String secretsPath = require(args, "--secrets");
@@ -183,14 +185,14 @@ public final class PublisherSecretsManagerCli {
         PublisherSecretsProtection protection = parseProtection(protectionStr);
 
         char[] password = resolvePassword(args, "--password-env", protection,
-                List.of(PublisherSecretsProtection.CLASSIC, PublisherSecretsProtection.HYBRID));
+                List.of(PublisherSecretsProtection.CLASSIC, PublisherSecretsProtection.HYBRID)).orElse(null);
         PublicKey bikePub = resolvePublicKey(args, "--bike-pub", protection,
                 List.of(PublisherSecretsProtection.PQC, PublisherSecretsProtection.HYBRID));
 
         Map<String, String> secrets = loadSecretsJson(Path.of(secretsPath));
         PublisherSecretsStore.create(Path.of(storePath), protection, secrets, password, bikePub);
 
-        if (password != null) Arrays.fill(password, '\0');
+        if (password != null) { Arrays.fill(password, '\0'); }
         out.println("Publisher secrets store written: " + storePath);
         out.println("  Protection: " + protection);
         out.println("  Secret IDs: " + String.join(", ", secrets.keySet()));
@@ -199,7 +201,7 @@ public final class PublisherSecretsManagerCli {
 
     // --- verify-store ---
 
-    private static int verifyStore(String[] args, PrintStream out, PrintStream err)
+    private static int verifyStore(String[] args, PrintStream out)
             throws IOException, GeneralSecurityException {
         String storePath = require(args, "--store");
 
@@ -228,42 +230,43 @@ public final class PublisherSecretsManagerCli {
     private static String optional(String[] args, String flag) {
         List<String> list = Arrays.asList(args);
         int idx = list.indexOf(flag);
-        if (idx < 0 || idx + 1 >= list.size()) return null;
+        if (idx < 0 || idx + 1 >= list.size()) { return null; }
         return list.get(idx + 1);
     }
 
     private static PublisherSecretsProtection parseProtection(String value) {
-        try {
-            return PublisherSecretsProtection.valueOf(value.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(
+        return switch (value.toUpperCase(Locale.ROOT)) {
+            case "CLASSIC" -> PublisherSecretsProtection.CLASSIC;
+            case "PQC" -> PublisherSecretsProtection.PQC;
+            case "HYBRID" -> PublisherSecretsProtection.HYBRID;
+            default -> throw new IllegalArgumentException(
                     "Protection must be CLASSIC, PQC, or HYBRID; got: " + value);
-        }
+        };
     }
 
-    private static char[] resolvePassword(String[] args, String flag,
+    private static Optional<char[]> resolvePassword(String[] args, String flag,
             PublisherSecretsProtection protection,
             List<PublisherSecretsProtection> required) throws IOException {
-        if (!required.contains(protection)) return null;
+        if (!required.contains(protection)) { return Optional.empty(); }
         String envName = require(args, flag);
         String value = System.getenv(envName);
         if (value == null || value.isEmpty()) {
             throw new IOException(
                     "Password environment variable is not set or empty: " + envName);
         }
-        return value.toCharArray();
+        return Optional.of(value.toCharArray());
     }
 
     private static PublicKey resolvePublicKey(String[] args, String flag,
             PublisherSecretsProtection protection,
             List<PublisherSecretsProtection> required) throws IOException, GeneralSecurityException {
-        if (!required.contains(protection)) return null;
+        if (!required.contains(protection)) { return null; }
         String path = require(args, flag);
         byte[] der = Files.readAllBytes(Path.of(path));
         return BikeKeySupport.loadPublicKey(der);
     }
 
-    private static UnlockMaterial resolveUnlockMaterial(String[] args)
+    private static UnlockMaterial resolveUnlockMaterial(String... args)
             throws IOException, GeneralSecurityException {
         String passwordEnv = optional(args, "--password-env");
         String bikePrivPath = optional(args, "--bike-priv");

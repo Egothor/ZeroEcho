@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.io.InputStream;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -358,7 +360,7 @@ public final class DefaultPublicationService implements PublicationService {
      * @param verified stream opened for verification, or null when no stream was returned
      * @throws IOException if closing the opened stream fails
      */
-    private static void close(java.io.InputStream verified) throws IOException {
+    private static void close(InputStream verified) throws IOException {
         if (verified != null) {
             verified.close();
         }

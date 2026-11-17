@@ -73,10 +73,7 @@ import zeroecho.pki.application.PkiRepositoryContent;
  * principal and an explicit {@link Permission.Action#OCSP_STATUS_QUERY} grant are
  * independently required.
  */
-@SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CyclomaticComplexity",
-        "PMD.AvoidInstantiatingObjectsInLoops", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.ControlStatementBraces", "PMD.PreserveStackTrace", "PMD.AvoidLiteralsInIfCondition",
-        "PMD.DataClass" })
+@SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops", "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.PreserveStackTrace", "PMD.AvoidLiteralsInIfCondition", "PMD.DataClass"})
 public final class OcspRequesterService {
     private static final int MAXIMUM_CERTIFICATE_BYTES = 1_048_576;
     private static final String OID_SHA256 = "2.16.840.1.101.3.4.2.1";
@@ -225,7 +222,7 @@ public final class OcspRequesterService {
             verifySignature(policy, signer, request);
             String principalId = mapPrincipal(policy, signer);
             SecurityPrincipal principal = realm.principal(principalId);
-            if (!principal.enabled()) throw new UnauthorizedException("PRINCIPAL_DISABLED");
+            if (!principal.enabled()) { throw new UnauthorizedException("PRINCIPAL_DISABLED"); }
             validateRevocation(policy, signer);
             for (OcspResponseService.CertId certId : requests) {
                 requireIssuer(responder, certId);
@@ -246,9 +243,9 @@ public final class OcspRequesterService {
     private void validateSigner(X509Certificate signer, byte[] requestorName) throws CertificateException {
         signer.checkValidity(Date.from(clock.instant()));
         requireCanonical(signer);
-        if (signer.hasUnsupportedCriticalExtension()) throw new CertificateException("Unsupported critical extension");
+        if (signer.hasUnsupportedCriticalExtension()) { throw new CertificateException("Unsupported critical extension"); }
         boolean[] usage = signer.getKeyUsage();
-        if (usage != null && (usage.length == 0 || !usage[0])) throw new CertificateException("Signing usage denied");
+        if (usage != null && (usage.length == 0 || !usage[0])) { throw new CertificateException("Signing usage denied"); }
         if (!Arrays.equals(requestorName, signer.getSubjectX500Principal().getEncoded())) {
             throw new UnauthorizedException("REQUESTOR_NAME");
         }
@@ -260,16 +257,16 @@ public final class OcspRequesterService {
         String signerCommitment = digest(chain.getFirst().getEncoded());
         for (OcspResponderService.TrustSelector selector : policy.trustSelectors()) {
             if (selector.type() == OcspResponderService.TrustSelectorType.EXACT_REQUESTER_CERTIFICATE_COMMITMENTS) {
-                if (selector.identities().contains(signerCommitment) && chain.size() == 1) matches++;
+                if (selector.identities().contains(signerCommitment) && chain.size() == 1) { matches++; }
                 continue;
             }
             for (String identity : selector.identities()) {
                 X509Certificate anchor = selector.type() == OcspResponderService.TrustSelectorType.MANAGED_ISSUER_GENERATIONS
                         ? issuerCertificate(new PkiId(identity)) : credentialCertificate(new PkiId(identity));
-                if (validPath(chain, anchor)) matches++;
+                if (validPath(chain, anchor)) { matches++; }
             }
         }
-        if (matches != 1) throw new UnauthorizedException("TRUST_PATH");
+        if (matches != 1) { throw new UnauthorizedException("TRUST_PATH"); }
     }
 
     private boolean validPath(List<X509Certificate> chain, X509Certificate anchor) {
@@ -278,23 +275,23 @@ public final class OcspRequesterService {
             for (X509Certificate certificate : chain) {
                 certificate.checkValidity(Date.from(clock.instant()));
                 requireCanonical(certificate);
-                if (certificate.hasUnsupportedCriticalExtension()) return false;
-                if (!seen.add(digest(certificate.getEncoded()))) return false;
+                if (certificate.hasUnsupportedCriticalExtension()) { return false; }
+                if (!seen.add(digest(certificate.getEncoded()))) { return false; }
             }
             anchor.checkValidity(Date.from(clock.instant()));
             requireCanonical(anchor);
-            if (anchor.hasUnsupportedCriticalExtension()) return false;
+            if (anchor.hasUnsupportedCriticalExtension()) { return false; }
             for (int index = 0; index + 1 < chain.size(); index++) {
-                if (chain.get(index + 1).getBasicConstraints() < 0) return false;
+                if (chain.get(index + 1).getBasicConstraints() < 0) { return false; }
                 boolean[] usage = chain.get(index + 1).getKeyUsage();
-                if (usage != null && (usage.length <= 5 || !usage[5])) return false;
+                if (usage != null && (usage.length <= 5 || !usage[5])) { return false; }
                 verifyIssuedBy(chain.get(index), chain.get(index + 1));
             }
             X509Certificate last = chain.getLast();
-            if (Arrays.equals(last.getEncoded(), anchor.getEncoded())) return true;
-            if (anchor.getBasicConstraints() < 0) return false;
+            if (Arrays.equals(last.getEncoded(), anchor.getEncoded())) { return true; }
+            if (anchor.getBasicConstraints() < 0) { return false; }
             boolean[] anchorUsage = anchor.getKeyUsage();
-            if (anchorUsage != null && (anchorUsage.length <= 5 || !anchorUsage[5])) return false;
+            if (anchorUsage != null && (anchorUsage.length <= 5 || !anchorUsage[5])) { return false; }
             verifyIssuedBy(last, anchor);
             return true;
         } catch (CertificateException | RuntimeException failure) {
@@ -305,7 +302,7 @@ public final class OcspRequesterService {
     private static void verifyIssuedBy(X509Certificate certificate, X509Certificate issuer)
             throws CertificateException {
         if (!Arrays.equals(certificate.getIssuerX500Principal().getEncoded(),
-                issuer.getSubjectX500Principal().getEncoded())) throw new CertificateException("Issuer mismatch");
+                issuer.getSubjectX500Principal().getEncoded())) { throw new CertificateException("Issuer mismatch"); }
         try { certificate.verify(issuer.getPublicKey()); }
         catch (java.security.GeneralSecurityException failure) { throw new CertificateException("Signature mismatch"); }
     }
@@ -319,11 +316,11 @@ public final class OcspRequesterService {
                     reference.commitment());
             if (binding.role() == X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE
                     && binding.oid().equals(algorithm.oid()) && parametersMatch(binding, algorithm)) {
-                if (selected != null) throw new UnauthorizedException("BINDING_AMBIGUOUS");
+                if (selected != null) { throw new UnauthorizedException("BINDING_AMBIGUOUS"); }
                 selected = binding;
             }
         }
-        if (selected == null || !supported(selected)) throw new UnauthorizedException("BINDING_REJECTED");
+        if (selected == null || !supported(selected)) { throw new UnauthorizedException("BINDING_REJECTED"); }
         ContentVerifier verifier;
         try {
             verifier = Pkix.verifier(signer.getPublicKey(), algorithm);
@@ -333,14 +330,14 @@ public final class OcspRequesterService {
         } catch (IOException | RuntimeException failure) {
             throw new UnauthorizedException("SIGNATURE_PROVIDER");
         }
-        if (!verifier.verify(request.signature())) throw new UnauthorizedException("SIGNATURE_INVALID");
+        if (!verifier.verify(request.signature())) { throw new UnauthorizedException("SIGNATURE_INVALID"); }
     }
 
     private static boolean supported(X509AlgorithmBinding binding) {
-        return binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.ECDSA_SHA256)
-                || binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.ED25519_SIGNATURE)
-                || binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256)
-                || binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.RSA_PSS_SHA256);
+        return BootstrapAlgorithmIdentities.ECDSA_SHA256.equals(binding.algorithmIdentity())
+                || BootstrapAlgorithmIdentities.ED25519_SIGNATURE.equals(binding.algorithmIdentity())
+                || BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.equals(binding.algorithmIdentity())
+                || BootstrapAlgorithmIdentities.RSA_PSS_SHA256.equals(binding.algorithmIdentity());
     }
 
     private static boolean parametersMatch(X509AlgorithmBinding binding, AlgorithmIdentifier algorithm) {
@@ -352,7 +349,7 @@ public final class OcspRequesterService {
     }
 
     private static boolean strictPss(X509AlgorithmBinding binding, AlgorithmIdentifier algorithm) {
-        return binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.RSA_PSS_SHA256)
+        return BootstrapAlgorithmIdentities.RSA_PSS_SHA256.equals(binding.algorithmIdentity())
                 && OID_RSA_PSS.equals(algorithm.oid())
                 && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.EXACT_DER
                 && Arrays.equals(algorithm.parameters(), PSS_SHA256_PARAMETERS);
@@ -437,7 +434,7 @@ public final class OcspRequesterService {
                     case SHA256_SPKI_COMMITMENT -> mapping.commitment().equals(spki);
                     case ISSUER_AND_SERIAL_COMMITMENT -> mapping.commitment().equals(exactIssuerSerial);
                 }).toList();
-        if (matches.size() != 1) throw new UnauthorizedException("PRINCIPAL_MAPPING");
+        if (matches.size() != 1) { throw new UnauthorizedException("PRINCIPAL_MAPPING"); }
         return matches.getFirst().principalId();
     }
 
@@ -445,12 +442,12 @@ public final class OcspRequesterService {
             throws CertificateException {
         Optional<Credential> managed = managedCredential(policy, signer);
         if (policy.revocationPolicy() == OcspResponderService.RequesterRevocationPolicy.LOCAL_AUTHORITATIVE_REQUIRED
-                && managed.isEmpty()) throw new UnauthorizedException("LOCAL_SIGNER_REQUIRED");
+                && managed.isEmpty()) { throw new UnauthorizedException("LOCAL_SIGNER_REQUIRED"); }
         if (policy.revocationPolicy() != OcspResponderService.RequesterRevocationPolicy.VALIDITY_AND_TRUST_ONLY
                 && managed.isPresent()) {
             RevocationState state = realm.session().revocations().get(managed.orElseThrow().credentialId())
                     .map(record -> record.transition().state()).orElse(RevocationState.CLEAR);
-            if (state != RevocationState.CLEAR) throw new UnauthorizedException("SIGNER_REVOKED");
+            if (state != RevocationState.CLEAR) { throw new UnauthorizedException("SIGNER_REVOKED"); }
         }
     }
 
@@ -460,13 +457,13 @@ public final class OcspRequesterService {
         String commitment = digest(signer.getEncoded());
         List<Credential> matches = new ArrayList<>();
         for (OcspResponderService.TrustSelector selector : policy.trustSelectors()) {
-            if (selector.type() != OcspResponderService.TrustSelectorType.MANAGED_ISSUER_GENERATIONS) continue;
+            if (selector.type() != OcspResponderService.TrustSelectorType.MANAGED_ISSUER_GENERATIONS) { continue; }
             for (String identity : selector.identities()) {
                 realm.session().repository().credential(new PkiId(identity), serial)
                         .filter(credential -> credentialCommitment(credential).equals(commitment)).ifPresent(matches::add);
             }
         }
-        if (matches.size() > 1) throw new UnauthorizedException("MANAGED_SIGNER_AMBIGUOUS");
+        if (matches.size() > 1) { throw new UnauthorizedException("MANAGED_SIGNER_AMBIGUOUS"); }
         return matches.stream().findFirst();
     }
 
@@ -496,7 +493,7 @@ public final class OcspRequesterService {
         try (PkiRepositoryContent content = realm.session().repository().openCredential(credentialId);
                 InputStream input = content.openStream()) {
             byte[] encoded = input.readNBytes(MAXIMUM_CERTIFICATE_BYTES + 1);
-            if (encoded.length > MAXIMUM_CERTIFICATE_BYTES || input.read() != -1) throw new IllegalStateException();
+            if (encoded.length > MAXIMUM_CERTIFICATE_BYTES || input.read() != -1) { throw new IllegalStateException(); }
             return parseCertificate(encoded);
         } catch (IOException | CertificateException failure) { throw new IllegalStateException(); }
     }
@@ -510,9 +507,9 @@ public final class OcspRequesterService {
     }
 
     private static List<X509Certificate> certificates(List<byte[]> encoded) throws CertificateException {
-        if (encoded.isEmpty()) throw new CertificateException("Signer certificate is required");
+        if (encoded.isEmpty()) { throw new CertificateException("Signer certificate is required"); }
         List<X509Certificate> result = new ArrayList<>(encoded.size());
-        for (byte[] certificate : encoded) result.add(parseCertificate(certificate));
+        for (byte[] certificate : encoded) { result.add(parseCertificate(certificate)); }
         return List.copyOf(result);
     }
 
@@ -531,7 +528,7 @@ public final class OcspRequesterService {
     }
 
     private static BigInteger positiveSerial(X509Certificate certificate) {
-        if (certificate.getSerialNumber().signum() <= 0) throw new UnauthorizedException("SERIAL_INVALID");
+        if (certificate.getSerialNumber().signum() <= 0) { throw new UnauthorizedException("SERIAL_INVALID"); }
         return certificate.getSerialNumber();
     }
 
@@ -542,7 +539,7 @@ public final class OcspRequesterService {
     }
     private static byte[] requireBytes(byte[] value, String field, int maximum) {
         Objects.requireNonNull(value, field);
-        if (value.length == 0 || value.length > maximum) throw new IllegalArgumentException(field + " is invalid");
+        if (value.length == 0 || value.length > maximum) { throw new IllegalArgumentException(field + " is invalid"); }
         return value.clone();
     }
 }

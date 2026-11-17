@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.channels.WritableByteChannel;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -164,7 +166,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Creates or restores an active WAL in its secured parent directory and starts its single writer.
      *
-     * <p>Existing bytes are validated before appending; new files are initialized and forced together with their parent directory.</p>
+     * <p>Existing bytes are validated before appending; new files are initialized and forced together
+     * with their parent directory.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -182,7 +185,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Reopens the validated WAL, repairing only its proven incomplete suffix and starts its single writer.
      *
-     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced
+     * before ownership is returned.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -202,7 +206,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Reopens the validated WAL, repairing only its proven incomplete suffix and starts its single writer.
      *
-     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced
+     * before ownership is returned.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -226,7 +231,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Reopens the validated WAL, repairing only its proven incomplete suffix without starting the writer.
      *
-     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced
+     * before ownership is returned.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -250,7 +256,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Reopens the validated WAL, repairing only its proven incomplete suffix without starting the writer.
      *
-     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced before ownership is returned.</p>
+     * <p>The descriptor must match the persisted generation. A repaired suffix is truncated and forced
+     * before ownership is returned.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -329,7 +336,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Creates or restores an active WAL in its secured parent directory and starts its single writer.
      *
-     * <p>Existing bytes are validated before appending; new files are initialized and forced together with their parent directory.</p>
+     * <p>Existing bytes are validated before appending; new files are initialized and forced together
+     * with their parent directory.</p>
      *
      * @param path active WAL path in an existing secured parent directory
      * @param descriptor exact generation identity, first sequence, and baseline revision
@@ -513,7 +521,9 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Copies and admits one data frame to the bounded single-writer queue.
      *
-     * <p>Sequences and revisions are reserved in admission order. Cancelling the acknowledgement does not retract durable work. Counter exhaustion completes the acknowledgement with a validation failure before append.</p>
+     * <p>Sequences and revisions are reserved in admission order. Cancelling the acknowledgement does
+     * not retract durable work. Counter exhaustion completes the acknowledgement with a validation
+     * failure before append.</p>
      *
      * @param recordType data record type; BATCH_COMMIT is reserved for the writer
      * @param transactionId non-null identity shared by the transaction records
@@ -651,7 +661,8 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Reserves exclusive exact frame coordinates and capacity without queuing the frame.
      *
-     * <p>Only successful admission consumes the reserved sequence and revision. Closing an unadmitted reservation releases its capacity without creating a gap.</p>
+     * <p>Only successful admission consumes the reserved sequence and revision. Closing an unadmitted
+     * reservation releases its capacity without creating a gap.</p>
      *
      * @param recordType data record type; BATCH_COMMIT is reserved for the writer
      * @param transactionId non-null identity shared by the transaction records
@@ -1245,7 +1256,8 @@ final class SigningActiveWal implements AutoCloseable {
      * @param acceptedPrefix previously accepted forced prefix of this exact WAL generation
      * @return immutable suffix ending at the currently forced boundary
      * @throws NullPointerException if the accepted prefix is null
-     * @throws IllegalArgumentException if the prefix belongs to another generation, exceeds the forced end, or contradicts an equal endpoint
+     * @throws IllegalArgumentException if the prefix belongs to another generation, exceeds the forced
+     * end, or contradicts an equal endpoint
      */
     /* default */ CommittedPrefixDescriptor committedPrefixAfter(
             CommittedPrefixDescriptor acceptedPrefix) {
@@ -1326,7 +1338,8 @@ final class SigningActiveWal implements AutoCloseable {
          * @param lastCommittedRevision last revision covered by a validated batch commit
          * @param rollingCommitment rolling WAL commitment at the accepted end boundary
          * @throws NullPointerException if {@code rollingCommitment} is null
-         * @throws IllegalArgumentException if observed/accepted offsets, sequence, revision, or commitment length cannot describe a validated WAL prefix
+         * @throws IllegalArgumentException if observed/accepted offsets, sequence, revision, or
+         * commitment length cannot describe a validated WAL prefix
          */
         ValidatedState {
             Objects.requireNonNull(rollingCommitment, "rollingCommitment");
@@ -1451,7 +1464,8 @@ final class SigningActiveWal implements AutoCloseable {
          * @param maximumBatchBytes inclusive maximum encoded writer batch length in bytes
          * @param maximumSegmentBytes maximum active segment length in bytes before rotation
          * @param payloadCopier bounded payload transfer callback used by the WAL writer
-         * @throws IllegalArgumentException if queue, grouping, wait, byte, or segment bounds are outside their supported ranges, or the payload copier is null
+         * @throws IllegalArgumentException if queue, grouping, wait, byte, or segment bounds are
+         * outside their supported ranges, or the payload copier is null
          */
         Configuration {
             if (queueCapacity <= 0 || queueCapacity > MAXIMUM_QUEUE_CAPACITY
@@ -1894,7 +1908,9 @@ final class SigningActiveWal implements AutoCloseable {
         /**
          * Queues this active reservation only if the guard succeeds at the admission linearization point.
          *
-         * <p>Admission consumes this reservation. A declined guard consumes no sequence, revision, or queue position. Guard work must be bounded and must not perform I/O, wait, or invoke further callbacks.</p>
+         * <p>Admission consumes this reservation. A declined guard consumes no sequence, revision,
+         * or queue position. Guard work must be bounded and must not perform I/O, wait, or invoke
+         * further callbacks.</p>
          *
          * @param guard bounded in-memory predicate evaluated under the WAL lock; must not wait or perform I/O
          * @return acknowledgement when admitted, or empty after releasing a declined reservation
@@ -2107,7 +2123,6 @@ final class SigningActiveWal implements AutoCloseable {
     /**
      * Package-local filesystem and fault-injection seam.
      */
-    @SuppressWarnings("PMD.CommentRequired")
     /* default */ interface Operations {
         /**
          * Checks whether the candidate path exists.
@@ -2254,7 +2269,7 @@ final class SigningActiveWal implements AutoCloseable {
     }
 
     private record DigestingChannel(WalChannel delegate, MessageDigest digest)
-            implements java.nio.channels.WritableByteChannel {
+            implements WritableByteChannel {
         /**
          * {@inheritDoc}
          */

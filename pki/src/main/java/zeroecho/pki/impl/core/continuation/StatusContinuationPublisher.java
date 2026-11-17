@@ -33,17 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.security.cert.X509CRL;
-import java.security.cert.X509Certificate;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.Objects;
-import java.util.Optional;
-
-import zeroecho.pkix.Pkix;
-import zeroecho.pkix.ocsp.OcspResponse;
-import zeroecho.pkix.ocsp.ResponderId;
-
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.PkiId;
@@ -54,6 +43,16 @@ import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.ocsp.OcspResponse;
+import zeroecho.pkix.ocsp.ResponderId;
+
+import java.security.cert.X509CRL;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Publishes one frozen status continuation with exact restart validation.
@@ -99,7 +98,10 @@ final class StatusContinuationPublisher {
         byte[] issuerDer = statusIssuer(attributes);
         validateStatus(result, issuerDer, thisUpdate, nextUpdate, type);
         byte[] der = result.bytes();
-        String prefix = type == StatusObjectType.CRL || type == StatusObjectType.DELTA_CRL ? "crl:" : "status:";
+        String prefix =
+                type == StatusObjectType.CRL || type == StatusObjectType.DELTA_CRL
+                        ? "crl:"
+                        : "status:";
         PkiId statusId = new PkiId(prefix + DomainContinuationPublisher.sha256(der));
         Optional<StatusObject> existing = store.getStatusObject(statusId);
         if (existing.isPresent()) {
@@ -171,7 +173,8 @@ final class StatusContinuationPublisher {
             }
             crl.verify(issuer.getPublicKey());
         } catch (java.security.GeneralSecurityException | IllegalArgumentException malformed) {
-            throw new DomainContinuationPublisher.PostconditionFailure("STATUS_OBJECT_INVALID", malformed);
+            throw new DomainContinuationPublisher.PostconditionFailure(
+                    "STATUS_OBJECT_INVALID", malformed);
         }
     }
 
@@ -192,7 +195,8 @@ final class StatusContinuationPublisher {
                 throw new DomainContinuationPublisher.PostconditionFailure("STATUS_OBJECT_DIFFERS");
             }
         } catch (IllegalArgumentException malformed) {
-            throw new DomainContinuationPublisher.PostconditionFailure("STATUS_OBJECT_INVALID", malformed);
+            throw new DomainContinuationPublisher.PostconditionFailure(
+                    "STATUS_OBJECT_INVALID", malformed);
         }
     }
 

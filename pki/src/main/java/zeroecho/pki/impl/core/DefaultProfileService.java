@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.util.ArrayList;
+import zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry;
+import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
+import zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings;
+
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -112,7 +117,8 @@ public final class DefaultProfileService implements ProfileService {
      * @param certificateBinding optional explicit certificate-signature binding
      * @param crlBinding optional explicit CRL-signature binding
      * @param publicKeyBinding optional explicit subject-public-key binding
-     * @throws NullPointerException if store, clock, auditSink, algorithmBindings, certificateBinding, crlBinding, publicKeyBinding is null
+     * @throws NullPointerException if store, clock, auditSink, algorithmBindings, certificateBinding, crlBinding,
+     * publicKeyBinding is null
      */
     public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink,
             X509AlgorithmBindingRegistry algorithmBindings, boolean signingConfigured,
@@ -181,7 +187,7 @@ public final class DefaultProfileService implements ProfileService {
     @Override
     public void validateActivation(String profileId, long profileVersion) {
         requireProfileId(profileId);
-        if (profileVersion <= 0) throw new IllegalArgumentException("profileVersion must be positive");
+        if (profileVersion <= 0) { throw new IllegalArgumentException("profileVersion must be positive"); }
         ImportedCertificateProfileVersion version = store.getProfileVersion(profileId, profileVersion)
                 .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
         validateBindings(version.definition());
@@ -359,10 +365,10 @@ public final class DefaultProfileService implements ProfileService {
     }
 
     private static X509AlgorithmBindingRegistry defaultBindings() {
-        List<X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(
-                zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors());
-        descriptors.addAll(zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.descriptors());
-        return zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+        List<X509AlgorithmBinding> descriptors = new ArrayList<>(
+                StandardX509Bindings.descriptors());
+        descriptors.addAll(ZeroEchoPrivateX509Bindings.descriptors());
+        return ImmutableX509AlgorithmBindingRegistry.create(descriptors);
     }
 
     /*

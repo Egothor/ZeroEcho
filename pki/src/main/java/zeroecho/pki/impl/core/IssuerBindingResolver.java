@@ -33,6 +33,18 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Optional;
+import java.util.stream.Stream;
+import org.bouncycastle.asn1.ASN1OctetString;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
+import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
+import zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings;
+import zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier;
+import zeroecho.pkix.Pkix;
+
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -100,15 +112,15 @@ public final class IssuerBindingResolver {
             throw invalid("Issuer credential digest differs");
         }
         try {
-            X509Certificate holder = zeroecho.pkix.Pkix.parseCertificate(certificate);
-            validateKey(binding.primary(), zeroecho.pkix.Pkix.subjectPublicKeyInfo(holder), keys, authority);
-            byte[] extension = holder.getExtensionValue("2.5.29.72");
+            X509Certificate holder = Pkix.parseCertificate(certificate);
+            validateKey(binding.primary(), Pkix.subjectPublicKeyInfo(holder), keys, authority);
+            byte[] extension = holder.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo());
             if (binding.alternative().isPresent()) {
                 if (extension == null) {
                     throw invalid("Alternative issuer subject key missing");
                 }
                 validateKey(binding.alternative().orElseThrow(),
-                        org.bouncycastle.asn1.ASN1OctetString.getInstance(extension).getOctets(), keys, authority);
+                        ASN1OctetString.getInstance(extension).getOctets(), keys, authority);
             } else if (extension != null) {
                 throw invalid("Unexpected alternative issuer subject key");
             }
@@ -127,7 +139,7 @@ public final class IssuerBindingResolver {
      * @param keyRef existing managed signing key; must not be {@code null}
      * @param signatureAlgorithm exact outgoing signature identity; must not be {@code null}
      */
-    public record AlternativeSelection(zeroecho.pki.api.KeyRef keyRef, zeroecho.core.spec.AlgorithmIdentity signatureAlgorithm) {
+    public record AlternativeSelection(KeyRef keyRef, AlgorithmIdentity signatureAlgorithm) {
         /**
          * Requires both coordinates of the alternative signer selection.
          *
@@ -166,25 +178,27 @@ public final class IssuerBindingResolver {
      * @throws IllegalStateException if public keys, role selections or algorithm evidence disagree,
      *         or the certificate evidence cannot be encoded
      */
+    // Retain the established public binding-factory signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public static IssuerCryptographicBinding create(IssuerGeneration generation, byte[] certificateDer, String formatId,
-            zeroecho.core.spec.AlgorithmIdentity outgoingPrimarySignature, java.util.Optional<AlternativeSelection> alternative,
+            AlgorithmIdentity outgoingPrimarySignature, Optional<AlternativeSelection> alternative,
             PublicKeyInfoSource keys, X509AuthoritySnapshot authority,
             IssuerCryptographicBinding.HybridSignatureBaseline baseline,
-            zeroecho.pki.api.profile.CertificateProfileRef profile, String bindingSetCommitment) {
+            CertificateProfileRef profile, String bindingSetCommitment) {
         try {
-            X509Certificate certificate = zeroecho.pkix.Pkix.parseCertificate(certificateDer);
+            X509Certificate certificate = Pkix.parseCertificate(certificateDer);
             IssuerKeyBinding primary = createKey(generation.signingKeyRef(), outgoingPrimarySignature,
-                    zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate), keys, authority);
-            java.util.Optional<IssuerKeyBinding> alternate = java.util.Optional.empty();
+                    Pkix.subjectPublicKeyInfo(certificate), keys, authority);
+            Optional<IssuerKeyBinding> alternate = Optional.empty();
             if (alternative.isPresent()) {
                 AlternativeSelection selected = alternative.orElseThrow();
-                byte[] extension = certificate.getExtensionValue("2.5.29.72");
+                byte[] extension = certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo());
                 if (extension == null) {
                     throw invalid("Alternative CA subject key missing");
                 }
-                alternate = java.util.Optional.of(createKey(selected.keyRef(), selected.signatureAlgorithm(),
-                        org.bouncycastle.asn1.ASN1OctetString.getInstance(extension).getOctets(), keys, authority));
-            } else if (certificate.getExtensionValue("2.5.29.72") != null) {
+                alternate = Optional.of(createKey(selected.keyRef(), selected.signatureAlgorithm(),
+                        ASN1OctetString.getInstance(extension).getOctets(), keys, authority));
+            } else if (certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo()) != null) {
                 throw invalid("Alternative CA signer selection missing");
             }
             String certificateDigest = digest(certificateDer);
@@ -193,7 +207,7 @@ public final class IssuerBindingResolver {
                     formatId, primary, alternate, certificateDigest, profile, bindingSetCommitment, baseline,
                     "0".repeat(64));
             String evidence = digest(("zeroecho-issuer-creation-v1\n" + initial.commitment())
-                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                    .getBytes(StandardCharsets.US_ASCII));
             return new IssuerCryptographicBinding(1, generation.issuerId(), generation.authorityId(), generation.credentialId(),
                     formatId, primary, alternate, certificateDigest, profile, bindingSetCommitment, baseline,
                     evidence);
@@ -220,15 +234,15 @@ public final class IssuerBindingResolver {
      * @throws IllegalArgumentException if public-key or algorithm encodings are malformed
      * @throws IllegalStateException if the managed key or its algorithm evidence does not match
      */
-    public static IssuerKeyBinding createKey(zeroecho.pki.api.KeyRef reference, zeroecho.core.spec.AlgorithmIdentity signature,
+    public static IssuerKeyBinding createKey(KeyRef reference, AlgorithmIdentity signature,
             byte[] spki, PublicKeyInfoSource keys, X509AuthoritySnapshot authority) throws IOException {
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
-        AlgorithmIdentity identity = adapter.decode(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(spki),
+        AlgorithmIdentity identity = adapter.decode(Pkix.subjectPublicKeyAlgorithm(spki),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-        byte[] algorithm = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(adapter.encode(signature,
+        byte[] algorithm = Pkix.encodeAlgorithmIdentifier(adapter.encode(signature,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM));
         IssuerKeyBinding binding = new IssuerKeyBinding(reference, identity, signature,
-                new zeroecho.pki.api.EncodedObject(Encoding.DER, algorithm), digest(spki));
+                new EncodedObject(Encoding.DER, algorithm), digest(spki));
         validateKey(binding, spki, keys, authority);
         return binding;
     }
@@ -236,7 +250,7 @@ public final class IssuerBindingResolver {
     private static void validateKey(IssuerKeyBinding binding, byte[] subjectSpki, PublicKeyInfoSource keys,
             X509AuthoritySnapshot authority) throws IOException {
         EncodedObject exported = Objects.requireNonNull(keys.resolvePublicKeyInfo(binding.keyRef()), "publicKeyInfo");
-        if (exported.encoding() != Encoding.DER || exported.byteLength() > 32768
+        if (exported.encoding() != Encoding.DER || exported.byteLength() > 32_768
                 || !digest(subjectSpki).equals(binding.subjectSpkiSha256())
                 || !MessageDigest.isEqual(subjectSpki, exported.bytes())) {
             throw invalid("Issuer managed key evidence differs");
@@ -250,7 +264,7 @@ public final class IssuerBindingResolver {
      * @return public-only verifier suitable for store startup and historical validation
      * @throws NullPointerException if the authority is null
      */
-    public static zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier publicEvidenceVerifier(X509AuthoritySnapshot authority) {
+    public static IssuerAlgorithmEvidenceVerifier publicEvidenceVerifier(X509AuthoritySnapshot authority) {
         return publicEvidenceVerifier(new BcX509AlgorithmAdapter(Objects.requireNonNull(authority, "authority").bindings()));
     }
 
@@ -263,18 +277,19 @@ public final class IssuerBindingResolver {
      *
      * @return the cached verifier using the immutable built-in algorithm bindings
      */
-    public static zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier defaultPublicEvidenceVerifier() {
+    public static IssuerAlgorithmEvidenceVerifier defaultPublicEvidenceVerifier() {
         return PublicEvidenceDefaults.VERIFIER;
     }
 
+    /** Lazily retains the immutable default public-evidence verifier. */
     private static final class PublicEvidenceDefaults {
-        private static final zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier VERIFIER = publicEvidenceVerifier(
-                new BcX509AlgorithmAdapter(zeroecho.pki.impl.framework.x509.X509BindingCatalog.builtIn(java.util.stream.Stream.concat(
-                        zeroecho.pki.impl.framework.x509.StandardX509Bindings.catalog().rules().stream(),
-                        zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.catalog().rules().stream()).toList())));
+        private static final IssuerAlgorithmEvidenceVerifier VERIFIER = publicEvidenceVerifier(
+                new BcX509AlgorithmAdapter(X509BindingCatalog.builtIn(Stream.concat(
+                        StandardX509Bindings.catalog().rules().stream(),
+                        ZeroEchoPrivateX509Bindings.catalog().rules().stream()).toList())));
     }
 
-    private static zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier publicEvidenceVerifier(BcX509AlgorithmAdapter adapter) {
+    private static IssuerAlgorithmEvidenceVerifier publicEvidenceVerifier(BcX509AlgorithmAdapter adapter) {
         return (binding, publicKey) -> {
             if (publicKey.encoding() != Encoding.DER) {
                 throw invalid("Issuer public key is not DER");
@@ -296,13 +311,13 @@ public final class IssuerBindingResolver {
         if (!MessageDigest.isEqual(subjectSpki, info.getEncoded("DER"))) {
             throw invalid("Noncanonical subject public key");
         }
-        if (!binding.publicKeyAlgorithm().equals(adapter.decode(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(subjectSpki),
+        if (!binding.publicKeyAlgorithm().equals(adapter.decode(Pkix.subjectPublicKeyAlgorithm(subjectSpki),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM))) {
             throw invalid("Issuer public-key algorithm differs");
         }
         AlgorithmIdentifier signature = AlgorithmIdentifier.getInstance(binding.signatureAlgorithmIdentifier().bytes());
         if (!MessageDigest.isEqual(signature.getEncoded("DER"), binding.signatureAlgorithmIdentifier().bytes())
-                || !binding.signatureAlgorithm().equals(adapter.decode(zeroecho.pkix.Pkix.parseAlgorithmIdentifier(
+                || !binding.signatureAlgorithm().equals(adapter.decode(Pkix.parseAlgorithmIdentifier(
                         binding.signatureAlgorithmIdentifier().bytes()), X509AlgorithmRole.SIGNATURE_ALGORITHM))) {
             throw invalid("Issuer outgoing signature algorithm differs");
         }
@@ -331,17 +346,17 @@ public final class IssuerBindingResolver {
      * @throws IllegalStateException if a captured reference or subject-key digest disagrees
      */
     public static IssuerCryptographicBinding createCaptured(IssuerGeneration generation, byte[] certificateDer, String formatId,
-            IssuerKeyBinding primary, java.util.Optional<IssuerKeyBinding> alternative,
+            IssuerKeyBinding primary, Optional<IssuerKeyBinding> alternative,
             IssuerCryptographicBinding.HybridSignatureBaseline baseline,
-            zeroecho.pki.api.profile.CertificateProfileRef profile, String bindingSetCommitment) {
-        X509Certificate certificate = zeroecho.pkix.Pkix.parseCertificate(certificateDer);
+            CertificateProfileRef profile, String bindingSetCommitment) {
+        X509Certificate certificate = Pkix.parseCertificate(certificateDer);
         if (!primary.keyRef().equals(generation.signingKeyRef())
-                || !digest(zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate)).equals(primary.subjectSpkiSha256())) {
+                || !digest(Pkix.subjectPublicKeyInfo(certificate)).equals(primary.subjectSpkiSha256())) {
             throw invalid("Captured primary issuer evidence differs");
         }
-        byte[] extension = certificate.getExtensionValue("2.5.29.72");
+        byte[] extension = certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo());
         if (alternative.isPresent()) {
-            if (extension == null || !digest(org.bouncycastle.asn1.ASN1OctetString.getInstance(extension).getOctets())
+            if (extension == null || !digest(ASN1OctetString.getInstance(extension).getOctets())
                     .equals(alternative.orElseThrow().subjectSpkiSha256())) {
                 throw invalid("Captured alternative issuer evidence differs");
             }
@@ -352,7 +367,7 @@ public final class IssuerBindingResolver {
                 generation.authorityId(), generation.credentialId(), formatId,
                 primary, alternative, digest(certificateDer), profile, bindingSetCommitment, baseline,
                 "0".repeat(64));
-        String evidence = digest(("zeroecho-issuer-creation-v1\n" + initial.commitment()).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        String evidence = digest(("zeroecho-issuer-creation-v1\n" + initial.commitment()).getBytes(StandardCharsets.US_ASCII));
         return new IssuerCryptographicBinding(1, initial.issuerId(), initial.authorityId(), initial.credentialId(), initial.formatId(),
                 primary, alternative, initial.certificateSha256(), profile, bindingSetCommitment, baseline,
                 evidence);

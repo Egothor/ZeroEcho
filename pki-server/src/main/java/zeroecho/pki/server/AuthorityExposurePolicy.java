@@ -63,7 +63,7 @@ public record AuthorityExposurePolicy(Mode mode, Set<PkiId> authorityIds,
 
         private final int code;
 
-        Mode(int code) {
+        /* default */ Mode(int code) {
             this.code = code;
         }
 

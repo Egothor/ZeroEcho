@@ -159,7 +159,7 @@ public record BackupTransferConfiguration(Path directory, long maximumArchiveByt
      */
     public static BackupTransferConfiguration decode(byte[] bytes) {
         if (!(StrictJson.parse(bytes, CONFIGURATION_LIMIT) instanceof PkiOperationValue.ObjectValue object)
-                || !object.fields().keySet().equals(FIELDS)) {
+                || !FIELDS.equals(object.fields().keySet())) {
             throw new IllegalArgumentException("Invalid backup transfer configuration");
         }
         Map<String, PkiOperationValue> fields = object.fields();

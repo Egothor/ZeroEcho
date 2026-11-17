@@ -55,7 +55,7 @@ public final class HybridSdkProofs {
      * @throws PkiException if the original request, key suite or primary proof is invalid
      */
     public static ParsedHybridSdkRequest parse(byte[] originalDer) {
-        if (originalDer == null || originalDer.length < 1 || originalDer.length > 1048576) throw new PkiException("SDK_REQUEST_SIZE_INVALID");
+        if (originalDer == null || originalDer.length < 1 || originalDer.length > 1_048_576) { throw new PkiException("SDK_REQUEST_SIZE_INVALID"); }
         return new BcX509CertificationRequestParser().parseHybridSdk(new CertificationRequest(
                 BcX509CredentialFramework.FORMAT_ID, new EncodedObject(Encoding.DER, originalDer)));
     }

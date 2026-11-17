@@ -34,6 +34,9 @@
 
 package zeroecho.pki.application;
 
+import zeroecho.pki.spi.store.CrlHybridExecution;
+
+
 import java.io.InterruptedIOException;
 import java.time.Instant;
 import java.util.NoSuchElementException;
@@ -224,7 +227,7 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
             requireOpen.run();
             SemanticSigningOperation observation = semantic.find(id).orElseThrow();
             Workflow workflow = store.getSignWorkflow(id).orElseThrow();
-            Optional<zeroecho.pki.spi.store.CrlHybridExecution> hybrid = store.supportsHybridCrlContinuations()
+            Optional<CrlHybridExecution> hybrid = store.supportsHybridCrlContinuations()
                     && workflow.envelope().outer().filter(value -> value.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.STATUS
                             && zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.isHybrid(
                                     zeroecho.pki.impl.core.continuation.DomainCommandEncoding.decode(value.command()))).isPresent()
@@ -265,7 +268,7 @@ final class DefaultLocalSigningExecutor implements LocalSigningExecutor {
             }
             boolean hybridForward = false;
             if (hybrid.isPresent()) {
-                var changed = store.getCrlHybridExecution(id).orElseThrow();
+                CrlHybridExecution changed = store.getCrlHybridExecution(id).orElseThrow();
                 hybridForward = hybrid.orElseThrow().phase() == SignWorkflowStore.CrlHybridPhase.AWAITING_ALT
                         && changed.phase() == SignWorkflowStore.CrlHybridPhase.NATIVE_LINKED;
             }

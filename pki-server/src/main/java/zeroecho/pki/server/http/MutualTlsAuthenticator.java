@@ -33,6 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import zeroecho.pki.server.AdministrativeAuthenticationMode;
+import zeroecho.pki.server.CertificateIdentityEvidence;
+import zeroecho.pki.server.PkiServerConfiguration.ClientCertificateMapping;
+import zeroecho.pki.server.SecurityPrincipal;
+import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
+import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
+import zeroecho.pki.server.spi.PkiServerAuthenticator;
+
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -49,14 +57,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 
-import zeroecho.pki.server.AdministrativeAuthenticationMode;
-import zeroecho.pki.server.CertificateIdentityEvidence;
-import zeroecho.pki.server.PkiServerConfiguration.ClientCertificateMapping;
-import zeroecho.pki.server.SecurityPrincipal;
-import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
-import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
-import zeroecho.pki.server.spi.PkiServerAuthenticator;
-
 /**
  * Production mutual-TLS authenticator using immutable cryptographic certificate
  * commitments rather than mutable subject or SAN strings.
@@ -67,6 +67,8 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
  * state of the persisted principal.</p>
  */
 public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
+    private static final int BOUND_1 = 1;
+
     private final List<ClientCertificateMapping> mappings;
     private final Function<String, SecurityPrincipal> principalResolver;
     private final Clock clock;
@@ -89,6 +91,9 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
     /**
      * {@inheritDoc}
      */
+    // This transport boundary must preserve cleanup and finite masking of provider/runtime
+    // failures.
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException"})
     @Override
     public PkiServerAuthenticationResult authenticate(PkiServerAuthenticationContext context) {
         Objects.requireNonNull(context, "context");
@@ -101,32 +106,42 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
             Commitments commitments = commitments(leaf);
             List<ClientCertificateMapping> matches = new ArrayList<>();
             for (ClientCertificateMapping mapping : mappings) {
-                if (matches(mapping, commitments)) matches.add(mapping);
+                if (matches(mapping, commitments)) {
+                    matches.add(mapping);
+                }
             }
             if (matches.isEmpty()) {
                 return new PkiServerAuthenticationResult.Rejected(
                         PkiServerAuthenticationResult.Code.MAPPING_UNAVAILABLE);
             }
-            if (matches.size() != 1) {
+            if (matches.size() != BOUND_1) {
                 return new PkiServerAuthenticationResult.Rejected(
                         PkiServerAuthenticationResult.Code.MAPPING_AMBIGUOUS);
             }
             SecurityPrincipal principal = principalResolver.apply(matches.getFirst().principalId());
             if (!principal.enabled()) {
                 return new PkiServerAuthenticationResult.Rejected(
-                        AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(),
+                        AdministrativeAuthenticationMode.DIRECT_MTLS,
+                        Optional.empty(),
                         Optional.of(principal.principalId()),
                         PkiServerAuthenticationResult.Code.PRINCIPAL_DISABLED);
             }
             Optional<CertificateIdentityEvidence> evidence;
             try {
-                evidence = Optional.of(CertificateIdentityEvidence.fromCertificate(context.realmId(), leaf));
+                evidence =
+                        Optional.of(
+                                CertificateIdentityEvidence.fromCertificate(
+                                        context.realmId(), leaf));
             } catch (IllegalArgumentException unsupportedIdentity) {
-                // Authentication retains existing mapping semantics; enrollment requires this evidence separately.
+                // Authentication retains existing mapping semantics; enrollment requires this
+                // evidence separately.
                 evidence = Optional.empty();
             }
-            return new PkiServerAuthenticationResult.Authenticated(AdministrativeAuthenticationMode.DIRECT_MTLS,
-                    Optional.empty(), principal.principalId(), evidence);
+            return new PkiServerAuthenticationResult.Authenticated(
+                    AdministrativeAuthenticationMode.DIRECT_MTLS,
+                    Optional.empty(),
+                    principal.principalId(),
+                    evidence);
         } catch (java.security.cert.CertificateException | IllegalArgumentException failure) {
             return new PkiServerAuthenticationResult.Rejected(
                     PkiServerAuthenticationResult.Code.CERTIFICATE_INVALID);
@@ -145,12 +160,16 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
     private static Commitments commitments(X509Certificate certificate)
             throws java.security.cert.CertificateEncodingException {
         BigInteger serial = certificate.getSerialNumber();
-        if (serial.signum() <= 0) throw new IllegalArgumentException("Certificate serial is invalid");
+        if (serial.signum() <= 0) {
+            throw new IllegalArgumentException("Certificate serial is invalid");
+        }
         MessageDigest issuerSerial = sha256();
         issuerSerial.update(certificate.getIssuerX500Principal().getEncoded());
         issuerSerial.update((byte) 0);
         issuerSerial.update(serial.toByteArray());
-        return new Commitments(digest(certificate.getEncoded()), digest(certificate.getPublicKey().getEncoded()),
+        return new Commitments(
+                digest(certificate.getEncoded()),
+                digest(certificate.getPublicKey().getEncoded()),
                 HexFormat.of().formatHex(issuerSerial.digest()));
     }
 

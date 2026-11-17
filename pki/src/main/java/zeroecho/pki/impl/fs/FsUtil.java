@@ -47,10 +47,12 @@ final class FsUtil {
     /**
      * Converts an object's text through the store's lossy filename-component transformation.
      *
-     * <p>This mapping preserves periods and may produce collisions. Caller identity rules must enforce uniqueness and reserved-component restrictions.</p>
+     * <p>This mapping preserves periods and may produce collisions. Caller identity rules must enforce
+     * uniqueness and reserved-component restrictions.</p>
      *
      * @param id non-null identity whose textual representation is transformed
-     * @return trimmed text with characters outside ASCII letters, digits, hyphen, underscore and period replaced by underscore
+     * @return trimmed text with characters outside ASCII letters, digits, hyphen, underscore and period
+     * replaced by underscore
      * @throws NullPointerException if a required input is null
      * @throws IllegalArgumentException if the textual representation is blank
      */
@@ -62,7 +64,8 @@ final class FsUtil {
     /**
      * Trims a textual component and replaces unsupported characters with underscores.
      *
-     * <p>Periods are preserved, including dot-only components; this function does not establish semantic identity uniqueness.</p>
+     * <p>Periods are preserved, including dot-only components; this function does not establish semantic
+     * identity uniqueness.</p>
      *
      * @param segment non-null component text
      * @return lossy ASCII component preserving letters, digits, hyphen, underscore and period

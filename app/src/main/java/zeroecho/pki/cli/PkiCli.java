@@ -60,6 +60,7 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
         "PMD.AvoidReassigningLoopVariables", "PMD.CloseResource", "PMD.CyclomaticComplexity",
         "PMD.DoNotUseThreads", "PMD.UseVarargs" })
 public final class PkiCli {
+    private static final String EXPECTED_HEAD = "expectedHead";
 
     private static final String CONFIG = "--config";
     private static final String OUTPUT = "--output";
@@ -419,7 +420,7 @@ public final class PkiCli {
             PkiOperationValue value;
             if ("limit".equals(name) || "offset".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)) {
                 value = new PkiOperationValue.IntegerValue(parseLong(raw));
-            } else if ("expectedHead".equals(name)) {
+            } else if (EXPECTED_HEAD.equals(name)) {
                 value=PkiCliJson.parseArgument(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             } else if (BOOLEAN_ARGUMENT_VALUES.contains(name)) {
                 value = new PkiOperationValue.BooleanValue(Boolean.parseBoolean(raw));

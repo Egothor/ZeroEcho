@@ -150,6 +150,8 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
      * @throws NullPointerException if a coordinate, optional container, list or list element is null
      * @throws IllegalArgumentException if a present lifecycle target differs from the subject keys
      */
+    // Preserve the established public constructor signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
             String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
             List<SubjectRdn> subject, List<SubjectAlternativeName> subjectAlternativeNames, Validity validity,
@@ -184,6 +186,8 @@ public record SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPa
      * @param disclosurePolicy canonical disclosure policy
      * @throws NullPointerException if a coordinate, optional container, list or list element is null
      */
+    // Preserve the established public constructor signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public SdkIssuancePreview(PkiId issuerCaId, PkiId issuerId, PkiId chainPathId,
             String chainPathCommitment, CertificateProfileRef profile, SubjectRef subjectRef,
             List<SubjectRdn> subject, List<SubjectAlternativeName> subjectAlternativeNames, Validity validity,

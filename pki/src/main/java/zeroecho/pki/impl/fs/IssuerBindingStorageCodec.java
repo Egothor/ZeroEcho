@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.DataInputStream;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -49,6 +54,7 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * Context-bound compact ZICB v1 storage; immutable generation coordinates are stored once.
  */
 final class IssuerBindingStorageCodec {
+    private static final int BOOLEAN_TRUE = 1;
     private static final int MAGIC = 0x5a494342;
     private static final int MAXIMUM = SigningWalFrameCodec.MAX_PAYLOAD_BYTES;
     private IssuerBindingStorageCodec() { }
@@ -88,7 +94,7 @@ final class IssuerBindingStorageCodec {
      * @throws IOException if envelope framing or the leading identity field cannot be decoded
      */
     /* default */ static PkiId issuerId(byte[] bytes) throws IOException {
-        try (var in = input(bytes)) { return new PkiId(text(in)); }
+        try (DataInputStream in = input(bytes)) { return new PkiId(text(in)); }
     }
 
     /**
@@ -100,29 +106,29 @@ final class IssuerBindingStorageCodec {
      * @throws IOException if framing, context, coordinates, canonical commitment or trailing data is invalid
      */
     /* default */ static IssuerCryptographicBinding decode(byte[] bytes, IssuerGeneration generation) throws IOException {
-        try (var in = input(bytes)) {
+        try (DataInputStream in = input(bytes)) {
             PkiId id = new PkiId(text(in));
             if (!id.equals(generation.issuerId()) || !MessageDigest.isEqual(data(in), context(generation))) { throw invalid(); }
-            String commitment = text(in), format = text(in);
+            String commitment = text(in); String format = text(in);
             IssuerKeyBinding primary = key(in, generation.signingKeyRef());
             Optional<IssuerKeyBinding> alternative = flag(in) ? Optional.of(key(in, new KeyRef(text(in)))) : Optional.empty();
-            String certificate = text(in), profileId = text(in); long profileVersion = in.readLong();
-            var profile = new CertificateProfileRef(profileId, profileVersion, data(in));
+            String certificate = text(in); String profileId = text(in); long profileVersion = in.readLong();
+            CertificateProfileRef profile = new CertificateProfileRef(profileId, profileVersion, data(in));
             String registry = text(in);
-            var baseline = IssuerCryptographicBinding.HybridSignatureBaseline.valueOf(text(in));
+            IssuerCryptographicBinding.HybridSignatureBaseline baseline = IssuerCryptographicBinding.HybridSignatureBaseline.valueOf(text(in));
             String evidence = text(in);
             if (in.read() != -1) { throw invalid(); }
-            var value = new IssuerCryptographicBinding(1, id, generation.authorityId(), generation.credentialId(), format,
+            IssuerCryptographicBinding value = new IssuerCryptographicBinding(1, id, generation.authorityId(), generation.credentialId(), format,
                     primary, alternative, certificate, profile, registry, baseline, evidence);
             requireCoordinates(value, generation);
             if (!value.commitment().equals(commitment)) { throw invalid(); }
             return value;
-        } catch (RuntimeException failure) { throw new IOException("Invalid context-bound issuer binding", failure); }
+        } catch (IllegalArgumentException | IllegalStateException | NullPointerException failure) { throw new IOException("Invalid context-bound issuer binding", failure); }
     }
 
     private static DataInputStream input(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length > MAXIMUM) { throw invalid(); }
-        var in = new DataInputStream(new ByteArrayInputStream(bytes));
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
         if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedShort() != 1) { throw invalid(); }
         return in;
     }
@@ -141,7 +147,7 @@ final class IssuerBindingStorageCodec {
                 generation.credentialId().value(), generation.signingKeyRef().value(), generation.profilePolicyCommitment(), generation.x509BindingCommitment())) {
             byte[] bytes = field.getBytes(StandardCharsets.UTF_8);
             if (bytes.length > MAXIMUM) { throw invalid(); }
-            digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.length).array()); digest.update(bytes);
+            digest.update(ByteBuffer.allocate(4).putInt(bytes.length).array()); digest.update(bytes);
         }
         return digest.digest();
     }
@@ -155,12 +161,12 @@ final class IssuerBindingStorageCodec {
                 new EncodedObject(Encoding.DER, data(in)), text(in));
     }
     private static boolean flag(DataInputStream in) throws IOException {
-        int value = in.readUnsignedByte(); if (value > 1) { throw invalid(); } return value == 1;
+        int value = in.readUnsignedByte(); if (value > BOOLEAN_TRUE) { throw invalid(); } return value == 1;
     }
     private static void text(DataOutputStream out, String value) throws IOException { data(out, value.getBytes(StandardCharsets.UTF_8)); }
     private static String text(DataInputStream in) throws IOException {
         byte[] bytes = data(in); String value = new String(bytes, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) { throw invalid(); } return value;
+        if (!Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) { throw invalid(); } return value;
     }
     private static void data(DataOutputStream out, byte[] value) throws IOException {
         if (value.length < 1 || (long)out.size() + 4 + value.length > MAXIMUM) { throw invalid(); }

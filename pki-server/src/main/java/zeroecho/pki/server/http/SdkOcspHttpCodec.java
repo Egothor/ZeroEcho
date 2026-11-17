@@ -43,15 +43,17 @@ import zeroecho.pki.application.PkiOperationValue;
 /**
  * Exact bounded HTTP envelope for separate SDK OCSP evidence; decoding never establishes trust.
  */
-final class SdkOcspHttpCodec {
+/* default */ final class SdkOcspHttpCodec {
+    private static final int BOUND_32 = 32;
+
     /**
      * Media type for the versioned hybrid-SDK OCSP JSON envelope.
      */
-    static final String MEDIA = "application/vnd.zeroecho.hybrid-sdk+json";
+    /* default */ static final String MEDIA = "application/vnd.zeroecho.hybrid-sdk+json";
     /**
      * Exact hybrid-SDK version-one profile identifier accepted by this codec.
      */
-    static final String PROFILE = "zeroecho-hybrid-sdk-v1";
+    /* default */ static final String PROFILE = "zeroecho-hybrid-sdk-v1";
     private SdkOcspHttpCodec() { }
     /**
      * Decoded transport inputs before native OCSP validation or trust establishment.
@@ -59,7 +61,7 @@ final class SdkOcspHttpCodec {
      * @param requestDer decoded OCSP request bytes; retained without copying by this carrier
      * @param clientNonce decoded 32-byte client nonce; retained without copying by this carrier
      */
-    record Query(byte[] requestDer,byte[] clientNonce) { }
+    /* default */ record Query(byte[] requestDer,byte[] clientNonce) { }
     /**
      * Decodes the exact version-one SDK OCSP query envelope under independent byte bounds.
      *
@@ -69,15 +71,15 @@ final class SdkOcspHttpCodec {
      * @return decoded OCSP request and exact 32-byte client nonce
      * @throws IllegalArgumentException if fields, version, profile, base64url encoding or bounds are invalid
      */
-    static Query decode(byte[] bytes,int maximumBytes,int maximumNativeBytes) {
-        if(!(StrictJson.parse(bytes,maximumBytes) instanceof PkiOperationValue.ObjectValue object))throw invalid();
-        var fields=object.fields();
+    /* default */ static Query decode(byte[] bytes,int maximumBytes,int maximumNativeBytes) {
+        if(!(StrictJson.parse(bytes,maximumBytes) instanceof PkiOperationValue.ObjectValue object)){ throw invalid(); }
+        Map<String,PkiOperationValue> fields=object.fields();
         if(!fields.keySet().equals(Set.of("version","profile","requestDer","clientNonce"))
                 || !(fields.get("version") instanceof PkiOperationValue.IntegerValue version) || version.value()!=1
-                || !PROFILE.equals(text(fields,"profile")))throw invalid();
+                || !PROFILE.equals(text(fields,"profile"))){ throw invalid(); }
         byte[] request=decodeBytes(text(fields,"requestDer"),maximumNativeBytes);
-        byte[] nonce=decodeBytes(text(fields,"clientNonce"),32);
-        if(nonce.length!=32)throw invalid();return new Query(request,nonce);
+        byte[] nonce=decodeBytes(text(fields,"clientNonce"),BOUND_32);
+        if(nonce.length!=BOUND_32){ throw invalid(); }return new Query(request,nonce);
     }
     /**
      * Encodes public hybrid-SDK OCSP evidence into the version-one JSON transport envelope.
@@ -86,8 +88,8 @@ final class SdkOcspHttpCodec {
      * @return newly allocated UTF-8 JSON bytes
      * @throws NullPointerException if evidence is null
      */
-    static byte[] encode(SdkOcspEvidence evidence) {
-        var fields=new LinkedHashMap<String,PkiOperationValue>();
+    /* default */ static byte[] encode(SdkOcspEvidence evidence) {
+        Map<String,PkiOperationValue> fields=new LinkedHashMap<>();
         fields.put("version",new PkiOperationValue.IntegerValue(1));fields.put("profile",text(PROFILE));
         fields.put("primaryResponseDer",bytes(evidence.primaryResponseDer()));
         fields.put("responderChain",new PkiOperationValue.ListValue(evidence.responderChain().stream().map(v->(PkiOperationValue)bytes(v)).toList()));
@@ -104,26 +106,29 @@ final class SdkOcspHttpCodec {
      * @param entries maximum requested certificate count
      * @return UTF-8 JSON capability document
      */
-    static byte[] capability(String origin,int bodyBytes,int nativeBytes,int entries) {
+    /* default */ static byte[] capability(String origin,int bodyBytes,int nativeBytes,int entries) {
         return StrictJson.encode(new PkiOperationValue.ObjectValue(Map.ofEntries(
                 Map.entry("version",new PkiOperationValue.IntegerValue(1)),Map.entry("profile",text(PROFILE)),
                 Map.entry("canonicalOrigin",text(origin)),Map.entry("route",text("/ocsp/{alias}/hybrid-sdk/v1")),Map.entry("mediaType",text(MEDIA)),
                 Map.entry("maximumBodyBytes",new PkiOperationValue.IntegerValue(bodyBytes)),
                 Map.entry("maximumNativeRequestBytes",new PkiOperationValue.IntegerValue(nativeBytes)),
                 Map.entry("maximumEntries",new PkiOperationValue.IntegerValue(entries)),
-                Map.entry("clientNonceBytes",new PkiOperationValue.IntegerValue(32)),
+                Map.entry("clientNonceBytes",new PkiOperationValue.IntegerValue(BOUND_32)),
                 Map.entry("maximumEvidenceLifetimeSeconds",new PkiOperationValue.IntegerValue(120)),
                 Map.entry("maximumResponseBytes",new PkiOperationValue.IntegerValue(zeroecho.pki.application.SdkOcspProjection.MAXIMUM_RESPONSE_BYTES)))));
     }
+    // Untrusted transport/parser failures retain the existing finite safe HTTP diagnostics.
+
+    @SuppressWarnings({"PMD.PreserveStackTrace"})
     private static byte[] decodeBytes(String value,int maximum) {
-        if(value.isEmpty()||value.indexOf('=')>=0||value.length()>((long)maximum*4+2)/3)throw invalid();
+        if(value.isEmpty()||value.indexOf('=')>=0||value.length()>((long)maximum*4+2)/3){ throw invalid(); }
         byte[] bytes;
         try{bytes=Base64.getUrlDecoder().decode(value);}catch(IllegalArgumentException failure){throw invalid();}
-        if(bytes.length>maximum||!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(value))throw invalid();
+        if(bytes.length>maximum||!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(value)){ throw invalid(); }
         return bytes;
     }
     private static String text(Map<String,PkiOperationValue> fields,String key) {
-        if(!(fields.get(key) instanceof PkiOperationValue.Text value))throw invalid();return value.value();
+        if(!(fields.get(key) instanceof PkiOperationValue.Text value)){ throw invalid(); }return value.value();
     }
     private static PkiOperationValue.Text bytes(byte[] value){return text(Base64.getUrlEncoder().withoutPadding().encodeToString(value));}
     private static PkiOperationValue.Text text(String value){return new PkiOperationValue.Text(value);}

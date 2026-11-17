@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Locale;
+
 import java.io.IOException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.CopyOption;
@@ -64,7 +66,7 @@ final class PlatformFs {
     // Windows Defender / indexer can transiently lock a just-written file during MoveFileEx.
     // The retry is Windows-only; on POSIX, rename(2) is unconditionally atomic and non-blocking.
     private static final boolean ON_WINDOWS = System.getProperty("os.name", "")
-            .toLowerCase(java.util.Locale.ROOT).startsWith("windows");
+            .toLowerCase(Locale.ROOT).startsWith("windows");
     private static final int ATOMIC_MOVE_MAX_ATTEMPTS = 5;
     private static final long ATOMIC_MOVE_RETRY_DELAY_MS = 10L;
 

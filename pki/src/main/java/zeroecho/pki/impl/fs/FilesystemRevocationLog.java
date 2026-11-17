@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.CharBuffer;
+import java.nio.file.attribute.PosixFilePermission;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -86,7 +89,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
     private static final HexFormat HEX = HexFormat.of();
     private static final Set<String> LOCAL_FILE_SYSTEMS =
             Set.of("apfs", "btrfs", "ext2", "ext3", "ext4", "tmpfs", "ufs", "xfs", "zfs");
-    private static final Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
+    private static final Set<PosixFilePermission> OWNER_ONLY =
             PosixFilePermissions.fromString("rw-------");
 
     private final FileChannel channel;
@@ -271,7 +274,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
      * @param transition legal next transition bound to this credential; must not be null
      * @return complete authoritative record after its file force succeeds
      * @throws IOException if credential authority or writer authority cannot be established
-     * @throws NullPointerException if credentialId or transition is null, or map-mode append is used without a predecessor map
+     * @throws NullPointerException if credentialId or transition is null, or map-mode append is used
+     * without a predecessor map
      * @throws IllegalArgumentException if the transition is illegal for its predecessor
      * @throws IllegalStateException if the log is closed
      * @throws OutcomeUnknownException if append or file-force completion is uncertain
@@ -321,7 +325,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
      * @param transition legal next transition bound to this credential; must not be null
      * @param previous exact prior credential transition, or null for the first transition
      * @return complete authoritative record after its file force succeeds
-     * @throws IOException if credential/writer authority, predecessor identity, transition legality, or the next revision cannot be established
+     * @throws IOException if credential/writer authority, predecessor identity, transition legality, or
+     * the next revision cannot be established
      * @throws NullPointerException if credentialId or transition is null
      * @throws IllegalStateException if closed or the predecessor overload is used outside production mode
      * @throws OutcomeUnknownException if append or file-force completion is uncertain
@@ -560,7 +565,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
             ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .encode(java.nio.CharBuffer.wrap(value));
+                    .encode(CharBuffer.wrap(value));
             byte[] result = new byte[encoded.remaining()];
             encoded.get(result);
             return result;
@@ -1151,7 +1156,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
          * @param transition immutable revocation transition retained for the credential
          * @param recordOffset zero-based byte offset of the encoded record
          * @throws NullPointerException if {@code commitment} is null; or if {@code transition} is null
-         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || recordOffset < RevocationTransitionFrameCodec.PREAMBLE_BYTES)}
+         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || recordOffset <
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES)}
          */
         LatestState {
             Objects.requireNonNull(commitment, "commitment");
@@ -1219,8 +1225,11 @@ final class FilesystemRevocationLog implements AutoCloseable {
          * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
          * @param globalCommitment global revocation commitment at the captured boundary
          * @param latestStates latest finite revocation state for each credential identity
-         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
-         * @throws IllegalArgumentException if {@code (lastCompleteRecordBoundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES || physicalEnd < lastCompleteRecordBoundary || globalRevision < 0L || globalRevision == 0L != finalRecordStart.isEmpty())}
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is
+         * null; or if {@code globalCommitment} is null
+         * @throws IllegalArgumentException if {@code (lastCompleteRecordBoundary <
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES || physicalEnd < lastCompleteRecordBoundary
+         * || globalRevision < 0L || globalRevision == 0L != finalRecordStart.isEmpty())}
          */
         RecoveryResult {
             Objects.requireNonNull(storeId, "storeId");
@@ -1273,8 +1282,16 @@ final class FilesystemRevocationLog implements AutoCloseable {
          * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
          * @param boundary exclusive byte boundary of the captured authoritative log prefix
          * @param globalCommitment global revocation commitment at the captured boundary
-         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
-         * @throws IllegalArgumentException if {@code (globalRevision < 0L || boundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES || globalRevision == 0L != finalRecordStart.isEmpty())}; or if {@code (globalRevision == 0L && (boundary != RevocationTransitionFrameCodec.PREAMBLE_BYTES || !globalCommitment.equals(RevocationTransitionFrameCodec.initialCommitment(storeId))))}; or if {@code (finalRecordStart.isPresent() && (finalRecordStart.getAsLong() < RevocationTransitionFrameCodec.PREAMBLE_BYTES || finalRecordStart.getAsLong() >= boundary))}
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is
+         * null; or if {@code globalCommitment} is null
+         * @throws IllegalArgumentException if {@code (globalRevision < 0L || boundary <
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES || globalRevision == 0L !=
+         * finalRecordStart.isEmpty())}; or if {@code (globalRevision == 0L && (boundary !=
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES ||
+         * !globalCommitment.equals(RevocationTransitionFrameCodec.initialCommitment(storeId))))}; or
+         * if {@code (finalRecordStart.isPresent() && (finalRecordStart.getAsLong() <
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES || finalRecordStart.getAsLong() >=
+         * boundary))}
          */
         RecoveryTarget {
             Objects.requireNonNull(storeId, "storeId");

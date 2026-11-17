@@ -33,6 +33,12 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReview;
+import zeroecho.pki.server.acme.AcmeWireBounds;
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
+
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -41,12 +47,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-
-import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
-import zeroecho.pki.api.confirmation.CredentialConfirmationReview;
-import zeroecho.pki.server.acme.AcmeWireBounds;
-import zeroecho.pki.spi.ProviderConfig;
-import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
 /**
  * Immutable configuration values for one administrative HTTPS server and its optional listeners.
@@ -81,6 +81,11 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener,
         Optional<EstListener> estListener, Optional<ScepListener> scepListener,
         Optional<CmpListener> cmpListener, AuditProjection auditProjection) {
+    private static final String EXECUTION = "execution";
+    private static final String HYBRID_SDK = "hybridSdk";
+    private static final String ADDRESS = "address";
+    private static final String TLS_PROVIDER = "tlsProvider";
+    private static final int MAX_CERTIFICATE_MAPPINGS = 10_000;
 
     /**
      * Current server configuration schema.
@@ -109,12 +114,14 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      *     configured nonzero overlapping bind addresses/ports are invalid
      */
     public PkiServerConfiguration {
-        if (version != CURRENT_VERSION) throw new IllegalArgumentException("Unsupported server schema version");
+        if (version != CURRENT_VERSION) {
+            throw new IllegalArgumentException("Unsupported server schema version");
+        }
         Permission.requireBounded(serverName, 128, "server name");
         Objects.requireNonNull(realm, "realm");
         Objects.requireNonNull(listener, "listener");
         Objects.requireNonNull(authentication, "authentication");
-        Objects.requireNonNull(execution, "execution");
+        Objects.requireNonNull(execution, EXECUTION);
         Objects.requireNonNull(runtime, "runtime");
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
         acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
@@ -125,17 +132,19 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
-        publicListener.ifPresent(publicConfiguration -> {
-            if (listener.port() != 0
-                    && listener.port() == publicConfiguration.port()) {
-                boolean addressOverlap = listener.address().equals(publicConfiguration.address())
-                        || listener.address().isAnyLocalAddress()
-                        || publicConfiguration.address().isAnyLocalAddress();
-                if (addressOverlap) {
-                    throw new IllegalArgumentException("Administrative and public listeners conflict");
-                }
-            }
-        });
+        publicListener.ifPresent(
+                publicConfiguration -> {
+                    if (listener.port() != 0 && listener.port() == publicConfiguration.port()) {
+                        boolean addressOverlap =
+                                listener.address().equals(publicConfiguration.address())
+                                        || listener.address().isAnyLocalAddress()
+                                        || publicConfiguration.address().isAnyLocalAddress();
+                        if (addressOverlap) {
+                            throw new IllegalArgumentException(
+                                    "Administrative and public listeners conflict");
+                        }
+                    }
+                });
         Optional<PublicListener> exactPublicListener = publicListener;
         Optional<AcmeListener> exactAcmeListener = acmeListener;
         acmeListener.ifPresent(acme -> {
@@ -299,6 +308,36 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      */
     public record Listener(InetAddress address, int port, ProviderConfig tlsProvider,
             boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes, Optional<HybridSdkListener> hybridSdk) {
+        /** Exact canonical unpadded Base64url character bound for one proof response. */
+        // Existing public constant name is part of the configuration API.
+        @SuppressWarnings("PMD.LongVariable")
+        public static final int MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS =
+                KeyPossessionProofResponse.MAXIMUM_BYTES / 3 * 4
+                        + (KeyPossessionProofResponse.MAXIMUM_BYTES % 3 == 0
+                                ? 0
+                                : KeyPossessionProofResponse.MAXIMUM_BYTES % 3 + 1);
+
+        private static final int MAX_JSON_ESCAPE_BYTES = 6;
+        private static final int SHA_256_HEX_CHARACTERS = 64;
+        private static final String COMPLETION_REQUEST_FRAMING =
+                "{\"version\":1,\"authorityId\":\"\",\"arguments\":{"
+                + "\"credentialId\":\"\",\"expectedLifecycleRevision\":1,"
+                + "\"expectedLifecycleRecordCommitment\":\"\","
+                + "\"expectedChallengeRecordCommitment\":\"\",\"response\":\"\"}}";
+
+        /**
+         * Minimum administrative body bound that can carry the canonical maximum proof-completion
+         * request, including worst-case JSON escaping of both IDs.
+         */
+        public static final int MINIMUM_BODY_BYTES =
+                COMPLETION_REQUEST_FRAMING.length()
+                        + MAX_JSON_ESCAPE_BYTES
+                                * (CredentialConfirmationReview.MAXIMUM_AUTHORITY_ID_UTF8_BYTES
+                                        + CredentialConfirmationInitialization
+                                                .MAXIMUM_CREDENTIAL_ID_UTF8_BYTES)
+                        + 2 * SHA_256_HEX_CHARACTERS
+                        + MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS;
+
         /**
          * Preserves the SDK-disabled listener constructor.
          *
@@ -308,38 +347,26 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @param clientCertificateRequired must be {@code true}
          * @param maximumHeaderBytes bounded aggregate decoded header bytes
          * @param maximumBodyBytes bounded request body bytes
-         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws NullPointerException if a required supplied configuration reference or container
+         *     is null
          * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
-        public Listener(InetAddress address, int port, ProviderConfig tlsProvider,
-            boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes) {
-            this(address, port, tlsProvider, clientCertificateRequired, maximumHeaderBytes, maximumBodyBytes, Optional.empty());
+        public Listener(
+                InetAddress address,
+                int port,
+                ProviderConfig tlsProvider,
+                boolean clientCertificateRequired,
+                int maximumHeaderBytes,
+                int maximumBodyBytes) {
+            this(
+                    address,
+                    port,
+                    tlsProvider,
+                    clientCertificateRequired,
+                    maximumHeaderBytes,
+                    maximumBodyBytes,
+                    Optional.empty());
         }
-
-        /**
-         * Exact canonical unpadded Base64url character bound for one proof response.
-         */
-        public static final int MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS =
-                (KeyPossessionProofResponse.MAXIMUM_BYTES / 3) * 4
-                + (KeyPossessionProofResponse.MAXIMUM_BYTES % 3 == 0
-                        ? 0 : KeyPossessionProofResponse.MAXIMUM_BYTES % 3 + 1);
-        private static final int MAXIMUM_JSON_ESCAPE_BYTES_PER_INPUT_BYTE = 6;
-        private static final int SHA_256_HEX_CHARACTERS = 64;
-        private static final String COMPLETION_REQUEST_FRAMING =
-                "{\"version\":1,\"authorityId\":\"\",\"arguments\":{"
-                + "\"credentialId\":\"\",\"expectedLifecycleRevision\":1,"
-                + "\"expectedLifecycleRecordCommitment\":\"\","
-                + "\"expectedChallengeRecordCommitment\":\"\",\"response\":\"\"}}";
-        /**
-         * Minimum administrative body bound that can carry the canonical maximum
-         * proof-completion request, including worst-case JSON escaping of both IDs.
-         */
-        public static final int MINIMUM_BODY_BYTES = COMPLETION_REQUEST_FRAMING.length()
-                + MAXIMUM_JSON_ESCAPE_BYTES_PER_INPUT_BYTE
-                        * (CredentialConfirmationReview.MAXIMUM_AUTHORITY_ID_UTF8_BYTES
-                                + CredentialConfirmationInitialization.MAXIMUM_CREDENTIAL_ID_UTF8_BYTES)
-                + 2 * SHA_256_HEX_CHARACTERS
-                + MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS;
 
         /**
          * Checks required address/TLS configuration, body/header bounds and optional SDK envelope capacity.
@@ -356,11 +383,13 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     MINIMUM_BODY_BYTES-through-16777216 body budget or SDK budget is invalid
          */
         public Listener {
-            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            Objects.requireNonNull(hybridSdk, HYBRID_SDK);
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
-            Objects.requireNonNull(address, "address");
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("Listener port is invalid");
-            Objects.requireNonNull(tlsProvider, "tlsProvider");
+            Objects.requireNonNull(address, ADDRESS);
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("Listener port is invalid");
+            }
+            Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
             if (maximumHeaderBytes < 1_024 || maximumHeaderBytes > 1_048_576) {
                 throw new IllegalArgumentException("Header bound is invalid");
             }
@@ -382,11 +411,11 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Mode-separated administrative client-certificate mapping policy.
      *
-     * <p>Lists/sets are copied into unmodifiable containers retaining immutable
-     * mapping elements. Structural checks do not establish live certificate trust,
-     * principal enablement or trusted-proxy authorization. Direct mode requires
-     * nonempty direct mappings and no forwarding fields; proxy mode independently
-     * configures proxy and forwarded-client mappings/trust, with explicit exclusions.</p>
+     * <p>Lists/sets are copied into unmodifiable containers retaining immutable mapping elements.
+     * Structural checks do not establish live certificate trust, principal enablement or
+     * trusted-proxy authorization. Direct mode requires nonempty direct mappings and no forwarding
+     * fields; proxy mode independently configures proxy and forwarded-client mappings/trust, with
+     * explicit exclusions.
      *
      * @param mode exact deployment mode
      * @param directClientMappings direct TLS end-client mappings
@@ -400,7 +429,10 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param maximumForwardedCertificateBytes maximum decoded leaf size
      * @param maximumForwardedChainBytes maximum aggregate decoded chain size
      */
-    public record Authentication(AdministrativeAuthenticationMode mode,
+    // Existing component names define public record accessors.
+    @SuppressWarnings("PMD.LongVariable")
+    public record Authentication(
+            AdministrativeAuthenticationMode mode,
             List<ClientCertificateMapping> directClientMappings,
             List<ClientCertificateMapping> proxyTransportMappings,
             List<ClientCertificateMapping> forwardedClientMappings,
@@ -409,7 +441,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Optional<String> forwardedCertificateHeaderName,
             Optional<String> forwardedCertificateChainHeaderName,
             Optional<ProviderConfig> administrativeClientTrust,
-            int maximumForwardedCertificateBytes, int maximumForwardedChainBytes) {
+            int maximumForwardedCertificateBytes,
+            int maximumForwardedChainBytes) {
         /**
          * Snapshots mapping lists and trusted principals and checks direct/proxy mode separation and header
          * policy.
@@ -446,23 +479,31 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                     "forwardedCertificateChainHeaderName");
             administrativeClientTrust = Objects.requireNonNull(administrativeClientTrust,
                     "administrativeClientTrust");
+            ProxyInputs inputs =
+                    new ProxyInputs(
+                            directClientMappings,
+                            proxyTransportMappings,
+                            forwardedClientMappings,
+                            trustedProxyPrincipalIds,
+                            forwardedCertificateFormat,
+                            forwardedCertificateHeaderName,
+                            forwardedCertificateChainHeaderName,
+                            administrativeClientTrust,
+                            maximumForwardedCertificateBytes,
+                            maximumForwardedChainBytes);
             if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS) {
-                requireDirect(directClientMappings, proxyTransportMappings, forwardedClientMappings,
-                        trustedProxyPrincipalIds, forwardedCertificateFormat, forwardedCertificateHeaderName,
-                        forwardedCertificateChainHeaderName, administrativeClientTrust,
-                        maximumForwardedCertificateBytes, maximumForwardedChainBytes);
+                requireDirect(inputs);
             } else {
-                requireProxy(directClientMappings, proxyTransportMappings, forwardedClientMappings,
-                        trustedProxyPrincipalIds, forwardedCertificateFormat, forwardedCertificateHeaderName,
-                        forwardedCertificateChainHeaderName, administrativeClientTrust,
-                        maximumForwardedCertificateBytes, maximumForwardedChainBytes);
+                requireProxy(inputs);
             }
         }
 
         private static List<ClientCertificateMapping> mappings(List<ClientCertificateMapping> source,
                 String name) {
             List<ClientCertificateMapping> result = List.copyOf(Objects.requireNonNull(source, name));
-            if (result.size() > 10_000) throw new IllegalArgumentException("Too many " + name + " mappings");
+            if (result.size() > MAX_CERTIFICATE_MAPPINGS) {
+                throw new IllegalArgumentException("Too many " + name + " mappings");
+            }
             if (result.stream().map(ClientCertificateMapping::mappingId).distinct().count() != result.size()) {
                 throw new IllegalArgumentException("Duplicate " + name + " mapping identity");
             }
@@ -470,89 +511,163 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         }
 
         private static Optional<String> header(Optional<String> source, String name) {
-            return Objects.requireNonNull(source, name).map(value -> {
-                if (!value.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}")) {
-                    throw new IllegalArgumentException("Forwarded certificate header name is invalid");
-                }
-                String lower = value.toLowerCase(java.util.Locale.ROOT);
-                if (Set.of("authorization", "connection", "content-length", "host", "transfer-encoding",
-                        "x-forwarded-for", "forwarded", "x-real-ip").contains(lower)) {
-                    throw new IllegalArgumentException("Forwarded certificate header name is prohibited");
-                }
-                return value;
-            });
+            return Objects.requireNonNull(source, name)
+                    .map(
+                            value -> {
+                                if (!value.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}")) {
+                                    throw new IllegalArgumentException(
+                                            "Forwarded certificate header name is invalid");
+                                }
+                                String lower = value.toLowerCase(java.util.Locale.ROOT);
+                                if (Set.of(
+                                                "authorization",
+                                                "connection",
+                                                "content-length",
+                                                "host",
+                                                "transfer-encoding",
+                                                "x-forwarded-for",
+                                                "forwarded",
+                                                "x-real-ip")
+                                        .contains(lower)) {
+                                    throw new IllegalArgumentException(
+                                            "Forwarded certificate header name is prohibited");
+                                }
+                                return value;
+                            });
         }
 
-        private static void requireDirect(List<ClientCertificateMapping> direct,
-                List<ClientCertificateMapping> proxy, List<ClientCertificateMapping> forwarded,
-                Set<String> trusted, Optional<ForwardedCertificateFormat> format, Optional<String> header,
-                Optional<String> chainHeader, Optional<ProviderConfig> trust, int maximumCertificate,
-                int maximumChain) {
-            if (direct.isEmpty() || !proxy.isEmpty() || !forwarded.isEmpty() || !trusted.isEmpty()
-                    || format.isPresent() || header.isPresent() || chainHeader.isPresent() || trust.isPresent()
-                    || maximumCertificate != 0 || maximumChain != 0) {
-                throw new IllegalArgumentException("Direct authentication configuration is contradictory");
+        private static void requireDirect(ProxyInputs input) {
+            if (input.direct().isEmpty()
+                    || !input.proxy().isEmpty()
+                    || !input.forwarded().isEmpty()
+                    || !input.trusted().isEmpty()
+                    || input.format().isPresent()
+                    || input.header().isPresent()
+                    || input.chainHeader().isPresent()
+                    || input.trust().isPresent()
+                    || input.maximumCertificate() != 0
+                    || input.maximumChain() != 0) {
+                throw new IllegalArgumentException(
+                        "Direct authentication configuration is contradictory");
             }
         }
 
-        private static void requireProxy(List<ClientCertificateMapping> direct,
-                List<ClientCertificateMapping> proxy, List<ClientCertificateMapping> forwarded,
-                Set<String> trusted, Optional<ForwardedCertificateFormat> format, Optional<String> header,
-                Optional<String> chainHeader, Optional<ProviderConfig> trust, int maximumCertificate,
-                int maximumChain) {
-            if (!direct.isEmpty() || proxy.isEmpty() || forwarded.isEmpty() || trusted.isEmpty()
-                    || format.isEmpty() || header.isEmpty() || trust.isEmpty()) {
-                throw new IllegalArgumentException("Trusted-proxy authentication configuration is incomplete");
-            }
-            if (maximumCertificate < 512 || maximumCertificate > 1_048_576
-                    || maximumChain < 512 || maximumChain > 4_194_304) {
-                throw new IllegalArgumentException("Forwarded certificate bound is invalid");
-            }
-            if (proxy.stream().anyMatch(mapping -> !trusted.contains(mapping.principalId()))) {
-                throw new IllegalArgumentException("Proxy mapping is outside the trusted principal set");
-            }
-            if (proxy.stream().anyMatch(mapping -> mapping.certificateSha256().isEmpty()
-                    && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
-                throw new IllegalArgumentException("Proxy mapping requires certificate or SPKI commitment");
-            }
-            if (forwarded.stream().anyMatch(mapping -> mapping.certificateSha256().isEmpty()
-                    && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
-                throw new IllegalArgumentException("Forwarded client mapping requires certificate or SPKI commitment");
-            }
-            Set<String> proxyPrincipals = proxy.stream().map(ClientCertificateMapping::principalId)
-                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            if (!trusted.equals(proxyPrincipals)) {
+        private static void requireProxy(ProxyInputs input) {
+            requireProxyBounds(input);
+            requireProxyCommitments(input);
+            Set<String> proxyPrincipals =
+                    input.proxy().stream()
+                            .map(ClientCertificateMapping::principalId)
+                            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (!input.trusted().equals(proxyPrincipals)) {
                 throw new IllegalArgumentException("Trusted proxy principals and mappings differ");
             }
-            if (forwarded.stream().map(ClientCertificateMapping::principalId).anyMatch(proxyPrincipals::contains)) {
-                throw new IllegalArgumentException("Proxy and end-client principal mappings overlap");
+            if (input.forwarded().stream()
+                    .map(ClientCertificateMapping::principalId)
+                    .anyMatch(proxyPrincipals::contains)) {
+                throw new IllegalArgumentException(
+                        "Proxy and end-client principal mappings overlap");
             }
             Set<String> mappingIds = new java.util.HashSet<>();
-            if (java.util.stream.Stream.concat(proxy.stream(), forwarded.stream())
+            if (java.util.stream.Stream.concat(input.proxy().stream(), input.forwarded().stream())
                     .anyMatch(mapping -> !mappingIds.add(mapping.mappingId()))) {
-                throw new IllegalArgumentException("Proxy authentication mapping identity is duplicated");
+                throw new IllegalArgumentException(
+                        "Proxy authentication mapping identity is duplicated");
             }
-            Set<String> proxyCertificates = proxy.stream().flatMap(mapping -> mapping.certificateSha256().stream())
-                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            Set<String> proxyKeys = proxy.stream().flatMap(mapping -> mapping.subjectPublicKeyInfoSha256().stream())
-                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            if (forwarded.stream().anyMatch(mapping -> mapping.certificateSha256()
-                    .filter(proxyCertificates::contains).isPresent()
-                    || mapping.subjectPublicKeyInfoSha256().filter(proxyKeys::contains).isPresent())) {
-                throw new IllegalArgumentException("Proxy and end-client mapping commitments overlap");
+            Set<String> proxyCertificates =
+                    input.proxy().stream()
+                            .flatMap(mapping -> mapping.certificateSha256().stream())
+                            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            Set<String> proxyKeys =
+                    input.proxy().stream()
+                            .flatMap(mapping -> mapping.subjectPublicKeyInfoSha256().stream())
+                            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (input.forwarded().stream()
+                    .anyMatch(
+                            mapping ->
+                                    mapping.certificateSha256()
+                                                    .filter(proxyCertificates::contains)
+                                                    .isPresent()
+                                            || mapping.subjectPublicKeyInfoSha256()
+                                                    .filter(proxyKeys::contains)
+                                                    .isPresent())) {
+                throw new IllegalArgumentException(
+                        "Proxy and end-client mapping commitments overlap");
             }
-            if (format.orElseThrow() == ForwardedCertificateFormat.RFC9440) {
-                if (!"Client-Cert".equalsIgnoreCase(header.orElseThrow())
-                        || chainHeader.isEmpty()
-                        || !"Client-Cert-Chain".equalsIgnoreCase(chainHeader.orElseThrow())) {
-                    throw new IllegalArgumentException("RFC 9440 header names are fixed");
-                }
-            } else if (chainHeader.isPresent()
-                    || "Client-Cert".equalsIgnoreCase(header.orElseThrow())
-                    || "Client-Cert-Chain".equalsIgnoreCase(header.orElseThrow())) {
-                throw new IllegalArgumentException("NGINX compatibility header configuration is invalid");
+            requireForwardingHeaders(input);
+        }
+
+        private static void requireProxyBounds(ProxyInputs input) {
+            if (!input.direct().isEmpty()
+                    || input.proxy().isEmpty()
+                    || input.forwarded().isEmpty()
+                    || input.trusted().isEmpty()
+                    || input.format().isEmpty()
+                    || input.header().isEmpty()
+                    || input.trust().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Trusted-proxy authentication configuration is incomplete");
+            }
+            if (input.maximumCertificate() < 512
+                    || input.maximumCertificate() > 1_048_576
+                    || input.maximumChain() < 512
+                    || input.maximumChain() > 4_194_304) {
+                throw new IllegalArgumentException("Forwarded certificate bound is invalid");
             }
         }
+
+        private static void requireProxyCommitments(ProxyInputs input) {
+            if (input.proxy().stream()
+                    .anyMatch(mapping -> !input.trusted().contains(mapping.principalId()))) {
+                throw new IllegalArgumentException(
+                        "Proxy mapping is outside the trusted principal set");
+            }
+            if (input.proxy().stream()
+                    .anyMatch(
+                            mapping ->
+                                    mapping.certificateSha256().isEmpty()
+                                            && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
+                throw new IllegalArgumentException(
+                        "Proxy mapping requires certificate or SPKI commitment");
+            }
+            if (input.forwarded().stream()
+                    .anyMatch(
+                            mapping ->
+                                    mapping.certificateSha256().isEmpty()
+                                            && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
+                throw new IllegalArgumentException(
+                        "Forwarded client mapping requires certificate or SPKI commitment");
+            }
+        }
+
+        private static void requireForwardingHeaders(ProxyInputs input) {
+            if (input.format().orElseThrow() == ForwardedCertificateFormat.RFC9440) {
+                if (!"Client-Cert".equalsIgnoreCase(input.header().orElseThrow())
+                        || input.chainHeader().isEmpty()
+                        || !"Client-Cert-Chain"
+                                .equalsIgnoreCase(input.chainHeader().orElseThrow())) {
+                    throw new IllegalArgumentException("RFC 9440 header names are fixed");
+                }
+            } else if (input.chainHeader().isPresent()
+                    || "Client-Cert".equalsIgnoreCase(input.header().orElseThrow())
+                    || "Client-Cert-Chain".equalsIgnoreCase(input.header().orElseThrow())) {
+                throw new IllegalArgumentException(
+                        "NGINX compatibility header configuration is invalid");
+            }
+        }
+
+        /** Normalized authentication coordinates; construction adds no validation or ownership. */
+        private record ProxyInputs(
+                List<ClientCertificateMapping> direct,
+                List<ClientCertificateMapping> proxy,
+                List<ClientCertificateMapping> forwarded,
+                Set<String> trusted,
+                Optional<ForwardedCertificateFormat> format,
+                Optional<String> header,
+                Optional<String> chainHeader,
+                Optional<ProviderConfig> trust,
+                int maximumCertificate,
+                int maximumChain) {}
     }
 
     /**
@@ -583,19 +698,25 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Permission.requireId(mappingId, "mapping");
             Permission.requirePrincipal(principalId);
             certificateSha256 = digest(certificateSha256, "certificateSha256");
-            subjectPublicKeyInfoSha256 = digest(subjectPublicKeyInfoSha256, "subjectPublicKeyInfoSha256");
+            subjectPublicKeyInfoSha256 =
+                    digest(subjectPublicKeyInfoSha256, "subjectPublicKeyInfoSha256");
             issuerSerialSha256 = digest(issuerSerialSha256, "issuerSerialSha256");
             if (certificateSha256.isEmpty() && subjectPublicKeyInfoSha256.isEmpty()
                     && issuerSerialSha256.isEmpty()) {
-                throw new IllegalArgumentException("Certificate mapping requires a cryptographic commitment");
+                throw new IllegalArgumentException(
+                        "Certificate mapping requires a cryptographic commitment");
             }
         }
 
         private static Optional<String> digest(Optional<String> source, String name) {
-            return Objects.requireNonNull(source, name).map(value -> {
-                if (!value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException(name + " is invalid");
-                return value;
-            });
+            return Objects.requireNonNull(source, name)
+                    .map(
+                            value -> {
+                                if (!value.matches("[0-9a-f]{64}")) {
+                                    throw new IllegalArgumentException(name + " is invalid");
+                                }
+                                return value;
+                            });
         }
     }
 
@@ -693,16 +814,29 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @param publicImmutableCache immutable cache lifetime
          * @param publicAliasCache alias cache lifetime
          * @param authorityListExposed safe public authority listing permission
-         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws NullPointerException if a required supplied configuration reference or container
+         *     is null
          * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
-        public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
-                boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
-                int maximumBodyBytes,Execution execution,Duration maximumStreamDuration,
-                Duration publicImmutableCache,Duration publicAliasCache,boolean authorityListExposed) {
+        // Preserve the existing source and binary configuration-constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public PublicListener(
+                InetAddress address,
+                int port,
+                Optional<ProviderConfig> tlsProvider,
+                boolean allowPlaintextLoopback,
+                Authentication authentication,
+                int maximumHeaderBytes,
+                int maximumBodyBytes,
+                Execution execution,
+                Duration maximumStreamDuration,
+                Duration publicImmutableCache,
+                Duration publicAliasCache,
+                boolean authorityListExposed) {
             this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
                     execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,Optional.empty());
         }
+
         /**
          * Preserves public listener configuration without SDK opt-in.
          *
@@ -719,13 +853,26 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @param publicAliasCache alias cache lifetime
          * @param authorityListExposed listing opt-in
          * @param consoleBasePath published console path
-         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws NullPointerException if a required supplied configuration reference or container
+         *     is null
          * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
-        public PublicListener(InetAddress address,int port,Optional<ProviderConfig> tlsProvider,
-                boolean allowPlaintextLoopback,Authentication authentication,int maximumHeaderBytes,
-                int maximumBodyBytes,Execution execution,Duration maximumStreamDuration,
-                Duration publicImmutableCache,Duration publicAliasCache,boolean authorityListExposed,Optional<String> consoleBasePath) {
+        // Preserve the existing source and binary configuration-constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public PublicListener(
+                InetAddress address,
+                int port,
+                Optional<ProviderConfig> tlsProvider,
+                boolean allowPlaintextLoopback,
+                Authentication authentication,
+                int maximumHeaderBytes,
+                int maximumBodyBytes,
+                Execution execution,
+                Duration maximumStreamDuration,
+                Duration publicImmutableCache,
+                Duration publicAliasCache,
+                boolean authorityListExposed,
+                Optional<String> consoleBasePath) {
             this(address,port,tlsProvider,allowPlaintextLoopback,authentication,maximumHeaderBytes,maximumBodyBytes,
                     execution,maximumStreamDuration,publicImmutableCache,publicAliasCache,authorityListExposed,consoleBasePath,Optional.empty());
         }
@@ -754,21 +901,29 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     or SDK transport/budget constraints are invalid
          */
         public PublicListener {
-            Objects.requireNonNull(address, "address");
-            hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
-            if (hybridSdk.isPresent() && tlsProvider.isEmpty()) throw new IllegalArgumentException("SDK OCSP listener requires TLS");
+            Objects.requireNonNull(address, ADDRESS);
+            hybridSdk = Objects.requireNonNull(hybridSdk, HYBRID_SDK);
+            if (hybridSdk.isPresent() && tlsProvider.isEmpty()) {
+                throw new IllegalArgumentException("SDK OCSP listener requires TLS");
+            }
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("Public listener port is invalid");
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("Public listener port is invalid");
+            }
             consoleBasePath=Objects.requireNonNull(consoleBasePath,"consoleBasePath");
-            if(consoleBasePath.filter(value -> !value.equals("/public/v1")).isPresent())throw new IllegalArgumentException("Published public repository path is invalid");
-            tlsProvider = Objects.requireNonNull(tlsProvider, "tlsProvider");
+            if (consoleBasePath.filter(value -> !"/public/v1".equals(value)).isPresent()) {
+                throw new IllegalArgumentException("Published public repository path is invalid");
+            }
+            tlsProvider = Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
             Objects.requireNonNull(authentication, "authentication");
             if(consoleBasePath.isPresent()&&(tlsProvider.isEmpty()||authentication.mode()!=AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY)) {
-                throw new IllegalArgumentException("Published public console route requires TLS and trusted reverse proxy authentication");
+                throw new IllegalArgumentException(
+                        "Published public console route requires TLS and trusted reverse proxy"
+                            + " authentication");
             }
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "public header bound");
             bounded(maximumBodyBytes, 1, 65_536, "public body bound");
-            Objects.requireNonNull(execution, "execution");
+            Objects.requireNonNull(execution, EXECUTION);
             positive(maximumStreamDuration, Duration.ofHours(1), "maximum stream duration");
             nonNegative(publicImmutableCache, Duration.ofDays(365), "immutable cache duration");
             nonNegative(publicAliasCache, Duration.ofDays(1), "alias cache duration");
@@ -776,7 +931,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 throw new IllegalArgumentException("Public listener TLS is required");
             }
             if (tlsProvider.isPresent() && allowPlaintextLoopback) {
-                throw new IllegalArgumentException("Public listener transport policy is contradictory");
+                throw new IllegalArgumentException(
+                        "Public listener transport policy is contradictory");
             }
         }
 
@@ -833,16 +989,34 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param eabProviders explicitly enabled secret-confining EAB provider configurations
      * @param hybridSdk explicit SDK opt-in, empty disables SDK routes
      */
-    public record AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
-            AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
-            Set<String> trustedProxyPrincipalIds, URI externalBaseUri,
-            int maximumHeaderBytes, int maximumBodyBytes, Execution execution, Execution validationExecution,
-            Duration nonceLifetime, int maximumOutstandingNonces,
-            int maximumAccountsPresented, int maximumOrdersPresented,
-            Duration admissionWindow, int maximumNewAccountsPerWindow,
-            int maximumNewOrdersPerAccountWindow, int maximumPendingOrdersPerAccount,
-            int maximumChallengeValidationsPerAccountWindow, int maximumConcurrentFinalizations,
-            List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders, Optional<HybridSdkListener> hybridSdk) {
+    // Component names are established public accessors.
+    @SuppressWarnings("PMD.LongVariable")
+    public record AcmeListener(
+            String listenerId,
+            InetAddress address,
+            int port,
+            ProviderConfig tlsProvider,
+            AcmeTransportMode transportMode,
+            List<ClientCertificateMapping> proxyTransportMappings,
+            Set<String> trustedProxyPrincipalIds,
+            URI externalBaseUri,
+            int maximumHeaderBytes,
+            int maximumBodyBytes,
+            Execution execution,
+            Execution validationExecution,
+            Duration nonceLifetime,
+            int maximumOutstandingNonces,
+            int maximumAccountsPresented,
+            int maximumOrdersPresented,
+            Duration admissionWindow,
+            int maximumNewAccountsPerWindow,
+            int maximumNewOrdersPerAccountWindow,
+            int maximumPendingOrdersPerAccount,
+            int maximumChallengeValidationsPerAccountWindow,
+            int maximumConcurrentFinalizations,
+            List<ProviderConfig> challengeProviders,
+            List<ProviderConfig> eabProviders,
+            Optional<HybridSdkListener> hybridSdk) {
         /**
          * Preserves the SDK-disabled listener constructor.
          *
@@ -870,19 +1044,37 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @param maximumConcurrentFinalizations bounded listener-wide finalization concurrency
          * @param challengeProviders explicitly enabled provider configurations
          * @param eabProviders explicitly enabled secret-confining EAB provider configurations
-         * @throws NullPointerException if a required supplied configuration reference or container is null
+         * @throws NullPointerException if a required supplied configuration reference or container
+         *     is null
          * @throws IllegalArgumentException if delegated local configuration constraints fail
          */
-        public AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
-            AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
-            Set<String> trustedProxyPrincipalIds, URI externalBaseUri,
-            int maximumHeaderBytes, int maximumBodyBytes, Execution execution, Execution validationExecution,
-            Duration nonceLifetime, int maximumOutstandingNonces,
-            int maximumAccountsPresented, int maximumOrdersPresented,
-            Duration admissionWindow, int maximumNewAccountsPerWindow,
-            int maximumNewOrdersPerAccountWindow, int maximumPendingOrdersPerAccount,
-            int maximumChallengeValidationsPerAccountWindow, int maximumConcurrentFinalizations,
-            List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders) {
+        // Preserve the existing source and binary configuration-constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public AcmeListener(
+                String listenerId,
+                InetAddress address,
+                int port,
+                ProviderConfig tlsProvider,
+                AcmeTransportMode transportMode,
+                List<ClientCertificateMapping> proxyTransportMappings,
+                Set<String> trustedProxyPrincipalIds,
+                URI externalBaseUri,
+                int maximumHeaderBytes,
+                int maximumBodyBytes,
+                Execution execution,
+                Execution validationExecution,
+                Duration nonceLifetime,
+                int maximumOutstandingNonces,
+                int maximumAccountsPresented,
+                int maximumOrdersPresented,
+                Duration admissionWindow,
+                int maximumNewAccountsPerWindow,
+                int maximumNewOrdersPerAccountWindow,
+                int maximumPendingOrdersPerAccount,
+                int maximumChallengeValidationsPerAccountWindow,
+                int maximumConcurrentFinalizations,
+                List<ProviderConfig> challengeProviders,
+                List<ProviderConfig> eabProviders) {
             this(listenerId, address, port, tlsProvider, transportMode, proxyTransportMappings, trustedProxyPrincipalIds, externalBaseUri, maximumHeaderBytes, maximumBodyBytes, execution, validationExecution, nonceLifetime, maximumOutstandingNonces, maximumAccountsPresented, maximumOrdersPresented, admissionWindow, maximumNewAccountsPerWindow, maximumNewOrdersPerAccountWindow, maximumPendingOrdersPerAccount, maximumChallengeValidationsPerAccountWindow, maximumConcurrentFinalizations, challengeProviders, eabProviders, Optional.empty());
         }
 
@@ -921,15 +1113,19 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     numeric/duration/SDK constraints are invalid
          */
         public AcmeListener {
-            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            Objects.requireNonNull(hybridSdk, HYBRID_SDK);
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             if (hybridSdk.isPresent() && !hybridSdk.orElseThrow().canonicalOrigin().equals(
                     externalBaseUri.toString() + (externalBaseUri.getPort() < 0 ? ":443" : ""))) {
                 throw new IllegalArgumentException("SDK_ORIGIN_DIFFERS_FROM_ACME_ORIGIN");
             }
-            Permission.requireId(listenerId, "ACME listener"); Objects.requireNonNull(address, "address");
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("ACME listener port is invalid");
-            Objects.requireNonNull(tlsProvider, "tlsProvider"); Objects.requireNonNull(transportMode, "transportMode");
+            Permission.requireId(listenerId, "ACME listener");
+            Objects.requireNonNull(address, ADDRESS);
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("ACME listener port is invalid");
+            }
+            Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
+            Objects.requireNonNull(transportMode, "transportMode");
             proxyTransportMappings = List.copyOf(Objects.requireNonNull(proxyTransportMappings,
                     "proxyTransportMappings"));
             trustedProxyPrincipalIds = Set.copyOf(Objects.requireNonNull(trustedProxyPrincipalIds,
@@ -944,7 +1140,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "ACME header bound");
             bounded(maximumBodyBytes, AcmeWireBounds.minimumCompletionDocumentBytes(externalBaseUri),
                     StrictBounds.MAXIMUM_ACME_BODY, "ACME body bound");
-            Objects.requireNonNull(execution, "execution"); Objects.requireNonNull(validationExecution, "validationExecution");
+            Objects.requireNonNull(execution, EXECUTION);
+            Objects.requireNonNull(validationExecution, "validationExecution");
             positive(nonceLifetime, Duration.ofHours(1), "ACME nonce lifetime");
             bounded(maximumOutstandingNonces, 16, 1_000_000, "ACME nonce capacity");
             bounded(maximumAccountsPresented, 1, 256, "ACME account presentation limit");
@@ -953,25 +1150,33 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             bounded(maximumNewAccountsPerWindow, 1, 1_000_000, "ACME account rate");
             bounded(maximumNewOrdersPerAccountWindow, 1, 1_000_000, "ACME order rate");
             bounded(maximumPendingOrdersPerAccount, 1, 100_000, "ACME pending order bound");
-            bounded(maximumChallengeValidationsPerAccountWindow, 1, 1_000_000, "ACME validation rate");
+            bounded(
+                    maximumChallengeValidationsPerAccountWindow,
+                    1,
+                    1_000_000,
+                    "ACME validation rate");
             bounded(maximumConcurrentFinalizations, 1, 10_000, "ACME finalization bound");
             challengeProviders = providers(challengeProviders, "challenge");
             eabProviders = providers(eabProviders, "EAB");
             if (transportMode == AcmeTransportMode.DIRECT_TLS
                     && (!proxyTransportMappings.isEmpty() || !trustedProxyPrincipalIds.isEmpty())) {
-                throw new IllegalArgumentException("Direct ACME transport cannot configure proxy identity");
+                throw new IllegalArgumentException(
+                        "Direct ACME transport cannot configure proxy identity");
             }
             if (transportMode == AcmeTransportMode.TRUSTED_REVERSE_PROXY) {
                 boolean mappingOutsideTrusted = false;
                 for (ClientCertificateMapping mapping : proxyTransportMappings) {
-                    if (!trustedProxyPrincipalIds.contains(mapping.principalId())) mappingOutsideTrusted = true;
+                    if (!trustedProxyPrincipalIds.contains(mapping.principalId())) {
+                        mappingOutsideTrusted = true;
+                    }
                 }
                 if (proxyTransportMappings.isEmpty() || trustedProxyPrincipalIds.isEmpty()
                         || mappingOutsideTrusted
                         || !proxyTransportMappings.stream().map(ClientCertificateMapping::principalId)
                                 .collect(java.util.stream.Collectors.toUnmodifiableSet())
                                 .equals(trustedProxyPrincipalIds)) {
-                    throw new IllegalArgumentException("ACME trusted-proxy transport is incomplete");
+                    throw new IllegalArgumentException(
+                            "ACME trusted-proxy transport is incomplete");
                 }
             }
         }
@@ -986,7 +1191,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         private static List<ProviderConfig> providers(List<ProviderConfig> source, String name) {
             List<ProviderConfig> values = List.copyOf(Objects.requireNonNull(source, name));
             if (values.size() > 64 || values.stream().map(ProviderConfig::backendId).distinct().count() != values.size()) {
-                throw new IllegalArgumentException("ACME " + name + " provider identities are invalid");
+                throw new IllegalArgumentException(
+                        "ACME " + name + " provider identities are invalid");
             }
             return values;
         }
@@ -1042,13 +1248,15 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     capacity is invalid
          */
         public EstListener {
-            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            Objects.requireNonNull(hybridSdk, HYBRID_SDK);
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "EST listener");
-            Objects.requireNonNull(address, "address");
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("EST listener port is invalid");
-            Objects.requireNonNull(tlsProvider, "tlsProvider");
-            Objects.requireNonNull(execution, "execution");
+            Objects.requireNonNull(address, ADDRESS);
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("EST listener port is invalid");
+            }
+            Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
+            Objects.requireNonNull(execution, EXECUTION);
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "EST header bound");
             bounded(maximumBodyBytes, 1_024, 16_777_216, "EST body bound");
         }
@@ -1111,13 +1319,15 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     capacity is invalid
          */
         public ScepListener {
-            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            Objects.requireNonNull(hybridSdk, HYBRID_SDK);
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "SCEP listener");
-            Objects.requireNonNull(address, "address");
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("SCEP listener port is invalid");
-            Objects.requireNonNull(tlsProvider, "tlsProvider");
-            Objects.requireNonNull(execution, "execution");
+            Objects.requireNonNull(address, ADDRESS);
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("SCEP listener port is invalid");
+            }
+            Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
+            Objects.requireNonNull(execution, EXECUTION);
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "SCEP header bound");
             bounded(maximumBodyBytes, 1_024, 16_777_216, "SCEP body bound");
         }
@@ -1180,13 +1390,15 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     capacity is invalid
          */
         public CmpListener {
-            Objects.requireNonNull(hybridSdk, "hybridSdk");
+            Objects.requireNonNull(hybridSdk, HYBRID_SDK);
             hybridSdk.ifPresent(value -> value.requireBodyBudget(maximumBodyBytes));
             Permission.requireId(listenerId, "CMP listener");
-            Objects.requireNonNull(address, "address");
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("CMP listener port is invalid");
-            Objects.requireNonNull(tlsProvider, "tlsProvider");
-            Objects.requireNonNull(execution, "execution");
+            Objects.requireNonNull(address, ADDRESS);
+            if (port < 0 || port > 65_535) {
+                throw new IllegalArgumentException("CMP listener port is invalid");
+            }
+            Objects.requireNonNull(tlsProvider, TLS_PROVIDER);
+            Objects.requireNonNull(execution, EXECUTION);
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "CMP header bound");
             bounded(maximumBodyBytes, 1_024, 16_777_216, "CMP body bound");
         }
@@ -1202,17 +1414,20 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Process-local external capability references, with no secret resolution.
      *
-     * <p>Environment names are syntax-checked. The optional publisher-store string
-     * is retained without path validation, and store/password pairing is not
-     * enforced here. Required credential availability and backend-specific policy
-     * remain startup/runtime checks. Generated record diagnostics are not redaction.</p>
+     * <p>Environment names are syntax-checked. The optional publisher-store string is retained
+     * without path validation, and store/password pairing is not enforced here. Required credential
+     * availability and backend-specific policy remain startup/runtime checks. Generated record
+     * diagnostics are not redaction.
      *
-     * @param keyUnlockEnvironmentVariable        optional keyring unlock environment variable
-     * @param publisherSecretsStore               optional path to the encrypted publisher secrets store
+     * @param keyUnlockEnvironmentVariable optional keyring unlock environment variable
+     * @param publisherSecretsStore optional path to the encrypted publisher secrets store
      * @param publisherSecretsEnvironmentVariable optional environment variable whose value is the
-     * store password; required for CLASSIC and HYBRID stores
+     *     store password; required for CLASSIC and HYBRID stores
      */
-    public record RuntimeCapabilities(Optional<String> keyUnlockEnvironmentVariable,
+    // Component names are established public accessors.
+    @SuppressWarnings("PMD.LongVariable")
+    public record RuntimeCapabilities(
+            Optional<String> keyUnlockEnvironmentVariable,
             Optional<String> publisherSecretsStore,
             Optional<String> publisherSecretsEnvironmentVariable) {
         /**
@@ -1228,13 +1443,17 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          *     the permitted length/grammar
          */
         public RuntimeCapabilities {
-            keyUnlockEnvironmentVariable = Objects.requireNonNull(keyUnlockEnvironmentVariable,
-                    "keyUnlockEnvironmentVariable").map(value -> {
-                        if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
-                            throw new IllegalArgumentException("Key-unlock environment reference is invalid");
-                        }
-                        return value;
-                    });
+            keyUnlockEnvironmentVariable =
+                    Objects.requireNonNull(
+                                    keyUnlockEnvironmentVariable, "keyUnlockEnvironmentVariable")
+                            .map(
+                                    value -> {
+                                        if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
+                                            throw new IllegalArgumentException(
+                                                    "Key-unlock environment reference is invalid");
+                                        }
+                                        return value;
+                                    });
             publisherSecretsStore = Objects.requireNonNull(publisherSecretsStore,
                     "publisherSecretsStore");
             publisherSecretsEnvironmentVariable = Objects.requireNonNull(
@@ -1273,9 +1492,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          */
         public SigningReconciliation {
             bounded(maximumRecords, 1, 4096, "signing reconciliation record count");
-            bounded(maximumProviderCalls, 1, maximumRecords, "signing reconciliation provider call count");
+            bounded(
+                    maximumProviderCalls,
+                    1,
+                    maximumRecords,
+                    "signing reconciliation provider call count");
             positive(passTimeout, Duration.ofMinutes(5), "signing reconciliation pass timeout");
-            positive(providerCallTimeout, passTimeout, "signing reconciliation provider call timeout");
+            positive(
+                    providerCallTimeout,
+                    passTimeout,
+                    "signing reconciliation provider call timeout");
             positive(idleInterval, Duration.ofMinutes(5), "signing reconciliation idle interval");
         }
 
@@ -1292,7 +1518,9 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     private static void bounded(int value, int minimum, int maximum, String name) {
-        if (value < minimum || value > maximum) throw new IllegalArgumentException(name + " is invalid");
+        if (value < minimum || value > maximum) {
+            throw new IllegalArgumentException(name + " is invalid");
+        }
     }
 
     private static void positive(Duration value, Duration maximum, String name) {
@@ -1317,9 +1545,9 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         }
     }
 
+    /** Fixed body bound shared by the standalone ACME listeners. */
     private static final class StrictBounds {
         private static final int MAXIMUM_ACME_BODY = 16_777_216;
-        private StrictBounds() { }
     }
 
     /**
@@ -1333,6 +1561,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      * @param canonicalOrigin configured canonical HTTPS origin including port
      */
     public record HybridSdkListener(String canonicalOrigin) {
+        private static final int MINIMUM_SDK_BODY_BYTES = 16_384;
+
         /**
          * Checks the explicit canonical HTTPS origin without discovering or enabling a listener.
          *
@@ -1349,7 +1579,9 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
          * @throws IllegalArgumentException if the byte budget is below 16384
          */
         public void requireBodyBudget(int maximumBodyBytes) {
-            if (maximumBodyBytes < 16_384) throw new IllegalArgumentException("SDK_BODY_BUDGET_TOO_SMALL");
+            if (maximumBodyBytes < MINIMUM_SDK_BODY_BYTES) {
+                throw new IllegalArgumentException("SDK_BODY_BUDGET_TOO_SMALL");
+            }
         }
     }
 }

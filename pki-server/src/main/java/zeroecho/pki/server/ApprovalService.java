@@ -51,8 +51,7 @@ import java.util.Set;
 /**
  * Durable exact-operation multi-party approval service.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel" })
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel"})
 public final class ApprovalService {
     /**
      * Approval lifecycle states.
@@ -87,7 +86,7 @@ public final class ApprovalService {
          */
         EXECUTED(7);
         private final int code;
-        State(int code) { this.code = code; }
+        /* default */ State(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -102,7 +101,7 @@ public final class ApprovalService {
          * @throws IllegalArgumentException if the code does not identify a supported persisted approval state
          */
         public static State fromCode(int code) {
-            for (State candidate : values()) if (candidate.code == code) return candidate;
+            for (State candidate : values()) { if (candidate.code == code) { return candidate; } }
             throw new IllegalArgumentException("Unknown approval-state code");
         }
     }
@@ -120,7 +119,7 @@ public final class ApprovalService {
          */
         REJECT(2);
         private final int code;
-        Choice(int code) { this.code = code; }
+        /* default */ Choice(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -272,7 +271,7 @@ public final class ApprovalService {
             Permission.requirePrincipal(requesterPrincipalId);
             Objects.requireNonNull(createdAt, "createdAt");
             Objects.requireNonNull(expiresAt, "expiresAt");
-            if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("Approval expiry is invalid");
+            if (!expiresAt.isAfter(createdAt)) { throw new IllegalArgumentException("Approval expiry is invalid"); }
             Objects.requireNonNull(policy, "policy");
             requireDigest(policyCommitment);
             if (!policy.commitment().equals(policyCommitment)) {
@@ -292,6 +291,8 @@ public final class ApprovalService {
     private final Clock clock;
     private final SafeAudit audit;
     private final OwnDecisionAuthorizer ownDecisionAuthorizer;
+    // The standalone server retains this exact cross-thread publication contract.
+    @SuppressWarnings({"PMD.AvoidUsingVolatile"})
     private volatile Runnable decisionWake = () -> { };
 
     /**
@@ -300,12 +301,12 @@ public final class ApprovalService {
      * @param wake payload-free reconciliation callback
      * @throws NullPointerException if wake is null
      */
-    void onDecision(Runnable wake) { decisionWake = Objects.requireNonNull(wake, "wake"); }
+    /* default */ void onDecision(Runnable wake) { decisionWake = Objects.requireNonNull(wake, "wake"); }
 
     /**
      * Resolves the additional own-decision capability without replacing ordinary approval checks.
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     interface OwnDecisionAuthorizer {
         /**
          * Checks the additional scoped own-decision capability without replacing ordinary approval checks.
@@ -323,7 +324,7 @@ public final class ApprovalService {
      *
      * @return current server instant
      */
-    Instant validationTime() { return clock.instant(); }
+    /* default */ Instant validationTime() { return clock.instant(); }
 
     /**
      * Creates a durable approval service over one server-control authority.
@@ -393,6 +394,8 @@ public final class ApprovalService {
      *         not currently an eligible approver or the principal has already recorded a decision
      * @throws IllegalArgumentException if the decision justification is absent or blank
      */
+    // Preserve the original bounded failure result when an external operation is unavailable.
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException"})
     public synchronized Request decide(String approvalId, String principalId,
             Choice choice, String justification) {
         SecurityPrincipal principal = store.requirePrincipal(principalId);
@@ -410,7 +413,7 @@ public final class ApprovalService {
                 .filter(assignment -> contains(assignment.scope(), current.scope()))
                 .map(RoleTemplateCatalog.Assignment::templateId)
                 .anyMatch(current.policy().requiredRoleTemplateIds()::contains);
-        if (!direct && !role) throw new IllegalStateException("Principal is not an eligible approver");
+        if (!direct && !role) { throw new IllegalStateException("Principal is not an eligible approver"); }
         if (current.decisions().stream().anyMatch(item -> item.principalId().equals(principal.principalId()))) {
             throw new IllegalStateException("Principal has already decided this approval");
         }
@@ -473,7 +476,7 @@ public final class ApprovalService {
             throw new IllegalStateException("Approval does not bind the requested operation");
         }
         current = expireIfNecessary(current);
-        if (current.state() != State.APPROVED) throw new IllegalStateException("Approval is not executable");
+        if (current.state() != State.APPROVED) { throw new IllegalStateException("Approval is not executable"); }
         Request executing = copy(current, State.EXECUTING, current.decisions(), Optional.empty());
         store.replaceApproval(current, executing);
         return executing;
@@ -489,7 +492,7 @@ public final class ApprovalService {
      */
     public synchronized Request complete(String approvalId, String safeResultClassification) {
         Request current = requireCurrent(approvalId);
-        if (current.state() != State.EXECUTING) throw new IllegalStateException("Approval is not executing");
+        if (current.state() != State.EXECUTING) { throw new IllegalStateException("Approval is not executing"); }
         Request executed = copy(current, State.EXECUTED, current.decisions(),
                 Optional.of(Permission.requireBounded(safeResultClassification, 256, "result classification")));
         store.replaceApproval(current, executed);
@@ -524,7 +527,7 @@ public final class ApprovalService {
     }
 
     private static void requirePending(Request request) {
-        if (request.state() != State.PENDING) throw new IllegalStateException("Approval is not pending");
+        if (request.state() != State.PENDING) { throw new IllegalStateException("Approval is not pending"); }
     }
 
     private static boolean contains(Permission.Scope grant, Permission.Scope request) {

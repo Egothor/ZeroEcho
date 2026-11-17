@@ -80,7 +80,7 @@ final class AcmeStateCodec {
      * @throws NullPointerException if the record is null
      * @throws IllegalArgumentException if the record type is unsupported or a field exceeds its encoding bound
      */
-    byte[] encode(Object record) { return encode(record, true); }
+    /* default */ byte[] encode(Object record) { return encode(record, true); }
     /**
      * Computes the record commitment with the commitment field replaced by the zero digest.
      *
@@ -89,7 +89,7 @@ final class AcmeStateCodec {
      * @throws NullPointerException if the record is null
      * @throws IllegalArgumentException if the record type or an encoded field is invalid
      */
-    String commitment(Object record) { return sha256(encode(record, false)); }
+    /* default */ String commitment(Object record) { return CanonicalWire.sha256(encode(record, false)); }
 
     /**
      * Copies a supported record with its canonical commitment recomputed.
@@ -99,7 +99,7 @@ final class AcmeStateCodec {
      * @throws NullPointerException if the record is null
      * @throws IllegalArgumentException if the record type or an encoded field is invalid
      */
-    Object seal(Object record) {
+    /* default */ Object seal(Object record) {
         String value = commitment(record);
         return switch (record) {
             case AcmeState.Directory item -> new AcmeState.Directory(item.directoryId(), item.alias(), item.revision(),
@@ -141,20 +141,12 @@ final class AcmeStateCodec {
      * @throws IllegalArgumentException if bytes are null, malformed, unsupported, truncated,
      *         contain trailing data or fail commitment verification
      */
+    /* default */
+    // Retains the established runtime cleanup or safe protocol error-normalization boundary.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     Object decode(byte[] encoded) {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(encoded))) {
-            if (in.readInt() != MAGIC || in.readInt() != VERSION) throw invalid();
-            Object result = switch (in.readInt()) {
-                case DIRECTORY -> readDirectory(in);
-                case ACCOUNT -> readAccount(in);
-                case ORDER -> readOrder(in);
-                case AUTHORIZATION -> readAuthorization(in);
-                case CHALLENGE -> readChallenge(in);
-                case EVIDENCE -> readEvidence(in);
-                default -> throw invalid();
-            };
-            if (in.read() != -1 || !storedCommitment(result).equals(commitment(result))) throw invalid();
-            return result;
+            return decodeValue(in);
         } catch (IOException | RuntimeException failure) {
             throw new IllegalArgumentException("ACME control record is invalid");
         }
@@ -179,68 +171,71 @@ final class AcmeStateCodec {
     }
 
     private static void writeDirectory(DataOutputStream out, AcmeState.Directory v, boolean committed) throws IOException {
-        out.writeInt(DIRECTORY); string(out, v.directoryId()); string(out, v.alias()); out.writeInt(v.revision());
-        string(out, v.realmId().value()); string(out, v.authorityId().value()); profile(out, v.profile());
-        string(out, v.enrollmentProfileId());
-        string(out, v.issuerId().value()); string(out, v.issuancePathId().value()); string(out, v.issuancePathCommitment());
-        enums(out, v.identifierTypes()); strings(out, v.dnsNamespaces()); out.writeLong(v.maximumValidity().toSeconds());
-        strings(out, v.publicKeyAlgorithms()); strings(out, v.x509BindingPolicies()); enums(out, v.challengeTypes());
-        strings(out, v.challengeProviderIds()); optional(out, v.eabProviderId()); out.writeBoolean(v.eabRequired());
-        confirmationPolicy(out, v.confirmationPolicy()); string(out, v.confirmationPolicyCommitment());
-        string(out, v.status().name()); string(out, v.policyCommitment());
-        instant(out, v.createdAt()); string(out, committed ? v.commitment() : ZERO);
+        out.writeInt(DIRECTORY); CanonicalWire.string(out, v.directoryId()); CanonicalWire.string(out, v.alias()); out.writeInt(v.revision());
+        CanonicalWire.string(out, v.realmId().value()); CanonicalWire.string(out, v.authorityId().value()); CanonicalWire.profile(out, v.profile());
+        CanonicalWire.string(out, v.enrollmentProfileId());
+        CanonicalWire.string(out, v.issuerId().value()); CanonicalWire.string(out, v.issuancePathId().value()); CanonicalWire.string(out, v.issuancePathCommitment());
+        CanonicalWire.enums(out, v.identifierTypes()); CanonicalWire.strings(out, v.dnsNamespaces()); out.writeLong(v.maximumValidity().toSeconds());
+        CanonicalWire.strings(out, v.publicKeyAlgorithms()); CanonicalWire.strings(out, v.x509BindingPolicies()); CanonicalWire.enums(out, v.challengeTypes());
+        CanonicalWire.strings(out, v.challengeProviderIds()); CanonicalWire.optional(out, v.eabProviderId()); out.writeBoolean(v.eabRequired());
+        confirmationPolicy(out, v.confirmationPolicy()); CanonicalWire.string(out, v.confirmationPolicyCommitment());
+        CanonicalWire.string(out, v.status().name()); CanonicalWire.string(out, v.policyCommitment());
+        CanonicalWire.instant(out, v.createdAt()); CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Directory readDirectory(DataInputStream in) throws IOException {
-        String id = string(in), alias = string(in); int revision = in.readInt(); RealmId realm = new RealmId(string(in));
-        PkiId authority = new PkiId(string(in)); CertificateProfileRef profile = profile(in);
-        String enrollmentProfileId = string(in);
-        PkiId issuer = new PkiId(string(in)), path = new PkiId(string(in)); String pathCommitment = string(in);
-        Set<AcmeState.IdentifierType> types = enumSet(in, AcmeState.IdentifierType.class);
-        Set<String> namespaces = strings(in); Duration validity = Duration.ofSeconds(in.readLong());
-        Set<String> algorithms = strings(in), bindings = strings(in);
-        Set<AcmeState.ChallengeType> challenges = enumSet(in, AcmeState.ChallengeType.class);
-        Set<String> providers = strings(in); Optional<String> eab = optional(in); boolean required = in.readBoolean();
+        String id = CanonicalWire.string(in);
+        String alias = CanonicalWire.string(in); int revision = in.readInt(); RealmId realm = new RealmId(CanonicalWire.string(in));
+        PkiId authority = new PkiId(CanonicalWire.string(in)); CertificateProfileRef profile = CanonicalWire.profile(in);
+        String enrollmentProfileId = CanonicalWire.string(in);
+        PkiId issuer = new PkiId(CanonicalWire.string(in));
+        PkiId path = new PkiId(CanonicalWire.string(in)); String pathCommitment = CanonicalWire.string(in);
+        Set<AcmeState.IdentifierType> types = CanonicalWire.enumSet(in, AcmeState.IdentifierType.class);
+        Set<String> namespaces = CanonicalWire.strings(in); Duration validity = Duration.ofSeconds(in.readLong());
+        Set<String> algorithms = CanonicalWire.strings(in);
+        Set<String> bindings = CanonicalWire.strings(in);
+        Set<AcmeState.ChallengeType> challenges = CanonicalWire.enumSet(in, AcmeState.ChallengeType.class);
+        Set<String> providers = CanonicalWire.strings(in); Optional<String> eab = CanonicalWire.optional(in); boolean required = in.readBoolean();
         CredentialConfirmationPolicy confirmation = confirmationPolicy(in);
-        String confirmationCommitment = string(in);
-        AcmeState.DirectoryStatus status = AcmeState.DirectoryStatus.valueOf(string(in));
+        String confirmationCommitment = CanonicalWire.string(in);
+        AcmeState.DirectoryStatus status = AcmeState.DirectoryStatus.valueOf(CanonicalWire.string(in));
         return new AcmeState.Directory(id, alias, revision, realm, authority, profile, enrollmentProfileId, issuer, path, pathCommitment,
                 types, namespaces, validity, algorithms, bindings, challenges, providers, eab, required,
-                confirmation, confirmationCommitment, status, string(in), instant(in), string(in));
+                confirmation, confirmationCommitment, status, CanonicalWire.string(in), CanonicalWire.instant(in), CanonicalWire.string(in));
     }
 
     private static void confirmationPolicy(DataOutputStream out, CredentialConfirmationPolicy value)
             throws IOException {
-        string(out, value.disclosurePolicy().name());
+        CanonicalWire.string(out, value.disclosurePolicy().name());
         out.writeLong(value.confirmationWindow().getSeconds());
         out.writeInt(value.confirmationWindow().getNano());
-        string(out, value.proofSuite().suiteId());
-        string(out, value.proofSuite().configurationCommitment());
+        CanonicalWire.string(out, value.proofSuite().suiteId());
+        CanonicalWire.string(out, value.proofSuite().configurationCommitment());
     }
 
     private static CredentialConfirmationPolicy confirmationPolicy(DataInputStream in) throws IOException {
-        ConfirmationDisclosurePolicy disclosure = ConfirmationDisclosurePolicy.valueOf(string(in));
+        ConfirmationDisclosurePolicy disclosure = ConfirmationDisclosurePolicy.valueOf(CanonicalWire.string(in));
         Duration window = Duration.ofSeconds(in.readLong(), in.readInt());
-        ConfirmationProofSuiteRef proofSuite = new ConfirmationProofSuiteRef(string(in), string(in));
+        ConfirmationProofSuiteRef proofSuite = new ConfirmationProofSuiteRef(CanonicalWire.string(in), CanonicalWire.string(in));
         return new CredentialConfirmationPolicy(disclosure, window, proofSuite);
     }
 
     private static void writeAccount(DataOutputStream out, AcmeState.Account v, boolean committed) throws IOException {
-        out.writeInt(ACCOUNT); string(out, v.accountId()); string(out, v.directoryId()); out.writeInt(v.directoryRevision());
-        string(out, v.directoryPolicyCommitment()); string(out, v.keyThumbprint()); bytes(out, v.publicKeySpki());
-        string(out, v.status().name()); stringsList(out, v.contacts()); out.writeBoolean(v.termsAgreed());
-        optional(out, v.eabPolicyCommitment()); instant(out, v.createdAt()); instant(out, v.updatedAt());
+        out.writeInt(ACCOUNT); CanonicalWire.string(out, v.accountId()); CanonicalWire.string(out, v.directoryId()); out.writeInt(v.directoryRevision());
+        CanonicalWire.string(out, v.directoryPolicyCommitment()); CanonicalWire.string(out, v.keyThumbprint()); CanonicalWire.bytes(out, v.publicKeySpki());
+        CanonicalWire.string(out, v.status().name()); CanonicalWire.stringsList(out, v.contacts()); out.writeBoolean(v.termsAgreed());
+        CanonicalWire.optional(out, v.eabPolicyCommitment()); CanonicalWire.instant(out, v.createdAt()); CanonicalWire.instant(out, v.updatedAt());
         accountKeyHistory(out, v.keyHistory());
-        string(out, committed ? v.commitment() : ZERO);
+        CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Account readAccount(DataInputStream in) throws IOException {
-        String id = string(in); String directory = string(in); int revision = in.readInt();
-        String policy = string(in); String thumbprint = string(in); byte[] spki = bytes(in, 16_384);
-        AcmeState.AccountStatus status = AcmeState.AccountStatus.valueOf(string(in));
-        List<String> contacts = stringsList(in); boolean terms = in.readBoolean(); Optional<String> eab = optional(in);
-        Instant created = instant(in); Instant updated = instant(in);
+        String id = CanonicalWire.string(in); String directory = CanonicalWire.string(in); int revision = in.readInt();
+        String policy = CanonicalWire.string(in); String thumbprint = CanonicalWire.string(in); byte[] spki = CanonicalWire.bytes(in, 16_384);
+        AcmeState.AccountStatus status = AcmeState.AccountStatus.valueOf(CanonicalWire.string(in));
+        List<String> contacts = CanonicalWire.stringsList(in); boolean terms = in.readBoolean(); Optional<String> eab = CanonicalWire.optional(in);
+        Instant created = CanonicalWire.instant(in); Instant updated = CanonicalWire.instant(in);
         List<AcmeState.AccountKeyIdentity> history = accountKeyHistory(in);
         return new AcmeState.Account(id, directory, revision, policy, thumbprint, spki, status, contacts, terms,
-                eab, created, updated, string(in), history);
+                eab, created, updated, CanonicalWire.string(in), history);
     }
 
     /**
@@ -252,7 +247,7 @@ final class AcmeStateCodec {
      * @throws IllegalArgumentException if an encoded string exceeds its size limit
      * @throws IllegalStateException if in-memory history encoding unexpectedly fails
      */
-    static byte[] accountKeyHistory(List<AcmeState.AccountKeyIdentity> history) {
+    /* default */ static byte[] accountKeyHistory(List<AcmeState.AccountKeyIdentity> history) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bytes)) {
             accountKeyHistory(out, history); out.flush(); return bytes.toByteArray();
         } catch (IOException impossible) { throw new IllegalStateException("ACME history encoding failed", impossible); }
@@ -261,82 +256,81 @@ final class AcmeStateCodec {
     private static void accountKeyHistory(DataOutputStream out, List<AcmeState.AccountKeyIdentity> history) throws IOException {
         out.writeInt(history.size());
         for (AcmeState.AccountKeyIdentity key : history) {
-            string(out, key.canonicalSha256()); strings(out, key.legacySpkiSha256());
+            CanonicalWire.string(out, key.canonicalSha256()); CanonicalWire.strings(out, key.legacySpkiSha256());
             out.writeInt(key.aliases().size());
-            for (String alias : key.aliases().stream().sorted().toList()) string(out, alias);
+            for (String alias : key.aliases().stream().sorted().toList()) { CanonicalWire.string(out, alias); }
         }
     }
 
     private static List<AcmeState.AccountKeyIdentity> accountKeyHistory(DataInputStream in) throws IOException {
-        int size = count(in); List<AcmeState.AccountKeyIdentity> history = new ArrayList<>(size);
-        for (int index = 0; index < size; index++) {
-            String canonical = string(in); Set<String> hashes = strings(in);
-            int aliases = in.readInt(); if (aliases < 0 || aliases > 20_000) throw invalid();
-            Set<String> principals = new HashSet<>();
-            for (int alias = 0; alias < aliases; alias++) if (!principals.add(string(in))) throw invalid();
-            history.add(new AcmeState.AccountKeyIdentity(canonical, hashes, principals));
-        }
+        int size = CanonicalWire.count(in); List<AcmeState.AccountKeyIdentity> history = new ArrayList<>(size);
+        for (int index = 0; index < size; index++) { history.add(readAccountKeyIdentity(in)); }
         return List.copyOf(history);
     }
 
     private static void writeOrder(DataOutputStream out, AcmeState.Order v, boolean committed) throws IOException {
-        out.writeInt(ORDER); string(out, v.orderId()); string(out, v.accountId()); string(out, v.directoryId());
-        out.writeInt(v.directoryRevision()); string(out, v.directoryPolicyCommitment()); string(out, v.authorityId().value());
-        profile(out, v.profile()); string(out, v.issuerId().value()); string(out, v.issuancePathId().value());
-        string(out, v.issuancePathCommitment()); identifiers(out, v.identifiers()); optionalInstant(out, v.notBefore());
-        optionalInstant(out, v.notAfter()); string(out, v.status().name()); stringsList(out, v.authorizationIds());
-        optional(out, v.credentialId().map(PkiId::value)); optional(out, v.issuanceCommitment());
-        instant(out, v.createdAt()); instant(out, v.expiresAt());
-        optional(out, v.signingOperationId().map(PkiId::value));
-        string(out, committed ? v.commitment() : ZERO);
+        out.writeInt(ORDER); CanonicalWire.string(out, v.orderId()); CanonicalWire.string(out, v.accountId()); CanonicalWire.string(out, v.directoryId());
+        out.writeInt(v.directoryRevision()); CanonicalWire.string(out, v.directoryPolicyCommitment()); CanonicalWire.string(out, v.authorityId().value());
+        CanonicalWire.profile(out, v.profile()); CanonicalWire.string(out, v.issuerId().value()); CanonicalWire.string(out, v.issuancePathId().value());
+        CanonicalWire.string(out, v.issuancePathCommitment()); CanonicalWire.identifiers(out, v.identifiers()); CanonicalWire.optionalInstant(out, v.notBefore());
+        CanonicalWire.optionalInstant(out, v.notAfter()); CanonicalWire.string(out, v.status().name()); CanonicalWire.stringsList(out, v.authorizationIds());
+        CanonicalWire.optional(out, v.credentialId().map(PkiId::value)); CanonicalWire.optional(out, v.issuanceCommitment());
+        CanonicalWire.instant(out, v.createdAt()); CanonicalWire.instant(out, v.expiresAt());
+        CanonicalWire.optional(out, v.signingOperationId().map(PkiId::value));
+        CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Order readOrder(DataInputStream in) throws IOException {
-        String id = string(in), account = string(in), directory = string(in); int revision = in.readInt();
-        String directoryPolicyCommitment = string(in); PkiId authority = new PkiId(string(in)); CertificateProfileRef profile = profile(in);
-        PkiId issuer = new PkiId(string(in)), path = new PkiId(string(in)); String pathCommitment = string(in);
-        List<AcmeState.Identifier> identifiers = identifiers(in); Optional<Instant> from = optionalInstant(in), to = optionalInstant(in);
-        AcmeState.OrderStatus status = AcmeState.OrderStatus.valueOf(string(in)); List<String> authorizations = stringsList(in);
-        Optional<PkiId> credential = optional(in).map(PkiId::new); Optional<String> issuanceCommitment = optional(in);
-        Instant created = instant(in), expires = instant(in);
-        Optional<PkiId> signingOperation = optional(in).map(PkiId::new);
+        String id = CanonicalWire.string(in);
+        String account = CanonicalWire.string(in);
+        String directory = CanonicalWire.string(in); int revision = in.readInt();
+        String directoryPolicyCommitment = CanonicalWire.string(in); PkiId authority = new PkiId(CanonicalWire.string(in)); CertificateProfileRef profile = CanonicalWire.profile(in);
+        PkiId issuer = new PkiId(CanonicalWire.string(in));
+        PkiId path = new PkiId(CanonicalWire.string(in)); String pathCommitment = CanonicalWire.string(in);
+        List<AcmeState.Identifier> identifiers = CanonicalWire.identifiers(in); Optional<Instant> from = CanonicalWire.optionalInstant(in);
+                                                                  Optional<Instant> to = CanonicalWire.optionalInstant(in);
+        AcmeState.OrderStatus status = AcmeState.OrderStatus.valueOf(CanonicalWire.string(in)); List<String> authorizations = CanonicalWire.stringsList(in);
+        Optional<PkiId> credential = CanonicalWire.optional(in).map(PkiId::new); Optional<String> issuanceCommitment = CanonicalWire.optional(in);
+        Instant created = CanonicalWire.instant(in);
+        Instant expires = CanonicalWire.instant(in);
+        Optional<PkiId> signingOperation = CanonicalWire.optional(in).map(PkiId::new);
         return new AcmeState.Order(id, account, directory, revision, directoryPolicyCommitment, authority, profile, issuer,
                 path, pathCommitment, identifiers, from, to, status, authorizations, credential,
-                issuanceCommitment, signingOperation, created, expires, string(in));
+                issuanceCommitment, signingOperation, created, expires, CanonicalWire.string(in));
     }
 
     private static void writeAuthorization(DataOutputStream out, AcmeState.Authorization v, boolean committed) throws IOException {
-        out.writeInt(AUTHORIZATION); string(out, v.authorizationId()); string(out, v.orderId()); string(out, v.accountId());
-        identifier(out, v.identifier()); string(out, v.status().name()); stringsList(out, v.challengeIds());
-        instant(out, v.expiresAt()); optional(out, v.evidenceId()); string(out, committed ? v.commitment() : ZERO);
+        out.writeInt(AUTHORIZATION); CanonicalWire.string(out, v.authorizationId()); CanonicalWire.string(out, v.orderId()); CanonicalWire.string(out, v.accountId());
+        CanonicalWire.identifier(out, v.identifier()); CanonicalWire.string(out, v.status().name()); CanonicalWire.stringsList(out, v.challengeIds());
+        CanonicalWire.instant(out, v.expiresAt()); CanonicalWire.optional(out, v.evidenceId()); CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Authorization readAuthorization(DataInputStream in) throws IOException {
-        return new AcmeState.Authorization(string(in), string(in), string(in), identifier(in),
-                AcmeState.AuthorizationStatus.valueOf(string(in)), stringsList(in), instant(in), optional(in), string(in));
+        return new AcmeState.Authorization(CanonicalWire.string(in), CanonicalWire.string(in), CanonicalWire.string(in), CanonicalWire.identifier(in),
+                AcmeState.AuthorizationStatus.valueOf(CanonicalWire.string(in)), CanonicalWire.stringsList(in), CanonicalWire.instant(in), CanonicalWire.optional(in), CanonicalWire.string(in));
     }
 
     private static void writeChallenge(DataOutputStream out, AcmeState.Challenge v, boolean committed) throws IOException {
-        out.writeInt(CHALLENGE); string(out, v.challengeId()); string(out, v.authorizationId()); string(out, v.type().name());
-        string(out, v.token()); string(out, v.status().name()); string(out, v.providerId()); out.writeInt(v.attempt());
-        optional(out, v.failureCode()); optional(out, v.evidenceId()); instant(out, v.createdAt()); instant(out, v.updatedAt());
-        string(out, committed ? v.commitment() : ZERO);
+        out.writeInt(CHALLENGE); CanonicalWire.string(out, v.challengeId()); CanonicalWire.string(out, v.authorizationId()); CanonicalWire.string(out, v.type().name());
+        CanonicalWire.string(out, v.token()); CanonicalWire.string(out, v.status().name()); CanonicalWire.string(out, v.providerId()); out.writeInt(v.attempt());
+        CanonicalWire.optional(out, v.failureCode()); CanonicalWire.optional(out, v.evidenceId()); CanonicalWire.instant(out, v.createdAt()); CanonicalWire.instant(out, v.updatedAt());
+        CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Challenge readChallenge(DataInputStream in) throws IOException {
-        return new AcmeState.Challenge(string(in), string(in), AcmeState.ChallengeType.valueOf(string(in)), string(in),
-                AcmeState.ChallengeStatus.valueOf(string(in)), string(in), in.readInt(), optional(in), optional(in),
-                instant(in), instant(in), string(in));
+        return new AcmeState.Challenge(CanonicalWire.string(in), CanonicalWire.string(in), AcmeState.ChallengeType.valueOf(CanonicalWire.string(in)), CanonicalWire.string(in),
+                AcmeState.ChallengeStatus.valueOf(CanonicalWire.string(in)), CanonicalWire.string(in), in.readInt(), CanonicalWire.optional(in), CanonicalWire.optional(in),
+                CanonicalWire.instant(in), CanonicalWire.instant(in), CanonicalWire.string(in));
     }
 
     private static void writeEvidence(DataOutputStream out, AcmeState.AuthorizationEvidence v, boolean committed) throws IOException {
-        out.writeInt(EVIDENCE); string(out, v.evidenceId()); string(out, v.authorizationId()); string(out, v.providerId());
-        string(out, v.challengeType().name()); identifier(out, v.identifier()); string(out, v.accountKeyCommitment());
-        string(out, v.keyAuthorizationCommitment()); string(out, v.directoryPolicyCommitment()); out.writeInt(v.attempt());
-        instant(out, v.validatedAt()); instant(out, v.expiresAt()); string(out, v.result().name()); optional(out, v.failureCode());
-        string(out, committed ? v.commitment() : ZERO);
+        out.writeInt(EVIDENCE); CanonicalWire.string(out, v.evidenceId()); CanonicalWire.string(out, v.authorizationId()); CanonicalWire.string(out, v.providerId());
+        CanonicalWire.string(out, v.challengeType().name()); CanonicalWire.identifier(out, v.identifier()); CanonicalWire.string(out, v.accountKeyCommitment());
+        CanonicalWire.string(out, v.keyAuthorizationCommitment()); CanonicalWire.string(out, v.directoryPolicyCommitment()); out.writeInt(v.attempt());
+        CanonicalWire.instant(out, v.validatedAt()); CanonicalWire.instant(out, v.expiresAt()); CanonicalWire.string(out, v.result().name()); CanonicalWire.optional(out, v.failureCode());
+        CanonicalWire.string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.AuthorizationEvidence readEvidence(DataInputStream in) throws IOException {
-        return new AcmeState.AuthorizationEvidence(string(in), string(in), string(in),
-                AcmeState.ChallengeType.valueOf(string(in)), identifier(in), string(in), string(in), string(in),
-                in.readInt(), instant(in), instant(in), AcmeState.EvidenceResult.valueOf(string(in)), optional(in), string(in));
+        return new AcmeState.AuthorizationEvidence(CanonicalWire.string(in), CanonicalWire.string(in), CanonicalWire.string(in),
+                AcmeState.ChallengeType.valueOf(CanonicalWire.string(in)), CanonicalWire.identifier(in), CanonicalWire.string(in), CanonicalWire.string(in), CanonicalWire.string(in),
+                in.readInt(), CanonicalWire.instant(in), CanonicalWire.instant(in), AcmeState.EvidenceResult.valueOf(CanonicalWire.string(in)), CanonicalWire.optional(in), CanonicalWire.string(in));
     }
 
     private static String storedCommitment(Object value) {
@@ -347,68 +341,126 @@ final class AcmeStateCodec {
             default -> throw invalid();
         };
     }
-    private static void profile(DataOutputStream out, CertificateProfileRef value) throws IOException {
-        string(out, value.profileId()); out.writeLong(value.profileVersion()); bytes(out, value.canonicalSha256());
-    }
-    private static CertificateProfileRef profile(DataInputStream in) throws IOException {
-        return new CertificateProfileRef(string(in), in.readLong(), bytes(in, 32));
-    }
-    private static void identifier(DataOutputStream out, AcmeState.Identifier value) throws IOException {
-        string(out, value.type().name()); string(out, value.value()); out.writeBoolean(value.wildcard());
-    }
-    private static AcmeState.Identifier identifier(DataInputStream in) throws IOException {
-        return new AcmeState.Identifier(AcmeState.IdentifierType.valueOf(string(in)), string(in), in.readBoolean());
-    }
-    private static void identifiers(DataOutputStream out, List<AcmeState.Identifier> values) throws IOException {
-        out.writeInt(values.size()); for (AcmeState.Identifier value : values) identifier(out, value);
-    }
-    private static List<AcmeState.Identifier> identifiers(DataInputStream in) throws IOException {
-        int count = count(in); List<AcmeState.Identifier> result = new ArrayList<>(count);
-        for (int index = 0; index < count; index++) result.add(identifier(in)); return List.copyOf(result);
-    }
-    private static <E extends Enum<E>> void enums(DataOutputStream out, Set<E> values) throws IOException {
-        strings(out, values.stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()));
-    }
-    private static <E extends Enum<E>> Set<E> enumSet(DataInputStream in, Class<E> type) throws IOException {
-        Set<E> result = new HashSet<>(); for (String name : strings(in)) if (!result.add(Enum.valueOf(type, name))) throw invalid();
-        return Set.copyOf(result);
-    }
-    private static void strings(DataOutputStream out, Set<String> values) throws IOException {
-        List<String> sorted = values.stream().sorted().toList(); stringsList(out, sorted);
-    }
-    private static Set<String> strings(DataInputStream in) throws IOException {
-        List<String> values = stringsList(in); Set<String> result = new HashSet<>(values);
-        if (result.size() != values.size()) throw invalid(); return Set.copyOf(result);
-    }
-    private static void stringsList(DataOutputStream out, List<String> values) throws IOException {
-        if (values.size() > MAX_COLLECTION) throw invalid(); out.writeInt(values.size()); for (String value : values) string(out, value);
-    }
-    private static List<String> stringsList(DataInputStream in) throws IOException {
-        int count = count(in); List<String> result = new ArrayList<>(count);
-        for (int index = 0; index < count; index++) result.add(string(in)); return List.copyOf(result);
-    }
-    private static void string(DataOutputStream out, String value) throws IOException {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8); if (bytes.length > MAX_TEXT) throw invalid();
-        out.writeInt(bytes.length); out.write(bytes);
-    }
-    private static String string(DataInputStream in) throws IOException {
-        int length = in.readInt(); if (length < 0 || length > MAX_TEXT) throw invalid();
-        byte[] bytes = in.readNBytes(length); if (bytes.length != length) throw invalid();
-        String value = new String(bytes, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) throw invalid(); return value;
-    }
-    private static void bytes(DataOutputStream out, byte[] value) throws IOException { out.writeInt(value.length); out.write(value); }
-    private static byte[] bytes(DataInputStream in, int maximum) throws IOException {
-        int length = in.readInt(); if (length <= 0 || length > maximum) throw invalid();
-        byte[] result = in.readNBytes(length); if (result.length != length) throw invalid(); return result;
-    }
-    private static void optional(DataOutputStream out, Optional<String> value) throws IOException { out.writeBoolean(value.isPresent()); if (value.isPresent()) string(out, value.orElseThrow()); }
-    private static Optional<String> optional(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(string(in)) : Optional.empty(); }
-    private static void instant(DataOutputStream out, Instant value) throws IOException { out.writeLong(value.toEpochMilli()); }
-    private static Instant instant(DataInputStream in) throws IOException { return Instant.ofEpochMilli(in.readLong()); }
-    private static void optionalInstant(DataOutputStream out, Optional<Instant> value) throws IOException { out.writeBoolean(value.isPresent()); if (value.isPresent()) instant(out, value.orElseThrow()); }
-    private static Optional<Instant> optionalInstant(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(instant(in)) : Optional.empty(); }
-    private static int count(DataInputStream in) throws IOException { int value = in.readInt(); if (value < 0 || value > MAX_COLLECTION) throw invalid(); return value; }
-    private static String sha256(byte[] value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
+
+
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("ACME control record is invalid"); }
+
+    private Object decodeValue(DataInputStream in) throws IOException {
+
+            if (in.readInt() != MAGIC || in.readInt() != VERSION) { throw invalid(); }
+            Object result = switch (in.readInt()) {
+                case DIRECTORY -> readDirectory(in);
+                case ACCOUNT -> readAccount(in);
+                case ORDER -> readOrder(in);
+                case AUTHORIZATION -> readAuthorization(in);
+                case CHALLENGE -> readChallenge(in);
+                case EVIDENCE -> readEvidence(in);
+                default -> throw invalid();
+            };
+            if (in.read() != -1 || !storedCommitment(result).equals(commitment(result))) { throw invalid(); }
+            return result;
+    }
+
+
+    private static AcmeState.AccountKeyIdentity readAccountKeyIdentity(DataInputStream in) throws IOException {
+
+            String canonical = CanonicalWire.string(in); Set<String> hashes = CanonicalWire.strings(in);
+            int aliases = in.readInt(); if (aliases < 0 || aliases > 20_000) { throw invalid(); }
+            Set<String> principals = new HashSet<>();
+            for (int alias = 0; alias < aliases; alias++) { if (!principals.add(CanonicalWire.string(in))) { throw invalid(); } }
+            return new AcmeState.AccountKeyIdentity(canonical, hashes, principals);
+
+    }
+
+
+    /** Groups one bounded protocol validation responsibility. */
+    private static final class CanonicalWire {
+        private static void profile(DataOutputStream out, CertificateProfileRef value) throws IOException {
+            string(out, value.profileId()); out.writeLong(value.profileVersion()); bytes(out, value.canonicalSha256());
+        }
+
+        private static CertificateProfileRef profile(DataInputStream in) throws IOException {
+            return new CertificateProfileRef(string(in), in.readLong(), bytes(in, 32));
+        }
+
+        private static void identifier(DataOutputStream out, AcmeState.Identifier value) throws IOException {
+            string(out, value.type().name()); string(out, value.value()); out.writeBoolean(value.wildcard());
+        }
+
+        private static AcmeState.Identifier identifier(DataInputStream in) throws IOException {
+            return new AcmeState.Identifier(AcmeState.IdentifierType.valueOf(string(in)), string(in), in.readBoolean());
+        }
+
+        private static void identifiers(DataOutputStream out, List<AcmeState.Identifier> values) throws IOException {
+            out.writeInt(values.size()); for (AcmeState.Identifier value : values) { identifier(out, value); }
+        }
+
+        private static List<AcmeState.Identifier> identifiers(DataInputStream in) throws IOException {
+            int count = count(in); List<AcmeState.Identifier> result = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) { result.add(identifier(in)); } return List.copyOf(result);
+        }
+
+        private static <E extends Enum<E>> void enums(DataOutputStream out, Set<E> values) throws IOException {
+            strings(out, values.stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()));
+        }
+
+        private static <E extends Enum<E>> Set<E> enumSet(DataInputStream in, Class<E> type) throws IOException {
+            Set<E> result = new HashSet<>(); for (String name : strings(in)) { if (!result.add(Enum.valueOf(type, name))) { throw invalid(); } }
+            return Set.copyOf(result);
+        }
+
+        private static void strings(DataOutputStream out, Set<String> values) throws IOException {
+            List<String> sorted = values.stream().sorted().toList(); stringsList(out, sorted);
+        }
+
+        private static Set<String> strings(DataInputStream in) throws IOException {
+            List<String> values = stringsList(in); Set<String> result = new HashSet<>(values);
+            if (result.size() != values.size()) { throw invalid(); } return Set.copyOf(result);
+        }
+
+        private static void stringsList(DataOutputStream out, List<String> values) throws IOException {
+            if (values.size() > MAX_COLLECTION) { throw invalid(); } out.writeInt(values.size()); for (String value : values) { string(out, value); }
+        }
+
+        private static List<String> stringsList(DataInputStream in) throws IOException {
+            int count = count(in); List<String> result = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) { result.add(string(in)); } return List.copyOf(result);
+        }
+
+        private static void string(DataOutputStream out, String value) throws IOException {
+            byte[] bytes = value.getBytes(StandardCharsets.UTF_8); if (bytes.length > MAX_TEXT) { throw invalid(); }
+            out.writeInt(bytes.length); out.write(bytes);
+        }
+
+        private static String string(DataInputStream in) throws IOException {
+            int length = in.readInt(); if (length < 0 || length > MAX_TEXT) { throw invalid(); }
+            byte[] bytes = in.readNBytes(length); if (bytes.length != length) { throw invalid(); }
+            String value = new String(bytes, StandardCharsets.UTF_8);
+            if (!java.util.Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) { throw invalid(); } return value;
+        }
+
+        private static void bytes(DataOutputStream out, byte[] value) throws IOException { out.writeInt(value.length); out.write(value); }
+
+        private static byte[] bytes(DataInputStream in, int maximum) throws IOException {
+            int length = in.readInt(); if (length <= 0 || length > maximum) { throw invalid(); }
+            byte[] result = in.readNBytes(length); if (result.length != length) { throw invalid(); } return result;
+        }
+
+        private static void optional(DataOutputStream out, Optional<String> value) throws IOException { out.writeBoolean(value.isPresent()); if (value.isPresent()) { string(out, value.orElseThrow()); } }
+
+        private static Optional<String> optional(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(string(in)) : Optional.empty(); }
+
+        private static void instant(DataOutputStream out, Instant value) throws IOException { out.writeLong(value.toEpochMilli()); }
+
+        private static Instant instant(DataInputStream in) throws IOException { return Instant.ofEpochMilli(in.readLong()); }
+
+        private static void optionalInstant(DataOutputStream out, Optional<Instant> value) throws IOException { out.writeBoolean(value.isPresent()); if (value.isPresent()) { instant(out, value.orElseThrow()); } }
+
+        private static Optional<Instant> optionalInstant(DataInputStream in) throws IOException { return in.readBoolean() ? Optional.of(instant(in)) : Optional.empty(); }
+
+        private static int count(DataInputStream in) throws IOException { int value = in.readInt(); if (value < 0 || value > MAX_COLLECTION) { throw invalid(); } return value; }
+
+        private static String sha256(byte[] value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
+    }
+
 }

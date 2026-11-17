@@ -33,14 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spec.AlgorithmSuite;
 import zeroecho.core.spi.AlgorithmExecutionCapabilities;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Provider-independent intersection of exact identity, binding, installed
@@ -233,6 +233,7 @@ public final class X509AlgorithmResolver {
 
     /**
      * Resolves an operation with an optional explicit X.509 binding identity.
+     *
      * @param requested exact signature identity
      * @param key exact public-key identity
      * @param direction execution direction
@@ -241,12 +242,19 @@ public final class X509AlgorithmResolver {
      * @param authorityFingerprint semantic fingerprint of the resolving authority
      * @param bindingId optional explicit role-specific binding identifier
      * @return immutable effective selection
-     * @throws NullPointerException if {@code requested}, {@code key}, {@code direction}, {@code implementation}, {@code provenance} or {@code authorityFingerprint} is null
-     * @throws X509AlgorithmResolver.ResolutionException if security floor, key compatibility, binding, policy, or executor capability selection fails
+     * @throws NullPointerException if {@code requested}, {@code key}, {@code direction}, {@code
+     *     implementation}, {@code provenance} or {@code authorityFingerprint} is null
+     * @throws X509AlgorithmResolver.ResolutionException if security floor, key compatibility,
+     *     binding, policy, or executor capability selection fails
      */
-    public Selection resolve(AlgorithmIdentity requested, AlgorithmIdentity key,
-            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
-            String authorityFingerprint, Optional<String> bindingId) {
+    public Selection resolve(
+            AlgorithmIdentity requested,
+            AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction,
+            Optional<String> implementation,
+            String provenance,
+            String authorityFingerprint,
+            Optional<String> bindingId) {
         Objects.requireNonNull(requested, "requested");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(direction, "direction");

@@ -48,7 +48,7 @@ import zeroecho.pki.server.jfr.AuditWriteEvent;
 /**
  * Package-private safe server audit producer.
  */
-@SuppressWarnings("PMD.CommentDefaultAccessModifier")
+
 final class SafeAudit {
     private final Clock clock;
     private final AuditSink sink;
@@ -60,7 +60,7 @@ final class SafeAudit {
      * @param sink destination server-security audit sink
      * @throws NullPointerException if a collaborator is null
      */
-    SafeAudit(Clock clock, AuditSink sink) {
+    /* default */ SafeAudit(Clock clock, AuditSink sink) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.sink = Objects.requireNonNull(sink, "sink");
     }
@@ -76,7 +76,7 @@ final class SafeAudit {
      * @param objectId optional public object identity
      * @param details safe event detail map, copied before delivery
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink defines RuntimeException as its failure boundary.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink defines RuntimeException as its failure boundary.
     void record(String action, String principalId, Optional<PkiId> objectId, Map<String, String> details) {
         AuditWriteEvent jfrEvent = new AuditWriteEvent();
         jfrEvent.category = "SERVER_SECURITY";

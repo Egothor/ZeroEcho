@@ -93,7 +93,8 @@ public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Complete
          * @param operationName stable semantic name
          * @param classification closed failure class
          * @param code stable non-sensitive code
-         * @throws IllegalArgumentException if operationName is null or blank, or code is null or not 3 to 64 uppercase letters, digits or underscores
+         * @throws IllegalArgumentException if operationName is null or blank, or code is null or not 3
+         * to 64 uppercase letters, digits or underscores
          * @throws NullPointerException if classification is null
          */
         public Failed {

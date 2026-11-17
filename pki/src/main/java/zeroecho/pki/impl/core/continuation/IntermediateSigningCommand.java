@@ -34,10 +34,6 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.util.Base64;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Optional;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -47,6 +43,11 @@ import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Configuration-independent provenance for intermediate creation, additional
@@ -66,6 +67,10 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
  * do not replace live-candidate validation, proof verification or authorization.
  */
 public final class IntermediateSigningCommand {
+    private static final int EXTENDED_FIELDS = 25;
+    private static final int LIFECYCLE_FIELDS = 26;
+    private static final String SUBJECT_PROOFS_OPERATION = "CA_SUBJECT_PROOFS_V1";
+
     /**
      * Discriminator for creation of a new intermediate authority.
      */
@@ -113,29 +118,7 @@ public final class IntermediateSigningCommand {
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static DomainCommandEncoding.Decoded validate(DomainCommandEncoding.Decoded command) {
-        if (!supports(command.operation())) {
-            throw invalid();
-        }
-        if (command.fields().size() >= 25) {
-            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-        } else {
-            command.requireFields(23);
-        }
-        requireBound(command.operation(), command.fields());
-        if (command.fields().size() == 26) {
-            CaLifecycleContext context = CaLifecycleContextCodec.decode(command.field(25));
-            if (CREATE.equals(command.operation()) || !context.expectedHead().caId().value().equals(command.field(2))
-                    || ISSUE.equals(command.operation()) != (context.operation() == CaLifecycleContext.Operation.INTERMEDIATE_ISSUE)
-                    || context.operation() == CaLifecycleContext.Operation.ROOT_CANDIDATE
-                    || context.operation() == CaLifecycleContext.Operation.ROOT_ROLLOVER) {
-                throw invalid();
-            }
-        }
-        if (command.fields().size() >= 25) {
-            CaOutgoingBinding.decodeForSubject(command.field(24), new KeyRef(command.field(14)));
-        }
-        ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576);
-        ManagedKeyProofCommand.hex(command.field(22), 32, 32);
+        ProofValidation.requireContext(command);
         try {
             ManagedKeyProofCommand.utf8Length(command.field(18), 4096);
             PkiId proofId = new PkiId(command.field(18));
@@ -149,7 +132,7 @@ public final class IntermediateSigningCommand {
             }
             EncodedObject nested = new EncodedObject(Encoding.BINARY, bytes);
             DomainCommandEncoding.Decoded proofContainer = DomainCommandEncoding.decode(nested);
-            if (proofContainer.operation().equals("CA_SUBJECT_PROOFS_V1")) {
+            if (SUBJECT_PROOFS_OPERATION.equals(proofContainer.operation())) {
                 proofContainer.requireFields(4);
                 if (!proofContainer.field(0).equals(command.field(18))) {
                     throw invalid();
@@ -190,7 +173,7 @@ public final class IntermediateSigningCommand {
      */
     public static Optional<DomainCommandEncoding.Decoded> alternativeProof(DomainCommandEncoding.Decoded command) {
         DomainCommandEncoding.Decoded container = DomainCommandEncoding.decode(proofBytes(command.field(19)));
-        if (!container.operation().equals("CA_SUBJECT_PROOFS_V1")) {
+        if (!SUBJECT_PROOFS_OPERATION.equals(container.operation())) {
             return Optional.empty();
         }
         container.requireFields(4);
@@ -212,8 +195,9 @@ public final class IntermediateSigningCommand {
      */
     public static Optional<PkiId> alternativeProofId(DomainCommandEncoding.Decoded command) {
         DomainCommandEncoding.Decoded container = DomainCommandEncoding.decode(proofBytes(command.field(19)));
-        return container.operation().equals("CA_SUBJECT_PROOFS_V1")
-                ? Optional.of(new PkiId(container.requireFields(4).field(2))) : Optional.empty();
+        return SUBJECT_PROOFS_OPERATION.equals(container.operation())
+                ? Optional.of(new PkiId(container.requireFields(4).field(2)))
+                : Optional.empty();
     }
 
     /**
@@ -237,13 +221,21 @@ public final class IntermediateSigningCommand {
         if (primaryId.equals(alternativeId)) {
             throw invalid();
         }
-        return encodeProof(DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, "CA_SUBJECT_PROOFS_V1",
-                primaryId.value(), encodeProof(primary), alternativeId.value(), encodeProof(alternative)).command());
+        return encodeProof(
+                DomainCommandEncoding.template(
+                                DomainContinuationStore.Kind.CA,
+                                SUBJECT_PROOFS_OPERATION,
+                                primaryId.value(),
+                                encodeProof(primary),
+                                alternativeId.value(),
+                                encodeProof(alternative))
+                        .command());
     }
 
     private static DomainCommandEncoding.Decoded validateAlternative(DomainCommandEncoding.Decoded command,
             DomainCommandEncoding.Decoded container) {
-        if (command.fields().size() < 25 || container.field(2).equals(command.field(18))) {
+        if (command.fields().size() < EXTENDED_FIELDS
+                || container.field(2).equals(command.field(18))) {
             throw invalid();
         }
         CaOutgoingBinding outgoing = CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
@@ -365,7 +357,10 @@ public final class IntermediateSigningCommand {
     }
 
     private static void requireBound(String operation, List<String> fields) {
-        if (!supports(operation) || (fields.size() != 23 && fields.size() != 25 && fields.size() != 26)) {
+        if (!supports(operation)
+                || (fields.size() != 23
+                        && fields.size() != EXTENDED_FIELDS
+                        && fields.size() != LIFECYCLE_FIELDS)) {
             throw invalid();
         }
         long bytes = 13L + operation.length();
@@ -379,5 +374,39 @@ public final class IntermediateSigningCommand {
 
     private static IllegalStateException invalid() {
         return new IllegalStateException("Intermediate signing proof provenance is inconsistent");
+    }
+
+    /** Frozen context checks independent of retained proof decoding. */
+    private static final class ProofValidation {
+        private static void requireContext(DomainCommandEncoding.Decoded command) {
+            if (!supports(command.operation())) {
+                throw invalid();
+            }
+            if (command.fields().size() >= EXTENDED_FIELDS) {
+                CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+            } else {
+                command.requireFields(23);
+            }
+            requireBound(command.operation(), command.fields());
+            if (command.fields().size() == LIFECYCLE_FIELDS) {
+                CaLifecycleContext context =
+                        CaLifecycleContextCodec.decode(command.field(EXTENDED_FIELDS));
+                if (CREATE.equals(command.operation())
+                        || !context.expectedHead().caId().value().equals(command.field(2))
+                        || ISSUE.equals(command.operation())
+                                != (context.operation()
+                                        == CaLifecycleContext.Operation.INTERMEDIATE_ISSUE)
+                        || context.operation() == CaLifecycleContext.Operation.ROOT_CANDIDATE
+                        || context.operation() == CaLifecycleContext.Operation.ROOT_ROLLOVER) {
+                    throw invalid();
+                }
+            }
+            if (command.fields().size() >= EXTENDED_FIELDS) {
+                CaOutgoingBinding.decodeForSubject(
+                        command.field(24), new KeyRef(command.field(14)));
+            }
+            ManagedKeyProofCommand.positiveLength(command.field(21), 1_048_576);
+            ManagedKeyProofCommand.hex(command.field(22), 32, 32);
+        }
     }
 }

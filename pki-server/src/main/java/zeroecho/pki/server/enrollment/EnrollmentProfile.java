@@ -119,7 +119,7 @@ public record EnrollmentProfile(
             throw new IllegalArgumentException("Enrollment profile display name must contain 1 through 256 characters");
         }
         Objects.requireNonNull(sdkProfile, "sdkProfile");
-        if (sdkProfile.filter(value -> !"zeroecho-hybrid-sdk-v1".equals(value)).isPresent()) throw new IllegalArgumentException("Unsupported enrollment SDK profile");
+        if (sdkProfile.filter(value -> !"zeroecho-hybrid-sdk-v1".equals(value)).isPresent()) { throw new IllegalArgumentException("Unsupported enrollment SDK profile"); }
         Objects.requireNonNull(state, "state");
         EnrollmentEndpoint.requireProfileId(certificateProfileId);
         allowedAuthorityIds = Set.copyOf(Objects.requireNonNull(allowedAuthorityIds, "allowedAuthorityIds"));

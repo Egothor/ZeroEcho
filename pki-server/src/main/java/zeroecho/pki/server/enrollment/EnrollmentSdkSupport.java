@@ -55,7 +55,7 @@ final class EnrollmentSdkSupport {
      * @param intent frozen enrollment authorization intent
      * @return access context bound to the predecessor credential or original request identity
      */
-    static AccessContext access(EnrollmentCoordinator.Admission admission, EnrollmentTransaction.Intent intent) {
+    /* default */ static AccessContext access(EnrollmentCoordinator.Admission admission, EnrollmentTransaction.Intent intent) {
         return new AccessContext(new Principal(admission.requester().type().name(), admission.requester().actorId()),
                 new Purpose("ENROLLMENT"), Optional.of(intent.predecessorId().orElse(intent.requestId())), Optional.empty());
     }
@@ -72,9 +72,9 @@ final class EnrollmentSdkSupport {
      * @throws IllegalArgumentException if the operation is server key generation or inputs violate enrollment
      *         invariants
      */
-    static SdkIssuancePreview preview(SemanticSigningService signing, EnrollmentCoordinator.Admission admission,
+    /* default */ static SdkIssuancePreview preview(SemanticSigningService signing, EnrollmentCoordinator.Admission admission,
             EnrollmentTransaction.Intent intent, ParsedHybridSdkRequest parsed, Optional<Validity> frozen, SdkEnrollmentTarget target) {
-        var access = access(admission, intent);
+        AccessContext access = access(admission, intent);
         return switch (admission.operation()) {
             case ISSUE -> signing.previewSdk(access, new EndEntityIssuanceRequest(intent.authorityId(), admission.payload(), intent.profile().profileId(), admission.validity()), parsed, frozen, Optional.of(target), zeroecho.core.io.CancellationSignal.NONE);
             case RENEW -> signing.previewSdk(access, new EndEntityRenewalRequest(admission.predecessorId().orElseThrow(), admission.validity()), parsed, frozen, Optional.of(target), zeroecho.core.io.CancellationSignal.NONE);
@@ -91,16 +91,14 @@ final class EnrollmentSdkSupport {
      * @return semantic target frame with canonical arguments, issuer bindings, subject and disclosure policy
      * @throws IllegalArgumentException if the admitted operation is outside the supported issuance family
      */
-    static HybridSdkFrame target(EnrollmentCoordinator.Admission admission, EnrollmentTransaction.Intent intent, SdkIssuancePreview preview) {
-        var arguments = new TreeMap<String, HybridSdkValue>(); String operation;
-        switch (admission.operation()) {
-            case ISSUE -> { operation = "credential.issue"; arguments.put("issuerCaId", HybridSdkValue.text(intent.authorityId().value())); arguments.put("requestId", HybridSdkValue.text(intent.requestId().value())); arguments.put("profileId", HybridSdkValue.text(intent.profile().profileId())); }
-            case RENEW -> { operation = "credential.renew"; arguments.put("credentialId", HybridSdkValue.text(intent.predecessorId().orElseThrow().value())); }
-            case REPLACE -> { operation = "credential.replace"; arguments.put("existingCredentialId", HybridSdkValue.text(intent.predecessorId().orElseThrow().value())); arguments.put("requestId", HybridSdkValue.text(intent.requestId().value())); arguments.put("profileId", HybridSdkValue.text(intent.profile().profileId())); }
+    /* default */ static HybridSdkFrame target(EnrollmentCoordinator.Admission admission, EnrollmentTransaction.Intent intent, SdkIssuancePreview preview) {
+        Map<String,HybridSdkValue> arguments = new TreeMap<>(); String operation = switch (admission.operation()) {
+            case ISSUE -> { arguments.put("issuerCaId", HybridSdkValue.text(intent.authorityId().value())); arguments.put("requestId", HybridSdkValue.text(intent.requestId().value())); arguments.put("profileId", HybridSdkValue.text(intent.profile().profileId())); yield "credential.issue"; }
+            case RENEW -> { arguments.put("credentialId", HybridSdkValue.text(intent.predecessorId().orElseThrow().value())); yield "credential.renew"; }
+            case REPLACE -> { arguments.put("existingCredentialId", HybridSdkValue.text(intent.predecessorId().orElseThrow().value())); arguments.put("requestId", HybridSdkValue.text(intent.requestId().value())); arguments.put("profileId", HybridSdkValue.text(intent.profile().profileId())); yield "credential.replace"; }
             case SERVER_KEYGEN -> throw EnrollmentTransaction.invalid();
-            default -> throw EnrollmentTransaction.invalid();
-        }
-        var fields = new TreeMap<Integer, byte[]>(); fields.put(1, text(operation)); fields.put(2, HybridSdkValue.object(arguments).encode()); fields.put(3, text(admission.requester().actorId()));
+        };
+        Map<Integer,byte[]> fields = new TreeMap<>(); fields.put(1, text(operation)); fields.put(2, HybridSdkValue.object(arguments).encode()); fields.put(3, text(admission.requester().actorId()));
         fields.put(4, text(preview.issuerCaId().value())); fields.put(5, text(preview.issuerId().value())); fields.put(6, text(preview.chainPathId().value()));
         fields.put(7, text("sha512:" + preview.issuerCertificateSha512())); fields.put(8, preview.primaryIssuerBindingFrame().encode()); fields.put(9, preview.alternativeIssuerBindingFrame().map(HybridSdkFrame::encode).orElseGet(() -> new byte[0]));
         fields.put(10, text(preview.profile().profileId())); fields.put(11, time(preview.profile().profileVersion())); fields.put(12, text("sha256:" + HexFormat.of().formatHex(preview.profile().canonicalSha256())));
@@ -115,8 +113,8 @@ final class EnrollmentSdkSupport {
      * @return exact retained not-before/not-after instants
      * @throws IllegalArgumentException if the subject value or timestamp encoding is invalid
      */
-    static Validity validity(HybridSdkFrame target) {
-        var value = HybridSdkValue.decode(target.field(15)).objectFields();
+    /* default */ static Validity validity(HybridSdkFrame target) {
+        Map<String,HybridSdkValue> value = HybridSdkValue.decode(target.field(15)).objectFields();
         return new Validity(Instant.parse(value.get("notBefore").textValue()), Instant.parse(value.get("notAfter").textValue()));
     }
     /**
@@ -127,7 +125,7 @@ final class EnrollmentSdkSupport {
      * @param proof accepted SDK proof reference, or empty before acceptance
      * @return replacement retaining all other intent coordinates
      */
-    static EnrollmentTransaction.Intent frozen(EnrollmentTransaction.Intent intent, Validity validity,
+    /* default */ static EnrollmentTransaction.Intent frozen(EnrollmentTransaction.Intent intent, Validity validity,
             Optional<EnrollmentTransaction.SdkProofReference> proof) {
         return new EnrollmentTransaction.Intent(intent.realmId(), intent.source(), intent.requester(), intent.transactionId(), intent.operation(), intent.requestId(), intent.requestKind(), intent.requestSha256(), intent.requestBytes(),
                 intent.authorityId(), intent.profile(), intent.issuerId(), intent.pathId(), intent.pathCommitment(), Optional.of(validity), intent.predecessorId(), intent.predecessorSha256(), intent.approvalCategory(), intent.approvalPolicy(), intent.artifact(), intent.createdAt(), intent.expiresAt(), proof);
@@ -140,31 +138,23 @@ final class EnrollmentSdkSupport {
      * @param policyVersion exact enrollment-policy version
      * @throws IllegalArgumentException if any actor, endpoint, policy, key or native-message binding differs
      */
-    static void requireContext(EnrollmentSdkAdmission supplied, EnrollmentTransaction.Intent intent, long policyVersion) {
-        var a = supplied.admission(); var target = supplied.target(); var source = intent.source(); var auth = supplied.authenticationContext();
+    /* default */ static void requireContext(EnrollmentSdkAdmission supplied, EnrollmentTransaction.Intent intent, long policyVersion) {
+        EnrollmentCoordinator.Admission a = supplied.admission(); SdkEnrollmentTarget target = supplied.target(); EnrollmentTransaction.Source source = intent.source(); HybridSdkFrame auth = supplied.authenticationContext();
         String carrier = a.protocol().name().toLowerCase(Locale.ROOT) + "-v1";
-        if (!new String(auth.field(1), StandardCharsets.UTF_8).equals(a.requester().actorId())
-                || !new String(auth.field(4), StandardCharsets.UTF_8).equals(carrier)
-                || !target.authenticationContextSha512().equals(hash(auth.encode())) || !source.label().equals(target.endpointId())
-                || !source.commitment().equals(target.endpointCommitment()) || source.revision() != target.sourceRevision()
-                || !source.enrollmentProfileId().equals(target.enrollmentPolicyId()) || policyVersion != target.enrollmentPolicyVersion()
-                || !source.enrollmentCommitment().equals(target.enrollmentPolicyCommitment())) throw EnrollmentTransaction.invalid();
-        var nativeContext = HybridSdkValue.decode(auth.field(5)).objectFields();
+        requireAuthenticationCoordinates(a, target, source, auth, carrier, policyVersion);
+
+        Map<String,HybridSdkValue> nativeContext = HybridSdkValue.decode(auth.field(5)).objectFields();
         if (!nativeContext.get("endpointId").textValue().equals(source.label())
                 || !nativeContext.get("endpointCommitment").textValue().equals(source.commitment())
-                || !nativeContext.get("requestKind").textValue().equals(a.payload().kind().name())) throw EnrollmentTransaction.invalid();
+                || !nativeContext.get("requestKind").textValue().equals(a.payload().kind().name())) { throw EnrollmentTransaction.invalid(); }
         if (a.protocol() == EnrollmentTransaction.Protocol.ACME
                 && (!nativeContext.get("accountId").textValue().equals(a.requester().actorId())
-                        || !a.requester().canonicalKeySha256().equals(Optional.of(nativeContext.get("accountKeySha256").textValue())))) throw EnrollmentTransaction.invalid();
-        if (supplied.nativeWire().isPresent()) {
-            String key = a.protocol() == EnrollmentTransaction.Protocol.CMP ? "originalWireSha512" : "nativeMessageSha512";
-            if (!nativeContext.get(key).textValue().equals(hash(supplied.nativeWire().orElseThrow()))) throw EnrollmentTransaction.invalid();
-            if (supplied.cmpManifest().isPresent() && !supplied.cmpManifest().orElseThrow().originalWireSha256()
-                    .equals(EnrollmentTransactionCodec.sha256(supplied.nativeWire().orElseThrow()))) throw EnrollmentTransaction.invalid();
-        }
+                        || !a.requester().canonicalKeySha256().equals(Optional.of(nativeContext.get("accountKeySha256").textValue())))) { throw EnrollmentTransaction.invalid(); }
+        requireNativeWire(supplied, a, nativeContext);
+
         Optional<String> anchor = a.protocol() == EnrollmentTransaction.Protocol.ACME ? a.requester().canonicalKeySha256()
                 : a.requester().certificate().map(zeroecho.pki.server.CertificateIdentityEvidence::certificateSha256);
-        if (anchor.isPresent() && !Arrays.equals(auth.field(3), HybridSdkFrame.hash(text("sha256:" + anchor.orElseThrow())))) throw EnrollmentTransaction.invalid();
+        if (anchor.isPresent() && !Arrays.equals(auth.field(3), HybridSdkFrame.hash(text("sha256:" + anchor.orElseThrow())))) { throw EnrollmentTransaction.invalid(); }
     }
     /**
      * Compares immutable accepted ownership and original-request coordinates for replay.
@@ -176,21 +166,17 @@ final class EnrollmentSdkSupport {
      * @param supplied current authenticated replay admission
      * @return whether actor, protocol, transaction, payload, validity and native wire match the accepted request
      */
-    static boolean sameAcceptedOwnerAndRequest(EnrollmentSdkAdmission retained, EnrollmentSdkAdmission supplied) {
-        var a = retained.admission(); var b = supplied.admission();
-        var owner = a.requester(); var current = b.requester();
+    /* default */ static boolean sameAcceptedOwnerAndRequest(EnrollmentSdkAdmission retained, EnrollmentSdkAdmission supplied) {
+        EnrollmentCoordinator.Admission a = retained.admission(); EnrollmentCoordinator.Admission b = supplied.admission();
+        EnrollmentTransaction.Requester owner = a.requester(); EnrollmentTransaction.Requester current = b.requester();
         if (owner.type() != current.type() || owner.authentication() != current.authentication()
-                || !owner.actorId().equals(current.actorId()) || !owner.aliases().realmId().equals(current.aliases().realmId())) return false;
+                || !owner.actorId().equals(current.actorId()) || !owner.aliases().realmId().equals(current.aliases().realmId())) { return false; }
         if (a.protocol() != EnrollmentTransaction.Protocol.ACME) {
             if (!owner.canonicalKeySha256().equals(current.canonicalKeySha256())
                     || owner.certificate().isPresent() != current.certificate().isPresent()
-                    || owner.certificate().isPresent() && !owner.certificate().orElseThrow().sameCredential(current.certificate().orElseThrow())) return false;
-            if (owner.type() == zeroecho.pki.application.IssuanceExecutionEvidence.ActorType.CMP_PBM) {
-                var oldAuth = HybridSdkValue.decode(retained.authenticationContext().field(5)).objectFields();
-                var newAuth = HybridSdkValue.decode(supplied.authenticationContext().field(5)).objectFields();
-                if (!oldAuth.get("authenticationCredentialId").textValue().equals(newAuth.get("authenticationCredentialId").textValue())
-                        || oldAuth.get("authenticationCredentialRevision").integerValue() != newAuth.get("authenticationCredentialRevision").integerValue()) return false;
-            }
+                    || owner.certificate().isPresent() && !owner.certificate().orElseThrow().sameCredential(current.certificate().orElseThrow())) { return false; }
+            if (!sameCmpAuthentication(owner, retained, supplied)) { return false; }
+
         }
         return a.protocol() == b.protocol() && a.endpointId().equals(b.endpointId()) && a.transactionId().equals(b.transactionId())
                 && a.operation() == b.operation() && a.payload().kind() == b.payload().kind() && Arrays.equals(a.payload().der(), b.payload().der())
@@ -206,8 +192,8 @@ final class EnrollmentSdkSupport {
      * @param right second resolved admission
      * @return whether actor, endpoint, deadlines, original bytes, target, authentication and CMP context match
      */
-    static boolean sameAdmission(EnrollmentSdkAdmission left, EnrollmentSdkAdmission right) {
-        var a = left.admission(); var b = right.admission();
+    /* default */ static boolean sameAdmission(EnrollmentSdkAdmission left, EnrollmentSdkAdmission right) {
+        EnrollmentCoordinator.Admission a = left.admission(); EnrollmentCoordinator.Admission b = right.admission();
         return a.protocol() == b.protocol() && a.endpointId().equals(b.endpointId()) && a.requester().equals(b.requester())
                 && a.transactionId().equals(b.transactionId()) && a.operation() == b.operation() && a.payload().kind() == b.payload().kind()
                 && Arrays.equals(a.payload().der(), b.payload().der()) && a.validity().equals(b.validity()) && a.predecessorId().equals(b.predecessorId())
@@ -224,7 +210,7 @@ final class EnrollmentSdkSupport {
      * @return {@code sha512:} followed by lowercase hexadecimal digest
      * @throws NullPointerException if bytes is null
      */
-    static String hash(byte[] bytes) { return "sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(bytes)); }
+    /* default */ static String hash(byte[] bytes) { return "sha512:" + HexFormat.of().formatHex(HybridSdkFrame.hash(bytes)); }
     /**
      * Encodes canonical frame text as UTF-8 without adding a terminator.
      *
@@ -232,12 +218,44 @@ final class EnrollmentSdkSupport {
      * @return newly allocated UTF-8 bytes
      * @throws NullPointerException if value is null
      */
-    static byte[] text(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+    /* default */ static byte[] text(String value) { return value.getBytes(StandardCharsets.UTF_8); }
     /**
      * Encodes a signed 64-bit frame coordinate in canonical big-endian order.
      *
      * @param value coordinate value, such as a profile version or epoch-second timestamp
      * @return newly allocated eight-byte encoding
      */
-    static byte[] time(long value) { return ByteBuffer.allocate(8).putLong(value).array(); }
+    /* default */ static byte[] time(long value) { return ByteBuffer.allocate(8).putLong(value).array(); }
+
+    private static void requireAuthenticationCoordinates(EnrollmentCoordinator.Admission a,
+            SdkEnrollmentTarget target, EnrollmentTransaction.Source source,
+            HybridSdkFrame auth, String carrier, long policyVersion) {
+        if (!new String(auth.field(1), StandardCharsets.UTF_8).equals(a.requester().actorId())
+                || !new String(auth.field(4), StandardCharsets.UTF_8).equals(carrier)
+                || !target.authenticationContextSha512().equals(hash(auth.encode())) || !source.label().equals(target.endpointId())
+                || !source.commitment().equals(target.endpointCommitment()) || source.revision() != target.sourceRevision()
+                || !source.enrollmentProfileId().equals(target.enrollmentPolicyId()) || policyVersion != target.enrollmentPolicyVersion()
+                || !source.enrollmentCommitment().equals(target.enrollmentPolicyCommitment())) { throw EnrollmentTransaction.invalid(); }    }
+
+
+    private static void requireNativeWire(EnrollmentSdkAdmission supplied, EnrollmentCoordinator.Admission a,
+            Map<String,HybridSdkValue> nativeContext) {
+        if (supplied.nativeWire().isPresent()) {
+            String key = a.protocol() == EnrollmentTransaction.Protocol.CMP ? "originalWireSha512" : "nativeMessageSha512";
+            if (!nativeContext.get(key).textValue().equals(hash(supplied.nativeWire().orElseThrow()))) { throw EnrollmentTransaction.invalid(); }
+            if (supplied.cmpManifest().isPresent() && !supplied.cmpManifest().orElseThrow().originalWireSha256()
+                    .equals(EnrollmentTransactionCodec.sha256(supplied.nativeWire().orElseThrow()))) { throw EnrollmentTransaction.invalid(); }
+        }    }
+
+
+    private static boolean sameCmpAuthentication(EnrollmentTransaction.Requester owner,
+            EnrollmentSdkAdmission retained, EnrollmentSdkAdmission supplied) {
+            if (owner.type() == zeroecho.pki.application.IssuanceExecutionEvidence.ActorType.CMP_PBM) {
+                Map<String,HybridSdkValue> oldAuth = HybridSdkValue.decode(retained.authenticationContext().field(5)).objectFields();
+                Map<String,HybridSdkValue> newAuth = HybridSdkValue.decode(supplied.authenticationContext().field(5)).objectFields();
+                if (!oldAuth.get("authenticationCredentialId").textValue().equals(newAuth.get("authenticationCredentialId").textValue())
+                        || oldAuth.get("authenticationCredentialRevision").integerValue() != newAuth.get("authenticationCredentialRevision").integerValue()) { return false; }
+            }        return true;
+    }
+
 }

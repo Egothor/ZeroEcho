@@ -68,7 +68,7 @@ import zeroecho.pki.spi.store.RevocationView;
  */
 // Log, index, recovery, and feed collaborators must advance under one ownership boundary.
 @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.UnusedAssignment", "PMD.ControlStatementBraces", "PMD.CouplingBetweenObjects" })
+        "PMD.UnusedAssignment", "PMD.CouplingBetweenObjects" })
 final class FilesystemRevocationAuthority implements AutoCloseable {
 
     private static final FilesystemRevocationCurrentIndex.Configuration INDEX_CONFIGURATION =
@@ -319,7 +319,8 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
     }
 
     /**
-     * Validates an exact genesis or resumed authoritative prefix against its source identity, byte boundary and commitment chain.
+     * Validates an exact genesis or resumed authoritative prefix against its source identity, byte
+     * boundary and commitment chain.
      *
      * @param prefix expected authoritative high watermark
      * @param boundary byte boundary corresponding to the prefix
@@ -411,7 +412,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             requireOperational();
             ensureIndex();
             FilesystemRevocationLog.RecoveryTarget head = log.recoveryTarget();
-            if (index.coveredGlobalRevision() != head.globalRevision()) recoverIndex(head);
+            if (index.coveredGlobalRevision() != head.globalRevision()) { recoverIndex(head); }
             DirectView view = new DirectView(this, head);
             view.acquire();
             return view;
@@ -447,13 +448,15 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
     }
 
     /**
-     * Copies and forces exactly the captured authoritative log prefix to a new backup file, then validates the copied prefix.
+     * Copies and forces exactly the captured authoritative log prefix to a new backup file, then
+     * validates the copied prefix.
      *
      * @param target new destination file with a non-null parent directory
      * @return recovery coordinates bounding the validated copy
      * @throws NullPointerException if target or its parent is null
      * @throws IllegalStateException if this authority is closed
-     * @throws IOException if authority requires recovery, target already exists, copying or forcing fails, or copied authority is inconsistent
+     * @throws IOException if authority requires recovery, target already exists, copying or forcing
+     * fails, or copied authority is inconsistent
      */
     /* default */ FilesystemRevocationLog.RecoveryTarget copyAuthoritativePrefix(Path target) throws IOException {
         Objects.requireNonNull(target, "target");
@@ -693,12 +696,12 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
          * {@inheritDoc}
          */
         @Override public void close() {
-            if (closed) return;
+            if (closed) { return; }
             closed = true;
             owner.lifecycle.readLock().unlock();
         }
         private void requireOpen() {
-            if (closed) throw new IllegalStateException("Revocation view is closed");
+            if (closed) { throw new IllegalStateException("Revocation view is closed"); }
         }
     }
 

@@ -59,7 +59,9 @@ record CrlSignerLineage(int version, PkiId issuerId, Optional<PkiId> predecessor
      * @param signerTupleCommitment canonical commitment to the exact hybrid signer role tuple
      * @param issuerBindingCommitment canonical commitment to the immutable issuer cryptographic binding
      * @throws NullPointerException if {@code predecessorSelectedIssuerId} is null
-     * @throws IllegalArgumentException if {@code (version != 1 || predecessorSelectedIssuerId.filter(issuerId::equals).isPresent() || !digest(signerTupleCommitment) || !digest(issuerBindingCommitment))}
+     * @throws IllegalArgumentException if {@code (version != 1 ||
+     * predecessorSelectedIssuerId.filter(issuerId::equals).isPresent() || !digest(signerTupleCommitment)
+     * || !digest(issuerBindingCommitment))}
      */
     CrlSignerLineage {
         Objects.requireNonNull(predecessorSelectedIssuerId, "predecessorSelectedIssuerId");

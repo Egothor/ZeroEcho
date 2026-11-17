@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Arrays;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -184,7 +186,7 @@ final class PublicationRecordCodec {
             throw malformed();
         }
         String decoded = new String(value, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(value, decoded.getBytes(StandardCharsets.UTF_8))) {
+        if (!Arrays.equals(value, decoded.getBytes(StandardCharsets.UTF_8))) {
             throw malformed();
         }
         return decoded;

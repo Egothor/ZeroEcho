@@ -33,6 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
+
+import zeroecho.pki.server.PkiServerConfiguration;
+import zeroecho.pki.server.ServerRealmContext;
+import zeroecho.pki.server.cmp.CmpService;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
@@ -42,14 +50,6 @@ import java.util.function.BooleanSupplier;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
-
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
-import zeroecho.pki.server.PkiServerConfiguration;
-import zeroecho.pki.server.ServerRealmContext;
-import zeroecho.pki.server.cmp.CmpService;
 
 /**
  * Lifecycle owner for the optional CMP RFC 4210/9480 HTTPS listener (RFC 6712 transport).
@@ -63,7 +63,7 @@ import zeroecho.pki.server.cmp.CmpService;
  *
  * @since 1.0
  */
-@SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ControlStatementBraces" })
+@SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
 public final class CmpTransport implements AutoCloseable {
 
     private final HttpsServer listener;
@@ -180,7 +180,11 @@ public final class CmpTransport implements AutoCloseable {
     }
 
     private static void closePartial(HttpsServer listener, ServerRuntime protocol) {
-        if (listener != null) listener.stop(0);
-        if (protocol != null) protocol.close();
+        if (listener != null) {
+            listener.stop(0);
+        }
+        if (protocol != null) {
+            protocol.close();
+        }
     }
 }

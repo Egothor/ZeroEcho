@@ -34,6 +34,11 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.impl.core.continuation.FullCrlSnapshotProvenance;
+import zeroecho.pki.spi.store.MetadataStoreId;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
+
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -109,14 +114,14 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
         this.snapshot = Objects.requireNonNull(store.openRevocationSnapshot(), "revocation snapshot");
         try {
             if (prepared.base().isPresent()) {
-                zeroecho.pki.impl.core.continuation.FullCrlSnapshotProvenance base = prepared.base().orElseThrow().provenance();
+                FullCrlSnapshotProvenance base = prepared.base().orElseThrow().provenance();
                 if (!base.sourceStoreId().equals(snapshot.sourceStoreId()) || base.revision() > snapshot.revision()
                         || base.boundary() > snapshot.boundary()
                         || base.revision() == snapshot.revision() && (base.boundary() != snapshot.boundary()
                                 || !base.commitment().equals(snapshot.commitment()))) {
                     throw invalid("DELTA_BASE_PREFIX_OUTSIDE_SNAPSHOT");
                 }
-                store.requireRevocationPrefix(new zeroecho.pki.spi.store.RevocationTransitionFeed.HighWatermark(
+                store.requireRevocationPrefix(new RevocationTransitionFeed.HighWatermark(
                         base.sourceStoreId(), base.revision(), base.commitment()), base.boundary(), cancellation);
             }
             cancellation.throwIfCancelled();
@@ -140,7 +145,7 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
      * @return stable metadata store identity
      * @throws IllegalStateException if this source is closed
      */
-    /* default */ zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() { requireOpen(); return snapshot.sourceStoreId(); }
+    /* default */ MetadataStoreId sourceStoreId() { requireOpen(); return snapshot.sourceStoreId(); }
     /**
      * Returns the frozen source revision.
      *
@@ -251,7 +256,7 @@ final class FullCrlEntrySource implements CrlEntrySource { // NOPMD - Cyclomatic
             throw invalid("ISSUER_BINDING_INCONSISTENT");
         }
         String profileCommitment = HexFormat.of().formatHex(profile.reference().canonicalSha256());
-        var binding = store.getIssuerCryptographicBinding(generation.issuerId())
+        IssuerCryptographicBinding binding = store.getIssuerCryptographicBinding(generation.issuerId())
                 .orElseThrow(() -> invalid("ISSUER_CRYPTOGRAPHIC_BINDING_MISSING"));
         if (!generation.profilePolicyCommitment().equals(profileCommitment)
                 || !binding.profile().equals(profile.reference())

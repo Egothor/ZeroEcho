@@ -43,6 +43,10 @@ import zeroecho.pki.server.schema.OperationDescriptorCatalog.TransportSemantics;
  * Reviewed request semantics and presentation for every canonical operation.
  */
 final class OperationPresentationDefinitions {
+    private static final String CONFIGURATION = "configuration";
+    private static final String KEY = "key";
+    private static final String JSON = "json";
+    private static final String OCSP = "ocsp";
     private static final String TEXT_WIDGET = "text";
     private static final String PARAM_JUSTIFICATION = "justification";
     private static final String REVOCATION_SECTION = "revocation";
@@ -124,11 +128,11 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
                         ))),
-                new Presentation("key.generate", "Generate managed signing key", "Generate a non-exported signing key; only the first deployment administrator is eligible.", "configuration",
+                new Presentation("key.generate", "Generate managed signing key", "Generate a non-exported signing key; only the first deployment administrator is eligible.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("generationId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry("parameters", new FieldSemantics("enum", "", false, false, false, "", "", ""))))),
-                new Presentation("configuration.choices", "Available configuration choices", "Inspect available formats, signing keys and providers.", "configuration",
+                new Presentation("configuration.choices", "Available configuration choices", "Inspect available formats, signing keys and providers.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
@@ -153,7 +157,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_FORMAT_ID, new FieldSemantics(TEXT_TEXT, "format", false, false, false, "", "", "")),
                                 Map.entry("subjectRef", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, KEY, true, false, false, "", "", "")),
                                 Map.entry("signatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Canonical outgoing signature algorithm identity; omit to retain the configured creation default.", ""))
                         ))),
                 new Presentation("ca.transition", "Transition authority state", "Change the lifecycle state of an authority.", TEXT_AUTHORITIES,
@@ -168,7 +172,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_ISSUER_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry("subjectRef", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("keyRef", new FieldSemantics(TEXT_TEXT, KEY, true, false, false, "", "", "")),
                                 Map.entry("signatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Canonical outgoing signature algorithm identity; omit to retain the configured creation default.", ""))
                         ))),
                 new Presentation("ca.intermediate.issue", "Issue intermediate certificate", "Issue a CA certificate for a subordinate authority.", TEXT_AUTHORITIES,
@@ -188,11 +192,11 @@ final class OperationPresentationDefinitions {
                 new Presentation("ca.rotate", "Rotate CA keys", "Prepare an exact outgoing-key generation; a changed root anchor requires separately approved activation.", TEXT_AUTHORITIES,
                         new TransportSemantics(TEXT_AUTHORITY, TEXT_CA_ID, Map.ofEntries(
                                 Map.entry(TEXT_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
-                                Map.entry("newKeyRef", new FieldSemantics(TEXT_TEXT, "key", false, false, false, "", "", "")),
-                                Map.entry("newAlternativeKeyRef", new FieldSemantics(TEXT_TEXT, "key", false, false, false, "", "", "")),
+                                Map.entry("newKeyRef", new FieldSemantics(TEXT_TEXT, KEY, false, false, false, "", "", "")),
+                                Map.entry("newAlternativeKeyRef", new FieldSemantics(TEXT_TEXT, KEY, false, false, false, "", "", "")),
                                 Map.entry("primarySignatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry("alternativeSignatureAlgorithmId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
-                                Map.entry("expectedHead", new FieldSemantics("json", "", false, false, false, "", "Exact immutable selected-head fence; omitted coordinates are captured before approval.", "")),
+                                Map.entry("expectedHead", new FieldSemantics(JSON, "", false, false, false, "", "Exact immutable selected-head fence; omitted coordinates are captured before approval.", "")),
                                 Map.entry(TEXT_ISSUER_CA_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", ""))
                         ))),
                 new Presentation("issuer.generation.inspect", "Inspect issuer generation", "Show one issuer generation.", TEXT_ISSUERS,
@@ -398,20 +402,20 @@ final class OperationPresentationDefinitions {
                         new TransportSemantics(TEXT_AUTHORITY, "", Map.ofEntries(
                                 Map.entry("publicationId", new FieldSemantics(TEXT_PKI_ID, TEXT_PUBLICATION, false, false, false, "", "", ""))
                         ))),
-                new Presentation("configuration.validate", "Validate configuration", "Validate the active PKI configuration.", "configuration",
+                new Presentation("configuration.validate", "Validate configuration", "Validate the active PKI configuration.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries())),
-                new Presentation("algorithm.binding.list", "List algorithm bindings", "List algorithm bindings.", "configuration",
+                new Presentation("algorithm.binding.list", "List algorithm bindings", "List algorithm bindings.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("origin", new FieldSemantics(TEXT_TEXT, "algorithmOrigin", false, false, false, "", "", "")),
                                 Map.entry("role", new FieldSemantics(TEXT_TEXT, "algorithmRole", false, false, false, "", "", "")),
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AFTER, new FieldSemantics(TEXT_TEXT, "", false, true, false, "", "", ""))
                         ))),
-                new Presentation("algorithm.binding.inspect", "Inspect algorithm binding", "Show one algorithm binding.", "configuration",
+                new Presentation("algorithm.binding.inspect", "Inspect algorithm binding", "Show one algorithm binding.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("bindingId", new FieldSemantics(TEXT_TEXT, "algorithmBinding", false, false, false, "", "", ""))
                         ))),
-                new Presentation("algorithm.binding.validate", "Validate algorithm bindings", "Validate algorithm bindings.", "configuration",
+                new Presentation("algorithm.binding.validate", "Validate algorithm bindings", "Validate algorithm bindings.", CONFIGURATION,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("bindingId", new FieldSemantics(TEXT_TEXT, "algorithmBinding", false, false, false, "", "", "")),
                                 Map.entry("expectedCommitment", new FieldSemantics(TEXT_TEXT, "", false, false, true, "", "", ""))
@@ -509,7 +513,7 @@ final class OperationPresentationDefinitions {
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("approvalId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry("targetOperation", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "Operation id being approved.", "")),
-                                Map.entry("targetArguments", new FieldSemantics("json", "", false, false, false, "", "JSON object of the target operation arguments.", "")),
+                                Map.entry("targetArguments", new FieldSemantics(JSON, "", false, false, false, "", "JSON object of the target operation arguments.", "")),
                                 Map.entry("targetAuthorityId", new FieldSemantics(TEXT_TEXT, TEXT_AUTHORITY, false, false, false, "", "", ""))
                         ))),
                 new Presentation("security.approval.inspect", "Inspect approval", "Show one approval.", TEXT_APPROVALS,
@@ -687,13 +691,13 @@ final class OperationPresentationDefinitions {
                                 Map.entry("accountId", new FieldSemantics(TEXT_TEXT, "acmeAccount", false, false, false, "", "", ""))
                         ))),
                 new Presentation("ocsp.responder.issue-certificate", "Issue managed OCSP responder certificate",
-                        "Issue or explicitly renew one dedicated managed responder certificate; repeated requests reuse canonical work.", "ocsp",
+                        "Issue or explicitly renew one dedicated managed responder certificate; repeated requests reuse canonical work.", OCSP,
                         new TransportSemantics("authority","authorityId",Map.ofEntries(
                                 Map.entry("authorityId",new FieldSemantics(TEXT_PKI_ID,TEXT_AUTHORITY,false,false,false,"","","")),
                                 Map.entry("issuerId",new FieldSemantics(TEXT_PKI_ID,TEXT_ISSUER,false,false,false,"","Exact issuer generation.","")),
-                                Map.entry("primaryKeyRef",new FieldSemantics(TEXT_TEXT,"key",true,false,false,"","Existing dedicated P-384 responder key.","")),
-                                Map.entry("alternativeKeyRef",new FieldSemantics(TEXT_TEXT,"key",true,false,false,"","Existing dedicated ML-DSA-87 responder key.","")),
-                                Map.entry("subject",new FieldSemantics("json","",false,false,false,"","Ordered rdns array of type/value objects.","")),
+                                Map.entry("primaryKeyRef",new FieldSemantics(TEXT_TEXT,KEY,true,false,false,"","Existing dedicated P-384 responder key.","")),
+                                Map.entry("alternativeKeyRef",new FieldSemantics(TEXT_TEXT,KEY,true,false,false,"","Existing dedicated ML-DSA-87 responder key.","")),
+                                Map.entry("subject",new FieldSemantics(JSON,"",false,false,false,"","Ordered rdns array of type/value objects.","")),
                                 Map.entry("profileId",new FieldSemantics(TEXT_TEXT,TEXT_PROFILE,false,false,false,"","Dedicated managed OCSP profile.","")),
                                 Map.entry("profileVersion",new FieldSemantics(TEXT_INTEGER,"",false,false,false,"","Frozen profile version.","")),
                                 Map.entry("profileSha256",new FieldSemantics(TEXT_TEXT,"",false,false,true,"","Exact profile SHA-256.","")),
@@ -702,7 +706,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry("notBefore",new FieldSemantics(TEXT_INSTANT,"",false,false,false,"","Absolute validity start.","")),
                                 Map.entry("notAfter",new FieldSemantics(TEXT_INSTANT,"",false,false,false,"","Absolute validity end.","")),
                                 Map.entry("expectedPredecessorCredentialId",new FieldSemantics(TEXT_PKI_ID,TEXT_CREDENTIAL,false,false,false,"","Only for explicit same-key renewal of the current completed certificate.",""))))),
-                new Presentation("ocsp.responder.register", "Register OCSP responder", "Register an OCSP responder.", "ocsp",
+                new Presentation("ocsp.responder.register", "Register OCSP responder", "Register an OCSP responder.", OCSP,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("responderId", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry("alias", new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
@@ -710,7 +714,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_ISSUER_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_ISSUER, false, false, false, "", "", "")),
                                 Map.entry("signingMode", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "", "")),
                                 Map.entry("responderCredentialId", new FieldSemantics(TEXT_PKI_ID, TEXT_CREDENTIAL, false, false, false, "", "", "")),
-                                Map.entry("signingKeyRef", new FieldSemantics(TEXT_TEXT, "key", true, false, false, "", "", "")),
+                                Map.entry("signingKeyRef", new FieldSemantics(TEXT_TEXT, KEY, true, false, false, "", "", "")),
                                 Map.entry("chainPathId", new FieldSemantics(TEXT_PKI_ID, "path", false, false, false, "", "", "")),
                                 Map.entry("signatureAlgorithm", new FieldSemantics(TEXT_TEXT, "signatureAlgorithm", false, false, false, "", "", "")),
                                 Map.entry("signatureBindingId", new FieldSemantics(TEXT_TEXT, "algorithmBinding", false, false, false, "", "", "")),
@@ -724,23 +728,23 @@ final class OperationPresentationDefinitions {
                                 Map.entry("maximumEntries", new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry("cacheLifetimeMillis", new FieldSemantics(TEXT_LONG, "", false, false, false, "", "", "")),
                                 Map.entry("requestAuthenticationMode", new FieldSemantics(TEXT_ENUM, "", false, false, false, "", "", "")),
-                                Map.entry("requesterTrustPolicy", new FieldSemantics("json", "", false, false, false, "", "Optional JSON requester trust policy.", "")),
-                                Map.entry("hybridSdk",new FieldSemantics("json","",false,false,false,"","Optional zeroecho-hybrid-sdk-v1 dedicated alternative role.",""))
+                                Map.entry("requesterTrustPolicy", new FieldSemantics(JSON, "", false, false, false, "", "Optional JSON requester trust policy.", "")),
+                                Map.entry("hybridSdk",new FieldSemantics(JSON,"",false,false,false,"","Optional zeroecho-hybrid-sdk-v1 dedicated alternative role.",""))
                         ))),
-                new Presentation("ocsp.responder.inspect", "Inspect OCSP responder", "Show one OCSP responder.", "ocsp",
+                new Presentation("ocsp.responder.inspect", "Inspect OCSP responder", "Show one OCSP responder.", OCSP,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("responderId", new FieldSemantics(TEXT_TEXT, "ocspResponder", false, false, false, "", "", ""))
                         ))),
-                new Presentation("ocsp.responder.list", "List OCSP responders", "List OCSP responders.", "ocsp",
+                new Presentation("ocsp.responder.list", "List OCSP responders", "List OCSP responders.", OCSP,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry(TEXT_OFFSET, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_LIMIT, new FieldSemantics(TEXT_INTEGER, "", false, false, false, "", "", ""))
                         ))),
-                new Presentation("ocsp.responder.activate", "Activate OCSP responder", "Activate an OCSP responder.", "ocsp",
+                new Presentation("ocsp.responder.activate", "Activate OCSP responder", "Activate an OCSP responder.", OCSP,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("responderId", new FieldSemantics(TEXT_TEXT, "ocspResponder", false, false, false, "", "", ""))
                         ))),
-                new Presentation("ocsp.responder.deactivate", "Deactivate OCSP responder", "Deactivate an OCSP responder.", "ocsp",
+                new Presentation("ocsp.responder.deactivate", "Deactivate OCSP responder", "Deactivate an OCSP responder.", OCSP,
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(
                                 Map.entry("responderId", new FieldSemantics(TEXT_TEXT, "ocspResponder", false, false, false, "", "", ""))
                         ))),
@@ -789,7 +793,7 @@ final class OperationPresentationDefinitions {
                                 Map.entry(TEXT_LABEL, new FieldSemantics(TEXT_TEXT, "", false, false, false, "", "", "")),
                                 Map.entry(TEXT_AUTHORITY_ID, new FieldSemantics(TEXT_PKI_ID, TEXT_AUTHORITY, false, false, false, "", "", "")),
                                 Map.entry(TEXT_PROFILE_ID, new FieldSemantics(TEXT_TEXT, TEXT_PROFILE, false, false, false, "", "", "")),
-                                Map.entry("keygen", new FieldSemantics("json", "", false, false, false, "", "Server-keygen policy (omit entirely to disable). Fields: enabled (bool), permittedAlgorithms (string array of JCA key algorithm names), maximumKeySizeBits (int ≥ 256), storeGeneratedKeys (bool — true escrows the private key in the CA keyring).", "{\"enabled\":true,\"permittedAlgorithms\":[\"RSA\",\"EC\"],\"maximumKeySizeBits\":4096,\"storeGeneratedKeys\":false}"))
+                                Map.entry("keygen", new FieldSemantics(JSON, "", false, false, false, "", "Server-keygen policy (omit entirely to disable). Fields: enabled (bool), permittedAlgorithms (string array of JCA key algorithm names), maximumKeySizeBits (int ≥ 256), storeGeneratedKeys (bool — true escrows the private key in the CA keyring).", "{\"enabled\":true,\"permittedAlgorithms\":[\"RSA\",\"EC\"],\"maximumKeySizeBits\":4096,\"storeGeneratedKeys\":false}"))
                         ))),
                 new Presentation("est.endpoint.inspect", "Inspect EST endpoint", "Show one EST endpoint.", "est",
                         new TransportSemantics(TEXT_REALM, "", Map.ofEntries(

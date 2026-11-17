@@ -59,20 +59,28 @@ public final class MutualTlsContext {
     }
 
     /**
-     * Builds a client {@link SSLContext} that presents the configured client
-     * identity and trusts only the configured anchors.
+     * Builds a client {@link SSLContext} that presents the configured client identity and trusts
+     * only the configured anchors.
      *
      * @param keystore PKCS#12 file holding the client private key and chain
-     * @param keystorePassword mutable keystore/key password buffer, cleared after initialization is attempted
+     * @param keystorePassword mutable keystore/key password buffer, cleared after initialization is
+     *     attempted
      * @param truststore PKCS#12 file holding the trusted remote issuer(s)
-     * @param truststorePassword mutable trust-store password buffer, cleared after initialization is attempted
+     * @param truststorePassword mutable trust-store password buffer, cleared after initialization
+     *     is attempted
      * @param protocol TLS protocol (for example {@code TLSv1.3})
      * @return an initialised client context
-     * @throws IllegalArgumentException if key/trust material cannot be read or unlocked, or TLS setup fails
-     * @throws NullPointerException if {@code keystore}, {@code keystorePassword}, {@code truststore}, {@code truststorePassword} or {@code protocol} is null
+     * @throws IllegalArgumentException if key/trust material cannot be read or unlocked, or TLS
+     *     setup fails
+     * @throws NullPointerException if {@code keystore}, {@code keystorePassword}, {@code
+     *     truststore}, {@code truststorePassword} or {@code protocol} is null
      */
-    public static SSLContext fromPkcs12(Path keystore, char[] keystorePassword, Path truststore,
-            char[] truststorePassword, String protocol) {
+    public static SSLContext fromPkcs12(
+            Path keystore,
+            char[] keystorePassword,
+            Path truststore,
+            char[] truststorePassword,
+            String protocol) {
         Objects.requireNonNull(keystore, "keystore");
         Objects.requireNonNull(keystorePassword, "keystorePassword");
         Objects.requireNonNull(truststore, "truststore");
@@ -89,7 +97,8 @@ public final class MutualTlsContext {
             context.init(keyManagers.getKeyManagers(), trustManagers.getTrustManagers(), null);
             return context;
         } catch (java.security.GeneralSecurityException | java.io.IOException failure) {
-            throw new IllegalArgumentException("Unable to build remote signing TLS context", failure);
+            throw new IllegalArgumentException(
+                    "Unable to build remote signing TLS context", failure);
         } finally {
             Arrays.fill(keystorePassword, '\0');
             Arrays.fill(truststorePassword, '\0');

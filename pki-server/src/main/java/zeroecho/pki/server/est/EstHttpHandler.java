@@ -83,6 +83,7 @@ import zeroecho.pki.server.PkiServerConfiguration;
  */
 @SuppressWarnings("PMD.AvoidCatchingGenericException")
 public final class EstHttpHandler implements HttpHandler {
+    private static final int SDK_FIELD_COUNT = 2;
 
     private static final int MAX_BODY_BYTES = 64 * 1024;
 
@@ -224,11 +225,11 @@ public final class EstHttpHandler implements HttpHandler {
         String[] sdkSegments = requestPath.startsWith("/.well-known/est/")
                 ? requestPath.substring("/.well-known/est/".length()).split("/", -1) : new String[0];
         boolean sdkPath = sdkSegments.length >= 2 && "hybrid-sdk".equals(sdkSegments[1]);
-        if (sdkPath && hybridSdk.isEmpty()) return error(404, "EST SDK is disabled");
+        if (sdkPath && hybridSdk.isEmpty()) { return error(404, "EST SDK is disabled"); }
         // Require mTLS client certificate.
         X509Certificate clientCert;
         try {
-            clientCert = requireClientCert((HttpsExchange) exchange);
+            clientCert = ClientAuthentication.requireClientCert((HttpsExchange) exchange);
         } catch (EstProtocolException ex) {
             return error(ex.httpStatus(), ex.getMessage());
         }
@@ -250,9 +251,9 @@ public final class EstHttpHandler implements HttpHandler {
         }
         String label = after.substring(0, slash);
         String operation = after.substring(slash + 1);
-        if (!label.isEmpty() && (operation.equals("hybrid-sdk") || operation.startsWith("hybrid-sdk/"))) {
-            var endpoint = service.find(label).orElse(null);
-            if (endpoint == null) return error(404, "EST endpoint is not registered");
+        if (!label.isEmpty() && ("hybrid-sdk".equals(operation) || operation.startsWith("hybrid-sdk/"))) {
+            EstEndpoint endpoint = service.find(label).orElse(null);
+            if (endpoint == null) { return error(404, "EST endpoint is not registered"); }
             return sdkRoute(exchange, endpoint, operation, clientCert, cancellation);
         }
         if (label.isEmpty() || operation.isEmpty() || operation.contains("/")) {
@@ -271,27 +272,27 @@ public final class EstHttpHandler implements HttpHandler {
     private Response sdkRoute(HttpExchange exchange, EstEndpoint endpoint, String operation, X509Certificate certificate,
             CancellationSignal cancellation) throws IOException, EstProtocolException {
         if (hybridSdk.isEmpty() || !exchange.getRequestURI().getRawPath().equals(exchange.getRequestURI().getPath())
-                || exchange.getRequestURI().getRawFragment() != null) return error(404, "EST SDK path not recognized");
+                || exchange.getRequestURI().getRawFragment() != null) { return error(404, "EST SDK path not recognized"); }
         String[] parts = operation.split("/", -1);
-        if (parts.length < 2 || !"v1".equals(parts[1])) return error(404, "EST SDK path not recognized");
-        if (parts.length == 2) {
-            if (!"GET".equals(exchange.getRequestMethod())) return error(405, "EST SDK capability requires GET");
-            if (!service.hybridSdkAvailable(endpoint)) return error(404, "EST SDK profile unavailable");
+        if (parts.length < 2 || !"v1".equals(parts[1])) { return error(404, "EST SDK path not recognized"); }
+        if (parts.length == SDK_FIELD_COUNT) {
+            if (!"GET".equals(exchange.getRequestMethod())) { return error(405, "EST SDK capability requires GET"); }
+            if (!service.hybridSdkAvailable(endpoint)) { return error(404, "EST SDK profile unavailable"); }
             String base = "/.well-known/est/" + endpoint.label() + "/hybrid-sdk/v1";
             return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.capability(base,
                     java.util.List.of("simpleenroll", "simplereenroll"), hybridSdk.orElseThrow().canonicalOrigin(), maximumBodyBytes), Optional.empty());
         }
-        if (parts.length != 3 || !("challenge".equals(parts[2]) || "accept".equals(parts[2]))) return error(404, "EST SDK path not recognized");
-        if (!"POST".equals(exchange.getRequestMethod())) return error(405, "EST SDK action requires POST");
+        if (parts.length != 3 || !("challenge".equals(parts[2]) || "accept".equals(parts[2]))) { return error(404, "EST SDK path not recognized"); }
+        if (!"POST".equals(exchange.getRequestMethod())) { return error(405, "EST SDK action requires POST"); }
         String media = exchange.getRequestHeaders().getFirst("Content-Type");
-        if (media == null || !HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(media.trim())) return error(415, "EST SDK content type required");
+        if (media == null || !HybridSdkHttpCodec.MEDIA_TYPE.equalsIgnoreCase(media.trim())) { return error(415, "EST SDK content type required"); }
         boolean acceptance = "accept".equals(parts[2]);
-        var fields = HybridSdkHttpCodec.parse(readBody(exchange), maximumBodyBytes, acceptance, java.util.Set.of("operation", "requestDer"));
+        java.util.Map<String,zeroecho.pki.application.PkiOperationValue> fields = HybridSdkHttpCodec.parse(readBody(exchange), maximumBodyBytes, acceptance, java.util.Set.of("operation", "requestDer"));
         String selected = HybridSdkHttpCodec.text(fields, "operation");
         byte[] der = HybridSdkHttpCodec.bytes(fields, "requestDer", 1, zeroecho.pki.api.request.X509EnrollmentPayload.MAXIMUM_DER_BYTES);
         String origin = hybridSdk.orElseThrow().canonicalOrigin();
         if (!acceptance) {
-            var challenge = service.challengeSdk(endpoint, selected, der, certificate, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin);
+            zeroecho.pki.server.enrollment.EnrollmentSdkAdmission.Challenge challenge = service.challengeSdk(endpoint, selected, der, certificate, HybridSdkHttpCodec.bytes(fields, "clientNonce", 32, 32), origin);
             return new Response(200, HybridSdkHttpCodec.MEDIA_TYPE, HybridSdkHttpCodec.challenge(challenge.intentId(), challenge.primaryFrame(), challenge.targetFrame()), Optional.empty());
         }
         return enrollment(service.acceptSdk(endpoint, selected, der, certificate, HybridSdkHttpCodec.text(fields, "intentId"), HybridSdkHttpCodec.text(fields, "sdkRequestId"),
@@ -389,17 +390,6 @@ public final class EstHttpHandler implements HttpHandler {
         }
     }
 
-    private static X509Certificate requireClientCert(HttpsExchange exchange) throws EstProtocolException {
-        try {
-            Certificate[] peer = exchange.getSSLSession().getPeerCertificates();
-            if (peer == null || peer.length == 0 || !(peer[0] instanceof X509Certificate x509)) {
-                throw new EstProtocolException(401, "EST requires a valid mTLS client certificate");
-            }
-            return x509;
-        } catch (SSLPeerUnverifiedException failure) {
-            throw new EstProtocolException(401, "EST mTLS client certificate is required but absent", failure);
-        }
-    }
 
     private void send(HttpExchange exchange, String requestId, int status, String contentType, byte[] body)
             throws IOException {
@@ -429,4 +419,20 @@ public final class EstHttpHandler implements HttpHandler {
         }
         exchange.close();
     }
+
+    /** Groups one bounded protocol validation responsibility. */
+    private static final class ClientAuthentication {
+        private static X509Certificate requireClientCert(HttpsExchange exchange) throws EstProtocolException {
+            try {
+                Certificate[] peer = exchange.getSSLSession().getPeerCertificates();
+                if (peer == null || peer.length == 0 || !(peer[0] instanceof X509Certificate x509)) {
+                    throw new EstProtocolException(401, "EST requires a valid mTLS client certificate");
+                }
+                return x509;
+            } catch (SSLPeerUnverifiedException failure) {
+                throw new EstProtocolException(401, "EST mTLS client certificate is required but absent", failure);
+            }
+        }
+    }
+
 }

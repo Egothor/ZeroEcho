@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.signing;
 
+import zeroecho.pki.api.schedule.StatusScheduleState;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -201,7 +203,7 @@ public final class SigningReactor implements AutoCloseable {
      * @throws NullPointerException if command, claim, transferCustody is null
      */
     public SignWorkflowStore.AcceptanceResult acceptScheduledSign(SignWorkflowStore.AcceptanceCommand command,
-            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+            StatusScheduleState.Execution claim, Runnable transferCustody) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(claim, "claim");
         Objects.requireNonNull(transferCustody, "transferCustody");
@@ -355,7 +357,8 @@ public final class SigningReactor implements AutoCloseable {
      * waits for all owned threads under one common deadline. A timeout leaves the
      * reactor quiescing so a later close can retry without closing borrowed
      * dependencies.
-     * @throws IllegalStateException if accepted work or owned threads do not drain within the close bound, or a signing claim permit remains owned
+     * @throws IllegalStateException if accepted work or owned threads do not drain within the close bound, or a signing
+     * claim permit remains owned
      */
     @Override public void close() {
         long startedAt = System.nanoTime();

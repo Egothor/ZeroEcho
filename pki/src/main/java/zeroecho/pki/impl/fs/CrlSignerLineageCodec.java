@@ -52,11 +52,12 @@ final class CrlSignerLineageCodec {
     /**
      * Exact metadata namespace {@code io.zeroecho.pki.crl-signer-lineage}; persisted identities depend on this value.
      */
-    static final String NAMESPACE = "io.zeroecho.pki.crl-signer-lineage";
+    /* default */ static final String NAMESPACE = "io.zeroecho.pki.crl-signer-lineage";
     /**
      * Inclusive maximum encoded metadata record length in bytes.
      */
-    static final int MAXIMUM_BYTES = 16 * 1024;
+    /* default */ static final int MAXIMUM_BYTES = 16 * 1024;
+    private static final int BOOLEAN_TRUE = 1;
     private static final int MAGIC = 0x5a434c4e;
     private CrlSignerLineageCodec() { }
     /**
@@ -66,7 +67,7 @@ final class CrlSignerLineageCodec {
      * @return canonical lineage metadata key
      * @throws NullPointerException if a required input is null
      */
-    static MetadataKey key(PkiId issuer) { return new MetadataKey(NAMESPACE, issuer.value()); }
+    /* default */ static MetadataKey key(PkiId issuer) { return new MetadataKey(NAMESPACE, issuer.value()); }
     /**
      * Encodes hybrid signer-lineage membership without private material or mutable-head inference.
      *
@@ -75,16 +76,16 @@ final class CrlSignerLineageCodec {
      * @throws NullPointerException if the value is null
      * @throws IOException if bounded text encoding fails or the record exceeds its row bound
      */
-    static byte[] encode(CrlSignerLineage value) throws IOException {
-        var bytes = new ByteArrayOutputStream();
-        try (var output = new DataOutputStream(bytes)) {
+    /* default */ static byte[] encode(CrlSignerLineage value) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeInt(MAGIC); output.writeShort(value.version()); output.writeShort(0);
             text(output, value.issuerId().value());
             output.writeBoolean(value.predecessorSelectedIssuerId().isPresent());
-            if (value.predecessorSelectedIssuerId().isPresent()) text(output, value.predecessorSelectedIssuerId().orElseThrow().value());
+            if (value.predecessorSelectedIssuerId().isPresent()) { text(output, value.predecessorSelectedIssuerId().orElseThrow().value()); }
             text(output, value.lineageId().value()); text(output, value.signerTupleCommitment()); text(output, value.issuerBindingCommitment());
         }
-        if (bytes.size() > MAXIMUM_BYTES) throw new IOException("Hybrid CRL lineage exceeds row bound");
+        if (bytes.size() > MAXIMUM_BYTES) { throw new IOException("Hybrid CRL lineage exceeds row bound"); }
         return bytes.toByteArray();
     }
     /**
@@ -96,31 +97,37 @@ final class CrlSignerLineageCodec {
      * @throws NullPointerException if a required input is null
      * @throws IllegalStateException if framing, version, identity, canonical fields or trailing data is invalid
      */
-    static CrlSignerLineage decode(MetadataKey key, byte[] bytes) {
+    /* default */ static CrlSignerLineage decode(MetadataKey key, byte[] bytes) {
         try {
-            if (bytes.length > MAXIMUM_BYTES) throw new IOException("Hybrid CRL lineage exceeds row bound");
-            try (var input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-                if (input.readInt() != MAGIC || input.readUnsignedShort() != 1 || input.readUnsignedShort() != 0) throw new IOException("Unknown hybrid CRL lineage encoding");
-                PkiId issuer = new PkiId(text(input)); int present = input.readUnsignedByte();
-                if (present > 1) throw new IOException("Noncanonical hybrid CRL lineage optional");
-                var predecessor = present == 0 ? Optional.<PkiId>empty() : Optional.of(new PkiId(text(input)));
-                var value = new CrlSignerLineage(1, issuer, predecessor, new PkiId(text(input)), text(input), text(input));
-                if (!key.equals(key(issuer)) || input.read() != -1) throw new IOException("Hybrid CRL lineage identity differs");
-                return value;
-            }
+            return decodeValue(key, bytes);
         } catch (IOException | IllegalArgumentException failure) {
             throw new IllegalStateException("Hybrid CRL signer-lineage evidence invalid", failure);
         }
     }
     private static void text(DataOutputStream output, String value) throws IOException {
         byte[] encoded = value.getBytes(StandardCharsets.US_ASCII);
-        if (encoded.length == 0 || encoded.length > 64 || !value.equals(new String(encoded, StandardCharsets.US_ASCII))) throw new IOException("Invalid lineage scalar");
+        if (encoded.length == 0 || encoded.length > 64 || !value.equals(new String(encoded, StandardCharsets.US_ASCII))) { throw new IOException("Invalid lineage scalar"); }
         output.writeInt(encoded.length); output.write(encoded);
     }
     private static String text(DataInputStream input) throws IOException {
-        int length = input.readInt(); if (length < 1 || length > 64 || length > input.available()) throw new IOException("Invalid lineage scalar length");
+        int length = input.readInt(); if (length < 1 || length > 64 || length > input.available()) { throw new IOException("Invalid lineage scalar length"); }
         byte[] encoded = input.readNBytes(length); String value = new String(encoded, StandardCharsets.US_ASCII);
-        if (!Arrays.equals(encoded, value.getBytes(StandardCharsets.US_ASCII))) throw new IOException("Invalid lineage scalar encoding");
+        if (!Arrays.equals(encoded, value.getBytes(StandardCharsets.US_ASCII))) { throw new IOException("Invalid lineage scalar encoding"); }
         return value;
     }
+
+    private static CrlSignerLineage decodeValue(MetadataKey key, byte[] bytes) throws IOException {
+            if (bytes.length > MAXIMUM_BYTES) { throw new IOException("Hybrid CRL lineage exceeds row bound"); }
+            try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+                if (input.readInt() != MAGIC || input.readUnsignedShort() != 1 || input.readUnsignedShort() != 0) { throw new IOException("Unknown hybrid CRL lineage encoding"); }
+                PkiId issuer = new PkiId(text(input)); int present = input.readUnsignedByte();
+                if (present > BOOLEAN_TRUE) { throw new IOException("Noncanonical hybrid CRL lineage optional"); }
+                Optional<PkiId> predecessor = present == 0 ? Optional.<PkiId>empty() : Optional.of(new PkiId(text(input)));
+                CrlSignerLineage value = new CrlSignerLineage(1, issuer, predecessor, new PkiId(text(input)), text(input), text(input));
+                if (!key.equals(key(issuer)) || input.read() != -1) { throw new IOException("Hybrid CRL lineage identity differs"); }
+                return value;
+            }
+
+    }
+
 }

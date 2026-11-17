@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import java.util.Set;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -45,7 +47,7 @@ import java.util.Objects;
  * auxiliary memory. Callers supply an immutable snapshot of assignments for one
  * decision; the engine never reads persistence or invokes external code.</p>
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass" })
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass"})
 public final class AuthorizationEngine {
     /**
      * Safe decision codes that reveal no protected-object existence.
@@ -110,7 +112,7 @@ public final class AuthorizationEngine {
     public record Request(RealmId realmId, AuthorityExposurePolicy exposure, SecurityPrincipal principal,
             Permission.Action action, Permission.Resource resource, Permission.Relationship relationship,
             Permission.DataView dataView, Permission.Context context, List<Permission.Grant> grants,
-            java.util.Set<String> breakGlassGrantIds) {
+            Set<String> breakGlassGrantIds) {
         /**
          * Validates and snapshots the authorization input.
          * @param realmId active realm identity
@@ -137,7 +139,7 @@ public final class AuthorizationEngine {
             Objects.requireNonNull(dataView, "dataView");
             Objects.requireNonNull(context, "context");
             grants = List.copyOf(Objects.requireNonNull(grants, "grants"));
-            breakGlassGrantIds = java.util.Set.copyOf(
+            breakGlassGrantIds = Set.copyOf(
                     Objects.requireNonNull(breakGlassGrantIds, "breakGlassGrantIds"));
         }
     }
@@ -236,10 +238,10 @@ public final class AuthorizationEngine {
         if (allowed != null) {
             return new Decision(Code.ALLOWED, exact.breakGlassGrantIds().contains(allowed.grantId()));
         }
-        if (matchingExpired) return denied(Code.GRANT_EXPIRED);
-        if (matchingView) return denied(Code.INSUFFICIENT_DATA_VIEW);
-        if (approvalMissing) return denied(Code.APPROVAL_REQUIRED);
-        if (matchingCondition) return denied(Code.CONDITION_NOT_SATISFIED);
+        if (matchingExpired) { return denied(Code.GRANT_EXPIRED); }
+        if (matchingView) { return denied(Code.INSUFFICIENT_DATA_VIEW); }
+        if (approvalMissing) { return denied(Code.APPROVAL_REQUIRED); }
+        if (matchingCondition) { return denied(Code.CONDITION_NOT_SATISFIED); }
         return denied(Code.NO_MATCHING_GRANT);
     }
 
@@ -250,13 +252,13 @@ public final class AuthorizationEngine {
             return false;
         }
         if (grant.scope().authorityId().isPresent()
-                && !grant.scope().authorityId().equals(request.resource().scope().authorityId())) return false;
+                && !grant.scope().authorityId().equals(request.resource().scope().authorityId())) { return false; }
         if (grant.scope().issuerId().isPresent()
-                && !grant.scope().issuerId().equals(request.resource().scope().issuerId())) return false;
+                && !grant.scope().issuerId().equals(request.resource().scope().issuerId())) { return false; }
         if (grant.scope().profileId().isPresent()
-                && !grant.scope().profileId().equals(request.resource().scope().profileId())) return false;
+                && !grant.scope().profileId().equals(request.resource().scope().profileId())) { return false; }
         if (grant.scope().responderId().isPresent()
-                && !grant.scope().responderId().equals(request.resource().scope().responderId())) return false;
+                && !grant.scope().responderId().equals(request.resource().scope().responderId())) { return false; }
         return grant.relationship() == Permission.Relationship.ANY
                 || request.relationship() == Permission.Relationship.OWN
                 && request.resource().ownedBy(request.principal());
@@ -274,7 +276,7 @@ public final class AuthorizationEngine {
                 case AUTHORITY_ACTIVE -> request.context().authorityActive();
                 case PROFILE_MATCH_REQUIRED -> request.resource().scope().profileId().isPresent();
             };
-            if (!matches) return false;
+            if (!matches) { return false; }
         }
         return true;
     }

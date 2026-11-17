@@ -71,7 +71,8 @@ public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String p
      * @param subjectRef normalized CA subject reference
      * @param profileId nonblank strict UTF-8 profile id, at most 256 bytes
      * @param keyRef existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
-     * @param altKeyRef optional alternative key reference for hybrid certificate issuance; when absent the profile's default alternative key reference is used
+     * @param altKeyRef optional alternative key reference for hybrid certificate issuance; when absent the
+     * profile's default alternative key reference is used
      * @param attributes universal attributes (may be empty but not null)
      * @param signatureAlgorithmId exact outgoing primary signature selection, empty for legacy default
      */

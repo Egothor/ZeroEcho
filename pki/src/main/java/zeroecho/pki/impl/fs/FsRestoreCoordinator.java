@@ -33,6 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.File;
+import java.nio.file.DirectoryStream;
+import java.nio.file.LinkOption;
+import java.util.Iterator;
+import zeroecho.pki.api.backup.RestoreIdentity;
+import zeroecho.pki.api.backup.RestoreRejectedException;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -246,7 +253,9 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     /**
-     * Acquires restore-control ownership, reconciles the durable journal and cleans abandoned preparation. On failure, acquired coordinator resources are released; the caller must close a successfully opened coordinator.
+     * Acquires restore-control ownership, reconciles the durable journal and cleans abandoned
+     * preparation. On failure, acquired coordinator resources are released; the caller must close a
+     * successfully opened coordinator.
      *
      * @param root filesystem tree or store root
      * @param limits resource and path limits to enforce
@@ -284,7 +293,8 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     /**
-     * Acquires and retains exclusive store ownership for the normalized root until coordinator closure. Repeated acquisition of an already owned root is a no-op.
+     * Acquires and retains exclusive store ownership for the normalized root until coordinator closure.
+     * Repeated acquisition of an already owned root is a no-op.
      *
      * @param root filesystem tree or store root
      * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
@@ -331,13 +341,15 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
      *
      * @return current restore identity, or empty when no journal exists
      */
-    /* default */ Optional<zeroecho.pki.api.backup.RestoreIdentity> identity() {
-        return status().map(value -> new zeroecho.pki.api.backup.RestoreIdentity(
+    /* default */ Optional<RestoreIdentity> identity() {
+        return status().map(value -> new RestoreIdentity(
                 new PkiId(journal.source()), journal.manifest(), value));
     }
 
     /**
-     * Moves a prepared restore into its staging root, acquires ownership, writes and forces transition markers and publishes the durable journal. Preparation rejections are classified before publication; later failures require journal reconciliation.
+     * Moves a prepared restore into its staging root, acquires ownership, writes and forces transition
+     * markers and publishes the durable journal. Preparation rejections are classified before
+     * publication; later failures require journal reconciliation.
      *
      * @param prepared validated prepared backup whose directory is moved into staging
      * @param baseline baseline store root whose authority must be retained
@@ -349,7 +361,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     /* default */ RestoreStatus stage(BackupPreparation prepared, Path baseline, PkiId restoreId) throws IOException {
         Journal next;
         try { next = prepareJournal(prepared, baseline, restoreId); }
-        catch (IOException rejection) { throw new zeroecho.pki.api.backup.RestoreRejectedException(rejection); }
+        catch (IOException rejection) { throw new RestoreRejectedException(rejection); }
         Path stage = parent.resolve(next.stage());
         atomicMove(prepared.directory(), stage);
         observe(Phase.AFTER_STAGE_MOVE);
@@ -364,13 +376,15 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     /**
-     * Deletes only artifacts belonging to an unpublished restore after verifying the previous terminal restore identity and excluding uncertain or conflicting layouts.
+     * Deletes only artifacts belonging to an unpublished restore after verifying the previous terminal
+     * restore identity and excluding uncertain or conflicting layouts.
      *
      * @param restoreId identity assigned to this restore attempt
      * @param previousRestoreId expected preceding terminal restore identity, or empty when none exists
      * @param manifest exact expected manifest commitment
      * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
-     * @throws IllegalArgumentException if the restore identity is not canonical, repeats its predecessor or has an invalid manifest commitment
+     * @throws IllegalArgumentException if the restore identity is not canonical, repeats its predecessor
+     * or has an invalid manifest commitment
      */
     /* default */ void discardUnpublished(PkiId restoreId, Optional<PkiId> previousRestoreId,
             String manifest) throws IOException {
@@ -387,7 +401,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
         for (Path conflict : List.of(parent.resolve("." + live.getFileName() + ".restore-old-" + id),
                 parent.resolve("." + live.getFileName() + ".restore-failed-" + id),
                 control.resolve(ROLLBACK_PREFIX + id), control.resolve("recovery-" + id))) {
-            if (Files.exists(conflict, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.exists(conflict, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException(INVALID_ROOT_LAYOUT);
             }
         }
@@ -402,8 +416,8 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     private static void discardStage(Path stage) throws IOException {
-        if (Files.exists(stage, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            if (!Files.isDirectory(stage, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(stage, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException(INVALID_ROOT_LAYOUT);
             }
             FsBackupFiles.deleteTree(stage);
@@ -411,7 +425,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     private static void requireOptionalMarker(Path path, String role, String id, String manifest) throws IOException {
-        if (Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
             requireBytes(path, ("1\n" + role + "\n" + id + "\n" + manifest + "\n")
                     .getBytes(StandardCharsets.US_ASCII));
         }
@@ -422,17 +436,17 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
      */
     private void cleanupAbandonedPreparation() throws IOException {
         Path directory = control.resolve("work");
-        if (!Files.exists(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
-        if (!Files.isDirectory(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException(INVALID_ROOT_LAYOUT);
         }
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
             for (Path entry : entries) {
                 String name = entry.getFileName().toString();
                 if (!(name.startsWith(".verification-") || name.startsWith(".baseline-"))
-                        || !Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        || !Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("RESTORE_WORKSPACE_INVALID");
                 }
                 FsBackupFiles.deleteTree(entry);
@@ -645,7 +659,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                 throw new IOException("RESTORE_CANDIDATE_LIMIT");
             }
             total += length;
-            digest.update((root.relativize(path).toString().replace(java.io.File.separatorChar, '/') + "\n" + length + "\n")
+            digest.update((root.relativize(path).toString().replace(File.separatorChar, '/') + "\n" + length + "\n")
                     .getBytes(StandardCharsets.UTF_8));
             try (InputStream input = Files.newInputStream(path)) {
                 long remaining = length;
@@ -664,7 +678,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     private List<Path> inventoryPaths(Path root) throws IOException {
         List<Path> ordered = new ArrayList<>();
         try (Stream<Path> paths = Files.walk(root, 8)) {
-            java.util.Iterator<Path> iterator = paths.iterator();
+            Iterator<Path> iterator = paths.iterator();
             int visited = 0;
             while (iterator.hasNext()) {
                 Path path = iterator.next();
@@ -672,7 +686,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
                 if (Files.isSymbolicLink(path)) { throw new IOException("RESTORE_CANDIDATE_INVENTORY"); }
                 if (Files.isDirectory(path) && root.relativize(path).getNameCount() < 8) { continue; }
                 if (!Files.isRegularFile(path)) { throw new IOException("RESTORE_CANDIDATE_INVENTORY"); }
-                String relative = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
+                String relative = root.relativize(path).toString().replace(File.separatorChar, '/');
                 if (relative.matches("\\.restore-role-[0-9a-f-]{36}") || ".lock/store.lock".equals(relative)) { continue; }
                 FsBackupFiles.validatePath(relative, limits);
                 if (!FsBackupFiles.allowed(relative) || ordered.size() >= limits.entryCount()) {
@@ -789,7 +803,8 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
     }
 
     /**
-     * Reads a file through a fixed upper byte bound, rejecting oversized input rather than allocating from an untrusted file size.
+     * Reads a file through a fixed upper byte bound, rejecting oversized input rather than allocating
+     * from an untrusted file size.
      *
      * @param path relative backup name or filesystem path being processed
      * @param maximum inclusive maximum file length in bytes
@@ -797,7 +812,7 @@ final class FsRestoreCoordinator implements AutoCloseable { // NOPMD CyclomaticC
      * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
      */
     /* default */ static byte[] boundedRead(Path path, int maximum) throws IOException {
-        if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS) || Files.size(path) > maximum) {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > maximum) {
             throw new IOException("RESTORE_RECORD_INVALID");
         }
         try (InputStream input = Files.newInputStream(path)) {

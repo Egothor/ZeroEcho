@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.BufferUnderflowException;
+import java.nio.CharBuffer;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -137,7 +140,7 @@ final class CredentialConfirmationLifecycleCodec {
                     new ConfirmationProofSuiteRef(suiteId, suiteCommitment),
                     consumedRecordCommitment, confirmedAt,
                     recordCommitment);
-        } catch (IllegalArgumentException | java.nio.BufferUnderflowException failure) {
+        } catch (IllegalArgumentException | BufferUnderflowException failure) {
             throw new IOException("Credential confirmation lifecycle metadata is malformed", failure);
         }
     }
@@ -199,7 +202,7 @@ final class CredentialConfirmationLifecycleCodec {
             ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .encode(java.nio.CharBuffer.wrap(value));
+                    .encode(CharBuffer.wrap(value));
             byte[] result = new byte[encoded.remaining()];
             encoded.get(result);
             return result;

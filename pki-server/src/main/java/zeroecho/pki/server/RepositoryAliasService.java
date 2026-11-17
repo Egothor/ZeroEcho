@@ -73,7 +73,7 @@ public final class RepositoryAliasService {
          */
         CURRENT_DELTA_CRL(3);
         private final int code;
-        Type(int code) { this.code = code; }
+        /* default */ Type(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -107,7 +107,7 @@ public final class RepositoryAliasService {
          */
         REMOVED(2);
         private final int code;
-        State(int code) { this.code = code; }
+        /* default */ State(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -312,9 +312,9 @@ public final class RepositoryAliasService {
         String targetCommitment;
         Optional<PkiId> pathId=Optional.empty();
         if(type==Type.CURRENT_CHAIN) {
-            var path=validateChainTarget(authorityId,issuerId.orElseThrow(),targetId);targetCommitment=path.pathCommitment();pathId=Optional.of(targetId);
+            IssuerChainPath path=validateChainTarget(authorityId,issuerId.orElseThrow(),targetId);targetCommitment=path.pathCommitment();pathId=Optional.of(targetId);
         } else {
-            var status=validateStatusTarget(authorityId,targetId,type==Type.CURRENT_CRL?StatusObjectType.CRL:StatusObjectType.DELTA_CRL);targetCommitment=status.content().sha256();
+            StatusObject status=validateStatusTarget(authorityId,targetId,type==Type.CURRENT_CRL?StatusObjectType.CRL:StatusObjectType.DELTA_CRL);targetCommitment=status.content().sha256();
         }
         validateExpectation(store.findRepositoryAlias(idFor(realmId,authorityId,type)),targetId,issuerId,pathId,targetCommitment,expected);
     }
@@ -328,13 +328,13 @@ public final class RepositoryAliasService {
      * @throws IllegalStateException if the current alias expectation conflicts
      */
     public Record validateRemove(PkiId authorityId,Type type,String expected) {
-        var current=require(authorityId,type);
-        if(current.state()!=State.REMOVED&&!current.recordCommitment().equals(expected))throw new IllegalStateException("Repository alias expectation conflicts");
+        Record current=require(authorityId,type);
+        if(current.state()!=State.REMOVED&&!current.recordCommitment().equals(expected)){ throw new IllegalStateException("Repository alias expectation conflicts"); }
         return current;
     }
     private StatusObject validateStatusTarget(PkiId authorityId,PkiId targetId,StatusObjectType type) {
-        var status=repository.statusObject(targetId).orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
-        if(!authorityId.equals(status.issuerCaId())||status.type()!=type)throw new IllegalArgumentException("Repository status target is invalid");
+        StatusObject status=repository.statusObject(targetId).orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
+        if(!authorityId.equals(status.issuerCaId())||status.type()!=type){ throw new IllegalArgumentException("Repository status target is invalid"); }
         requirePublic(targetId,type==StatusObjectType.CRL?DisclosureService.ObjectType.CRL:DisclosureService.ObjectType.DELTA_CRL,"Status object is not public");
         return status;
     }
@@ -355,13 +355,13 @@ public final class RepositoryAliasService {
     private static void validateExpectation(Optional<Record> current,PkiId targetId,Optional<PkiId> issuerId,
             Optional<PkiId> pathId,String targetCommitment,Optional<String> expected) {
         if(current.isEmpty()) {
-            if(expected.isPresent())throw new IllegalStateException("Repository alias expectation conflicts");
+            if(expected.isPresent()){ throw new IllegalStateException("Repository alias expectation conflicts"); }
         } else if(expected.isPresent()) {
-            if(!current.orElseThrow().recordCommitment().equals(expected.orElseThrow()))throw new IllegalStateException("Repository alias expectation conflicts");
+            if(!current.orElseThrow().recordCommitment().equals(expected.orElseThrow())){ throw new IllegalStateException("Repository alias expectation conflicts"); }
         } else {
-            var existing=current.orElseThrow();
+            Record existing=current.orElseThrow();
             if(existing.state()!=State.ACTIVE||!existing.targetObjectId().equals(targetId)||!existing.issuerId().equals(issuerId)
-                    ||!existing.pathId().equals(pathId)||!existing.targetCommitment().equals(targetCommitment))throw new IllegalStateException("Repository alias update requires expected-current commitment");
+                    ||!existing.pathId().equals(pathId)||!existing.targetCommitment().equals(targetCommitment)){ throw new IllegalStateException("Repository alias update requires expected-current commitment"); }
         }
     }
 

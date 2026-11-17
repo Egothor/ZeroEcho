@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -76,11 +79,11 @@ final class SigningLedgerRecovery {
      */
     /* default */ static final String MANIFEST_FILE = "manifest.zem";
     private static final byte[] FORMAT_CONTENT =
-            "ZeroEcho signing ledger\nformat=1\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            "ZeroEcho signing ledger\nformat=1\n".getBytes(StandardCharsets.US_ASCII);
     private static final int MAXIMUM_ROOT_ENTRIES = 16_384;
     private static final SigningActiveWal.NanoClock SYSTEM_CLOCK = System::nanoTime;
     private static final SigningActiveWal.GroupWaitStrategy SYSTEM_WAIT =
-            java.util.concurrent.TimeUnit.NANOSECONDS::timedWait;
+            TimeUnit.NANOSECONDS::timedWait;
     private static final RecoveryFaultInjector NO_RECOVERY_FAULT = (stage, registry) -> { };
     private static final ThreadLocal<RecoveryFaultInjector> RECOVERY_FAULTS = new ThreadLocal<>();
 
@@ -117,7 +120,10 @@ final class SigningLedgerRecovery {
     /**
      * Recovers and publishes the ledger, then starts its active WAL writer.
      *
-     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no explicit observer is supplied. Publication and ordered lifecycle transitions complete before the ready handle is returned.</p>
+     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed
+     * handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no
+     * explicit observer is supplied. Publication and ordered lifecycle transitions complete before the
+     * ready handle is returned.</p>
      *
      * @param root existing ledger directory; symbolic-link roots are rejected
      * @param configuration validated limits for layout, replay, and active WAL resources
@@ -158,7 +164,10 @@ final class SigningLedgerRecovery {
     /**
      * Recovers and publishes the ledger, then starts its active WAL writer.
      *
-     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no explicit observer is supplied. Publication and ordered lifecycle transitions complete before the ready handle is returned.</p>
+     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed
+     * handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no
+     * explicit observer is supplied. Publication and ordered lifecycle transitions complete before the
+     * ready handle is returned.</p>
      *
      * @param root existing ledger directory; symbolic-link roots are rejected
      * @param configuration validated limits for layout, replay, and active WAL resources
@@ -196,7 +205,10 @@ final class SigningLedgerRecovery {
     /**
      * Validates and replays the authoritative ledger into isolated state without starting a writer.
      *
-     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass does not publish recovered state.</p>
+     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed
+     * handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no
+     * explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass
+     * does not publish recovered state.</p>
      *
      * @param root existing ledger directory; symbolic-link roots are rejected
      * @param configuration validated limits for layout, replay, and active WAL resources
@@ -214,7 +226,10 @@ final class SigningLedgerRecovery {
     /**
      * Validates and replays the authoritative ledger into isolated state without starting a writer.
      *
-     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass does not publish recovered state.</p>
+     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed
+     * handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no
+     * explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass
+     * does not publish recovered state.</p>
      *
      * @param root existing ledger directory; symbolic-link roots are rejected
      * @param configuration validated limits for layout, replay, and active WAL resources
@@ -261,7 +276,10 @@ final class SigningLedgerRecovery {
     /**
      * Validates and replays the authoritative ledger into isolated state without starting a writer.
      *
-     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass does not publish recovered state.</p>
+     * <p>Only manifest-referenced committed artifacts are replayed. Resources acquired before a failed
+     * handoff are cleaned up. Recovery-stage faults are inherited from the current thread when no
+     * explicit observer is supplied. Active-WAL suffix repair is deferred until activation; this pass
+     * does not publish recovered state.</p>
      *
      * @param root existing ledger directory; symbolic-link roots are rejected
      * @param configuration validated limits for layout, replay, and active WAL resources
@@ -1000,7 +1018,8 @@ final class SigningLedgerRecovery {
          * @param maximumCheckpointEntries inclusive maximum checkpoint record count
          * @param activeWalConfiguration resource and batching bounds used when activating the recovered WAL
          * @throws NullPointerException if {@code activeWalConfiguration} is null
-         * @throws IllegalArgumentException if root-entry, artifact-size, or checkpoint-entry limits fall outside the supported format bounds
+         * @throws IllegalArgumentException if root-entry, artifact-size, or checkpoint-entry limits
+         * fall outside the supported format bounds
          */
         Configuration {
             Objects.requireNonNull(activeWalConfiguration, "activeWalConfiguration");
@@ -1261,7 +1280,8 @@ final class SigningLedgerRecovery {
         /**
          * Opens the validated WAL passively and durably repairs only its proven incomplete suffix.
          *
-         * <p>Failure closes resources still owned by this candidate. The writer remains stopped until reconstruction, recovery writes, and explicit thread startup complete.</p>
+         * <p>Failure closes resources still owned by this candidate. The writer remains stopped
+         * until reconstruction, recovery writes, and explicit thread startup complete.</p>
          *
          * @return owned passive activation; this prepared owner becomes transferred on success
          * @throws IllegalStateException if this candidate is no longer owned in the read-only prepared state
@@ -1434,7 +1454,8 @@ final class SigningLedgerRecovery {
          *
          * <p>This does not start a writer. The sink contract requires prepared publication to be failure-free.</p>
          *
-         * @throws IllegalStateException if ownership is unavailable, activation is incomplete, or publication already occurred
+         * @throws IllegalStateException if ownership is unavailable, activation is incomplete, or
+         * publication already occurred
          */
         /* default */ synchronized void publishRecoveredState() {
             requireOwnedState(OpenState.PASSIVE_ACTIVATED);
@@ -1461,7 +1482,8 @@ final class SigningLedgerRecovery {
         /**
          * Records that deterministic recovery writes have crossed their durability barriers.
          *
-         * <p>The caller must force the recovery writes before invoking this transition; this method does not itself perform I/O.</p>
+         * <p>The caller must force the recovery writes before invoking this transition; this method
+         * does not itself perform I/O.</p>
          *
          * @throws IllegalStateException if ownership is unavailable or engine reconstruction is not the current state
          */
@@ -1474,7 +1496,8 @@ final class SigningLedgerRecovery {
         /**
          * Records writer startup after recovery durability has been established.
          *
-         * @throws IllegalStateException if ownership is unavailable, writes are not marked forced, or the WAL writer is not open
+         * @throws IllegalStateException if ownership is unavailable, writes are not marked forced,
+         * or the WAL writer is not open
          */
         /* default */ synchronized void markThreadsStarted() {
             requireOwnedState(OpenState.RECOVERY_WRITES_FORCED);
@@ -1488,7 +1511,8 @@ final class SigningLedgerRecovery {
          * Transfers all remaining recovery resources to the ready engine handle.
          *
          * @return owned handle replacing this activated owner
-         * @throws IllegalStateException if ownership is unavailable or writer startup is not the current lifecycle state
+         * @throws IllegalStateException if ownership is unavailable or writer startup is not the
+         * current lifecycle state
          */
         /* default */ synchronized Handle transferToStartedEngine() {
             requireOwnedState(OpenState.THREADS_STARTED);

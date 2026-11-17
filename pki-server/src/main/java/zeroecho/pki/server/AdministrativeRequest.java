@@ -97,6 +97,8 @@ public record AdministrativeRequest(String requestId, long revision, String oper
      * @throws NullPointerException if a required delegated value or optional container is null
      * @throws IllegalArgumentException if delegated identity, timing, commitment or linkage checks fail
      */
+    // Retain the established public compatibility constructor.
+    @SuppressWarnings({"PMD.ExcessiveParameterList"})
     public AdministrativeRequest(String requestId, long revision, String operation,
             PkiOperationValue.ObjectValue envelope, Actor actor, Permission.Scope scope, String operationCommitment,
             Optional<String> profileCommitment, String targetCommitment, State state, Instant createdAt, Instant updatedAt, long executionTimeoutMillis,
@@ -122,7 +124,7 @@ public record AdministrativeRequest(String requestId, long revision, String oper
          */
         public SdkProof {
             if (intentId == null || !intentId.matches("[0-9a-f]{64}") || proofCommitment == null
-                    || !proofCommitment.matches("sha512:[0-9a-f]{128}")) throw new IllegalArgumentException("SDK proof reference is invalid");
+                    || !proofCommitment.matches("sha512:[0-9a-f]{128}")) { throw new IllegalArgumentException("SDK proof reference is invalid"); }
         }
     }
     /**
@@ -194,7 +196,7 @@ public record AdministrativeRequest(String requestId, long revision, String oper
             transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
             evidence = Objects.requireNonNull(evidence, "evidence");
             transportPrincipalId.ifPresent(Permission::requirePrincipal);
-            if ((mode==AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY)!=transportPrincipalId.isPresent()) {
+            if (mode==AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY !=transportPrincipalId.isPresent()) {
                 throw new IllegalArgumentException("Actor transport identity differs from authentication mode");
             }
         }
@@ -228,22 +230,22 @@ public record AdministrativeRequest(String requestId, long revision, String oper
      */
     public AdministrativeRequest {
         Permission.requireId(requestId, "administrative request");
-        if (revision < 0 || operation == null || !operation.matches("[a-z][a-z0-9.-]{2,127}")) throw new IllegalArgumentException("Request identity is invalid");
+        if (revision < 0 || operation == null || !operation.matches("[a-z][a-z0-9.-]{2,127}")) { throw new IllegalArgumentException("Request identity is invalid"); }
         Objects.requireNonNull(envelope, "envelope"); Objects.requireNonNull(actor, "actor"); Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(state, "state"); Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(updatedAt, "updatedAt");
         if (!operationCommitment.matches("[0-9a-f]{64}") || !targetCommitment.matches("[0-9a-f]{64}")
-                || updatedAt.isBefore(createdAt) || executionTimeoutMillis < 1 || executionTimeoutMillis > 120000) {
+                || updatedAt.isBefore(createdAt) || executionTimeoutMillis < 1 || executionTimeoutMillis > 120_000) {
             throw new IllegalArgumentException("Request commitments or execution budget are invalid");
         }
         profileCommitment = Objects.requireNonNull(profileCommitment, "profileCommitment");
         sdkProof = Objects.requireNonNull(sdkProof, "sdkProof");
         approvalId = Objects.requireNonNull(approvalId, "approvalId"); policyCommitment = Objects.requireNonNull(policyCommitment, "policyCommitment");
         receipt = Objects.requireNonNull(receipt, "receipt"); result = Objects.requireNonNull(result, "result"); failureCode = Objects.requireNonNull(failureCode, "failureCode");
-        profileCommitment.ifPresent(value -> {if(!value.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Profile commitment is invalid");});
+        profileCommitment.ifPresent(value -> {if(!value.matches("[0-9a-f]{64}")){ throw new IllegalArgumentException("Profile commitment is invalid"); }});
         approvalId.ifPresent(value -> Permission.requireId(value,"approval"));
-        actor.evidence().ifPresent(value -> {if(!value.realmId().equals(scope.realmId()))throw new IllegalArgumentException("Actor evidence realm differs");});
+        actor.evidence().ifPresent(value -> {if(!value.realmId().equals(scope.realmId())){ throw new IllegalArgumentException("Actor evidence realm differs"); }});
         if (approvalId.isPresent() != policyCommitment.isPresent() || policyCommitment.filter(value -> !value.matches("[0-9a-f]{64}")).isPresent()
-                || failureCode.filter(value -> !value.matches("[A-Z0-9_]{3,128}")).isPresent()) throw new IllegalArgumentException("Request linkage is invalid");
+                || failureCode.filter(value -> !value.matches("[A-Z0-9_]{3,128}")).isPresent()) { throw new IllegalArgumentException("Request linkage is invalid"); }
     }
 
     /**

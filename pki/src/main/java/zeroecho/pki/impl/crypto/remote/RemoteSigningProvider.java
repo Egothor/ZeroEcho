@@ -34,6 +34,18 @@
 
 package zeroecho.pki.impl.crypto.remote;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
+import zeroecho.pki.spi.crypto.SigningInputCapabilities;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -46,18 +58,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
-
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.KeyRef;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
-import zeroecho.pki.spi.crypto.SigningProvider;
-import zeroecho.pki.spi.crypto.SigningInputCapabilities;
-import zeroecho.core.alg.BootstrapAlgorithmIdentities;
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 
 /**
  * Stateless signing provider backed by an externally idempotent remote service.
@@ -142,7 +142,8 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         domainLock.lock();
         try {
             if (boundNamespace != null && !boundNamespace.equals(namespace)) {
-                throw new IllegalArgumentException("Remote provider belongs to a different signing domain");
+                throw new IllegalArgumentException(
+                        "Remote provider belongs to a different signing domain");
             }
             boundNamespace = namespace;
         } finally {
@@ -152,13 +153,15 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
 
     /**
      * Dispatches a stateless signing request using the configured transport.
+     *
      * @param request validated signing request
      * @param control call deadline and cancellation
      * @return remote operation observation
-     * @throws zeroecho.core.err.UnsupportedRoleException if the algorithm is
-     *         LMS/XMSS; rejection occurs before reading content or calling the transport
+     * @throws zeroecho.core.err.UnsupportedRoleException if the algorithm is LMS/XMSS; rejection
+     *     occurs before reading content or calling the transport
      * @throws NullPointerException if {@code request} or {@code control} is null
-     * @throws IllegalArgumentException if namespace, configuration commitment, algorithm, key reference, or content commitment is invalid
+     * @throws IllegalArgumentException if namespace, configuration commitment, algorithm, key
+     *     reference, or content commitment is invalid
      */
     @Override
     public OperationObservation dispatch(SignRequest request, CallControl control) {
@@ -167,21 +170,33 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
         Objects.requireNonNull(control, "control").requireActive(now());
         requireExactDomain(request.namespace());
         if (!configurationCommitment.matches(request.configurationCommitment())) {
-            throw new IllegalArgumentException("Signing provider configuration commitment mismatch");
+            throw new IllegalArgumentException(
+                    "Signing provider configuration commitment mismatch");
         }
         SigningInputCapabilities.Mode mode = inputCapabilities.select(request.algorithmId(),
                 request.contentCommitment().length());
         AlgorithmIdentity digestIdentity = inputCapabilities.prehashedDigests().get(request.algorithmId());
         byte[] content = materializeAndVerify(request, control, digestIdentity);
         try {
-            RemoteSigningTransport.RemoteSignRequest wire = new RemoteSigningTransport.RemoteSignRequest(
-                    request.operationId().value(), request.namespace(), request.semanticFingerprint(),
-                    request.fencingToken(), remoteKeyHandle(request.keyRef()), request.algorithmId(),
-                    request.contentCommitment().sha256(), request.contentCommitment().length(), content,
-                    request.accessContext().principal().type(), request.accessContext().principal().name(),
-                    request.accessContext().purpose().value(), request.deadline(),
-                    SigningInputCapabilities.PROTOCOL_VERSION, mode,
-                    digestIdentity == null ? "" : digestIdentity.canonicalForm(), configurationCommitment);
+            RemoteSigningTransport.RemoteSignRequest wire =
+                    new RemoteSigningTransport.RemoteSignRequest(
+                            request.operationId().value(),
+                            request.namespace(),
+                            request.semanticFingerprint(),
+                            request.fencingToken(),
+                            remoteKeyHandle(request.keyRef()),
+                            request.algorithmId(),
+                            request.contentCommitment().sha256(),
+                            request.contentCommitment().length(),
+                            content,
+                            request.accessContext().principal().type(),
+                            request.accessContext().principal().name(),
+                            request.accessContext().purpose().value(),
+                            request.deadline(),
+                            SigningInputCapabilities.PROTOCOL_VERSION,
+                            mode,
+                            digestIdentity == null ? "" : digestIdentity.canonicalForm(),
+                            configurationCommitment);
             requireActive(request, control);
             RemoteSigningTransport.RemoteSigningStatus status;
             try {
@@ -235,8 +250,11 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
      */
     @Override
     public EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
-        byte[] bytes = transport.publicKeyInfo(remoteKeyHandle(Objects.requireNonNull(keyRef, "keyRef")),
-                new RemoteSigningTransport.RemoteCallControl(now().plus(operationHorizon), CancellationSignal.NONE));
+        byte[] bytes =
+                transport.publicKeyInfo(
+                        remoteKeyHandle(Objects.requireNonNull(keyRef, "keyRef")),
+                        new RemoteSigningTransport.RemoteCallControl(
+                                now().plus(operationHorizon), CancellationSignal.NONE));
         return new EncodedObject(Encoding.DER, bytes);
     }
 
@@ -336,7 +354,8 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
                     total = Math.addExact(total, read);
                     if ((algorithmDigest == null && total > inputCapabilities.rawMessageMaximum())
                             || total > request.contentCommitment().length()) {
-                        throw new IllegalArgumentException("Signing content exceeds its finite bound");
+                        throw new IllegalArgumentException(
+                                "Signing content exceeds its finite bound");
                     }
                     digest.update(chunk, 0, read);
                     if (algorithmDigest == null) {
@@ -360,7 +379,8 @@ public final class RemoteSigningProvider implements SigningProvider, PublicKeyIn
             requireActive(request, control);
             return algorithmDigest == null ? output.toByteArray() : algorithmDigest.digest();
         } catch (IOException failure) {
-            throw new RemoteSigningTransport.RemoteSigningException("Signing content could not be read", failure);
+            throw new RemoteSigningTransport.RemoteSigningException(
+                    "Signing content could not be read", failure);
         }
     }
 

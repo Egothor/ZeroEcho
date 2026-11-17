@@ -33,6 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.impl.crypto.pkcs11;
 
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.crypto.SigningInputCapabilities;
+import zeroecho.pki.spi.crypto.SigningProvider;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.InvalidKeyException;
@@ -54,13 +61,6 @@ import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import zeroecho.core.io.RepeatableContent;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.spi.crypto.SigningInputCapabilities;
-import zeroecho.pki.spi.crypto.SigningProvider;
 
 /**
  * PKCS#11 / HSM signing provider.
@@ -98,21 +98,30 @@ public final class Pkcs11SigningProvider implements SigningProvider {
     /**
      * Creates a PKCS#11 signing provider backed by the given already-opened KeyStore.
      *
-     * @param id                    stable provider identifier (never blank)
-     * @param keyStore              open PKCS#11 KeyStore (caller must not close it)
-     * @param provider              underlying SunPKCS11 provider used for all JCA Signature operations
-     * @param supportedAlgorithms   JCA algorithm names this HSM slot supports
-     * @param backendCommitment     SHA-256 commitment to the backend configuration
-     * @param operationHorizon      signing operation horizon (positive, not used for HSM expiry)
-     * @param keyRefPrefix          key reference prefix (may be empty)
-     * @param keyLabelPattern       key label template (informational)
-     * @param sessionPoolSize       maximum concurrent PKCS#11 sessions (≥ 1)
-     * @throws NullPointerException if {@code id}, {@code keyStore}, {@code provider}, {@code supportedAlgorithms}, {@code backendCommitment}, {@code operationHorizon}, {@code keyRefPrefix} or {@code keyLabelPattern} is null
-     * @throws IllegalArgumentException if id is blank, the supported algorithm set is empty, or sessionPoolSize is less than one
+     * @param id stable provider identifier (never blank)
+     * @param keyStore open PKCS#11 KeyStore (caller must not close it)
+     * @param provider underlying SunPKCS11 provider used for all JCA Signature operations
+     * @param supportedAlgorithms JCA algorithm names this HSM slot supports
+     * @param backendCommitment SHA-256 commitment to the backend configuration
+     * @param operationHorizon signing operation horizon (positive, not used for HSM expiry)
+     * @param keyRefPrefix key reference prefix (may be empty)
+     * @param keyLabelPattern key label template (informational)
+     * @param sessionPoolSize maximum concurrent PKCS#11 sessions (≥ 1)
+     * @throws NullPointerException if {@code id}, {@code keyStore}, {@code provider}, {@code
+     *     supportedAlgorithms}, {@code backendCommitment}, {@code operationHorizon}, {@code
+     *     keyRefPrefix} or {@code keyLabelPattern} is null
+     * @throws IllegalArgumentException if id is blank, the supported algorithm set is empty, or
+     *     sessionPoolSize is less than one
      */
-    /* default */ Pkcs11SigningProvider(String id, KeyStore keyStore, Provider provider,
-            Set<String> supportedAlgorithms, ConfigurationCommitment backendCommitment,
-            Duration operationHorizon, String keyRefPrefix, String keyLabelPattern,
+    /* default */ Pkcs11SigningProvider(
+            String id,
+            KeyStore keyStore,
+            Provider provider,
+            Set<String> supportedAlgorithms,
+            ConfigurationCommitment backendCommitment,
+            Duration operationHorizon,
+            String keyRefPrefix,
+            String keyLabelPattern,
             int sessionPoolSize) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(keyStore, "keyStore must not be null");
@@ -178,7 +187,8 @@ public final class Pkcs11SigningProvider implements SigningProvider {
         }
         Objects.requireNonNull(control, "control").requireActive(Instant.now());
         if (!configurationCommitment.matches(request.configurationCommitment())) {
-            throw new IllegalArgumentException("Signing provider configuration commitment mismatch");
+            throw new IllegalArgumentException(
+                    "Signing provider configuration commitment mismatch");
         }
         byte[] signatureBytes = null;
         try {

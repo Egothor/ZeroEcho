@@ -104,7 +104,8 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
      * @param coverage exact store/revision/boundary/commitment represented by the source
      * @param source borrowed canonically sorted current-state source; must not be null
      * @return immutable published generation identity, path, covered revision, and publication flag
-     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability acknowledgement fails
+     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability
+     * acknowledgement fails
      * @throws NullPointerException if a required argument is null
      * @throws IllegalArgumentException if source count or coverage is invalid
      */
@@ -132,7 +133,8 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
      * @param operations filesystem publication/durability operations; must not be null
      * @param faults deterministic build/publication fault callback; must not be null
      * @return immutable published generation identity, path, covered revision, and publication flag
-     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability acknowledgement fails
+     * @throws IOException if source encoding, authoritative binding, atomic publication, or durability
+     * acknowledgement fails
      * @throws NullPointerException if a required argument is null
      * @throws IllegalArgumentException if source count or coverage is invalid
      */
@@ -707,7 +709,8 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
          * @param finalRecordStart byte offset of the final covered log record, or empty for an empty log
          * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
          * @param globalCommitment global revocation commitment at the captured boundary
-         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is
+         * null; or if {@code globalCommitment} is null
          */
         Coverage {
             Objects.requireNonNull(storeId, "storeId");

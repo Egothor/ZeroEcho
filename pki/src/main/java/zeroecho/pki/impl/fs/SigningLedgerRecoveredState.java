@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Locale;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -147,7 +149,7 @@ final class SigningLedgerRecoveredState {
     }
 
     private static String hex(UUID token) {
-        return String.format(java.util.Locale.ROOT, "%016x%016x",
+        return String.format(Locale.ROOT, "%016x%016x",
                 token.getMostSignificantBits(), token.getLeastSignificantBits());
     }
 

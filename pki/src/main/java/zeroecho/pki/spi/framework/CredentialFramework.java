@@ -86,15 +86,16 @@ public interface CredentialFramework {
          * @param placeholder format-specific example, at most 512 characters
          * @param pattern optional coarse syntax hint, at most 1024 characters
          * @throws NullPointerException if label, help, placeholder, pattern is null
-         * @throws IllegalArgumentException if label is blank or text/pattern metadata exceeds its finite character bound
+         * @throws IllegalArgumentException if label is blank or text/pattern metadata exceeds its
+         * finite character bound
          */
         public SubjectInput {
             Objects.requireNonNull(label, "label");
             Objects.requireNonNull(help, "help");
             Objects.requireNonNull(placeholder, "placeholder");
             Objects.requireNonNull(pattern, "pattern");
-            if (label.isBlank() || label.length() > 128 || help.length() > 2048 || placeholder.length() > 512
-                    || pattern.filter(value -> value.isBlank() || value.length() > 1024).isPresent()) {
+            if (label.isBlank() || label.length() > 128 || help.length() > 2_048 || placeholder.length() > 512
+                    || pattern.filter(value -> value.isBlank() || value.length() > 1_024).isPresent()) {
                 throw new IllegalArgumentException("Subject input metadata is empty or exceeds its bound");
             }
         }
@@ -134,7 +135,7 @@ public interface CredentialFramework {
         Objects.requireNonNull(stored, "stored");
         Objects.requireNonNull(representation, "representation");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
-        if (!"original".equals(representation)) throw new UnsupportedOperationException("Unsupported credential representation");
+        if (!"original".equals(representation)) { throw new UnsupportedOperationException("Unsupported credential representation"); }
         return stored;
     }
 
@@ -156,7 +157,8 @@ public interface CredentialFramework {
          * @param fileExtension safe filename extension without a dot
          * @param encoding exact representation encoding
          * @throws NullPointerException if id, label, mediaType, fileExtension, encoding is null
-         * @throws IllegalArgumentException if representation identifiers or metadata are empty, malformed or exceed their finite bounds
+         * @throws IllegalArgumentException if representation identifiers or metadata are empty,
+         * malformed or exceed their finite bounds
          */
         public CredentialRepresentation {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(label, "label");
@@ -164,7 +166,7 @@ public interface CredentialFramework {
             Objects.requireNonNull(encoding, "encoding");
             if (!id.matches("[a-z][a-z0-9-]{0,31}") || label.isBlank() || label.length() > 128
                     || !mediaType.matches("[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+") || mediaType.length() > 128
-                    || !fileExtension.matches("[a-z0-9]{1,16}")) throw new IllegalArgumentException("Invalid credential representation metadata");
+                    || !fileExtension.matches("[a-z0-9]{1,16}")) { throw new IllegalArgumentException("Invalid credential representation metadata"); }
         }
         /**
          * Returns neutral transport metadata for native public bytes.
@@ -199,7 +201,7 @@ public interface CredentialFramework {
      */
     default java.util.List<CredentialRepresentation> statusRepresentations(zeroecho.pki.api.status.StatusObjectType type,
             zeroecho.pki.api.Encoding storedEncoding) {
-        java.util.Objects.requireNonNull(type,"type");return java.util.List.of(CredentialRepresentation.original(storedEncoding));
+        Objects.requireNonNull(type,"type");return java.util.List.of(CredentialRepresentation.original(storedEncoding));
     }
 
     /**
@@ -218,8 +220,8 @@ public interface CredentialFramework {
     default zeroecho.core.io.RepeatableContent exportStatusContent(zeroecho.pki.api.status.StatusObjectType type,
             zeroecho.pki.api.Encoding storedEncoding,zeroecho.core.io.RepeatableContent content,String representation,
             zeroecho.core.io.CancellationSignal cancellation)throws java.io.IOException {
-        java.util.Objects.requireNonNull(cancellation,"cancellation").throwIfCancelled();
-        if(!"original".equals(representation))throw new UnsupportedOperationException("Status representation unavailable");return content;
+        Objects.requireNonNull(cancellation,"cancellation").throwIfCancelled();
+        if(!"original".equals(representation)){ throw new UnsupportedOperationException("Status representation unavailable"); }return content;
     }
 
     /**

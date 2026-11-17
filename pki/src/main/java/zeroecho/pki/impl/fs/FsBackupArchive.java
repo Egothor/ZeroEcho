@@ -33,6 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.nio.file.attribute.FileTime;
+import java.util.Iterator;
+import java.util.Objects;
+import java.util.stream.Stream;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -113,7 +120,8 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
     /* default */ record Manifest(PkiId id, Instant createdAt, List<Item> items, String digest) { }
 
     /**
-     * Inventories a frozen snapshot, writes and forces its bounded integrity manifest, and publishes a ZIP32 backup through a bounded sink. The returned source owns the completed archive lifetime.
+     * Inventories a frozen snapshot, writes and forces its bounded integrity manifest, and publishes a
+     * ZIP32 backup through a bounded sink. The returned source owns the completed archive lifetime.
      *
      * @param frozen frozen source snapshot directory
      * @param work private directory used for archive publication
@@ -175,12 +183,12 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
         List<Item> items = new ArrayList<>();
         FsBackupFiles.Inventory names = new FsBackupFiles.Inventory();
         FsBackupFiles.Budget budget = new FsBackupFiles.Budget(limits);
-        try (java.util.stream.Stream<Path> walker = Files.walk(root)) {
-            java.util.Iterator<Path> iterator = walker.iterator();
+        try (Stream<Path> walker = Files.walk(root)) {
+            Iterator<Path> iterator = walker.iterator();
             while (iterator.hasNext()) {
                 Path path = iterator.next();
                 if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) { continue; }
-                String relative = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
+                String relative = root.relativize(path).toString().replace(File.separatorChar, '/');
                 names.add(relative, limits);
                 Item item = measure(root, path, limits);
                 budget.add(item.length());
@@ -209,7 +217,7 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
             }
         }
         if (read != length) { throw FsBackupFiles.invalid("BACKUP_LENGTH"); }
-        return new Item(root.relativize(path).toString().replace(java.io.File.separatorChar, '/'),
+        return new Item(root.relativize(path).toString().replace(File.separatorChar, '/'),
                 length, crc.getValue(), digest.digest(), Files.getLastModifiedTime(path).toMillis());
     }
 
@@ -376,7 +384,8 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
     }
 
     /**
-     * Extracts the bounded archive into the target and validates its expected identity, inventory and content commitments before returning the manifest.
+     * Extracts the bounded archive into the target and validates its expected identity, inventory and
+     * content commitments before returning the manifest.
      *
      * @param archive backup archive file
      * @param target target extraction directory
@@ -416,7 +425,7 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
                     throw FsBackupFiles.invalid("BACKUP_DIGEST");
                 }
             }
-            Files.setLastModifiedTime(destination, java.nio.file.attribute.FileTime.fromMillis(
+            Files.setLastModifiedTime(destination, FileTime.fromMillis(
                     expected.get(entry.path()).modifiedMillis()));
         }
         if (!FilesystemPkiStore.CURRENT_STORE_VERSION.equals(Files.readString(target.resolve("VERSION"), StandardCharsets.US_ASCII))) { throw FsBackupFiles.invalid("BACKUP_STORE_VERSION"); }
@@ -434,7 +443,7 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
 
     private static Manifest decodeManifest(byte[] bytes, PkiId expectedId, BackupLimits limits, String digest)
             throws IOException {
-        try (DataInputStream input = new DataInputStream(new java.io.ByteArrayInputStream(bytes))) {
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
             validateManifestHeader(input, expectedId);
             long seconds = input.readLong();
             int nanos = input.readInt();
@@ -529,7 +538,7 @@ final class FsBackupArchive { // NOPMD CyclomaticComplexity - Aggregate lifecycl
          * {@inheritDoc}
          */
         @Override public int read(byte[] bytes, int offset, int length) throws IOException {
-            java.util.Objects.checkFromIndexSize(offset, length, bytes.length);
+            Objects.checkFromIndexSize(offset, length, bytes.length);
             if (length == 0) { return 0; }
             if (remaining == 0) { return -1; }
             int count = channel.read(ByteBuffer.wrap(bytes, offset, (int) Math.min(length, remaining)));

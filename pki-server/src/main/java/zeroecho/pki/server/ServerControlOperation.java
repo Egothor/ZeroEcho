@@ -49,7 +49,7 @@ import zeroecho.pki.server.scep.ScepEndpoint;
 /**
  * Closed transport-neutral server-control administration operation hierarchy.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExcessivePublicCount" })
+@SuppressWarnings({"PMD.ExcessivePublicCount"})
 public sealed interface ServerControlOperation permits ServerControlOperation.RegisterPrincipal,
         ServerControlOperation.InspectPrincipal, ServerControlOperation.ListPrincipals,
         ServerControlOperation.SetPrincipalEnabled, ServerControlOperation.ListRoleTemplates,
@@ -307,7 +307,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
          * @param templateId stable role-template identifier
          * @param version positive template version
          */
-        public InspectRoleTemplate { Permission.requireId(templateId, "role template"); if (version <= 0) throw invalid(); }
+        public InspectRoleTemplate { Permission.requireId(templateId, "role template"); if (version <= 0) { throw invalid(); } }
         /**
          * {@inheritDoc}
          */
@@ -538,7 +538,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public RequestApproval { Permission.requireId(approvalId, "approval");
             Objects.requireNonNull(targetOperation); Objects.requireNonNull(targetResource);
             if (targetOperation instanceof AdministrativeOperation.Control control
-                    && control.operation() instanceof RequestApproval) throw invalid(); }
+                    && control.operation() instanceof RequestApproval) { throw invalid(); } }
         /**
          * {@inheritDoc}
          */
@@ -1165,7 +1165,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
              */
             ACKNOWLEDGE(BackupArtifactCommand.ACKNOWLEDGE);
             private final String operationId;
-            Action(String operationId) { this.operationId = operationId; }
+            /* default */ Action(String operationId) { this.operationId = operationId; }
             /** Returns the stable operation identity.
              * @return stable operation identity
              */
@@ -1301,7 +1301,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
          * @throws NullPointerException if any of {@code authorityId}, {@code type} is null
          */
         public RemoveRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type);
-            if (expectedCurrentCommitment == null || !isCommitment(expectedCurrentCommitment)) throw invalid(); }
+            if (expectedCurrentCommitment == null || !isCommitment(expectedCurrentCommitment)) { throw invalid(); } }
         /**
          * {@inheritDoc}
          */
@@ -1975,7 +1975,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
          */
         public DecideEnrollmentRequest {
             Permission.requireId(id, "enrollment request"); Objects.requireNonNull(choice, "choice");
-            if (expectedCommitment == null || !isCommitment(expectedCommitment)) throw new IllegalArgumentException("Enrollment record commitment is invalid");
+            if (expectedCommitment == null || !isCommitment(expectedCommitment)) { throw new IllegalArgumentException("Enrollment record commitment is invalid"); }
             justification = Permission.requireBounded(justification, 2048, "justification");
         }
         /**
@@ -2047,7 +2047,7 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
     }
 
     private static void page(int offset, int limit) {
-        if (offset < 0 || limit <= 0 || limit > 256) throw invalid();
+        if (offset < 0 || limit <= 0 || limit > 256) { throw invalid(); }
     }
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("Server-control operation input is invalid");

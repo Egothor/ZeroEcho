@@ -157,7 +157,8 @@ final class SigningFormatSupport {
      * @param value canonical text without ISO control characters or unpaired surrogates
      * @param maximumBytes nonnegative inclusive UTF-8 byte bound
      * @return newly allocated exact UTF-8 representation
-     * @throws IllegalArgumentException if the bound is negative or the text is null, empty, non-NFC, contains controls, malformed Unicode or exceeds its byte bound
+     * @throws IllegalArgumentException if the bound is negative or the text is null, empty, non-NFC,
+     * contains controls, malformed Unicode or exceeds its byte bound
      */
     @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static byte[] strictUtf8(String value, int maximumBytes) {

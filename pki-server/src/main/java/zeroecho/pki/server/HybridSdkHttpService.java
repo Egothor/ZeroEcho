@@ -69,7 +69,7 @@ public final class HybridSdkHttpService {
      */
     public Challenge challenge(ServerOperationGateway.Request request, PkiOperationValue.ObjectValue envelope,
             byte[] originalDer, byte[] clientNonce) {
-        var result = coordinator.sdkAdmission().challenge(request, envelope, originalDer, clientNonce);
+        HybridSdkAdmissionService.Challenge result = coordinator.sdkAdmission().challenge(request, envelope, originalDer, clientNonce);
         return new Challenge(result.intentId(), result.primary(), result.target());
     }
     /**

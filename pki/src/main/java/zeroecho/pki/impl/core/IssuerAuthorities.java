@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.util.ArrayList;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiFailureReason;
+
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -69,7 +73,7 @@ final class IssuerAuthorities {
     /* default */ static IssuerGeneration current(PkiStore store, CaRecord authority) {
         IssuerGeneration generation = store.getIssuerGeneration(authority.currentIssuanceIssuerId())
                 .orElseThrow(() -> new PkiException("Current issuer generation not found",
-                        zeroecho.pki.api.PkiFailureReason.ISSUER_GENERATION_NOT_FOUND));
+                        PkiFailureReason.ISSUER_GENERATION_NOT_FOUND));
         if (!authority.caId().equals(generation.authorityId()) || generation.state() != IssuerGenerationState.ACTIVE) {
             throw new PkiException("Current issuer generation unavailable");
         }
@@ -88,7 +92,7 @@ final class IssuerAuthorities {
     /* default */ static IssuerChainPath issuancePath(PkiStore store, CaRecord authority) {
         IssuerChainPath path = store.getIssuerChainPath(authority.issuanceChainPathId())
                 .orElseThrow(() -> new PkiException("Issuance chain path not found",
-                        zeroecho.pki.api.PkiFailureReason.ISSUER_CHAIN_PATH_NOT_FOUND));
+                        PkiFailureReason.ISSUER_CHAIN_PATH_NOT_FOUND));
         if (!authority.caId().equals(path.authorityId())
                 || !authority.currentIssuanceIssuerId().equals(path.issuerId())) {
             throw new PkiException("Issuance chain selection mismatch");
@@ -109,7 +113,7 @@ final class IssuerAuthorities {
         IssuerGeneration generation = current(store, authority);
         return store.getCredential(generation.credentialId())
                 .orElseThrow(() -> new PkiException("Current issuer credential not found",
-                        zeroecho.pki.api.PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
+                        PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
     }
 
     /**
@@ -123,7 +127,7 @@ final class IssuerAuthorities {
      * @throws ClassCastException if the credential does not carry a CA profile binding
      * @throws IllegalArgumentException if generation coordinates violate model constraints
      */
-    /* default */ static IssuerGeneration generation(PkiId authorityId, zeroecho.pki.api.KeyRef keyRef,
+    /* default */ static IssuerGeneration generation(PkiId authorityId, KeyRef keyRef,
             Credential credential) {
         CertificateProfileRef profile = ((CaProfileBinding) credential.profileBinding()).reference();
         String profileCommitment = HexFormat.of().formatHex(profile.canonicalSha256());
@@ -174,7 +178,7 @@ final class IssuerAuthorities {
      */
     /* default */ static IssuerChainPath childPath(PkiId authorityId, PkiId issuerId, PkiId credentialId,
             IssuerChainPath parentPath) {
-        List<PkiId> credentials = new java.util.ArrayList<>();
+        List<PkiId> credentials = new ArrayList<>();
         credentials.add(credentialId);
         credentials.addAll(parentPath.orderedCredentialIds());
         return IssuerChainPath.create(authorityId, issuerId, credentials);

@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.util.Optional;
+import zeroecho.pki.spi.framework.ValidatedCaRequest;
+
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Objects;
@@ -60,7 +63,7 @@ import zeroecho.pki.api.request.SubjectRdn;
  * </p>
  */
 @SuppressWarnings("PMD.DataClass")
-public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.framework.ValidatedCaRequest {
+public final class ValidatedCaCertificateRequest implements ValidatedCaRequest {
     /**
      * Closed CA certificate operations authorized by this gate.
      */
@@ -153,8 +156,9 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
      * @throws NullPointerException if a required input or collection element is null
      * @throws IllegalArgumentException if the serial is nonpositive or exceeds 20 bytes
      */
+    /* default */
     @SuppressWarnings("PMD.ExcessiveParameterList")
-    /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
+    ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
             PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, EncodedObject exactPublicKey, Validity validity,
             BigInteger serial, CaCertificatePolicy policy) {
@@ -184,8 +188,9 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
      * @throws NullPointerException if a required input or collection element is null
      * @throws IllegalArgumentException if the serial is nonpositive or exceeds 20 bytes
      */
+    /* default */
     @SuppressWarnings("PMD.ExcessiveParameterList")
-    /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
+    ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
             PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, EncodedObject exactPublicKey, Validity validity,
             BigInteger serial, CaCertificatePolicy policy, X509AlgorithmBindingPolicy algorithmBindingPolicy) {
@@ -378,7 +383,7 @@ public final class ValidatedCaCertificateRequest implements zeroecho.pki.spi.fra
      *
      * @return frozen inputs, when supplied
      */
-    public java.util.Optional<FrozenPublication> frozenPublication() {
-        return java.util.Optional.ofNullable(frozenPublication);
+    public Optional<FrozenPublication> frozenPublication() {
+        return Optional.ofNullable(frozenPublication);
     }
 }

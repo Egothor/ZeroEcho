@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Iterator;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -136,7 +138,8 @@ final class CredentialContentTransaction {
     // The handoff marker unwraps its original IOException and installs the store fence before releasing the lock.
     /**
      * Publishes X.509 content or verifies an exact completed replay while holding the credential handoff lock.
-     * The usability callback runs after acquiring the lock; unconfirmed publication invokes the recovery callback before unlocking.
+     * The usability callback runs after acquiring the lock; unconfirmed publication invokes the recovery
+     * callback before unlocking.
      *
      * @param credential X.509 credential with persisted store-owned content
      * @param requireStoreUsable callback rejecting a fenced or otherwise unusable store
@@ -369,7 +372,7 @@ final class CredentialContentTransaction {
             return;
         }
         try (Stream<Path> stream = Files.list(root)) {
-            java.util.Iterator<Path> iterator = stream
+            Iterator<Path> iterator = stream
                     .filter(path -> path.getFileName().toString().endsWith(PRIVATE_SUFFIX)).iterator();
             while (iterator.hasNext()) {
                 Files.deleteIfExists(iterator.next());
@@ -750,8 +753,16 @@ final class CredentialContentTransaction {
          * @param length exact encoded content length in bytes
          * @param sha256 canonical lowercase SHA-256 hexadecimal content commitment
          * @param lifecycle durable content lifecycle classification
-         * @throws NullPointerException if {@code state} is null; or if {@code credentialId} is null; or if {@code owner} is null; or if {@code storeId} is null; or if {@code contentId} is null; or if {@code encoding} is null; or if {@code sha256} is null; or if {@code lifecycle} is null
-         * @throws IllegalArgumentException if {@code (!owner.equals(DurableContentOwner.credentialRecord(credentialId)) || lifecycle != DurableContentReference.Lifecycle.PERSISTED || length < 0L || !storeId.matches("[0-9a-f]{32}") || !contentId.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}") || !sha256.matches("[0-9a-f]{64}"))}
+         * @throws NullPointerException if {@code state} is null; or if {@code credentialId} is null;
+         * or if {@code owner} is null; or if {@code storeId} is null; or if {@code contentId} is
+         * null; or if {@code encoding} is null; or if {@code sha256} is null; or if {@code
+         * lifecycle} is null
+         * @throws IllegalArgumentException if {@code
+         * (!owner.equals(DurableContentOwner.credentialRecord(credentialId)) || lifecycle !=
+         * DurableContentReference.Lifecycle.PERSISTED || length < 0L ||
+         * !storeId.matches("[0-9a-f]{32}") ||
+         * !contentId.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+         * || !sha256.matches("[0-9a-f]{64}"))}
          */
         Intent {
             Objects.requireNonNull(state, "state");

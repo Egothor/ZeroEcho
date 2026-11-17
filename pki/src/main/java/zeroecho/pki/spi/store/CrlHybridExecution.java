@@ -78,15 +78,16 @@ public record CrlHybridExecution(int version, PkiId parentId, String parentComma
      * @param revision exactly 0 before adoption and 1 after adoption
      * @param nativeAcceptanceCommitment exact accepted native-child commitment, present only after adoption
      * @param nativeTbs retained DER operation content for the native child, present only after adoption
-     * @param alternativeSignatureSha256 digest of the actual retained alternative signature, present only after adoption
+     * @param alternativeSignatureSha256 digest of the actual retained alternative signature, present only
+     * after adoption
      */
     public CrlHybridExecution {
         Objects.requireNonNull(phase, "phase");
         Objects.requireNonNull(nativeAcceptanceCommitment, "nativeAcceptanceCommitment");
         Objects.requireNonNull(nativeTbs, "nativeTbs");
         Objects.requireNonNull(alternativeSignatureSha256, "alternativeSignatureSha256");
-        var parent = canonical(parentId);
-        var child = canonical(nativeChildId);
+        SigningSubmissionId parent = canonical(parentId);
+        SigningSubmissionId child = canonical(nativeChildId);
         digest(issuerBindingCommitment); digest(roleTupleCommitment);
         if (version != 1 || parentId.equals(nativeChildId) || !parent.namespace().equals(child.namespace())
                 || !parent.createdAt().equals(child.createdAt()) || parentCommandCommitment == null
@@ -107,7 +108,7 @@ public record CrlHybridExecution(int version, PkiId parentId, String parentComma
     }
 
     private static SigningSubmissionId canonical(PkiId id) {
-        var parsed = SigningSubmissionId.parse(Objects.requireNonNull(id, "id"));
+        SigningSubmissionId parsed = SigningSubmissionId.parse(Objects.requireNonNull(id, "id"));
         String nonce = id.value().substring(id.value().lastIndexOf(':') + 1);
         String expected = "zsign:v1:" + parsed.namespace() + ":" + parsed.createdAt().toEpochMilli() + ":" + nonce;
         if (!nonce.matches("[0-9a-f]{32}") || !expected.equals(id.value())) {

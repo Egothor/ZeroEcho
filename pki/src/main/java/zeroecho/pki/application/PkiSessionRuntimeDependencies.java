@@ -48,7 +48,8 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofProvider;
  * @param auditSink optional precomposed lifecycle-owned audit sink
  * @param keyPossessionProofProviders explicitly trusted key-possession proof providers
  * @param credentialConfirmationProofPolicy optional server-controlled proof runtime policy
- * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link DashboardLiveSource#NONE}
+ * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link
+ * DashboardLiveSource#NONE}
  */
 // The proof-policy component name defines the exported runtime-wiring accessor.
 @SuppressWarnings("PMD.LongVariable")
@@ -72,8 +73,11 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      * @param auditSink optional precomposed lifecycle-owned audit sink
      * @param keyPossessionProofProviders explicitly trusted key-possession proof providers
      * @param credentialConfirmationProofPolicy optional server-controlled proof runtime policy
-     * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link DashboardLiveSource#NONE}
-     * @throws NullPointerException if keyringUnlockProvider, auditSink, keyPossessionProofProviders, credentialConfirmationProofPolicy, dashboardLiveSource is null or a supplied collection contains a null member
+     * @param dashboardLiveSource server-layer live counters for dashboard metrics; defaults to {@link
+     * DashboardLiveSource#NONE}
+     * @throws NullPointerException if keyringUnlockProvider, auditSink, keyPossessionProofProviders,
+     * credentialConfirmationProofPolicy, dashboardLiveSource is null or a supplied collection contains a
+     * null member
      */
     public PkiSessionRuntimeDependencies {
         keyringUnlockProvider = Objects.requireNonNull(keyringUnlockProvider, "keyringUnlockProvider");

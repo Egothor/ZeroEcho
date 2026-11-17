@@ -95,7 +95,7 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
      * @throws NullPointerException if the source identity or optional container is null
      * @throws IllegalArgumentException if retry or high-watermark coordinates are invalid
      */
-    RevocationAuditProjectionState {
+    /* default */ RevocationAuditProjectionState {
         Objects.requireNonNull(sourceStoreId, "sourceStoreId");
         lastPosition = Objects.requireNonNull(lastPosition, "lastPosition");
         nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
@@ -125,7 +125,7 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
          * @throws NullPointerException if state is null
          * @throws IllegalArgumentException if the commitment is invalid
          */
-        Loaded {
+        /* default */ Loaded {
             Objects.requireNonNull(state, "state");
             requireDigest(recordCommitment);
         }
@@ -271,7 +271,7 @@ record RevocationAuditProjectionState(MetadataStoreId sourceStoreId,
      * @throws NullPointerException if payload is null
      * @throws IllegalArgumentException if bytes are empty, oversized, malformed, noncanonical or unsupported
      */
-    @SuppressWarnings("PMD.PreserveStackTrace") // persisted bytes are untrusted and causes are sanitized
+    /* default */ @SuppressWarnings("PMD.PreserveStackTrace") // persisted bytes are untrusted and causes are sanitized
     /* default */ static RevocationAuditProjectionState decode(byte[] payload) {
         byte[] source = Objects.requireNonNull(payload, "payload").clone();
         if (source.length == 0 || source.length > MAXIMUM_PAYLOAD_BYTES) {

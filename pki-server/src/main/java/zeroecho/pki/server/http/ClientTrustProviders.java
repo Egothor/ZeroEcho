@@ -35,21 +35,19 @@ package zeroecho.pki.server.http;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
 import java.util.HashSet;
-import java.util.Set;
+import java.util.List;
 import java.util.Objects;
 import java.util.ServiceLoader;
-
+import java.util.Set;
 import javax.net.ssl.X509TrustManager;
-
 import zeroecho.pki.server.spi.PkiServerClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
 /**
  * Deterministic explicit provider resolver for forwarded-client trust.
  */
-@SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+/* default */ @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
 final class ClientTrustProviders {
     private ClientTrustProviders() {
     }

@@ -33,15 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.util.Objects;
-
-import zeroecho.pkix.AlgorithmIdentifier;
-
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pkix.AlgorithmIdentifier;
+
+import java.util.Objects;
 
 /**
  * Internal mapper from X.509 and PKCS#10 signature algorithm identifiers to
@@ -100,27 +99,28 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
  * </ul>
  */
 public final class OidAlgorithmMapper {
-    private static final java.util.Set<String> ABSENT_SIGNATURE_OIDS = java.util.Set.of(
-            StandardX509Bindings.OID_ECDSA_SHA256,
-            StandardX509Bindings.OID_ECDSA_SHA384,
-            StandardX509Bindings.OID_ECDSA_SHA512,
-            StandardX509Bindings.OID_ED25519,
-            StandardX509Bindings.OID_ED448,
-            StandardX509Bindings.OID_ML_DSA_44,
-            StandardX509Bindings.OID_ML_DSA_65,
-            StandardX509Bindings.OID_ML_DSA_87,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_128S,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_128F,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_192S,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_192F,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_256S,
-            StandardX509Bindings.OID_SLH_DSA_SHA2_256F,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_128S,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_128F,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_192S,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_192F,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_256S,
-            StandardX509Bindings.OID_SLH_DSA_SHAKE_256F);
+    private static final java.util.Set<String> ABSENT_SIGNATURE_OIDS =
+            java.util.Set.of(
+                    StandardX509Bindings.OID_ECDSA_SHA256,
+                    StandardX509Bindings.OID_ECDSA_SHA384,
+                    StandardX509Bindings.OID_ECDSA_SHA512,
+                    StandardX509Bindings.OID_ED25519,
+                    StandardX509Bindings.OID_ED448,
+                    StandardX509Bindings.OID_ML_DSA_44,
+                    StandardX509Bindings.OID_ML_DSA_65,
+                    StandardX509Bindings.OID_ML_DSA_87,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_128S,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_128F,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_192S,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_192F,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_256S,
+                    StandardX509Bindings.OID_SLH_DSA_SHA2_256F,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_128S,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_128F,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_192S,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_192F,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_256S,
+                    StandardX509Bindings.OID_SLH_DSA_SHAKE_256F);
 
     /**
      * Creates no instances.

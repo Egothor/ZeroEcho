@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.BufferUnderflowException;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -146,12 +150,12 @@ final class CredentialConfirmationReviewCursorCodec {
             PkiId credentialId = new PkiId(decoded);
             // Reuse the public model's exact strict UTF-8 bound.
             new CredentialConfirmationInitialization(credentialId,
-                    zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy.PUBLIC,
+                    ConfirmationDisclosurePolicy.PUBLIC,
                     "0".repeat(64), false, reviewAt,
-                    new zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef(
+                    new ConfirmationProofSuiteRef(
                             "cursor.v1", "0".repeat(64)));
             return new State(storeId, scopeBinding, cutoff, reviewAt, credentialId);
-        } catch (IllegalArgumentException | java.nio.BufferUnderflowException
+        } catch (IllegalArgumentException | BufferUnderflowException
                 | CharacterCodingException failure) {
             throw malformed();
         }

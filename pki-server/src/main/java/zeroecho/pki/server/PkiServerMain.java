@@ -33,6 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.core.spi.KeyringUnlockProvider;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.impl.secrets.PublisherSecretResolver;
+import zeroecho.pki.impl.secrets.PublisherSecretsStore;
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.sdk.guard.UnlockMaterial;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -45,23 +54,17 @@ import java.util.concurrent.CountDownLatch;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import zeroecho.core.spi.KeyringUnlockProvider;
-import zeroecho.core.storage.KeyringPassword;
-import zeroecho.pki.application.PkiSessionConfiguration;
-import zeroecho.pki.application.PkiSessionRuntimeDependencies;
-import zeroecho.pki.impl.secrets.PublisherSecretResolver;
-import zeroecho.pki.impl.secrets.PublisherSecretsStore;
-import zeroecho.pki.spi.ProviderConfig;
-import zeroecho.sdk.guard.UnlockMaterial;
-
 /**
  * Production command-line entry point for the administrative HTTPS server.
  */
 public final class PkiServerMain {
+    private static final String TRANSFER_CONFIG_FLAG = "--backup-transfer-config";
+    private static final String ENROLLMENT_CONFIG_FLAG = "--enrollment-config";
     private static final Logger LOG = Logger.getLogger(PkiServerMain.class.getName());
     private static final String DEV_PASSWORD_FLAG = "--publisher-secrets-dev-password";
 
-    private static final String HELP = """
+    private static final String HELP =
+            """
             Usage: zeroecho-pki-server --config <server-config.json> [--backup-transfer-config <transfer.json>]
                    [--enrollment-config <enrollment.json>]
                    zeroecho-pki-server --validate-config --config <server-config.json>
@@ -86,17 +89,23 @@ public final class PkiServerMain {
      */
     public static void main(String[] arguments) {
         int result = run(arguments);
-        if (result != 0) System.exit(result);
+        if (result != 0) {
+            System.exit(result);
+        }
     }
 
     /**
-     * Runs configuration validation or the long-lived HTTPS server and reports classified process status without exiting the JVM.
+     * Runs configuration validation or the long-lived HTTPS server and reports classified process
+     * status without exiting the JVM.
      *
      * @param arguments exact command-line arguments; no null entries
-     * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
+     * @return zero on success/help, two for refused input/prerequisites, or three for an
+     *     unconfirmed runtime failure
      * @throws NullPointerException if the arguments array is null
      */
-    static int run(String[] arguments) {
+    // Standalone process owns its shutdown hook and preserves the caller interruption signal.
+    @SuppressWarnings({"PMD.DoNotUseThreads", "PMD.AvoidCatchingGenericException"})
+    /* default */ static int run(String... arguments) {
         try {
             if (arguments.length == 1 && "--help".equals(arguments[0])) {
                 System.out.print(HELP);
@@ -108,21 +117,13 @@ public final class PkiServerMain {
                 System.out.println("zeroecho-pki-server " + version);
                 return 0;
             }
-            char[] devPassword = extractDevPassword(arguments);
+            char[] devPassword = extractDevPassword(arguments).orElse(null);
             String[] remaining = stripDevPasswordFlag(arguments);
-            Optional<BackupTransferConfiguration> transfer = Optional.empty();
-            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment = Optional.empty();
-            java.util.List<String> baseArguments = new java.util.ArrayList<>();
-            for (int index = 0; index < remaining.length; index++) {
-                if ("--backup-transfer-config".equals(remaining[index])) {
-                    if (transfer.isPresent() || index + 1 >= remaining.length) throw new IllegalArgumentException("Invalid transfer option");
-                    transfer = Optional.of(BackupTransferConfiguration.read(Path.of(remaining[++index])));
-                } else if ("--enrollment-config".equals(remaining[index])) {
-                    if (enrollment.isPresent() || index + 1 >= remaining.length) throw new IllegalArgumentException("Invalid enrollment option");
-                    enrollment = Optional.of(zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.read(Path.of(remaining[++index])));
-                } else baseArguments.add(remaining[index]);
-            }
-            remaining = baseArguments.toArray(String[]::new);
+            StartupArguments startup = startupArguments(remaining);
+            Optional<BackupTransferConfiguration> transfer = startup.transfer();
+            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment =
+                    startup.enrollment();
+            remaining = startup.remaining();
             boolean validate = Arrays.asList(remaining).contains("--validate-config");
             Path path = configurationPath(remaining, validate);
             PkiServerConfiguration configuration = PkiServerConfigurationCodec.read(path);
@@ -133,8 +134,9 @@ public final class PkiServerMain {
             }
             configuration = resolvePublisherSecrets(configuration, devPassword);
             PkiSessionRuntimeDependencies dependencies = runtimeDependencies(configuration);
-            PkiHttpsServer server = PkiHttpsServer.start(configuration, dependencies, transfer, enrollment);
-            server.installShutdownHook();
+            // The process shutdown hook retains ownership of the started server.
+            PkiHttpsServer.start(configuration, dependencies, transfer, enrollment)
+                    .installShutdownHook();
             new CountDownLatch(1).await();
             return 0;
         } catch (InterruptedException interrupted) {
@@ -149,37 +151,84 @@ public final class PkiServerMain {
         }
     }
 
+    /**
+     * Parsed optional sidecar configuration; input validation and reads keep command-line order.
+     */
+    private record StartupArguments(
+            String[] remaining,
+            Optional<BackupTransferConfiguration> transfer,
+            Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment) {}
+
+    private static StartupArguments startupArguments(String... remaining) throws IOException {
+        Optional<BackupTransferConfiguration> transfer = Optional.empty();
+        Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment =
+                Optional.empty();
+        List<String> baseArguments = new ArrayList<>();
+        java.util.Iterator<String> arguments = Arrays.asList(remaining).iterator();
+        while (arguments.hasNext()) {
+            String argument = arguments.next();
+            if (TRANSFER_CONFIG_FLAG.equals(argument)) {
+                if (transfer.isPresent() || !arguments.hasNext()) {
+                    throw new IllegalArgumentException("Invalid transfer option");
+                }
+                transfer = Optional.of(BackupTransferConfiguration.read(Path.of(arguments.next())));
+            } else if (ENROLLMENT_CONFIG_FLAG.equals(argument)) {
+                if (enrollment.isPresent() || !arguments.hasNext()) {
+                    throw new IllegalArgumentException("Invalid enrollment option");
+                }
+                enrollment =
+                        Optional.of(
+                                zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration.read(
+                                        Path.of(arguments.next())));
+            } else {
+                baseArguments.add(argument);
+            }
+        }
+        return new StartupArguments(baseArguments.toArray(String[]::new), transfer, enrollment);
+    }
+
     private static Path configurationPath(String[] arguments, boolean validate) {
         int expected = validate ? 3 : 2;
-        if (arguments.length != expected) throw new IllegalArgumentException("Invalid invocation");
+        if (arguments.length != expected) {
+            throw new IllegalArgumentException("Invalid invocation");
+        }
         int configIndex = validate && "--validate-config".equals(arguments[0]) ? 1 : 0;
-        if (!"--config".equals(arguments[configIndex])) throw new IllegalArgumentException("Invalid invocation");
-        if (validate && !"--validate-config".equals(arguments[2])) {
-            if (!"--validate-config".equals(arguments[0])) throw new IllegalArgumentException("Invalid invocation");
+        if (!"--config".equals(arguments[configIndex])) {
+            throw new IllegalArgumentException("Invalid invocation");
+        }
+        if (validate
+                && !"--validate-config".equals(arguments[2])
+                && !"--validate-config".equals(arguments[0])) {
+            throw new IllegalArgumentException("Invalid invocation");
         }
         return Path.of(arguments[configIndex + 1]);
     }
 
     private static PkiSessionRuntimeDependencies runtimeDependencies(PkiServerConfiguration configuration) {
         Optional<String> environment = configuration.runtime().keyUnlockEnvironmentVariable();
-        if (environment.isEmpty()) return PkiSessionRuntimeDependencies.none();
-        KeyringUnlockProvider provider = () -> {
-            String value = System.getenv(environment.orElseThrow());
-            if (value == null || value.isEmpty()) throw new IOException("Configured unlock source is unavailable");
-            char[] secret = value.toCharArray();
-            try {
-                return new KeyringPassword(secret);
-            } finally {
-                Arrays.fill(secret, '\0');
-            }
-        };
+        if (environment.isEmpty()) {
+            return PkiSessionRuntimeDependencies.none();
+        }
+        KeyringUnlockProvider provider =
+                () -> {
+                    String value = System.getenv(environment.orElseThrow());
+                    if (value == null || value.isEmpty()) {
+                        throw new IOException("Configured unlock source is unavailable");
+                    }
+                    char[] secret = value.toCharArray();
+                    try {
+                        return new KeyringPassword(secret);
+                    } finally {
+                        Arrays.fill(secret, '\0');
+                    }
+                };
         return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(provider);
     }
 
     // --- publisher secrets resolution ---
 
     private static PkiServerConfiguration resolvePublisherSecrets(
-            PkiServerConfiguration configuration, char[] devPassword)
+            PkiServerConfiguration configuration, char... devPassword)
             throws IOException, GeneralSecurityException {
         List<ProviderConfig> publishers = configuration.realm().pkiSessionConfiguration().publishers();
         Optional<String> storePath = configuration.runtime().publisherSecretsStore();
@@ -212,8 +261,8 @@ public final class PkiServerMain {
         return withResolvedPublishers(configuration, List.copyOf(resolved));
     }
 
-    private static char[] resolveStorePassword(PkiServerConfiguration configuration,
-            char[] devPassword) throws IOException {
+    private static char[] resolveStorePassword(
+            PkiServerConfiguration configuration, char... devPassword) throws IOException {
         if (devPassword != null) {
             return devPassword.clone();
         }
@@ -254,10 +303,12 @@ public final class PkiServerMain {
 
     // --- argument parsing helpers ---
 
-    private static char[] extractDevPassword(String[] arguments) {
+    private static Optional<char[]> extractDevPassword(String... arguments) {
         List<String> list = Arrays.asList(arguments);
         int idx = list.indexOf(DEV_PASSWORD_FLAG);
-        if (idx < 0) return null;
+        if (idx < 0) {
+            return Optional.empty();
+        }
         if (idx + 1 >= list.size()) {
             throw new IllegalArgumentException("Missing value for " + DEV_PASSWORD_FLAG);
         }
@@ -265,14 +316,16 @@ public final class PkiServerMain {
                 "SECURITY WARNING: --publisher-secrets-dev-password is active. "
                 + "The secrets store password is exposed in the process argument list. "
                 + "This MUST NOT be used in production environments.");
-        return list.get(idx + 1).toCharArray();
+        return Optional.of(list.get(idx + 1).toCharArray());
     }
 
-    private static String[] stripDevPasswordFlag(String[] arguments) {
+    private static String[] stripDevPasswordFlag(String... arguments) {
         List<String> list = new ArrayList<>(Arrays.asList(arguments));
         int idx = list.indexOf(DEV_PASSWORD_FLAG);
         if (idx >= 0) {
-            if (idx + 1 < list.size()) list.remove(idx + 1);
+            if (idx + 1 < list.size()) {
+                list.remove(idx + 1);
+            }
             list.remove(idx);
         }
         return list.toArray(String[]::new);

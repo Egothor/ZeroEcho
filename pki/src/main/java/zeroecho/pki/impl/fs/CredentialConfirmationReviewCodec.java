@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.BufferUnderflowException;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -112,7 +114,7 @@ final class CredentialConfirmationReviewCodec {
             }
             return new CredentialConfirmationReview(new PkiId(credential), new PkiId(authority),
                     profile, reviewAt, disclosure);
-        } catch (IllegalArgumentException | java.nio.BufferUnderflowException failure) {
+        } catch (IllegalArgumentException | BufferUnderflowException failure) {
             throw malformed(failure);
         }
     }

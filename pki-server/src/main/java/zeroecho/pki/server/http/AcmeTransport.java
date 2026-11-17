@@ -33,18 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.security.SecureRandom;
-import java.time.Clock;
-import java.time.Duration;
-import java.util.Map;
-import java.util.Objects;
-import java.util.function.BooleanSupplier;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
-
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
@@ -58,10 +46,22 @@ import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+
 /**
  * Lifecycle owner for the isolated optional ACME HTTPS listener.
  */
-@SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ControlStatementBraces" })
+@SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
 public final class AcmeTransport implements AutoCloseable {
     private final HttpsServer listener;
     private final ServerRuntime protocolRuntime;
@@ -190,10 +190,18 @@ public final class AcmeTransport implements AutoCloseable {
         };
     }
 
-    private static void closePartial(HttpsServer listener, ServerRuntime.ChallengeRuntime validation,
+    private static void closePartial(
+            HttpsServer listener,
+            ServerRuntime.ChallengeRuntime validation,
             ServerRuntime protocol) {
-        if (listener != null) listener.stop(0);
-        if (validation != null) validation.close();
-        if (protocol != null) protocol.close();
+        if (listener != null) {
+            listener.stop(0);
+        }
+        if (validation != null) {
+            validation.close();
+        }
+        if (protocol != null) {
+            protocol.close();
+        }
     }
 }

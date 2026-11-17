@@ -128,7 +128,8 @@ public final class SignatureInteropProfile {
      *                                representation conversion requires it; set to
      *                                {@code 0} for identity representations
      * @throws NullPointerException if any of {@code contextSpec}, {@code signatureRepresentation} is null
-     * @throws IllegalArgumentException if identity representation has a nonzero internal length or a converted representation lacks a positive length
+     * @throws IllegalArgumentException if identity representation has a nonzero internal length or a
+     * converted representation lacks a positive length
      */
     public SignatureInteropProfile(String requestedAlgorithmId, String keyAlgorithmId, String contextAlgorithmId,
             ContextSpec contextSpec, SignatureRepresentation signatureRepresentation, int internalSignatureLength) {

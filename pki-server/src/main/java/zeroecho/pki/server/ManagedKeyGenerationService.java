@@ -55,8 +55,10 @@ import zeroecho.pki.spi.crypto.ManagedKeyGeneration;
  * Durable public receipts around one provider-owned generate-only capability.
  */
 final class ManagedKeyGenerationService {
+    private static final int MAXIMUM_RECEIPTS = 1000;
+
     private static final int MAGIC = 0x5a4d4b31;
-    private static final int MAX_PUBLIC_BYTES = 16384;
+    private static final int MAX_PUBLIC_BYTES = 16_384;
     private final RealmId realm;
     private final Optional<String> initialAdministrator;
     private final ServerControlStore store;
@@ -71,7 +73,7 @@ final class ManagedKeyGenerationService {
      * @param provider optional provider-owned generation/observation capability
      * @throws NullPointerException if a required reference is null
      */
-    ManagedKeyGenerationService(ServerRealmConfiguration configuration, ServerControlStore store,
+    /* default */ ManagedKeyGenerationService(ServerRealmConfiguration configuration, ServerControlStore store,
             Optional<ManagedKeyGeneration> provider) {
         this.realm = configuration.realmId();
         this.initialAdministrator = configuration.initialAdministratorPrincipalId();
@@ -84,7 +86,7 @@ final class ManagedKeyGenerationService {
      *
      * @return whether both the provider capability and matching immutable administrator pin exist
      */
-    boolean available() { return initialAdministrator.isPresent() && provider.isPresent() && pinned(); }
+    /* default */ boolean available() { return initialAdministrator.isPresent() && provider.isPresent() && pinned(); }
 
     /**
      * Requires the enabled pinned initial administrator and a configured generation provider.
@@ -93,11 +95,11 @@ final class ManagedKeyGenerationService {
      * @throws SecurityException if the actor is not the enabled pinned initial administrator
      * @throws IllegalStateException if no generation provider is configured
      */
-    void requireAdministrator(String actor) {
+    /* default */ void requireAdministrator(String actor) {
         if (!initialAdministrator.filter(actor::equals).isPresent() || !pinned() || !store.requirePrincipal(actor).enabled()) {
             throw new SecurityException("Managed key generation requires the initial administrator");
         }
-        if (provider.isEmpty()) throw new IllegalStateException("MANAGED_KEY_GENERATION_NOT_CONFIGURED");
+        if (provider.isEmpty()) { throw new IllegalStateException("MANAGED_KEY_GENERATION_NOT_CONFIGURED"); }
     }
 
     /**
@@ -108,15 +110,15 @@ final class ManagedKeyGenerationService {
      * @param administrator bootstrap-selected principal identity
      * @throws SecurityException if bootstrap identity differs from configuration or a retained pin
      */
-    static void pinInitialAdministrator(ServerRealmConfiguration configuration, ServerControlStore store, String administrator) {
-        if (configuration.initialAdministratorPrincipalId().isEmpty()) return;
+    /* default */ static void pinInitialAdministrator(ServerRealmConfiguration configuration, ServerControlStore store, String administrator) {
+        if (configuration.initialAdministratorPrincipalId().isEmpty()) { return; }
         if (!configuration.initialAdministratorPrincipalId().orElseThrow().equals(administrator)) {
             throw new SecurityException("Configured initial administrator differs from bootstrap");
         }
         byte[] value = (configuration.realmId().value() + "\n" + administrator).getBytes(StandardCharsets.UTF_8);
-        var existing = store.protocolRecord(ServerControlStore.MANAGED_KEY_GENERATION, "initial-administrator");
+        Optional<ServerControlStore.ProtocolRecord> existing = store.protocolRecord(ServerControlStore.MANAGED_KEY_GENERATION, "initial-administrator");
         if (existing.isPresent()) {
-            if (!MessageDigest.isEqual(value, existing.orElseThrow().payload())) throw new SecurityException("Initial administrator is immutable");
+            if (!MessageDigest.isEqual(value, existing.orElseThrow().payload())) { throw new SecurityException("Initial administrator is immutable"); }
             return;
         }
         store.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(new ServerControlStore.ProtocolRecord(
@@ -124,7 +126,7 @@ final class ManagedKeyGenerationService {
     }
 
     private boolean pinned() {
-        if (initialAdministrator.isEmpty()) return false;
+        if (initialAdministrator.isEmpty()) { return false; }
         byte[] expected = (realm.value() + "\n" + initialAdministrator.orElseThrow()).getBytes(StandardCharsets.UTF_8);
         return store.protocolRecord(ServerControlStore.MANAGED_KEY_GENERATION, "initial-administrator")
                 .filter(record -> MessageDigest.isEqual(expected, record.payload())).isPresent();
@@ -146,11 +148,11 @@ final class ManagedKeyGenerationService {
      * @throws IllegalStateException if configuration, capacity, concurrency, identity or reconciliation
      *         prerequisites fail
      */
-    ManagedKeyGeneration.Result generate(String generationId, ManagedKeyGeneration.Parameters parameters, String actor) {
+    /* default */ ManagedKeyGeneration.Result generate(String generationId, ManagedKeyGeneration.Parameters parameters, String actor) {
         Permission.requireId(generationId, "generation identity");
         Objects.requireNonNull(parameters, "parameters");
         requireAdministrator(actor);
-        if (!lane.tryLock()) throw new IllegalStateException("MANAGED_KEY_GENERATION_BUSY");
+        if (!lane.tryLock()) { throw new IllegalStateException("MANAGED_KEY_GENERATION_BUSY"); }
         try {
             requireAdministrator(actor);
             String reservation = digest((realm.value() + "\n" + generationId).getBytes(StandardCharsets.UTF_8));
@@ -161,7 +163,7 @@ final class ManagedKeyGenerationService {
                 if (!receipt.actor().equals(actor) || receipt.parameters() != parameters) {
                     throw new IllegalStateException("MANAGED_KEY_IDENTITY_CONFLICT");
                 }
-                if (receipt.result().isPresent()) return receipt.result().orElseThrow();
+                if (receipt.result().isPresent()) { return receipt.result().orElseThrow(); }
                 // A durable claim may have reached cryptography. Observation must never become re-generation.
                 ManagedKeyGeneration.Result result = provider.orElseThrow().observe(reservation, parameters)
                         .orElseThrow(() -> new IllegalStateException("MANAGED_KEY_RECONCILIATION_REQUIRED"));
@@ -169,7 +171,7 @@ final class ManagedKeyGenerationService {
                 return result;
             }
             requireReservationCapacity();
-            var claimed = record(reservation, new Receipt(actor, parameters, Optional.empty()));
+            ServerControlStore.ProtocolRecord claimed = record(reservation, new Receipt(actor, parameters, Optional.empty()));
             store.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(claimed, Optional.empty())));
             // Recheck current authorization after reservation, immediately before irreversible key creation.
             requireAdministrator(actor);
@@ -183,9 +185,9 @@ final class ManagedKeyGenerationService {
 
     private void requireReservationCapacity() {
         int count = 0;
-        try (var snapshot = store.protocolSnapshot(ServerControlStore.MANAGED_KEY_GENERATION)) {
+        try (ServerControlStore.ProtocolCursor snapshot = store.protocolSnapshot(ServerControlStore.MANAGED_KEY_GENERATION)) {
             while (snapshot.next().isPresent()) {
-                if (++count >= 1000) throw new IllegalStateException("MANAGED_KEY_QUOTA_EXCEEDED");
+                if (++count >= MAXIMUM_RECEIPTS) { throw new IllegalStateException("MANAGED_KEY_QUOTA_EXCEEDED"); }
             }
         }
     }
@@ -200,6 +202,8 @@ final class ManagedKeyGenerationService {
                 record(id, new Receipt(actor, parameters, Optional.of(result))), Optional.of(expected.commitment()))));
     }
 
+    // Retain the established bounded no-cause diagnostic for malformed or unavailable retained evidence.
+    @SuppressWarnings({"PMD.PreserveStackTrace"})
     private static ServerControlStore.ProtocolRecord record(String id, Receipt receipt) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -207,7 +211,7 @@ final class ManagedKeyGenerationService {
                 output.writeInt(MAGIC); output.writeInt(1); output.writeUTF(receipt.actor());
                 output.writeUTF(receipt.parameters().name()); output.writeBoolean(receipt.result().isPresent());
                 if (receipt.result().isPresent()) {
-                    var result = receipt.result().orElseThrow();
+                    ManagedKeyGeneration.Result result = receipt.result().orElseThrow();
                     output.writeUTF(result.keyRef().value());
                     byte[] publicBytes = result.subjectPublicKeyInfo().bytes();
                     output.writeInt(publicBytes.length); output.write(publicBytes);
@@ -218,20 +222,11 @@ final class ManagedKeyGenerationService {
         } catch (IOException impossible) { throw new IllegalStateException("Managed key receipt encoding failed"); }
     }
 
+    // Retain the established bounded no-cause diagnostic for malformed or unavailable retained evidence.
+    @SuppressWarnings({"PMD.PreserveStackTrace"})
     private static Receipt decode(byte[] encoded) {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
-            if (input.readInt() != MAGIC || input.readInt() != 1) throw new IOException("Unsupported receipt");
-            String actor = input.readUTF(); Permission.requirePrincipal(actor);
-            ManagedKeyGeneration.Parameters parameters = ManagedKeyGeneration.Parameters.valueOf(input.readUTF());
-            Optional<ManagedKeyGeneration.Result> result = Optional.empty();
-            if (input.readBoolean()) {
-                KeyRef ref = new KeyRef(input.readUTF());
-                int length = input.readInt();
-                if (length < 1 || length > MAX_PUBLIC_BYTES || input.available() != length) throw new IOException("Invalid public material");
-                result = Optional.of(new ManagedKeyGeneration.Result(ref, parameters, new EncodedObject(Encoding.DER, input.readNBytes(length))));
-            }
-            if (input.available() != 0) throw new IOException("Trailing receipt data");
-            return new Receipt(actor, parameters, result);
+            return readReceipt(input);
         } catch (IOException | IllegalArgumentException invalid) {
             throw new IllegalStateException("Managed key receipt is invalid");
         }
@@ -244,4 +239,21 @@ final class ManagedKeyGenerationService {
 
     private record Receipt(String actor, ManagedKeyGeneration.Parameters parameters,
             Optional<ManagedKeyGeneration.Result> result) { }
+
+    private static Receipt readReceipt(DataInputStream input) throws IOException {
+
+            if (input.readInt() != MAGIC || input.readInt() != 1) { throw new IOException("Unsupported receipt"); }
+            String actor = input.readUTF(); Permission.requirePrincipal(actor);
+            ManagedKeyGeneration.Parameters parameters = ManagedKeyGeneration.Parameters.valueOf(input.readUTF());
+            Optional<ManagedKeyGeneration.Result> result = Optional.empty();
+            if (input.readBoolean()) {
+                KeyRef ref = new KeyRef(input.readUTF());
+                int length = input.readInt();
+                if (length < 1 || length > MAX_PUBLIC_BYTES || input.available() != length) { throw new IOException("Invalid public material"); }
+                result = Optional.of(new ManagedKeyGeneration.Result(ref, parameters, new EncodedObject(Encoding.DER, input.readNBytes(length))));
+            }
+            if (input.available() != 0) { throw new IOException("Trailing receipt data"); }
+            return new Receipt(actor, parameters, result);
+
+    }
 }

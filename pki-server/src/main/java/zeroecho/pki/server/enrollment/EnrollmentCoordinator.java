@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.server.enrollment;
 
+import zeroecho.pki.server.RealmId;
+
+import java.util.TreeMap;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -97,6 +101,7 @@ import zeroecho.pki.server.acme.AcmeState;
 // Admission, approval, keygen, dispatch and recovery share one realm's control monitor and transition authority.
 @SuppressWarnings("PMD.CouplingBetweenObjects")
 public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD CyclomaticComplexity, TooManyMethods - One durable realm lifecycle owns admission, approval, dispatch and recovery; methods remain checked.
+    private static final int SDK_INTENT_CAPACITY = 256;
     private final ServerControlStore control;
     private final ServerRealmConfiguration realm;
     private final PkiSession session;
@@ -208,8 +213,8 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
             while ((next = cursor.next()).isPresent()) {
                 EnrollmentTransaction value = EnrollmentTransactionCodec.decode(next.orElseThrow());
                 requireRealm(value); loadRequest(value); validateReferences(value);
-                if (value.intent().sdkProof().isPresent()) requireSdkLink(sdkIntent(value.intent().sdkProof().orElseThrow().intentId()));
-                else requests().requireProfileProof(requests().get(value.intent().requestId()).orElseThrow(EnrollmentCoordinator::unavailable), value.intent().profile());
+                if (value.intent().sdkProof().isPresent()) { requireSdkLink(sdkIntent(value.intent().sdkProof().orElseThrow().intentId())); }
+                else { requests().requireProfileProof(requests().get(value.intent().requestId()).orElseThrow(EnrollmentCoordinator::unavailable), value.intent().profile()); }
                 if (!value.id().equals(EnrollmentTransactionCodec.replayId(value.intent().realmId(), value.intent().source(),
                         value.intent().requester(), value.intent().transactionId(), value.intent().operation()))) {
                     throw unavailable();
@@ -1190,50 +1195,31 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @throws NullPointerException if {@code supplied} is null
      * @throws IllegalStateException if the retained open SDK challenge-intent capacity is exhausted
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement", "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public EnrollmentSdkAdmission.Challenge challengeSdk(EnrollmentSdkAdmission supplied, byte[] clientNonce) {
         Objects.requireNonNull(supplied, "supplied");
-        if (clientNonce == null || clientNonce.length != 32) throw EnrollmentTransaction.invalid();
-        var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(supplied.admission().payload());
+        if (clientNonce == null || clientNonce.length != 32) { throw EnrollmentTransaction.invalid(); }
+        zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(supplied.admission().payload());
         synchronized (control) {
             requireOpen();
-            supplied = canonicalSdkAdmission(supplied);
-            try (var cursor = control.protocolSnapshot(ServerControlStore.HYBRID_SDK_INTENT)) {
-                Optional<ServerControlStore.ProtocolRecord> next;
-                while ((next = cursor.next()).isPresent()) {
-                    if (!sdkVariant(next.orElseThrow())) continue;
-                    var prior = EnrollmentSdkIntentCodec.decode(next.orElseThrow());
-                    if (prior.state() == EnrollmentSdkIntent.State.OPEN && clock.instant().isBefore(prior.expiresAt())
-                            && prior.admission().admission().protocol() == supplied.admission().protocol()
-                            && prior.admission().admission().requester().actorId().equals(supplied.admission().requester().actorId())
-                            && prior.admission().admission().transactionId().equals(supplied.admission().transactionId())
-                            && java.util.Arrays.equals(prior.primaryFrame().field(6), clientNonce)) {
-                        if (!EnrollmentSdkSupport.sameAdmission(prior.admission(), supplied)) throw EnrollmentTransaction.invalid();
-                        return new EnrollmentSdkAdmission.Challenge(prior.id(), prior.primaryFrame(), prior.targetFrame());
-                    }
-                }
-            }
-            if (control.openSdkIntentCount(clock.instant()) >= 256) throw new IllegalStateException("SDK_INTENT_CAPACITY");
-            var cmp = sdkManifest(supplied); var planned = planAdmission(supplied.admission(), Optional.of(supplied.expectedEndpointCommitment()), cmp, Optional.of(parsed));
-            EnrollmentSdkSupport.requireContext(supplied, planned.intent(), profiles.revision(planned.intent().source().enrollmentProfileId()));
-            var preview = EnrollmentSdkSupport.preview(signing(), supplied.admission(), planned.intent(), parsed, Optional.empty(), supplied.target());
-            var target = EnrollmentSdkSupport.target(supplied.admission(), planned.intent(), preview);
+            EnrollmentSdkAdmission canonical = canonicalSdkAdmission(supplied);
+            Optional<EnrollmentSdkAdmission.Challenge> prior = priorSdkChallenge(canonical, clientNonce);
+            if (prior.isPresent()) { return prior.orElseThrow(); }
+
+            if (control.openSdkIntentCount(clock.instant()) >= SDK_INTENT_CAPACITY) { throw new IllegalStateException("SDK_INTENT_CAPACITY"); }
+            Optional<CmpTransaction> cmp = sdkManifest(canonical); EnrollmentCoordinator.PlannedAdmission planned = planAdmission(canonical.admission(), Optional.of(canonical.expectedEndpointCommitment()), cmp, Optional.of(parsed));
+            EnrollmentSdkSupport.requireContext(canonical, planned.intent(), profiles.revision(planned.intent().source().enrollmentProfileId()));
+            zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview preview = EnrollmentSdkSupport.preview(signing(), canonical.admission(), planned.intent(), parsed, Optional.empty(), canonical.target());
+            zeroecho.pki.api.hybrid.sdk.HybridSdkFrame target = EnrollmentSdkSupport.target(canonical.admission(), planned.intent(), preview);
             Instant issued = Instant.ofEpochSecond(clock.instant().getEpochSecond());
-            var random = new java.security.SecureRandom(); byte[] identity = new byte[32], challenge = new byte[32], server = new byte[32];
-            random.nextBytes(identity); random.nextBytes(challenge); random.nextBytes(server);
-            var fields = new java.util.TreeMap<Integer, byte[]>();
-            fields.put(1, EnrollmentSdkSupport.text("zeroecho-hybrid-sdk-v1")); fields.put(2, EnrollmentSdkSupport.text(realm.realmId().value()));
-            fields.put(3, identity); fields.put(4, challenge); fields.put(5, server); fields.put(6, clientNonce.clone());
-            fields.put(7, EnrollmentSdkSupport.time(issued.getEpochSecond())); fields.put(8, EnrollmentSdkSupport.time(issued.plusSeconds(300).getEpochSecond()));
-            fields.put(9, EnrollmentSdkSupport.text(supplied.canonicalOrigin())); fields.put(10, EnrollmentSdkSupport.text(supplied.admission().protocol().name().toLowerCase(java.util.Locale.ROOT) + "-v1"));
-            fields.put(11, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.originalPayload().der())); fields.put(12, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(supplied.authenticationContext().encode()));
-            fields.put(13, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.primary().publicKeyInfo().bytes())); fields.put(14, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.alternativeSubjectPublicKeyInfo().bytes()));
-            fields.put(15, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm()); fields.put(16, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.alternativeAlgorithm()); fields.put(17, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(target.encode()));
-            var frame = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(1, fields); String id = java.util.HexFormat.of().formatHex(identity);
-            var open = new EnrollmentSdkIntent(id, 1, realm.realmId(), supplied, parsed.originalPayload(), supplied.nativeWire(), frame, supplied.authenticationContext(), target,
+            SdkChallengeFrame generated = sdkChallengeFrame(canonical, parsed, target, clientNonce, issued);
+            zeroecho.pki.api.hybrid.sdk.HybridSdkFrame frame = generated.frame(); String id = generated.id();
+            EnrollmentSdkIntent open = new EnrollmentSdkIntent(id, 1, realm.realmId(), canonical, parsed.originalPayload(), canonical.nativeWire(), frame, canonical.authenticationContext(), target,
                     issued, issued.plusSeconds(300), EnrollmentSdkIntent.State.OPEN, 0, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
             requireSdkPhaseBudgets(open, planned.intent(), preview.validity());
             long charge = sdkCharge(open);
-            if (charge > budgets.maximumRetainedRequestBytes() - retainedBytes) throw unavailable();
+            if (charge > budgets.maximumRetainedRequestBytes() - retainedBytes) { throw unavailable(); }
             try { control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(EnrollmentSdkIntentCodec.record(open), Optional.empty()))); }
             catch (RuntimeException failure) { fenced = true; throw unavailable(); }
             retainedBytes = Math.addExact(retainedBytes, charge);
@@ -1252,36 +1238,36 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @return exact native retained enrollment receipt
      * @throws NullPointerException if {@code supplied} is null
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement", "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public EnrollmentTransaction admitSdk(EnrollmentSdkAdmission supplied, String intentId, String sdkRequestId,
             byte[] primaryProof, byte[] alternativeProof) {
         Objects.requireNonNull(supplied, "supplied"); EnrollmentTransaction.id(sdkRequestId);
         synchronized (control) {
             requireOpen();
-            var open = sdkIntent(intentId);
+            EnrollmentSdkIntent open = sdkIntent(intentId);
             if (open.state() == EnrollmentSdkIntent.State.CONSUMED) {
-                if (!EnrollmentSdkSupport.sameAcceptedOwnerAndRequest(open.admission(), supplied)) throw EnrollmentTransaction.invalid();
-                if (!open.sdkRequestId().equals(Optional.of(sdkRequestId)) || !java.util.Arrays.equals(open.primaryProof().orElseThrow(), primaryProof)
-                        || !java.util.Arrays.equals(open.alternativeProof().orElseThrow(), alternativeProof)) throw EnrollmentTransaction.invalid();
+                requireSdkAcceptedReplay(open, supplied, sdkRequestId, primaryProof, alternativeProof);
                 return requireSdkLink(open);
             }
-            supplied = canonicalSdkAdmission(supplied);
-            if (!EnrollmentSdkSupport.sameAdmission(open.admission(), supplied)) throw EnrollmentTransaction.invalid();
-            var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(open.originalPayload()); Instant accepted = clock.instant();
+            EnrollmentSdkAdmission canonical = canonicalSdkAdmission(supplied);
+            if (!EnrollmentSdkSupport.sameAdmission(open.admission(), canonical)) { throw EnrollmentTransaction.invalid(); }
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(open.originalPayload()); Instant accepted = clock.instant();
             String proof = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.verify(parsed, open.primaryFrame(), primaryProof, alternativeProof, accepted);
-            var cmp = sdkManifest(supplied); var planned = planAdmission(supplied.admission(), Optional.of(supplied.expectedEndpointCommitment()), cmp, Optional.of(parsed));
-            EnrollmentSdkSupport.requireContext(supplied, planned.intent(), profiles.revision(planned.intent().source().enrollmentProfileId()));
-            var preview = EnrollmentSdkSupport.preview(signing(), supplied.admission(), planned.intent(), parsed,
-                    Optional.of(EnrollmentSdkSupport.validity(open.targetFrame())), supplied.target());
-            if (!java.util.Arrays.equals(EnrollmentSdkSupport.target(supplied.admission(), planned.intent(), preview).encode(), open.targetFrame().encode())) throw EnrollmentTransaction.invalid();
+            Optional<CmpTransaction> cmp = sdkManifest(canonical); EnrollmentCoordinator.PlannedAdmission planned = planAdmission(canonical.admission(), Optional.of(canonical.expectedEndpointCommitment()), cmp, Optional.of(parsed));
+            EnrollmentSdkSupport.requireContext(canonical, planned.intent(), profiles.revision(planned.intent().source().enrollmentProfileId()));
+            zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview preview = EnrollmentSdkSupport.preview(signing(), canonical.admission(), planned.intent(), parsed,
+                    Optional.of(EnrollmentSdkSupport.validity(open.targetFrame())), canonical.target());
+            if (!java.util.Arrays.equals(EnrollmentSdkSupport.target(canonical.admission(), planned.intent(), preview).encode(), open.targetFrame().encode())) { throw EnrollmentTransaction.invalid(); }
             String id = EnrollmentTransactionCodec.replayId(realm.realmId(), planned.intent().source(), planned.intent().requester(), planned.intent().transactionId(), planned.intent().operation());
-            if (find(id).isPresent() || admissions.contains(id)) throw EnrollmentTransaction.invalid();
-            var reference = new EnrollmentTransaction.SdkProofReference(open.id(), proof, EnrollmentSdkSupport.hash(open.authenticationContext().encode()), EnrollmentSdkSupport.hash(open.targetFrame().encode()), accepted);
-            var intent = EnrollmentSdkSupport.frozen(planned.intent(), preview.validity(), Optional.of(reference));
-            var value = new EnrollmentTransaction(id, 1, intent, intent.approvalPolicy().isPresent() ? EnrollmentTransaction.State.PENDING : EnrollmentTransaction.State.APPROVED, List.of(), Optional.empty(), Optional.empty());
-            var consumed = sdkConsumed(open, sdkRequestId, primaryProof, alternativeProof, proof, accepted, id);
+            if (find(id).isPresent() || admissions.contains(id)) { throw EnrollmentTransaction.invalid(); }
+            EnrollmentTransaction.SdkProofReference reference = new EnrollmentTransaction.SdkProofReference(open.id(), proof, EnrollmentSdkSupport.hash(open.authenticationContext().encode()), EnrollmentSdkSupport.hash(open.targetFrame().encode()), accepted);
+            EnrollmentTransaction.Intent intent = EnrollmentSdkSupport.frozen(planned.intent(), preview.validity(), Optional.of(reference));
+            EnrollmentTransaction value = new EnrollmentTransaction(id, 1, intent, intent.approvalPolicy().isPresent() ? EnrollmentTransaction.State.PENDING : EnrollmentTransaction.State.APPROVED, List.of(), Optional.empty(), Optional.empty());
+            EnrollmentSdkIntent consumed = sdkConsumed(open, sdkRequestId, primaryProof, alternativeProof, proof, accepted, id);
             Optional<CmpTransaction> linked = cmp.map(manifest -> new CmpTransaction(manifest.id(), 1, manifest.frozen(), Optional.of(id), Optional.empty()));
             long reservation = reservedBytes(value) + cmp.map(CmpTransactionCodec::reservation).orElse(0L);
-            if (retained >= budgets.maximumTransactions() || pending >= budgets.maximumPending() || reservation > budgets.maximumRetainedRequestBytes() - retainedBytes) throw unavailable();
+            if (retained >= budgets.maximumTransactions() || pending >= budgets.maximumPending() || reservation > budgets.maximumRetainedRequestBytes() - retainedBytes) { throw unavailable(); }
             requireCurrent(value); requireSdkPhaseBudgets(open, intent, preview.validity());
             synchronized (requestStorageLock) { storeAdmissionRequest(parsed.primary(), open.originalPayload(), open.originalPayload().der()); }
             try { control.mutateSdkEnrollment(open, consumed, value, Optional.empty(), linked); }
@@ -1301,14 +1287,16 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @throws IllegalStateException if this coordinator is closed or durability is uncertain
      * @throws NullPointerException if {@code requester} is null
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement" })
     public EnrollmentTransaction.Requester freezeRequesterExclusions(EnrollmentTransaction.Requester requester) {
         synchronized (control) { requireOpen(); return withCurrentAliases(Objects.requireNonNull(requester, "requester")); }
     }
 
     private EnrollmentSdkAdmission canonicalSdkAdmission(EnrollmentSdkAdmission supplied) {
-        var original = supplied.admission(); var requester = withCurrentAliases(original.requester());
-        if (requester.equals(original.requester())) return supplied;
-        var canonical = new Admission(original.protocol(), original.endpointId(), requester, original.transactionId(), original.operation(),
+        EnrollmentCoordinator.Admission original = supplied.admission(); EnrollmentTransaction.Requester requester = withCurrentAliases(original.requester());
+        if (requester.equals(original.requester())) { return supplied; }
+        EnrollmentCoordinator.Admission canonical = new Admission(original.protocol(), original.endpointId(), requester, original.transactionId(), original.operation(),
                 original.payload(), original.validity(), original.predecessorId(), original.protocolDeadline());
         return new EnrollmentSdkAdmission(canonical, supplied.expectedEndpointCommitment(), supplied.canonicalOrigin(),
                 supplied.authenticationContext(), supplied.target(), supplied.cmpManifest(), supplied.nativeWire());
@@ -1333,19 +1321,21 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
      * @throws IllegalArgumentException for a noncanonical identity
      * @throws IllegalStateException if closed, fenced or durable data is malformed
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement" })
     public Optional<EnrollmentSdkIntent> retainedSdkIntent(String intentId) {
-        if (intentId == null || !intentId.matches("[0-9a-f]{64}")) throw EnrollmentTransaction.invalid();
+        if (intentId == null || !intentId.matches("[0-9a-f]{64}")) { throw EnrollmentTransaction.invalid(); }
         synchronized (control) {
             requireOpen();
-            var retained = control.protocolRecord(ServerControlStore.HYBRID_SDK_INTENT, intentId);
-            if (retained.isEmpty()) return Optional.empty();
+            Optional<ServerControlStore.ProtocolRecord> retained = control.protocolRecord(ServerControlStore.HYBRID_SDK_INTENT, intentId);
+            if (retained.isEmpty()) { return Optional.empty(); }
             if (!sdkVariant(retained.orElseThrow())) {
                 // Validate the closed shared namespace before treating another variant as absent.
                 control.openSdkIntentCount(clock.instant());
                 return Optional.empty();
             }
-            var value = EnrollmentSdkIntentCodec.decode(retained.orElseThrow());
-            if (!value.realmId().equals(realm.realmId())) throw unavailable();
+            EnrollmentSdkIntent value = EnrollmentSdkIntentCodec.decode(retained.orElseThrow());
+            if (!value.realmId().equals(realm.realmId())) { throw unavailable(); }
             return Optional.of(value);
         }
     }
@@ -1359,83 +1349,75 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
                 EnrollmentSdkIntent.State.CONSUMED, Math.incrementExact(open.revision()), Optional.of(request), Optional.of(primary), Optional.of(alternative), Optional.of(proof), Optional.of(accepted), Optional.of(enrollment));
     }
     private static long sdkCharge(EnrollmentSdkIntent value) {
-        var consumed = sdkConsumed(new EnrollmentSdkIntent(value.id(), 1, value.realmId(), value.admission(), value.originalPayload(), value.nativeWire(), value.primaryFrame(), value.authenticationContext(), value.targetFrame(),
+        EnrollmentSdkIntent consumed = sdkConsumed(new EnrollmentSdkIntent(value.id(), 1, value.realmId(), value.admission(), value.originalPayload(), value.nativeWire(), value.primaryFrame(), value.authenticationContext(), value.targetFrame(),
                 value.issuedAt(), value.expiresAt(), EnrollmentSdkIntent.State.OPEN, 0, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()),
                 "r".repeat(256), new byte[104], new byte[4627], "sha512:" + "f".repeat(128), value.issuedAt(), "enrollment:" + "f".repeat(64));
         return EnrollmentSdkIntentCodec.encode(consumed).length;
     }
 
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private void requireSdkPhaseBudgets(EnrollmentSdkIntent open, EnrollmentTransaction.Intent template, Validity absoluteValidity) {
         String id = EnrollmentTransactionCodec.replayId(template.realmId(), template.source(), template.requester(), template.transactionId(), template.operation());
         String proof = "sha512:" + "f".repeat(128);
-        var reference = new EnrollmentTransaction.SdkProofReference(open.id(), proof, EnrollmentSdkSupport.hash(open.authenticationContext().encode()), EnrollmentSdkSupport.hash(open.targetFrame().encode()), open.issuedAt());
-        var intent = EnrollmentSdkSupport.frozen(template, absoluteValidity, Optional.of(reference));
-        var initial = new EnrollmentTransaction(id, 1, intent, intent.approvalPolicy().isPresent() ? EnrollmentTransaction.State.PENDING : EnrollmentTransaction.State.APPROVED, List.of(), Optional.empty(), Optional.empty());
+        EnrollmentTransaction.SdkProofReference reference = new EnrollmentTransaction.SdkProofReference(open.id(), proof, EnrollmentSdkSupport.hash(open.authenticationContext().encode()), EnrollmentSdkSupport.hash(open.targetFrame().encode()), open.issuedAt());
+        EnrollmentTransaction.Intent intent = EnrollmentSdkSupport.frozen(template, absoluteValidity, Optional.of(reference));
+        EnrollmentTransaction initial = new EnrollmentTransaction(id, 1, intent, intent.approvalPolicy().isPresent() ? EnrollmentTransaction.State.PENDING : EnrollmentTransaction.State.APPROVED, List.of(), Optional.empty(), Optional.empty());
         try { reservedBytes(initial); }
         catch (IllegalStateException tooLarge) { throw new IllegalArgumentException("SDK_TOO_LARGE"); }
-        var consumed = sdkConsumed(open, "r".repeat(256), new byte[104], new byte[4627], proof, open.issuedAt(), id);
+        EnrollmentSdkIntent consumed = sdkConsumed(open, "r".repeat(256), new byte[104], new byte[4627], proof, open.issuedAt(), id);
         ServerControlStore.requireSdkProtocolBudget(List.of(new ServerControlStore.ProtocolMutation(EnrollmentSdkIntentCodec.record(open), Optional.empty())));
-        var acceptance = new java.util.ArrayList<ServerControlStore.ProtocolMutation>();
+        List<ServerControlStore.ProtocolMutation> acceptance = new ArrayList<>();
         acceptance.add(new ServerControlStore.ProtocolMutation(EnrollmentSdkIntentCodec.record(consumed), Optional.of(EnrollmentSdkIntentCodec.record(open).commitment())));
         acceptance.add(new ServerControlStore.ProtocolMutation(EnrollmentTransactionCodec.record(initial), Optional.empty()));
         sdkManifest(open.admission()).ifPresent(manifest -> acceptance.addAll(CmpTransactionCodec.create(new CmpTransaction(manifest.id(), 1, manifest.frozen(), Optional.of(id), Optional.empty()))));
         ServerControlStore.requireSdkProtocolBudget(acceptance);
         if (intent.approvalPolicy().isPresent()) {
             int threshold = intent.approvalPolicy().orElseThrow().threshold();
-            var decisions = new java.util.ArrayList<EnrollmentTransaction.Decision>(threshold);
+            List<EnrollmentTransaction.Decision> decisions = new ArrayList<>(threshold);
             for (int index = 0; index < threshold; index++) {
                 String principal = "sdk-future-approver-" + index + "x".repeat(220);
                 String hash = EnrollmentTransactionCodec.sha256(("sdk-future-key-" + index).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                if (intent.requester().aliases().principalIds().contains(principal) || intent.requester().canonicalKeySha256().equals(Optional.of(hash))) throw unavailable();
-                var evidence = new CertificateIdentityEvidence(intent.realmId(), hash, hash, java.util.Set.of(hash), hash);
+                if (intent.requester().aliases().principalIds().contains(principal) || intent.requester().canonicalKeySha256().equals(Optional.of(hash))) { throw unavailable(); }
+                CertificateIdentityEvidence evidence = futureSdkApproverEvidence(intent.realmId(), hash);
                 decisions.add(new EnrollmentTransaction.Decision(principal, evidence, ApprovalService.Choice.APPROVE, "\u0800".repeat(2048), intent.createdAt()));
             }
-            var approved = new EnrollmentTransaction(id, 2, intent, EnrollmentTransaction.State.APPROVED, decisions, Optional.empty(), Optional.empty());
+            EnrollmentTransaction approved = new EnrollmentTransaction(id, 2, intent, EnrollmentTransaction.State.APPROVED, decisions, Optional.empty(), Optional.empty());
             ServerControlStore.requireSdkProtocolBudget(List.of(new ServerControlStore.ProtocolMutation(EnrollmentTransactionCodec.record(approved), Optional.of(initial.commitment()))));
         }
     }
 
     private EnrollmentTransaction requireSdkLink(EnrollmentSdkIntent sdk) {
-        if (sdk.state() != EnrollmentSdkIntent.State.CONSUMED) throw unavailable();
-        var value = find(sdk.enrollmentId().orElseThrow()).orElseThrow(EnrollmentCoordinator::unavailable);
-        var reference = value.intent().sdkProof().orElseThrow(EnrollmentCoordinator::unavailable);
-        if (!value.intent().realmId().equals(sdk.realmId()) || !value.intent().requester().equals(sdk.admission().admission().requester())
-                || !value.intent().transactionId().equals(sdk.admission().admission().transactionId())
-                || value.intent().operation() != sdk.admission().admission().operation()
-                || !value.intent().source().label().equals(sdk.admission().target().endpointId())
-                || !value.intent().source().commitment().equals(sdk.admission().target().endpointCommitment())
-                || !value.intent().source().enrollmentCommitment().equals(sdk.admission().target().enrollmentPolicyCommitment())
-                || !reference.intentId().equals(sdk.id()) || !reference.proofCommitment().equals(sdk.proofCommitment().orElseThrow())
-                || !reference.acceptedAt().equals(sdk.acceptedAt().orElseThrow())
-                || !reference.authenticationContextSha512().equals(EnrollmentSdkSupport.hash(sdk.authenticationContext().encode()))
-                || !reference.targetSha512().equals(EnrollmentSdkSupport.hash(sdk.targetFrame().encode()))
-                || value.intent().requestKind() != sdk.originalPayload().kind()
-                || !value.intent().requestSha256().equals(EnrollmentTransactionCodec.sha256(sdk.originalPayload().der()))) throw unavailable();
+        if (sdk.state() != EnrollmentSdkIntent.State.CONSUMED) { throw unavailable(); }
+        EnrollmentTransaction value = find(sdk.enrollmentId().orElseThrow()).orElseThrow(EnrollmentCoordinator::unavailable);
+        EnrollmentTransaction.SdkProofReference reference = value.intent().sdkProof().orElseThrow(EnrollmentCoordinator::unavailable);
+        requireSdkReference(sdk, value, reference);
+
         EnrollmentSdkIntentCodec.requireTarget(value.intent(), sdk);
         if (sdk.admission().cmpManifest().isPresent()) {
-            var cmp = findCmp(value.intent().source().label(), value.intent().transactionId()).orElseThrow(EnrollmentCoordinator::unavailable);
-            if (!cmp.frozen().equals(sdk.admission().cmpManifest().orElseThrow())) throw unavailable();
+            CmpTransaction cmp = findCmp(value.intent().source().label(), value.intent().transactionId()).orElseThrow(EnrollmentCoordinator::unavailable);
+            if (!cmp.frozen().equals(sdk.admission().cmpManifest().orElseThrow())) { throw unavailable(); }
             requireCmpLink(cmp, value);
         }
         return value;
     }
 
     private void recoverSdkIntents() {
-        if (control.openSdkIntentCount(clock.instant()) > 256) throw unavailable();
-        try (var cursor = control.protocolSnapshot(ServerControlStore.HYBRID_SDK_INTENT)) {
+        if (control.openSdkIntentCount(clock.instant()) > SDK_INTENT_CAPACITY) { throw unavailable(); }
+        try (ServerControlStore.ProtocolCursor cursor = control.protocolSnapshot(ServerControlStore.HYBRID_SDK_INTENT)) {
             Optional<ServerControlStore.ProtocolRecord> next;
             while ((next = cursor.next()).isPresent()) {
-                if (!sdkVariant(next.orElseThrow())) continue;
-                var intent = EnrollmentSdkIntentCodec.decode(next.orElseThrow());
-                if (!intent.realmId().equals(realm.realmId())) throw unavailable();
-                var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(intent.originalPayload());
+                if (!sdkVariant(next.orElseThrow())) { continue; }
+                EnrollmentSdkIntent intent = EnrollmentSdkIntentCodec.decode(next.orElseThrow());
+                if (!intent.realmId().equals(realm.realmId())) { throw unavailable(); }
+                zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(intent.originalPayload());
                 if (intent.state() == EnrollmentSdkIntent.State.CONSUMED) {
                     String proof = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.verify(parsed, intent.primaryFrame(), intent.primaryProof().orElseThrow(), intent.alternativeProof().orElseThrow(), intent.acceptedAt().orElseThrow());
-                    if (!proof.equals(intent.proofCommitment().orElseThrow())) throw unavailable();
+                    if (!proof.equals(intent.proofCommitment().orElseThrow())) { throw unavailable(); }
                     requireSdkLink(intent);
                 }
                 retainedBytes = Math.addExact(retainedBytes, sdkCharge(intent));
-                if (retainedBytes > budgets.maximumRetainedRequestBytes()) throw unavailable();
+                if (retainedBytes > budgets.maximumRetainedRequestBytes()) { throw unavailable(); }
             }
         }
     }
@@ -1462,7 +1444,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         CertificateProfileDefinition profileDefinition = profile.definition();
         boolean requestHybrid = profileDefinition.hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature hybrid
                 && hybrid.subjectKeySource() == zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST;
-        if (sdk.isPresent() != requestHybrid || sdk.isPresent() && policy.sdkProfile().isEmpty()) throw unavailable();
+        if (sdk.isPresent() != requestHybrid || sdk.isPresent() && policy.sdkProfile().isEmpty()) { throw unavailable(); }
         if (sdk.isEmpty() && admission.operation() != EnrollmentTransaction.Operation.SERVER_KEYGEN) {
             requests().requireProfileProof(parsed, profileReference);
         }
@@ -1480,7 +1462,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         Optional<ApprovalService.Policy> approval = admissionApproval(category);
         Instant now = clock.instant();
         Instant expires = admissionExpiry(admission, cmp, approval, selection, now);
-        EnrollmentTransaction.Requester requester = cmp.isPresent() ? cmp.orElseThrow().frozen().requester() : withCurrentAliases(admission.requester());
+        EnrollmentTransaction.Requester requester = admissionRequester(admission, cmp);
         EnrollmentTransaction.Intent intent = new EnrollmentTransaction.Intent(realm.realmId(), selection.source(), requester, admission.transactionId(),
                 admission.operation(), parsed.requestId(), admission.payload().kind(), EnrollmentTransactionCodec.sha256(der), der.length, selection.authorityId(),
                 profileReference, authority.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment(), admission.validity(), admission.predecessorId(), predecessorDigest,
@@ -1605,12 +1587,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
     private EnrollmentTransaction admitInternal(Admission admission, Optional<String> expectedEndpointCommitment, Optional<CmpTransaction> cmp) {
         Objects.requireNonNull(admission, "admission");
         byte[] der = admission.payload().der();
-        if (der.length > budgets.maximumRequestBytes()) {
-            throw unavailable();
-        }
-        if (admission.operation() == EnrollmentTransaction.Operation.SERVER_KEYGEN) {
-            throw new IllegalStateException("Encrypted key-generation artifact admission is not installed");
-        }
+        requireAdmissionPayload(admission, der);
         String label = admission.protocol() == EnrollmentTransaction.Protocol.ACME
                 ? acme.get(AcmeState.Directory.class, admission.endpointId()).orElseThrow(EnrollmentCoordinator::unavailable).alias() : admission.endpointId();
         String id = EnrollmentTransactionCodec.replayId(realm.realmId(), admission.protocol(), label, admission.requester(), admission.transactionId(), admission.operation());
@@ -1619,7 +1596,7 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
             requireOpen(); existing = find(id);
         }
         if (existing.isPresent()) {
-            if (existing.orElseThrow().intent().sdkProof().isPresent()) throw new IllegalArgumentException("SDK_EXPLICIT_ACCEPTANCE_REQUIRED");
+            if (existing.orElseThrow().intent().sdkProof().isPresent()) { throw new IllegalArgumentException("SDK_EXPLICIT_ACCEPTANCE_REQUIRED"); }
             cmp.ifPresent(manifest -> requireCmpLink(manifest, existing.orElseThrow()));
             if (expectedEndpointCommitment.filter(value -> !value.equals(existing.orElseThrow().intent().source().commitment())).isPresent()) {
                 throw unavailable();
@@ -1957,23 +1934,23 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         SemanticSigningService signing = signing();
         CorrelatedIssuancePreparation prepared;
         if (intent.sdkProof().isPresent()) {
-            var sdk = sdkIntent(intent.sdkProof().orElseThrow().intentId()); requireSdkLink(sdk);
-            var parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(sdk.originalPayload());
-            var preview = EnrollmentSdkSupport.preview(signing, sdk.admission().admission(), intent, parsed,
+            EnrollmentSdkIntent sdk = sdkIntent(intent.sdkProof().orElseThrow().intentId()); requireSdkLink(sdk);
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed = zeroecho.pki.api.hybrid.sdk.HybridSdkProofs.parse(sdk.originalPayload());
+            zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview preview = EnrollmentSdkSupport.preview(signing, sdk.admission().admission(), intent, parsed,
                     Optional.of(EnrollmentSdkSupport.validity(sdk.targetFrame())), sdk.admission().target());
-            if (!java.util.Arrays.equals(EnrollmentSdkSupport.target(sdk.admission().admission(), intent, preview).encode(), sdk.targetFrame().encode())) throw unavailable();
-            var approval = new zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval(preview, sdk.primaryFrame(), sdk.targetFrame(), sdk.primaryProof().orElseThrow(), sdk.alternativeProof().orElseThrow(), sdk.proofCommitment().orElseThrow(), sdk.acceptedAt().orElseThrow());
+            if (!java.util.Arrays.equals(EnrollmentSdkSupport.target(sdk.admission().admission(), intent, preview).encode(), sdk.targetFrame().encode())) { throw unavailable(); }
+            zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval = new zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval(preview, sdk.primaryFrame(), sdk.targetFrame(), sdk.primaryProof().orElseThrow(), sdk.alternativeProof().orElseThrow(), sdk.proofCommitment().orElseThrow(), sdk.acceptedAt().orElseThrow());
             prepared = switch (intent.operation()) {
                 case ISSUE -> signing.prepareSdk(access, issuance(initial, payload), parsed, approval, Optional.of(evidence), cancellation);
                 case RENEW -> signing.prepareSdk(access, renewal(initial), parsed, approval, Optional.of(evidence), cancellation);
                 case REPLACE -> signing.prepareSdk(access, replacement(initial, payload), parsed, approval, Optional.of(evidence), cancellation);
                 case SERVER_KEYGEN -> throw unavailable();
             };
-        } else prepared = switch (intent.operation()) {
+        } else { prepared = switch (intent.operation()) {
             case RENEW -> signing.prepareCorrelatedRenewal(access, renewal(initial), Optional.of(evidence), cancellation);
             case REPLACE -> signing.prepareCorrelatedReplacement(access, replacement(initial, payload), Optional.of(evidence), cancellation);
             case ISSUE, SERVER_KEYGEN -> signing.prepareCorrelatedEndEntity(access, issuance(initial, payload), Optional.of(evidence), cancellation);
-        };
+        }; }
         if (prepared instanceof CorrelatedIssuancePreparation.Existing) {
             // Every accepted attempt must have had its receipt durably attached first.
             throw unavailable();
@@ -2116,9 +2093,9 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
         if (EnrollmentTransactionCodec.encode(value).length + value.intent().requestBytes() > reservedBytes(value)) {
             throw unavailable();
         }
-        var mutations = List.of(new ServerControlStore.ProtocolMutation(EnrollmentTransactionCodec.record(value), Optional.ofNullable(prior).map(EnrollmentTransaction::commitment)));
+        List<ServerControlStore.ProtocolMutation> mutations = List.of(new ServerControlStore.ProtocolMutation(EnrollmentTransactionCodec.record(value), Optional.ofNullable(prior).map(EnrollmentTransaction::commitment)));
         if (value.intent().sdkProof().isPresent()) {
-            if (prior == null || !prior.intentCommitment().equals(value.intentCommitment())) throw unavailable();
+            if (prior == null || !prior.intentCommitment().equals(value.intentCommitment())) { throw unavailable(); }
             requireSdkLink(sdkIntent(value.intent().sdkProof().orElseThrow().intentId()));
             ServerControlStore.requireSdkProtocolBudget(mutations);
         }
@@ -2320,4 +2297,94 @@ public final class EnrollmentCoordinator implements AutoCloseable { // NOPMD Cyc
     }
     private static IllegalStateException unavailable() { return new IllegalStateException("Enrollment operation requires reconciliation or policy admission"); }
     private record Selection(EnrollmentTransaction.Source source, PkiId authorityId, String profileId) { }
+
+    private Optional<EnrollmentSdkAdmission.Challenge> priorSdkChallenge(EnrollmentSdkAdmission canonical, byte[] clientNonce) {
+            try (ServerControlStore.ProtocolCursor cursor = control.protocolSnapshot(ServerControlStore.HYBRID_SDK_INTENT)) {
+                Optional<ServerControlStore.ProtocolRecord> next;
+                while ((next = cursor.next()).isPresent()) {
+                    if (!sdkVariant(next.orElseThrow())) { continue; }
+                    EnrollmentSdkIntent prior = EnrollmentSdkIntentCodec.decode(next.orElseThrow());
+                    if (prior.state() == EnrollmentSdkIntent.State.OPEN && clock.instant().isBefore(prior.expiresAt())
+                            && prior.admission().admission().protocol() == canonical.admission().protocol()
+                            && prior.admission().admission().requester().actorId().equals(canonical.admission().requester().actorId())
+                            && prior.admission().admission().transactionId().equals(canonical.admission().transactionId())
+                            && java.util.Arrays.equals(prior.primaryFrame().field(6), clientNonce)) {
+                        if (!EnrollmentSdkSupport.sameAdmission(prior.admission(), canonical)) { throw EnrollmentTransaction.invalid(); }
+                        return Optional.of(sdkChallenge(prior));
+                    }
+                }
+            }        return Optional.empty();
+    }
+
+
+    /** One generated F1 transcript and its exact entropy-derived identifier. */
+    private record SdkChallengeFrame(zeroecho.pki.api.hybrid.sdk.HybridSdkFrame frame, String id) { }
+    private SdkChallengeFrame sdkChallengeFrame(EnrollmentSdkAdmission canonical,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame target,
+            byte[] clientNonce, Instant issued) {
+            java.security.SecureRandom random = new java.security.SecureRandom(); byte[] identity = new byte[32];
+                                                                                  byte[] challenge = new byte[32];
+                                                                                  byte[] server = new byte[32];
+            random.nextBytes(identity); random.nextBytes(challenge); random.nextBytes(server);
+            java.util.Map<Integer,byte[]> fields = new TreeMap<>();
+            fields.put(1, EnrollmentSdkSupport.text("zeroecho-hybrid-sdk-v1")); fields.put(2, EnrollmentSdkSupport.text(realm.realmId().value()));
+            fields.put(3, identity); fields.put(4, challenge); fields.put(5, server); fields.put(6, clientNonce.clone());
+            fields.put(7, EnrollmentSdkSupport.time(issued.getEpochSecond())); fields.put(8, EnrollmentSdkSupport.time(issued.plusSeconds(300).getEpochSecond()));
+            fields.put(9, EnrollmentSdkSupport.text(canonical.canonicalOrigin())); fields.put(10, EnrollmentSdkSupport.text(canonical.admission().protocol().name().toLowerCase(java.util.Locale.ROOT) + "-v1"));
+            fields.put(11, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.originalPayload().der())); fields.put(12, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(canonical.authenticationContext().encode()));
+            fields.put(13, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.primary().publicKeyInfo().bytes())); fields.put(14, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(parsed.alternativeSubjectPublicKeyInfo().bytes()));
+            fields.put(15, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.primaryAlgorithm()); fields.put(16, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.alternativeAlgorithm()); fields.put(17, zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.hash(target.encode()));
+            zeroecho.pki.api.hybrid.sdk.HybridSdkFrame frame = new zeroecho.pki.api.hybrid.sdk.HybridSdkFrame(1, fields); String id = java.util.HexFormat.of().formatHex(identity);
+        return new SdkChallengeFrame(frame, id);
+    }
+
+
+    private static void requireSdkAcceptedReplay(EnrollmentSdkIntent open, EnrollmentSdkAdmission supplied,
+            String sdkRequestId, byte[] primaryProof, byte[] alternativeProof) {
+                if (!EnrollmentSdkSupport.sameAcceptedOwnerAndRequest(open.admission(), supplied)) { throw EnrollmentTransaction.invalid(); }
+                if (!open.sdkRequestId().equals(Optional.of(sdkRequestId)) || !java.util.Arrays.equals(open.primaryProof().orElseThrow(), primaryProof)
+                        || !java.util.Arrays.equals(open.alternativeProof().orElseThrow(), alternativeProof)) { throw EnrollmentTransaction.invalid(); }
+    }
+
+
+    private static void requireSdkReference(EnrollmentSdkIntent sdk, EnrollmentTransaction value,
+            EnrollmentTransaction.SdkProofReference reference) {
+        if (!value.intent().realmId().equals(sdk.realmId()) || !value.intent().requester().equals(sdk.admission().admission().requester())
+                || !value.intent().transactionId().equals(sdk.admission().admission().transactionId())
+                || value.intent().operation() != sdk.admission().admission().operation()
+                || !value.intent().source().label().equals(sdk.admission().target().endpointId())
+                || !value.intent().source().commitment().equals(sdk.admission().target().endpointCommitment())
+                || !value.intent().source().enrollmentCommitment().equals(sdk.admission().target().enrollmentPolicyCommitment())
+                || !reference.intentId().equals(sdk.id()) || !reference.proofCommitment().equals(sdk.proofCommitment().orElseThrow())
+                || !reference.acceptedAt().equals(sdk.acceptedAt().orElseThrow())
+                || !reference.authenticationContextSha512().equals(EnrollmentSdkSupport.hash(sdk.authenticationContext().encode()))
+                || !reference.targetSha512().equals(EnrollmentSdkSupport.hash(sdk.targetFrame().encode()))
+                || value.intent().requestKind() != sdk.originalPayload().kind()
+                || !value.intent().requestSha256().equals(EnrollmentTransactionCodec.sha256(sdk.originalPayload().der()))) { throw unavailable(); }    }
+
+
+    private static CertificateIdentityEvidence futureSdkApproverEvidence(RealmId realm, String hash) {
+        return new CertificateIdentityEvidence(realm, hash, hash, Set.of(hash), hash);
+    }
+
+
+    private EnrollmentTransaction.Requester admissionRequester(Admission admission, Optional<CmpTransaction> cmp) {
+        return cmp.isPresent() ? cmp.orElseThrow().frozen().requester() : withCurrentAliases(admission.requester());
+    }
+
+
+    private void requireAdmissionPayload(Admission admission, byte[] der) {
+        if (der.length > budgets.maximumRequestBytes()) {
+            throw unavailable();
+        }
+        if (admission.operation() == EnrollmentTransaction.Operation.SERVER_KEYGEN) {
+            throw new IllegalStateException("Encrypted key-generation artifact admission is not installed");
+        }
+    }
+
+
+    private static EnrollmentSdkAdmission.Challenge sdkChallenge(EnrollmentSdkIntent prior) {
+        return new EnrollmentSdkAdmission.Challenge(prior.id(), prior.primaryFrame(), prior.targetFrame());
+    }
+
 }

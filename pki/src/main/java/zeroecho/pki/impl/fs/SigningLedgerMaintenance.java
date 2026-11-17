@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.security.MessageDigest;
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -877,7 +880,7 @@ final class SigningLedgerMaintenance implements AutoCloseable {
                         || entry.recordType() != pointer.recordType()
                         || entry.revision() != record.revision()
                         || entry.sequence() != pointer.sequence()
-                        || !java.util.Arrays.equals(SigningWalFrameCodec.encode(
+                        || !Arrays.equals(SigningWalFrameCodec.encode(
                                 reader.readFrame(entry)), sources.readOne(pointer))) {
                     throw new IOException("existing signing checkpoint is not the retried image");
                 }
@@ -899,7 +902,7 @@ final class SigningLedgerMaintenance implements AutoCloseable {
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
                     || Files.size(target) != sealed.length()
-                    || !java.security.MessageDigest.isEqual(fileCommitment(target),
+                    || !MessageDigest.isEqual(fileCommitment(target),
                             sealed.fileCommitment())) {
                 throw new IOException("existing signing segment is not the retried image");
             }
@@ -1303,7 +1306,10 @@ final class SigningLedgerMaintenance implements AutoCloseable {
          *
          * @param maximumActiveSegmentBytes maximum active WAL segment length in bytes
          * @param maximumSourceGenerations maximum number of source generations considered in one compaction
-         * @throws IllegalArgumentException if {@code (maximumActiveSegmentBytes < SigningWalContainerCodec.HEADER_BYTES || maximumActiveSegmentBytes > SigningManifestCodec.MAX_FILE_BYTES || maximumSourceGenerations <= 0 || maximumSourceGenerations > 256)}
+         * @throws IllegalArgumentException if {@code (maximumActiveSegmentBytes <
+         * SigningWalContainerCodec.HEADER_BYTES || maximumActiveSegmentBytes >
+         * SigningManifestCodec.MAX_FILE_BYTES || maximumSourceGenerations <= 0 ||
+         * maximumSourceGenerations > 256)}
          */
         Configuration {
             if (maximumActiveSegmentBytes < SigningWalContainerCodec.HEADER_BYTES

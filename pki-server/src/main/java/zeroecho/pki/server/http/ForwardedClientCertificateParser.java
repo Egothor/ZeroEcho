@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import zeroecho.pki.server.ForwardedCertificateFormat;
+import zeroecho.pki.server.PkiServerConfiguration;
+
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.CertificateFactory;
@@ -44,13 +47,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import zeroecho.pki.server.ForwardedCertificateFormat;
-import zeroecho.pki.server.PkiServerConfiguration;
-
 /**
  * Narrow strict parser for the two explicitly supported forwarded-certificate formats.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition", "PMD.CyclomaticComplexity",
+/* default */ @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.CyclomaticComplexity",
         "PMD.AvoidDeeplyNestedIfStmts", "PMD.ExceptionAsFlowControl",
         "PMD.AvoidThrowingNewInstanceOfSameException", "PMD.PreserveStackTrace",
         "PMD.AvoidReassigningLoopVariables" })
@@ -87,33 +87,48 @@ final class ForwardedClientCertificateParser {
      *         or a certificate representation is malformed
      * @throws java.util.NoSuchElementException if required forwarding configuration is absent
      */
-    /* default */ static List<X509Certificate> parse(PkiServerConfiguration.Authentication configuration,
+    /* default */ static List<X509Certificate> parse(
+            PkiServerConfiguration.Authentication configuration,
             Map<String, List<String>> headers) {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(headers, "headers");
-        ForwardedCertificateFormat format = configuration.forwardedCertificateFormat().orElseThrow();
+        ForwardedCertificateFormat format =
+                configuration.forwardedCertificateFormat().orElseThrow();
         if (format == ForwardedCertificateFormat.RFC9440
-                && present(headers, DIRECT_REJECTED_NGINX_HEADER)
+                        && present(headers, DIRECT_REJECTED_NGINX_HEADER)
                 || format == ForwardedCertificateFormat.NGINX_ESCAPED_PEM_V1
-                && (present(headers, RFC_CERTIFICATE_HEADER) || present(headers, RFC_CHAIN_HEADER)
-                        || !DIRECT_REJECTED_NGINX_HEADER.equalsIgnoreCase(
-                                configuration.forwardedCertificateHeaderName().orElseThrow())
-                        && present(headers, DIRECT_REJECTED_NGINX_HEADER))) {
+                        && (present(headers, RFC_CERTIFICATE_HEADER)
+                                || present(headers, RFC_CHAIN_HEADER)
+                                || !DIRECT_REJECTED_NGINX_HEADER.equalsIgnoreCase(
+                                                configuration
+                                                        .forwardedCertificateHeaderName()
+                                                        .orElseThrow())
+                                        && present(headers, DIRECT_REJECTED_NGINX_HEADER))) {
             throw new IllegalArgumentException("Conflicting forwarded certificate representation");
         }
-        String leafValue = singleton(headers, configuration.forwardedCertificateHeaderName().orElseThrow(), true);
+        String leafValue =
+                singleton(
+                        headers,
+                        configuration.forwardedCertificateHeaderName().orElseThrow(),
+                        true);
         List<byte[]> encoded = new ArrayList<>();
         if (format == ForwardedCertificateFormat.RFC9440) {
             encoded.add(byteSequence(leafValue, configuration.maximumForwardedCertificateBytes()));
-            String chainValue = singleton(headers,
-                    configuration.forwardedCertificateChainHeaderName().orElseThrow(), false);
+            String chainValue =
+                    singleton(
+                            headers,
+                            configuration.forwardedCertificateChainHeaderName().orElseThrow(),
+                            false);
             if (chainValue != null) {
                 int total = 0;
                 for (String item : chainValue.split(",", -1)) {
-                    byte[] certificate = byteSequence(item.strip(), configuration.maximumForwardedChainBytes());
+                    byte[] certificate =
+                            byteSequence(item.strip(), configuration.maximumForwardedChainBytes());
                     total = Math.addExact(total, certificate.length);
-                    if (total > configuration.maximumForwardedChainBytes() || encoded.size() >= 64) {
-                        throw new IllegalArgumentException("Forwarded certificate chain is oversized");
+                    if (total > configuration.maximumForwardedChainBytes()
+                            || encoded.size() >= 64) {
+                        throw new IllegalArgumentException(
+                                "Forwarded certificate chain is oversized");
                     }
                     encoded.add(certificate);
                 }
@@ -122,7 +137,9 @@ final class ForwardedClientCertificateParser {
             encoded.add(escapedPem(leafValue, configuration.maximumForwardedCertificateBytes()));
         }
         List<X509Certificate> result = new ArrayList<>(encoded.size());
-        for (byte[] certificate : encoded) result.add(certificate(certificate));
+        for (byte[] certificate : encoded) {
+            result.add(certificate(certificate));
+        }
         return List.copyOf(result);
     }
 
@@ -218,8 +235,12 @@ final class ForwardedClientCertificateParser {
             char current = source.charAt(index);
             int value;
             if (current == '%') {
-                if (index + 2 >= source.length()) throw new IllegalArgumentException("Percent escape is truncated");
-                value = hexadecimal(source.charAt(++index)) * 16 + hexadecimal(source.charAt(++index));
+                if (index + 2 >= source.length()) {
+                    throw new IllegalArgumentException("Percent escape is truncated");
+                }
+                value =
+                        hexadecimal(source.charAt(++index)) * 16
+                                + hexadecimal(source.charAt(++index));
             } else {
                 if (current > 0x7e || !unreserved(current)) {
                     throw new IllegalArgumentException("Escaped PEM contains unescaped data");
@@ -236,7 +257,9 @@ final class ForwardedClientCertificateParser {
 
     private static int hexadecimal(char value) {
         int digit = Character.digit(value, 16);
-        if (digit < 0) throw new IllegalArgumentException("Percent escape is malformed");
+        if (digit < 0) {
+            throw new IllegalArgumentException("Percent escape is malformed");
+        }
         return digit;
     }
 

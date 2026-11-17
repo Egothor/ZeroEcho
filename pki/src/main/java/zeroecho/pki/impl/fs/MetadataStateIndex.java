@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Collections;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -134,7 +136,7 @@ final class MetadataStateIndex {
             Generation gen = currentGeneration;
             gen.pinCount.incrementAndGet();
             return new SnapshotView(
-                    java.util.Collections.unmodifiableNavigableMap(gen.records),
+                    Collections.unmodifiableNavigableMap(gen.records),
                     gen.pinCount::decrementAndGet);
         } finally {
             readLock.unlock();
@@ -180,7 +182,8 @@ final class MetadataStateIndex {
      *
      * @param committedStoreRevision exact next contiguous authoritative store revision
      * @param mutations ordered bounded descriptors with distinct canonical identities and exact expected revisions
-     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or record bounds are invalid
+     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or
+     * record bounds are invalid
      */
     /* default */ void applyCommitted(
             long committedStoreRevision,
@@ -194,7 +197,8 @@ final class MetadataStateIndex {
      * @param committedStoreRevision exact next contiguous authoritative store revision
      * @param mutations ordered bounded descriptors with distinct canonical identities and exact expected revisions
      * @return isolated update bound to its exact base token and revision
-     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or record bounds are invalid
+     * @throws MetadataStoreException if descriptors, revision continuity, expected identity state or
+     * record bounds are invalid
      */
     /* default */ PreparedUpdate prepare(
             long committedStoreRevision,
@@ -679,7 +683,8 @@ final class MetadataStateIndex {
          * @param valueOffset zero-based byte offset of the stored value
          * @param valueLength encoded value length in bytes
          * @throws NullPointerException if {@code key} is null
-         * @throws IllegalArgumentException if {@code (revision <= INITIAL_STORE_REVISION)}; or if {@code (valueOffset < MINIMUM_VALUE_POSITION || valueLength < MINIMUM_VALUE_POSITION)}
+         * @throws IllegalArgumentException if {@code (revision <= INITIAL_STORE_REVISION)}; or if
+         * {@code (valueOffset < MINIMUM_VALUE_POSITION || valueLength < MINIMUM_VALUE_POSITION)}
          */
         CurrentRecord {
             Objects.requireNonNull(key, "key");

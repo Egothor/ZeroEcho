@@ -33,6 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
+import zeroecho.pki.api.profile.LeafKeyUsage;
+import zeroecho.pki.api.request.SubjectAlternativeName;
+import zeroecho.pki.api.request.SubjectRdn;
+import zeroecho.pki.impl.core.ValidatedCertificateRequest;
+import zeroecho.pkix.DirectoryStringType;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.RelativeDistinguishedName;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
@@ -42,14 +50,6 @@ import java.util.List;
 import java.util.Set;
 
 import javax.security.auth.x500.X500Principal;
-
-import zeroecho.pkix.DirectoryStringType;
-import zeroecho.pkix.Pkix;
-import zeroecho.pkix.RelativeDistinguishedName;
-import zeroecho.pki.api.profile.LeafKeyUsage;
-import zeroecho.pki.api.request.SubjectAlternativeName;
-import zeroecho.pki.api.request.SubjectRdn;
-import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 
 /**
  * Exact X.509 representation and postcondition helpers for validated leaf
@@ -202,7 +202,8 @@ public final class BcX509ProfileSupport {
         };
     }
 
-    private static boolean matchesExtendedKeyUsage(X509Certificate certificate, ValidatedCertificateRequest request)
+    private static boolean matchesExtendedKeyUsage(
+            X509Certificate certificate, ValidatedCertificateRequest request)
             throws java.security.cert.CertificateParsingException {
         List<String> actual = certificate.getExtendedKeyUsage();
         if (request.extendedKeyUsages().isEmpty()) {
@@ -217,8 +218,9 @@ public final class BcX509ProfileSupport {
         return actualOids.size() == actual.size() && actualOids.equals(expectedOids);
     }
 
-    private static boolean matchesSubjectAlternativeNames(X509Certificate certificate,
-            ValidatedCertificateRequest request) throws java.security.cert.CertificateParsingException {
+    private static boolean matchesSubjectAlternativeNames(
+            X509Certificate certificate, ValidatedCertificateRequest request)
+            throws java.security.cert.CertificateParsingException {
         java.util.Collection<List<?>> names = certificate.getSubjectAlternativeNames();
         if (request.subjectAlternativeNames().isEmpty()) {
             return names == null;

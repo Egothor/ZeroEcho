@@ -34,7 +34,6 @@
 package zeroecho.pki.server.http;
 
 import java.util.Objects;
-
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.server.ServerOperationGateway;
@@ -43,7 +42,7 @@ import zeroecho.pki.server.acme.AcmeService;
 /**
  * Package-internal boundary that preserves the exact transport cancellation signal.
  */
-final class TransportCancellationGateway {
+/* default */ final class TransportCancellationGateway {
     private TransportCancellationGateway() { }
 
     /**

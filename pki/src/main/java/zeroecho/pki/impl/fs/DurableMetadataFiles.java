@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.HashSet;
+
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -68,7 +72,7 @@ final class DurableMetadataFiles {
 
     private static final int FINAL_TEMP_CREATE_ATTEMPT = 15;
     private static final long ZERO_BYTES = 0L;
-    private static final Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
+    private static final Set<PosixFilePermission> OWNER_ONLY =
             PosixFilePermissions.fromString("rw-------");
     private static final ThreadLocal<FaultInjector> FAULTS = new ThreadLocal<>();
 
@@ -78,7 +82,8 @@ final class DurableMetadataFiles {
     /**
      * Publishes a new bounded metadata record through an owned same-directory temporary file.
      *
-     * <p>The caller serializes target creation or replacement. The temporary file is forced before publication and the parent directory afterward.</p>
+     * <p>The caller serializes target creation or replacement. The temporary file is forced before
+     * publication and the parent directory afterward.</p>
      *
      * @param target authoritative target path with a parent directory
      * @param maximumBytes positive inclusive encoded record length limit in bytes
@@ -95,7 +100,8 @@ final class DurableMetadataFiles {
     /**
      * Replaces an existing bounded metadata record through a forced same-directory temporary file.
      *
-     * <p>The caller serializes target creation or replacement. The temporary file is forced before publication and the parent directory afterward.</p>
+     * <p>The caller serializes target creation or replacement. The temporary file is forced before
+     * publication and the parent directory afterward.</p>
      *
      * @param target authoritative target path with a parent directory
      * @param maximumBytes positive inclusive encoded record length limit in bytes
@@ -261,7 +267,7 @@ final class DurableMetadataFiles {
                 try (ignored) {
                     return candidate;
                 }
-            } catch (java.nio.file.FileAlreadyExistsException collision) {
+            } catch (FileAlreadyExistsException collision) {
                 if (attempt == FINAL_TEMP_CREATE_ATTEMPT) {
                     throw new IOException("Unable to create durable metadata temporary file", collision);
                 }
@@ -298,7 +304,7 @@ final class DurableMetadataFiles {
     }
 
     private static Set<OpenOption> openOptions(StandardOpenOption... options) {
-        Set<OpenOption> selected = new java.util.HashSet<>();
+        Set<OpenOption> selected = new HashSet<>();
         selected.addAll(EnumSet.copyOf(List.of(options)));
         selected.add(LinkOption.NOFOLLOW_LINKS);
         return Set.copyOf(selected);

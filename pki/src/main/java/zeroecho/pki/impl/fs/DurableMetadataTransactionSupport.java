@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.channels.Channels;
+import java.util.HashSet;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -322,7 +325,7 @@ final class DurableMetadataTransactionSupport {
         private final MetadataTransactionId transactionId;
         private final ReentrantLock owner = ownerLock();
         private final Map<MetadataKey, StagedMutation> staged = new LinkedHashMap<>();
-        private final Set<MetadataKey> reserved = new java.util.HashSet<>();
+        private final Set<MetadataKey> reserved = new HashSet<>();
         private TransactionState state = TransactionState.ACTIVE;
 
         private TransactionImpl(MetadataTransactionId transactionId) {
@@ -675,7 +678,7 @@ final class DurableMetadataTransactionSupport {
             if (closed.get()) {
                 throw new IllegalStateException("Staged metadata content is closed");
             }
-            return java.nio.channels.Channels.newInputStream(operations.openRead(path));
+            return Channels.newInputStream(operations.openRead(path));
         }
 
         /**

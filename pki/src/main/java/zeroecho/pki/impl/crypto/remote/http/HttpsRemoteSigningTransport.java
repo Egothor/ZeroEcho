@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.crypto.remote.http;
 
+import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport.RemoteSigningException;
+
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,9 +57,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import javax.net.ssl.SSLContext;
-
-import zeroecho.pki.spi.crypto.SigningProvider;
-import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 
 /**
  * Mutually-authenticated HTTPS/JSON binding of {@link RemoteSigningTransport}.
@@ -111,8 +113,8 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
     }
 
     /**
-     * Opens a transport to a remote signing service and captures its advertised
-     * capabilities during the initial handshake.
+     * Opens a transport to a remote signing service and captures its advertised capabilities during
+     * the initial handshake.
      *
      * @param endpoint absolute {@code https} endpoint of the remote service
      * @param sslContext mutually-authenticated TLS context (client identity + pinned trust)
@@ -121,18 +123,20 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
      * @return an open transport with capabilities captured
      * @throws IllegalArgumentException if the endpoint is not absolute {@code https}
      * @throws RemoteSigningException if the capability handshake fails
-     * @throws NullPointerException if {@code endpoint}, {@code sslContext}, {@code connectTimeout} or {@code callTimeout} is null
+     * @throws NullPointerException if {@code endpoint}, {@code sslContext}, {@code connectTimeout}
+     *     or {@code callTimeout} is null
      */
     // The construction guard owns and closes the client for every failed handshake runtime subtype.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public static HttpsRemoteSigningTransport open(URI endpoint, SSLContext sslContext, Duration connectTimeout,
-            Duration callTimeout) {
+    public static HttpsRemoteSigningTransport open(
+            URI endpoint, SSLContext sslContext, Duration connectTimeout, Duration callTimeout) {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(sslContext, "sslContext");
         Objects.requireNonNull(connectTimeout, "connectTimeout");
         Objects.requireNonNull(callTimeout, "callTimeout");
         if (!"https".equalsIgnoreCase(endpoint.getScheme()) || endpoint.getHost() == null) {
-            throw new IllegalArgumentException("Remote signing endpoint must be an absolute https URI");
+            throw new IllegalArgumentException(
+                    "Remote signing endpoint must be an absolute https URI");
         }
         HttpClient client = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
@@ -213,7 +217,8 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
     public byte[] publicKeyInfo(String keyHandle, RemoteCallControl control) {
         Objects.requireNonNull(keyHandle, "keyHandle");
         Objects.requireNonNull(control, "control");
-        String encoded = call(Map.of("op", "publicKey", "keyHandle", keyHandle), control).get("spki");
+        String encoded =
+                call(Map.of("op", "publicKey", "keyHandle", keyHandle), control).get("spki");
         if (encoded == null || encoded.isEmpty()) {
             throw new RemoteSigningException("Remote signing service returned no public key info");
         }
@@ -238,11 +243,13 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
 
     private Map<String, String> call(Map<String, String> body, RemoteCallControl control) {
         if (control.cancellation().isCancelled()) {
-            throw new RemoteSigningException("Remote signing call cancelled before dispatch: op=" + body.get("op"));
+            throw new RemoteSigningException(
+                    "Remote signing call cancelled before dispatch: op=" + body.get("op"));
         }
         Duration remaining = Duration.between(Instant.now(), control.deadline());
         if (remaining.isZero() || remaining.isNegative()) {
-            throw new RemoteSigningException("Remote signing deadline exceeded before dispatch: op=" + body.get("op"));
+            throw new RemoteSigningException(
+                    "Remote signing deadline exceeded before dispatch: op=" + body.get("op"));
         }
         Duration timeout = remaining.compareTo(callTimeout) < 0 ? remaining : callTimeout;
         return exchange(client, endpoint, body, timeout);
@@ -264,7 +271,8 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
             response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            throw new RemoteSigningException("Remote signing call interrupted: op=" + op, interrupted);
+            throw new RemoteSigningException(
+                    "Remote signing call interrupted: op=" + op, interrupted);
         } catch (IOException communication) {
             throw new RemoteSigningException("Remote signing call failed: op=" + op, communication);
         }
@@ -275,18 +283,21 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
                 try {
                     return RemoteSigningJson.read(boundedBody);
                 } catch (RuntimeException malformed) {
-                    throw new RemoteSigningException("Remote signing response is malformed: op=" + op, malformed);
+                    throw new RemoteSigningException(
+                            "Remote signing response is malformed: op=" + op, malformed);
                 } finally {
                     Arrays.fill(boundedBody, (byte) 0);
                 }
             }
             if (code == HTTP_CONFLICT) {
-                throw new IllegalStateException("Remote signing service reported a conflict or stale fence: op="
-                        + op);
+                throw new IllegalStateException(
+                        "Remote signing service reported a conflict or stale fence: op=" + op);
             }
-            throw new RemoteSigningException("Remote signing service returned HTTP " + code + ": op=" + op);
+            throw new RemoteSigningException(
+                    "Remote signing service returned HTTP " + code + ": op=" + op);
         } catch (IOException communication) {
-            throw new RemoteSigningException("Remote signing response could not be read: op=" + op, communication);
+            throw new RemoteSigningException(
+                    "Remote signing response could not be read: op=" + op, communication);
         }
     }
 
@@ -300,8 +311,8 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
                 if (read > 0) {
                     total = Math.addExact(total, read);
                     if (total > maximumBytes) {
-                        throw new RemoteSigningException("Remote signing response exceeds its finite bound: op="
-                                + op);
+                        throw new RemoteSigningException(
+                                "Remote signing response exceeds its finite bound: op=" + op);
                     }
                     output.write(buffer, 0, read);
                 }
@@ -335,11 +346,13 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         try {
             updatedAt = Instant.parse(required(fields, "updatedAt"));
         } catch (RuntimeException malformedInstant) {
-            throw new RemoteSigningException("Remote signing timestamp is malformed", malformedInstant);
+            throw new RemoteSigningException(
+                    "Remote signing timestamp is malformed", malformedInstant);
         }
         String signature = fields.getOrDefault("signature", "");
         if (state != RemoteSigningState.SIGNED && !signature.isEmpty()) {
-            throw new RemoteSigningException("Remote signing response carries a signature for a non-signed state");
+            throw new RemoteSigningException(
+                    "Remote signing response carries a signature for a non-signed state");
         }
         Optional<byte[]> signatureValue = signature.isEmpty() ? Optional.empty()
                 : Optional.of(decodeBase64(signature, "signature",
@@ -354,8 +367,11 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         String algorithms = required(fields, "algorithms");
         Set<String> supported = algorithms.isEmpty() ? Set.of()
                 : new LinkedHashSet<>(Arrays.asList(algorithms.split(ALGORITHM_SEPARATOR, -1)));
-        byte[] commitment = decodeBase64(required(fields, "configurationCommitment"), "configuration commitment",
-                SigningProvider.ConfigurationCommitment.BYTE_LENGTH);
+        byte[] commitment =
+                decodeBase64(
+                        required(fields, "configurationCommitment"),
+                        "configuration commitment",
+                        SigningProvider.ConfigurationCommitment.BYTE_LENGTH);
         try {
             int version = Integer.parseInt(required(fields, "protocolVersion"));
             long rawLimit = Long.parseLong(required(fields, "rawMessageMaximum"));
@@ -394,20 +410,23 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
     private static String required(Map<String, String> fields, String key) {
         String value = fields.get(key);
         if (value == null) {
-            throw new RemoteSigningException("Remote signing response is missing field '" + key + "'");
+            throw new RemoteSigningException(
+                    "Remote signing response is missing field '" + key + "'");
         }
         return value;
     }
 
     private static byte[] decodeBase64(String value, String what, int maximumDecodedBytes) {
         if (value.length() > base64Characters(maximumDecodedBytes)) {
-            throw new RemoteSigningException("Remote signing " + what + " exceeds its finite bound");
+            throw new RemoteSigningException(
+                    "Remote signing " + what + " exceeds its finite bound");
         }
         try {
             byte[] decoded = Base64.getDecoder().decode(value);
             if (decoded.length > maximumDecodedBytes) {
                 Arrays.fill(decoded, (byte) 0);
-                throw new RemoteSigningException("Remote signing " + what + " exceeds its finite bound");
+                throw new RemoteSigningException(
+                        "Remote signing " + what + " exceeds its finite bound");
             }
             return decoded;
         } catch (IllegalArgumentException malformed) {

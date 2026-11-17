@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.util.Optional;
+import zeroecho.pki.spi.framework.ValidatedLeafRequest;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -61,7 +64,7 @@ import zeroecho.pki.api.request.SubjectRdn;
  * </p>
  */
 @SuppressWarnings({ "PMD.DataClass", "PMD.ExcessiveParameterList" })
-public final class ValidatedCertificateRequest implements zeroecho.pki.spi.framework.ValidatedLeafRequest {
+public final class ValidatedCertificateRequest implements ValidatedLeafRequest {
     private final PkiId issuerCaId;
     private final CertificateProfileRef profileReference;
     private final SubjectRef subjectRef;
@@ -88,7 +91,7 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
      * @param intent optional caller idempotency intent frozen for publication
      */
     public record FrozenIssuance(PkiId issuerId, PkiId chainPathId, String chainPathCommitment,
-            java.util.Optional<IssuanceIntent> intent) {
+            Optional<IssuanceIntent> intent) {
         /**
          * Validates one immutable issuance selection.
          * @param issuerId exact selected issuer-generation identifier
@@ -236,7 +239,7 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
      * @throws IllegalArgumentException if the path commitment is not lowercase SHA-256 hexadecimal
      */
     /* default */ ValidatedCertificateRequest withFrozenIssuance(PkiId issuerId, PkiId chainPathId,
-            String chainPathCommitment, java.util.Optional<IssuanceIntent> intent) {
+            String chainPathCommitment, Optional<IssuanceIntent> intent) {
         return new ValidatedCertificateRequest(this,
                 new FrozenIssuance(issuerId, chainPathId, chainPathCommitment, intent));
     }
@@ -408,8 +411,8 @@ public final class ValidatedCertificateRequest implements zeroecho.pki.spi.frame
      *
      * @return frozen selection, when supplied
      */
-    public java.util.Optional<FrozenIssuance> frozenIssuance() {
-        return java.util.Optional.ofNullable(frozenIssuance);
+    public Optional<FrozenIssuance> frozenIssuance() {
+        return Optional.ofNullable(frozenIssuance);
     }
 
     /**

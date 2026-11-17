@@ -77,9 +77,9 @@ public record SdkOcspEvidence(byte[] primaryResponseDer, List<byte[]> responderC
     public SdkOcspEvidence {
         primaryResponseDer = bounded(primaryResponseDer, zeroecho.pki.application.SdkOcspProjection.MAXIMUM_RESPONSE_BYTES); responderChain = copyChain(responderChain);
         Objects.requireNonNull(primaryFrame, "primaryFrame"); Objects.requireNonNull(alternativeFrame, "alternativeFrame");
-        primarySignature = bounded(primarySignature, 104); alternativeSignature = bounded(alternativeSignature, 4627);
-        if (alternativeSignature.length != 4627 || primaryFrame.kind() != 4 || alternativeFrame.kind() != 5
-                || !java.util.Arrays.equals(new HybridSdkFrame(5, primaryFrame.fields()).encode(), alternativeFrame.encode())) throw new IllegalArgumentException("Invalid SDK OCSP evidence");
+        primarySignature = bounded(primarySignature, 104); alternativeSignature = bounded(alternativeSignature, 4_627);
+        if (alternativeSignature.length != 4_627 || primaryFrame.kind() != 4 || alternativeFrame.kind() != 5
+                || !java.util.Arrays.equals(new HybridSdkFrame(5, primaryFrame.fields()).encode(), alternativeFrame.encode())) { throw new IllegalArgumentException("Invalid SDK OCSP evidence"); }
     }
     /**
      * Returns a new copy of the retained native response bytes.
@@ -114,8 +114,8 @@ public record SdkOcspEvidence(byte[] primaryResponseDer, List<byte[]> responderC
      * @throws NullPointerException if the array is null
      * @throws IllegalArgumentException if its length is zero or exceeds the maximum
      */
-    static byte[] bounded(byte[] bytes, int maximum) {
-        Objects.requireNonNull(bytes, "bytes"); if (bytes.length == 0 || bytes.length > maximum) throw new IllegalArgumentException("SDK OCSP size invalid"); return bytes.clone();
+    /* default */ static byte[] bounded(byte[] bytes, int maximum) {
+        Objects.requireNonNull(bytes, "bytes"); if (bytes.length == 0 || bytes.length > maximum) { throw new IllegalArgumentException("SDK OCSP size invalid"); } return bytes.clone();
     }
     /**
      * Copies and bounds the responder chain before its SDK value representation is built.
@@ -123,11 +123,12 @@ public record SdkOcspEvidence(byte[] primaryResponseDer, List<byte[]> responderC
      * @param chain responder-to-issuer chain containing two to 32 certificate arrays
      * @return unmodifiable list containing independent copies of each certificate
      * @throws NullPointerException if the list or a certificate array is null
-     * @throws IllegalArgumentException if the chain count, a certificate's nonempty 262,144-byte bound or the SDK encoding bound is violated
+     * @throws IllegalArgumentException if the chain count, a certificate's nonempty 262,144-byte bound or
+     * the SDK encoding bound is violated
      */
-    static List<byte[]> copyChain(List<byte[]> chain) {
-        Objects.requireNonNull(chain, "chain"); if (chain.size() < 2 || chain.size() > 32) throw new IllegalArgumentException("SDK OCSP chain invalid");
-        var copied = chain.stream().map(value -> bounded(value, 262144)).toList();
+    /* default */ static List<byte[]> copyChain(List<byte[]> chain) {
+        Objects.requireNonNull(chain, "chain"); if (chain.size() < 2 || chain.size() > 32) { throw new IllegalArgumentException("SDK OCSP chain invalid"); }
+        List<byte[]> copied = chain.stream().map(value -> bounded(value, 262_144)).toList();
         HybridSdkValue.list(copied.stream().map(HybridSdkValue::bytes).toList()); return copied;
     }
 }

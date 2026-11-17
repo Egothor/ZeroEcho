@@ -33,6 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
+import zeroecho.pki.server.http.StrictJson;
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.store.MetadataStoreId;
+
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -47,25 +54,25 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.application.CredentialConfirmationProofAudience;
-import zeroecho.pki.application.PkiOperationValue;
-import zeroecho.pki.application.PkiSessionConfiguration;
-import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
-import zeroecho.pki.server.http.StrictJson;
-import zeroecho.pki.spi.ProviderConfig;
-import zeroecho.pki.spi.store.MetadataStoreId;
-
 /**
  * Strict current-version server configuration decoder with closed field sets.
  */
 public final class PkiServerConfigurationCodec {
+    private static final String IPV6_LOOPBACK_ALIAS = "::" + "1";
+    private static final String EXECUTION = "execution";
+    private static final String ADDRESS = "address";
+    private static final String PORT = "port";
+    private static final String TLS_PROVIDER = "tlsProvider";
+    private static final String MAX_HEADER_BYTES = "maximumHeaderBytes";
+    private static final String MAX_BODY_BYTES = "maximumBodyBytes";
+    private static final String HYBRID_SDK = "hybridSdk";
+    private static final String ENABLED = "enabled";
+    private static final String LISTENER_ID = "listenerId";
+
     /**
      * Maximum server configuration document size.
      */
     public static final int MAXIMUM_CONFIGURATION_BYTES = 1_048_576;
-    private static final long DEFAULT_CONFIRMATION_CHALLENGE_TTL_MILLIS = 300_000L;
-    private static final int DEFAULT_CONFIRMATION_RSA_MAXIMUM_MODULUS_BITS = 8_192;
 
     private PkiServerConfigurationCodec() {
     }
@@ -96,31 +103,67 @@ public final class PkiServerConfigurationCodec {
      * @throws IllegalArgumentException if framing, schema version, or semantics are invalid
      */
     public static PkiServerConfiguration decode(byte[] document) {
-        Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
-        root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
-                "runtime", "publicListener", "acmeListener", "estListener", "scepListener", "cmpListener",
-                "auditProjection"));
+        ConfigurationFields root =
+                ConfigurationFields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
+        root.allowed(
+                Set.of(
+                        "version",
+                        "serverName",
+                        "realm",
+                        "listener",
+                        "authentication",
+                        EXECUTION,
+                        "runtime",
+                        "publicListener",
+                        "acmeListener",
+                        "estListener",
+                        "scepListener",
+                        "cmpListener",
+                        "auditProjection"));
         int encodedVersion = root.integer("version");
         if (encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported server schema version");
         }
-        PkiServerConfiguration configuration = new PkiServerConfiguration(PkiServerConfiguration.CURRENT_VERSION,
-                root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
-                authentication(root.object("authentication")), execution(root.object("execution")),
-                runtime(root.object("runtime")), publicListener(root.object("publicListener")),
-                acmeListener(root.object("acmeListener")), estListener(root.object("estListener")),
-                scepListener(root.object("scepListener")), cmpListener(root.object("cmpListener")),
-                auditProjection(root.object("auditProjection")));
+        PkiServerConfiguration configuration =
+                new PkiServerConfiguration(
+                        PkiServerConfiguration.CURRENT_VERSION,
+                        root.text("serverName"),
+                        realm(root.object("realm")),
+                        listener(root.object("listener")),
+                        authentication(root.object("authentication")),
+                        execution(root.object(EXECUTION)),
+                        runtime(root.object("runtime")),
+                        publicListener(root.object("publicListener")),
+                        acmeListener(root.object("acmeListener")),
+                        estListener(root.object("estListener")),
+                        scepListener(root.object("scepListener")),
+                        cmpListener(root.object("cmpListener")),
+                        auditProjection(root.object("auditProjection")));
         root.complete();
         return configuration;
     }
 
-    private static ServerRealmConfiguration realm(Fields value) {
-        value.allowed(Set.of("realmId", "displayName", "confirmationProof", "authorityExposure",
-                "authorizationCommitment", "approvalCommitment", "extendedApprovalCommitment",
-                "disclosureCommitment", "disclosureDefaults", "controlLog", "controlStoreId", "approvalPolicy",
-                "issuanceSingleApprovalPolicy", "issuanceThresholdApprovalPolicy", "pkiSession", "initialAdministratorPrincipalId"));
-        AuthorityExposurePolicy exposure = exposure(value.object("authorityExposure"));
+    private static ServerRealmConfiguration realm(ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        "realmId",
+                        "displayName",
+                        "confirmationProof",
+                        "authorityExposure",
+                        "authorizationCommitment",
+                        "approvalCommitment",
+                        "extendedApprovalCommitment",
+                        "disclosureCommitment",
+                        "disclosureDefaults",
+                        "controlLog",
+                        "controlStoreId",
+                        "approvalPolicy",
+                        "issuanceSingleApprovalPolicy",
+                        "issuanceThresholdApprovalPolicy",
+                        "pkiSession",
+                        "initialAdministratorPrincipalId"));
+        AuthorityExposurePolicy exposure =
+                ConfigurationRealmPolicies.exposure(value.object("authorityExposure"));
         ApprovalService.Policy approval = approval(value.object("approvalPolicy"));
         String approvalCommitment = value.text("approvalCommitment");
         if (!approval.commitment().equals(approvalCommitment)) {
@@ -136,91 +179,72 @@ public final class PkiServerConfigurationCodec {
         Optional<String> suppliedExtended = value.optionalText("extendedApprovalCommitment");
         if (approvalPolicies.size() > 1 && suppliedExtended.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Extended approval commitment is required when issuance approval policies are configured");
+                    "Extended approval commitment is required when issuance approval policies are"
+                        + " configured");
         }
         if (!extendedCommitment.equals(suppliedExtended.orElse(extendedCommitment))) {
-            throw new IllegalArgumentException("Extended approval policy commitment does not match");
-        }
-        ServerRealmConfiguration result = new ServerRealmConfiguration(new RealmId(value.text("realmId")),
-                value.text("displayName"), confirmationProof(value.object("confirmationProof")),
-                session(value.object("pkiSession")), exposure,
-                value.text("authorizationCommitment"), approvalCommitment, extendedCommitment,
-                value.text("disclosureCommitment"),
-                disclosure(value.object("disclosureDefaults")), Path.of(value.text("controlLog")),
-                new MetadataStoreId(value.text("controlStoreId")), Map.copyOf(approvalPolicies),
-                value.optionalText("initialAdministratorPrincipalId"));
-        value.complete();
-        return result;
-    }
-
-    private static CredentialConfirmationProofPolicy confirmationProof(Fields value) {
-        value.allowed(Set.of("audience", "challengeTtlMillis", "rsaMaximumModulusBits"));
-        long ttlMillis = value.optionalLong("challengeTtlMillis")
-                .orElse(DEFAULT_CONFIRMATION_CHALLENGE_TTL_MILLIS);
-        if (ttlMillis % 1_000L != 0L) {
             throw new IllegalArgumentException(
-                    "Credential confirmation proof TTL must be a whole number of seconds");
+                    "Extended approval policy commitment does not match");
         }
-        CredentialConfirmationProofPolicy result = new CredentialConfirmationProofPolicy(
-                new CredentialConfirmationProofAudience(value.text("audience")),
-                Duration.ofMillis(ttlMillis), value.optionalInteger("rsaMaximumModulusBits")
-                        .orElse(DEFAULT_CONFIRMATION_RSA_MAXIMUM_MODULUS_BITS));
+        ServerRealmConfiguration result =
+                new ServerRealmConfiguration(
+                        new RealmId(value.text("realmId")),
+                        value.text("displayName"),
+                        ConfigurationRealmPolicies.confirmationProof(
+                                value.object("confirmationProof")),
+                        session(value.object("pkiSession")),
+                        exposure,
+                        value.text("authorizationCommitment"),
+                        approvalCommitment,
+                        extendedCommitment,
+                        value.text("disclosureCommitment"),
+                        ConfigurationRealmPolicies.disclosure(value.object("disclosureDefaults")),
+                        Path.of(value.text("controlLog")),
+                        new MetadataStoreId(value.text("controlStoreId")),
+                        Map.copyOf(approvalPolicies),
+                        value.optionalText("initialAdministratorPrincipalId"));
         value.complete();
         return result;
     }
 
-    private static AuthorityExposurePolicy exposure(Fields value) {
-        value.exact("mode", "authorityIds", "creationPermitted");
-        Set<PkiId> authorities = new LinkedHashSet<>();
-        for (PkiOperationValue item : value.list("authorityIds")) authorities.add(new PkiId(Fields.text(item)));
-        AuthorityExposurePolicy result = new AuthorityExposurePolicy(
-                AuthorityExposurePolicy.Mode.valueOf(value.text("mode")), authorities,
-                value.bool("creationPermitted"));
-        value.complete();
-        return result;
-    }
-
-    private static ApprovalService.Policy approval(Fields value) {
+    private static ApprovalService.Policy approval(ConfigurationFields value) {
         value.exact("policyId", "threshold", "eligibleApprovers", "requiredRoleTemplateIds",
                 "requesterSeparation", "lifetimeMillis", "justificationRequired");
-        ApprovalService.Policy result = new ApprovalService.Policy(value.text("policyId"),
-                value.integer("threshold"), strings(value.list("eligibleApprovers")),
-                strings(value.list("requiredRoleTemplateIds")), value.bool("requesterSeparation"),
-                Duration.ofMillis(value.longValue("lifetimeMillis")), value.bool("justificationRequired"));
+        ApprovalService.Policy result =
+                new ApprovalService.Policy(
+                        value.text("policyId"),
+                        value.integer("threshold"),
+                        strings(value.list("eligibleApprovers")),
+                        strings(value.list("requiredRoleTemplateIds")),
+                        value.bool("requesterSeparation"),
+                        Duration.ofMillis(value.longValue("lifetimeMillis")),
+                        value.bool("justificationRequired"));
         value.complete();
         return result;
     }
 
-    private static DisclosureService.Defaults disclosure(Fields value) {
-        value.exact("rootCa", "intermediateCa", "caChain", "crl", "leaf", "sensitiveLeaf");
-        DisclosureService.Defaults result = new DisclosureService.Defaults(policy(value.text("rootCa")),
-                policy(value.text("intermediateCa")), policy(value.text("caChain")), policy(value.text("crl")),
-                policy(value.text("leaf")), policy(value.text("sensitiveLeaf")));
-        value.complete();
-        return result;
-    }
-
-    private static DisclosureService.Policy policy(String value) {
-        return DisclosureService.Policy.valueOf(value);
-    }
-
-    private static PkiSessionConfiguration session(Fields value) {
-        Set<String> allowed = Set.of("version", "store", "audit", "signing", "publishers", "bindingProviders");
+    private static PkiSessionConfiguration session(ConfigurationFields value) {
+        Set<String> allowed =
+                Set.of("version", "store", "audit", "signing", "publishers", "bindingProviders");
         value.allowed(allowed);
         int version = value.integer("version");
         ProviderConfig store = provider(value.object("store"));
         ProviderConfig audit = provider(value.object("audit"));
-        Optional<PkiSessionConfiguration.SigningConfiguration> signing = value.optionalObject("signing")
-                .map(PkiServerConfigurationCodec::signing);
+        Optional<PkiSessionConfiguration.SigningConfiguration> signing =
+                value.optionalObject("signing").map(PkiServerConfigurationCodec::signing);
         List<ProviderConfig> publishers = new ArrayList<>();
-        for (PkiOperationValue item : value.list("publishers")) publishers.add(provider(Fields.of(item)));
+        for (PkiOperationValue item : value.list("publishers")) {
+            publishers.add(provider(ConfigurationFields.of(item)));
+        }
         List<PkiSessionConfiguration.BindingProviderConfiguration> bindings = new ArrayList<>();
-        for (PkiOperationValue item : value.list("bindingProviders")) bindings.add(binding(Fields.of(item)));
+        for (PkiOperationValue item : value.list("bindingProviders")) {
+            bindings.add(binding(ConfigurationFields.of(item)));
+        }
         value.complete();
         return new PkiSessionConfiguration(version, store, audit, signing, publishers, bindings);
     }
 
-    private static PkiSessionConfiguration.SigningConfiguration signing(Fields value) {
+    private static PkiSessionConfiguration.SigningConfiguration signing(ConfigurationFields value) {
         value.allowed(Set.of("provider", "signatureAlgorithm", "signingTtlMillis",
                 "unlockEnvironmentVariable", "topology", "pureEdDsaMaximumTbsBytes"));
         Optional<Long> maximum = value.optionalLong("pureEdDsaMaximumTbsBytes");
@@ -234,9 +258,9 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static PkiSessionConfiguration.SigningTopology topology(Fields value) {
+    private static PkiSessionConfiguration.SigningTopology topology(ConfigurationFields value) {
         value.exact("coordinator", "exactGroups", "catchAll");
-        Fields limits = value.object("coordinator");
+        ConfigurationFields limits = value.object("coordinator");
         limits.exact("pageSize", "claimLeaseMillis", "providerCallTimeoutMillis",
                 "idlePollIntervalMillis", "closeTimeoutMillis");
         PkiSessionConfiguration.SigningCoordinatorLimits coordinator =
@@ -248,14 +272,7 @@ public final class PkiServerConfigurationCodec {
         limits.complete();
         List<PkiSessionConfiguration.SigningKeyGroup> groups = new ArrayList<>();
         for (PkiOperationValue item : value.list("exactGroups")) {
-            Fields group = Fields.of(item);
-            group.exact("keyRefs", "lanePool");
-            List<zeroecho.pki.api.KeyRef> keys = new ArrayList<>();
-            for (PkiOperationValue key : group.list("keyRefs")) {
-                keys.add(new zeroecho.pki.api.KeyRef(Fields.text(key)));
-            }
-            groups.add(new PkiSessionConfiguration.SigningKeyGroup(keys, lanePool(group.object("lanePool"))));
-            group.complete();
+            appendSigningGroup(groups, item);
         }
         PkiSessionConfiguration.SigningTopology result = new PkiSessionConfiguration.SigningTopology(
                 coordinator, groups, lanePool(value.object("catchAll")));
@@ -263,7 +280,7 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static PkiSessionConfiguration.SigningLanePool lanePool(Fields value) {
+    private static PkiSessionConfiguration.SigningLanePool lanePool(ConfigurationFields value) {
         value.exact("laneCount", "prefetchSize");
         PkiSessionConfiguration.SigningLanePool result = new PkiSessionConfiguration.SigningLanePool(
                 value.integer("laneCount"), value.integer("prefetchSize"));
@@ -271,7 +288,8 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static PkiSessionConfiguration.BindingProviderConfiguration binding(Fields value) {
+    private static PkiSessionConfiguration.BindingProviderConfiguration binding(
+            ConfigurationFields value) {
         value.allowed(Set.of("providerId", "authorizedOidRoots", "expectedBindingSetVersion"));
         PkiSessionConfiguration.BindingProviderConfiguration result =
                 new PkiSessionConfiguration.BindingProviderConfiguration(value.text("providerId"),
@@ -281,12 +299,12 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static ProviderConfig provider(Fields value) {
+    private static ProviderConfig provider(ConfigurationFields value) {
         value.exact("id", "properties");
-        Fields properties = value.object("properties");
+        ConfigurationFields properties = value.object("properties");
         Map<String, String> result = new LinkedHashMap<>();
         for (Map.Entry<String, PkiOperationValue> item : properties.remaining().entrySet()) {
-            result.put(item.getKey(), Fields.text(item.getValue()));
+            result.put(item.getKey(), ConfigurationFields.text(item.getValue()));
         }
         properties.consumeAll();
         ProviderConfig provider = new ProviderConfig(value.text("id"), result);
@@ -294,19 +312,32 @@ public final class PkiServerConfigurationCodec {
         return provider;
     }
 
-    private static PkiServerConfiguration.Listener listener(Fields value) {
-        value.allowed(Set.of("address", "port", "tlsProvider", "clientCertificateRequired", "maximumHeaderBytes",
-                "maximumBodyBytes", "hybridSdk"));
-        PkiServerConfiguration.Listener result = new PkiServerConfiguration.Listener(
-                address(value.text("address")), value.integer("port"), provider(value.object("tlsProvider")),
-                value.bool("clientCertificateRequired"), value.integer("maximumHeaderBytes"),
-                value.integer("maximumBodyBytes"), hybridSdk(value));
+    private static PkiServerConfiguration.Listener listener(ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        "clientCertificateRequired",
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        HYBRID_SDK));
+        PkiServerConfiguration.Listener result =
+                new PkiServerConfiguration.Listener(
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        provider(value.object(TLS_PROVIDER)),
+                        value.bool("clientCertificateRequired"),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        hybridSdk(value));
         value.complete();
         return result;
     }
 
-    private static PkiServerConfiguration.Authentication authentication(Fields value) {
-        AdministrativeAuthenticationMode mode = AdministrativeAuthenticationMode.valueOf(value.text("mode"));
+    private static PkiServerConfiguration.Authentication authentication(ConfigurationFields value) {
+        AdministrativeAuthenticationMode mode =
+                AdministrativeAuthenticationMode.valueOf(value.text("mode"));
         if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS) {
             value.exact("mode", "directClientMappings");
             List<PkiServerConfiguration.ClientCertificateMapping> direct = mappings(
@@ -315,20 +346,37 @@ public final class PkiServerConfigurationCodec {
             return new PkiServerConfiguration.Authentication(mode, direct, List.of(), List.of(), Set.of(),
                     Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
         }
-        value.allowed(Set.of("mode", "proxyTransportMappings", "forwardedClientMappings",
-                "trustedProxyPrincipalIds", "forwardedCertificateFormat", "forwardedCertificateHeaderName",
-                "forwardedCertificateChainHeaderName", "administrativeClientTrust",
-                "maximumForwardedCertificateBytes", "maximumForwardedChainBytes"));
-        List<PkiServerConfiguration.ClientCertificateMapping> proxy = mappings(value.list("proxyTransportMappings"));
+        value.allowed(
+                Set.of(
+                        "mode",
+                        "proxyTransportMappings",
+                        "forwardedClientMappings",
+                        "trustedProxyPrincipalIds",
+                        "forwardedCertificateFormat",
+                        "forwardedCertificateHeaderName",
+                        "forwardedCertificateChainHeaderName",
+                        "administrativeClientTrust",
+                        "maximumForwardedCertificateBytes",
+                        "maximumForwardedChainBytes"));
+        List<PkiServerConfiguration.ClientCertificateMapping> proxy =
+                mappings(value.list("proxyTransportMappings"));
         List<PkiServerConfiguration.ClientCertificateMapping> forwarded = mappings(
                 value.list("forwardedClientMappings"));
-        PkiServerConfiguration.Authentication result = new PkiServerConfiguration.Authentication(mode,
-                List.of(), proxy, forwarded, Set.copyOf(strings(value.list("trustedProxyPrincipalIds"))),
-                Optional.of(ForwardedCertificateFormat.valueOf(value.text("forwardedCertificateFormat"))),
-                Optional.of(value.text("forwardedCertificateHeaderName")),
-                value.optionalText("forwardedCertificateChainHeaderName"),
-                Optional.of(provider(value.object("administrativeClientTrust"))),
-                value.integer("maximumForwardedCertificateBytes"), value.integer("maximumForwardedChainBytes"));
+        PkiServerConfiguration.Authentication result =
+                new PkiServerConfiguration.Authentication(
+                        mode,
+                        List.of(),
+                        proxy,
+                        forwarded,
+                        Set.copyOf(strings(value.list("trustedProxyPrincipalIds"))),
+                        Optional.of(
+                                ForwardedCertificateFormat.valueOf(
+                                        value.text("forwardedCertificateFormat"))),
+                        Optional.of(value.text("forwardedCertificateHeaderName")),
+                        value.optionalText("forwardedCertificateChainHeaderName"),
+                        Optional.of(provider(value.object("administrativeClientTrust"))),
+                        value.integer("maximumForwardedCertificateBytes"),
+                        value.integer("maximumForwardedChainBytes"));
         value.complete();
         return result;
     }
@@ -337,34 +385,42 @@ public final class PkiServerConfigurationCodec {
             List<PkiOperationValue> source) {
         List<PkiServerConfiguration.ClientCertificateMapping> mappings = new ArrayList<>();
         for (PkiOperationValue item : source) {
-            Fields mapping = Fields.of(item);
+            ConfigurationFields mapping = ConfigurationFields.of(item);
             mapping.allowed(Set.of("mappingId", "principalId", "certificateSha256",
                     "subjectPublicKeyInfoSha256", "issuerSerialSha256"));
-            mappings.add(new PkiServerConfiguration.ClientCertificateMapping(mapping.text("mappingId"),
-                    mapping.text("principalId"), mapping.optionalText("certificateSha256"),
-                    mapping.optionalText("subjectPublicKeyInfoSha256"),
-                    mapping.optionalText("issuerSerialSha256")));
+            mappings.add(
+                    new PkiServerConfiguration.ClientCertificateMapping(
+                            mapping.text("mappingId"),
+                            mapping.text("principalId"),
+                            mapping.optionalText("certificateSha256"),
+                            mapping.optionalText("subjectPublicKeyInfoSha256"),
+                            mapping.optionalText("issuerSerialSha256")));
             mapping.complete();
         }
         return mappings;
     }
 
-    private static PkiServerConfiguration.Execution execution(Fields value) {
+    private static PkiServerConfiguration.Execution execution(ConfigurationFields value) {
         value.exact("transportWorkers", "transportQueueCapacity", "operationWorkers",
                 "operationQueueCapacity", "maximumAdmittedRequests", "defaultDeadlineMillis",
                 "maximumDeadlineMillis", "gracefulShutdownMillis", "forcedShutdownMillis");
-        PkiServerConfiguration.Execution result = new PkiServerConfiguration.Execution(
-                value.integer("transportWorkers"), value.integer("transportQueueCapacity"),
-                value.integer("operationWorkers"), value.integer("operationQueueCapacity"),
-                value.integer("maximumAdmittedRequests"), Duration.ofMillis(value.longValue("defaultDeadlineMillis")),
-                Duration.ofMillis(value.longValue("maximumDeadlineMillis")),
-                Duration.ofMillis(value.longValue("gracefulShutdownMillis")),
-                Duration.ofMillis(value.longValue("forcedShutdownMillis")));
+        PkiServerConfiguration.Execution result =
+                new PkiServerConfiguration.Execution(
+                        value.integer("transportWorkers"),
+                        value.integer("transportQueueCapacity"),
+                        value.integer("operationWorkers"),
+                        value.integer("operationQueueCapacity"),
+                        value.integer("maximumAdmittedRequests"),
+                        Duration.ofMillis(value.longValue("defaultDeadlineMillis")),
+                        Duration.ofMillis(value.longValue("maximumDeadlineMillis")),
+                        Duration.ofMillis(value.longValue("gracefulShutdownMillis")),
+                        Duration.ofMillis(value.longValue("forcedShutdownMillis")));
         value.complete();
         return result;
     }
 
-    private static PkiServerConfiguration.AuditProjection auditProjection(Fields value) {
+    private static PkiServerConfiguration.AuditProjection auditProjection(
+            ConfigurationFields value) {
         value.exact("maxRecords", "maxSinkCalls", "idleIntervalMillis");
         PkiServerConfiguration.AuditProjection result = new PkiServerConfiguration.AuditProjection(
                 value.integer("maxRecords"), value.integer("maxSinkCalls"),
@@ -373,42 +429,86 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static Optional<PkiServerConfiguration.PublicListener> publicListener(Fields value) {
-        value.allowed(Set.of("enabled", "address", "port", "tlsProvider", "allowPlaintextLoopback", "authentication",
-                "maximumHeaderBytes", "maximumBodyBytes", "execution", "maximumStreamDurationMillis",
-                "publicImmutableCacheMillis",
-                "publicAliasCacheMillis", "authorityListExposed", "consoleBasePath", "hybridSdk"));
-        if (!value.bool("enabled")) {
-            value.exact("enabled");
+    private static Optional<PkiServerConfiguration.PublicListener> publicListener(
+            ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ENABLED,
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        "allowPlaintextLoopback",
+                        "authentication",
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        EXECUTION,
+                        "maximumStreamDurationMillis",
+                        "publicImmutableCacheMillis",
+                        "publicAliasCacheMillis",
+                        "authorityListExposed",
+                        "consoleBasePath",
+                        HYBRID_SDK));
+        if (!value.bool(ENABLED)) {
+            value.exact(ENABLED);
             value.complete();
             return Optional.empty();
         }
-        Optional<ProviderConfig> tlsProvider = value.optionalObject("tlsProvider")
-                .map(PkiServerConfigurationCodec::provider);
-        PkiServerConfiguration.PublicListener result = new PkiServerConfiguration.PublicListener(
-                address(value.text("address")), value.integer("port"), tlsProvider,
-                value.bool("allowPlaintextLoopback"), authentication(value.object("authentication")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"),
-                execution(value.object("execution")),
-                Duration.ofMillis(value.longValue("maximumStreamDurationMillis")),
-                Duration.ofMillis(value.longValue("publicImmutableCacheMillis")),
-                Duration.ofMillis(value.longValue("publicAliasCacheMillis")),
-                value.bool("authorityListExposed"),value.optionalText("consoleBasePath"),hybridSdk(value));
+        Optional<ProviderConfig> tlsProvider =
+                value.optionalObject(TLS_PROVIDER).map(PkiServerConfigurationCodec::provider);
+        PkiServerConfiguration.PublicListener result =
+                new PkiServerConfiguration.PublicListener(
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        tlsProvider,
+                        value.bool("allowPlaintextLoopback"),
+                        authentication(value.object("authentication")),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        execution(value.object(EXECUTION)),
+                        Duration.ofMillis(value.longValue("maximumStreamDurationMillis")),
+                        Duration.ofMillis(value.longValue("publicImmutableCacheMillis")),
+                        Duration.ofMillis(value.longValue("publicAliasCacheMillis")),
+                        value.bool("authorityListExposed"),
+                        value.optionalText("consoleBasePath"),
+                        hybridSdk(value));
         value.complete();
         return Optional.of(result);
     }
 
-    private static Optional<PkiServerConfiguration.AcmeListener> acmeListener(Fields value) {
-        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider", "transportMode",
-                "proxyTransportMappings", "trustedProxyPrincipalIds", "externalBaseUri",
-                "maximumHeaderBytes", "maximumBodyBytes", "execution", "validationExecution",
-                "nonceLifetimeMillis", "maximumOutstandingNonces", "maximumAccountsPresented",
-                "maximumOrdersPresented", "admissionWindowMillis", "maximumNewAccountsPerWindow",
-                "maximumNewOrdersPerAccountWindow", "maximumPendingOrdersPerAccount",
-                "maximumChallengeValidationsPerAccountWindow", "maximumConcurrentFinalizations",
-                "challengeProviders", "eabProviders", "hybridSdk"));
-        if (!value.bool("enabled")) {
-            value.exact("enabled"); value.complete(); return Optional.empty();
+    private static Optional<PkiServerConfiguration.AcmeListener> acmeListener(
+            ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ENABLED,
+                        LISTENER_ID,
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        "transportMode",
+                        "proxyTransportMappings",
+                        "trustedProxyPrincipalIds",
+                        "externalBaseUri",
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        EXECUTION,
+                        "validationExecution",
+                        "nonceLifetimeMillis",
+                        "maximumOutstandingNonces",
+                        "maximumAccountsPresented",
+                        "maximumOrdersPresented",
+                        "admissionWindowMillis",
+                        "maximumNewAccountsPerWindow",
+                        "maximumNewOrdersPerAccountWindow",
+                        "maximumPendingOrdersPerAccount",
+                        "maximumChallengeValidationsPerAccountWindow",
+                        "maximumConcurrentFinalizations",
+                        "challengeProviders",
+                        "eabProviders",
+                        HYBRID_SDK));
+        if (!value.bool(ENABLED)) {
+            value.exact(ENABLED);
+            value.complete();
+            return Optional.empty();
         }
         PkiServerConfiguration.AcmeTransportMode mode = PkiServerConfiguration.AcmeTransportMode
                 .valueOf(value.text("transportMode"));
@@ -417,77 +517,151 @@ public final class PkiServerConfigurationCodec {
                         ? mappings(value.list("proxyTransportMappings")) : List.of();
         Set<String> trusted = mode == PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY
                 ? strings(value.list("trustedProxyPrincipalIds")) : Set.of();
-        PkiServerConfiguration.AcmeListener result = new PkiServerConfiguration.AcmeListener(
-                value.text("listenerId"), address(value.text("address")), value.integer("port"),
-                provider(value.object("tlsProvider")), mode, proxy, trusted,
-                java.net.URI.create(value.text("externalBaseUri")), value.integer("maximumHeaderBytes"),
-                value.integer("maximumBodyBytes"), execution(value.object("execution")),
-                execution(value.object("validationExecution")),
-                Duration.ofMillis(value.longValue("nonceLifetimeMillis")),
-                value.integer("maximumOutstandingNonces"), value.integer("maximumAccountsPresented"),
-                value.integer("maximumOrdersPresented"), Duration.ofMillis(value.longValue("admissionWindowMillis")),
-                value.integer("maximumNewAccountsPerWindow"),
-                value.integer("maximumNewOrdersPerAccountWindow"), value.integer("maximumPendingOrdersPerAccount"),
-                value.integer("maximumChallengeValidationsPerAccountWindow"),
-                value.integer("maximumConcurrentFinalizations"), providers(value.list("challengeProviders")),
-                providers(value.list("eabProviders")), hybridSdk(value));
+        PkiServerConfiguration.AcmeListener result =
+                new PkiServerConfiguration.AcmeListener(
+                        value.text(LISTENER_ID),
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        provider(value.object(TLS_PROVIDER)),
+                        mode,
+                        proxy,
+                        trusted,
+                        java.net.URI.create(value.text("externalBaseUri")),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        execution(value.object(EXECUTION)),
+                        execution(value.object("validationExecution")),
+                        Duration.ofMillis(value.longValue("nonceLifetimeMillis")),
+                        value.integer("maximumOutstandingNonces"),
+                        value.integer("maximumAccountsPresented"),
+                        value.integer("maximumOrdersPresented"),
+                        Duration.ofMillis(value.longValue("admissionWindowMillis")),
+                        value.integer("maximumNewAccountsPerWindow"),
+                        value.integer("maximumNewOrdersPerAccountWindow"),
+                        value.integer("maximumPendingOrdersPerAccount"),
+                        value.integer("maximumChallengeValidationsPerAccountWindow"),
+                        value.integer("maximumConcurrentFinalizations"),
+                        providers(value.list("challengeProviders")),
+                        providers(value.list("eabProviders")),
+                        hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
-    private static Optional<PkiServerConfiguration.EstListener> estListener(Fields value) {
-        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
-        if (!value.bool("enabled")) {
-            value.exact("enabled"); value.complete(); return Optional.empty();
+    private static Optional<PkiServerConfiguration.EstListener> estListener(
+            ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ENABLED,
+                        LISTENER_ID,
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        EXECUTION,
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        HYBRID_SDK));
+        if (!value.bool(ENABLED)) {
+            value.exact(ENABLED);
+            value.complete();
+            return Optional.empty();
         }
-        PkiServerConfiguration.EstListener result = new PkiServerConfiguration.EstListener(
-                value.text("listenerId"), address(value.text("address")), value.integer("port"),
-                provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
+        PkiServerConfiguration.EstListener result =
+                new PkiServerConfiguration.EstListener(
+                        value.text(LISTENER_ID),
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        provider(value.object(TLS_PROVIDER)),
+                        execution(value.object(EXECUTION)),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
-    private static Optional<PkiServerConfiguration.ScepListener> scepListener(Fields value) {
-        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
-        if (!value.bool("enabled")) {
-            value.exact("enabled"); value.complete(); return Optional.empty();
+    private static Optional<PkiServerConfiguration.ScepListener> scepListener(
+            ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ENABLED,
+                        LISTENER_ID,
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        EXECUTION,
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        HYBRID_SDK));
+        if (!value.bool(ENABLED)) {
+            value.exact(ENABLED);
+            value.complete();
+            return Optional.empty();
         }
-        PkiServerConfiguration.ScepListener result = new PkiServerConfiguration.ScepListener(
-                value.text("listenerId"), address(value.text("address")), value.integer("port"),
-                provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
+        PkiServerConfiguration.ScepListener result =
+                new PkiServerConfiguration.ScepListener(
+                        value.text(LISTENER_ID),
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        provider(value.object(TLS_PROVIDER)),
+                        execution(value.object(EXECUTION)),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
-    private static Optional<PkiServerConfiguration.CmpListener> cmpListener(Fields value) {
-        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider",
-                "execution", "maximumHeaderBytes", "maximumBodyBytes", "hybridSdk"));
-        if (!value.bool("enabled")) {
-            value.exact("enabled"); value.complete(); return Optional.empty();
+    private static Optional<PkiServerConfiguration.CmpListener> cmpListener(
+            ConfigurationFields value) {
+        value.allowed(
+                Set.of(
+                        ENABLED,
+                        LISTENER_ID,
+                        ADDRESS,
+                        PORT,
+                        TLS_PROVIDER,
+                        EXECUTION,
+                        MAX_HEADER_BYTES,
+                        MAX_BODY_BYTES,
+                        HYBRID_SDK));
+        if (!value.bool(ENABLED)) {
+            value.exact(ENABLED);
+            value.complete();
+            return Optional.empty();
         }
-        PkiServerConfiguration.CmpListener result = new PkiServerConfiguration.CmpListener(
-                value.text("listenerId"), address(value.text("address")), value.integer("port"),
-                provider(value.object("tlsProvider")), execution(value.object("execution")),
-                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"), hybridSdk(value));
+        PkiServerConfiguration.CmpListener result =
+                new PkiServerConfiguration.CmpListener(
+                        value.text(LISTENER_ID),
+                        address(value.text(ADDRESS)),
+                        value.integer(PORT),
+                        provider(value.object(TLS_PROVIDER)),
+                        execution(value.object(EXECUTION)),
+                        value.integer(MAX_HEADER_BYTES),
+                        value.integer(MAX_BODY_BYTES),
+                        hybridSdk(value));
         value.complete(); return Optional.of(result);
     }
 
-    private static Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk(Fields value) {
-        Optional<Fields> configured = value.optionalObject("hybridSdk");
-        if (configured.isEmpty()) return Optional.empty();
-        Fields sdk = configured.orElseThrow(); sdk.exact("canonicalOrigin");
-        var result = new PkiServerConfiguration.HybridSdkListener(sdk.text("canonicalOrigin"));
+    private static Optional<PkiServerConfiguration.HybridSdkListener> hybridSdk(
+            ConfigurationFields value) {
+        Optional<ConfigurationFields> configured = value.optionalObject(HYBRID_SDK);
+        if (configured.isEmpty()) {
+            return Optional.empty();
+        }
+        ConfigurationFields sdk = configured.orElseThrow();
+        sdk.exact("canonicalOrigin");
+        PkiServerConfiguration.HybridSdkListener result =
+                new PkiServerConfiguration.HybridSdkListener(sdk.text("canonicalOrigin"));
         sdk.complete(); return Optional.of(result);
     }
 
     private static List<ProviderConfig> providers(List<PkiOperationValue> source) {
         List<ProviderConfig> result = new ArrayList<>();
-        for (PkiOperationValue item : source) result.add(provider(Fields.of(item)));
+        for (PkiOperationValue item : source) {
+            result.add(provider(ConfigurationFields.of(item)));
+        }
         return List.copyOf(result);
     }
 
-    private static PkiServerConfiguration.RuntimeCapabilities runtime(Fields value) {
+    private static PkiServerConfiguration.RuntimeCapabilities runtime(ConfigurationFields value) {
         value.allowed(Set.of("keyUnlockEnvironmentVariable",
                 "publisherSecretsStore", "publisherSecretsEnvironmentVariable"));
         PkiServerConfiguration.RuntimeCapabilities result = new PkiServerConfiguration.RuntimeCapabilities(
@@ -498,6 +672,8 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
+    // Listener parse failures retain the stable diagnostic without untrusted resolver details.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     private static InetAddress address(String value) {
         if (!value.matches("[0-9A-Fa-f:.]{2,64}") || value.contains("..")) {
             throw new IllegalArgumentException("Listener address must be a canonical IP literal");
@@ -505,7 +681,7 @@ public final class PkiServerConfigurationCodec {
         try {
             InetAddress result = InetAddress.getByName(value);
             if (!result.getHostAddress().equalsIgnoreCase(value)
-                    && !(result.isLoopbackAddress() && "::1".equals(value))) {
+                    && !(result.isLoopbackAddress() && IPV6_LOOPBACK_ALIAS.equals(value))) {
                 throw new IllegalArgumentException("Listener address is not canonical");
             }
             return result;
@@ -517,58 +693,28 @@ public final class PkiServerConfigurationCodec {
     private static Set<String> strings(List<PkiOperationValue> values) {
         Set<String> result = new LinkedHashSet<>();
         for (PkiOperationValue value : values) {
-            if (!result.add(Fields.text(value))) throw new IllegalArgumentException("Duplicate string value");
+            if (!result.add(ConfigurationFields.text(value))) {
+                throw new IllegalArgumentException("Duplicate string value");
+            }
         }
         return Set.copyOf(result);
     }
 
-    /**
-     * Strict consumed-field view over one JSON object.
-     */
-    private static final class Fields {
-        private final Map<String, PkiOperationValue> fields;
-        private final Set<String> consumed = new LinkedHashSet<>();
+    private static zeroecho.pki.api.KeyRef configuredKeyRef(PkiOperationValue key) {
+        return new zeroecho.pki.api.KeyRef(ConfigurationFields.text(key));
+    }
 
-        private Fields(Map<String, PkiOperationValue> fields) { this.fields = fields; }
-        static Fields of(PkiOperationValue value) {
-            if (!(value instanceof PkiOperationValue.ObjectValue object)) {
-                throw new IllegalArgumentException("Configuration value must be an object");
+    private static void appendSigningGroup(
+            List<PkiSessionConfiguration.SigningKeyGroup> groups, PkiOperationValue item) {
+        ConfigurationFields group = ConfigurationFields.of(item);
+        group.exact("keyRefs", "lanePool");
+        List<zeroecho.pki.api.KeyRef> keys = new ArrayList<>();
+        for (PkiOperationValue key : group.list("keyRefs")) {
+            keys.add(configuredKeyRef(key));
             }
-            return new Fields(object.fields());
-        }
-        void exact(String... names) { allowed(Set.of(names)); if (fields.size() != names.length)
-            throw new IllegalArgumentException("Configuration fields are incomplete"); }
-        void allowed(Set<String> names) { if (!names.containsAll(fields.keySet()))
-            throw new IllegalArgumentException("Unknown configuration field"); }
-        String text(String name) { consumed.add(name); return text(require(name)); }
-        Optional<String> optionalText(String name) { if (!fields.containsKey(name)) return Optional.empty();
-            return Optional.of(text(name)); }
-        int integer(String name) { long value = longValue(name); return Math.toIntExact(value); }
-        Optional<Integer> optionalInteger(String name) { return optionalLong(name).map(Math::toIntExact); }
-        long longValue(String name) { consumed.add(name); PkiOperationValue value = require(name);
-            if (!(value instanceof PkiOperationValue.IntegerValue integer)) throw type(); return integer.value(); }
-        Optional<Long> optionalLong(String name) { if (!fields.containsKey(name)) return Optional.empty();
-            return Optional.of(longValue(name)); }
-        boolean bool(String name) { consumed.add(name); PkiOperationValue value = require(name);
-            if (!(value instanceof PkiOperationValue.BooleanValue bool)) throw type(); return bool.value(); }
-        Fields object(String name) { consumed.add(name); return of(require(name)); }
-        Optional<Fields> optionalObject(String name) { if (!fields.containsKey(name)) return Optional.empty();
-            return Optional.of(object(name)); }
-        List<PkiOperationValue> list(String name) { consumed.add(name); PkiOperationValue value = require(name);
-            if (!(value instanceof PkiOperationValue.ListValue list)) throw type(); return list.values(); }
-        List<PkiOperationValue> optionalList(String name) { if (!fields.containsKey(name)) return List.of();
-            return list(name); }
-        Map<String, PkiOperationValue> remaining() { return fields; }
-        void consumeAll() { consumed.addAll(fields.keySet()); }
-        void complete() { if (!consumed.equals(fields.keySet())) throw new IllegalArgumentException(
-                "Configuration fields were not consumed"); }
-        private PkiOperationValue require(String name) { PkiOperationValue value = fields.get(name);
-            if (value == null) throw new IllegalArgumentException("Required configuration field is missing");
-            return value; }
-        static String text(PkiOperationValue value) { if (!(value instanceof PkiOperationValue.Text text))
-            throw type(); return text.value(); }
-        private static IllegalArgumentException type() {
-            return new IllegalArgumentException("Configuration field type is invalid");
-        }
+        groups.add(
+                new PkiSessionConfiguration.SigningKeyGroup(
+                        keys, lanePool(group.object("lanePool"))));
+        group.complete();
     }
 }

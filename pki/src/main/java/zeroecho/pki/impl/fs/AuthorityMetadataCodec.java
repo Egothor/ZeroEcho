@@ -34,6 +34,9 @@
 
 package zeroecho.pki.impl.fs;
 
+import java.io.IOException;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Comparator;
@@ -93,7 +96,8 @@ final class AuthorityMetadataCodec {
      */
     /* default */ static final String ISSUER_GENERATION = "io.zeroecho.pki.issuer-generation";
     /**
-     * Exact metadata namespace {@code io.zeroecho.pki.issuer-crypto-binding}; persisted identities depend on this value.
+     * Exact metadata namespace {@code io.zeroecho.pki.issuer-crypto-binding}; persisted identities
+     * depend on this value.
      */
     /* default */ static final String ISSUER_CRYPTO_BINDING = "io.zeroecho.pki.issuer-crypto-binding";
     /**
@@ -194,8 +198,8 @@ final class AuthorityMetadataCodec {
      * @throws java.io.IOException if encoding, generation context or binding commitment is invalid
      * @throws IllegalArgumentException if the persisted metadata key differs from the decoded issuer identity
      */
-    /* default */ static zeroecho.pki.api.ca.IssuerCryptographicBinding binding(MetadataKey key, byte[] payload, IssuerGeneration generation) throws java.io.IOException {
-        var value = IssuerBindingStorageCodec.decode(payload, generation);
+    /* default */ static IssuerCryptographicBinding binding(MetadataKey key, byte[] payload, IssuerGeneration generation) throws IOException {
+        IssuerCryptographicBinding value = IssuerBindingStorageCodec.decode(payload, generation);
         requireKey(key, bindingKey(value.issuerId()));
         return value;
     }
@@ -285,7 +289,8 @@ final class AuthorityMetadataCodec {
     }
 
     /**
-     * Decodes ordered or direct authority generation membership and requires its derived key to match persisted identity.
+     * Decodes ordered or direct authority generation membership and requires its derived key to match
+     * persisted identity.
      *
      * @param key exact persisted metadata key
      * @param payload complete versioned binary metadata value
@@ -355,7 +360,8 @@ final class AuthorityMetadataCodec {
                    * @param commitRevision nonnegative revision that committed this history row
                    * @return validated head history entry with timestamp recovered from its key
                    * @throws NullPointerException if a required input is null
-                   * @throws IllegalArgumentException if framing, key namespace, timestamp, identity or committed revision is invalid
+                   * @throws IllegalArgumentException if framing, key namespace, timestamp,
+                   * identity or committed revision is invalid
                    */
                   @SuppressWarnings({ "PMD.PreserveStackTrace" })
                   static HistoryEntry history(MetadataKey key, byte[] payload, long commitRevision) {
@@ -444,7 +450,8 @@ final class AuthorityMetadataCodec {
          * @param caId owning logical certificate authority identity
          * @param kind closed CaKind discriminator
          * @param subjectRef immutable authority subject reference
-         * @throws NullPointerException if {@code caId} is null; or if {@code kind} is null; or if {@code subjectRef} is null
+         * @throws NullPointerException if {@code caId} is null; or if {@code kind} is null; or if
+         * {@code subjectRef} is null
          */
         Base { Objects.requireNonNull(caId); Objects.requireNonNull(kind); Objects.requireNonNull(subjectRef); }
         /**
@@ -475,7 +482,8 @@ final class AuthorityMetadataCodec {
          * @param generationId exact generation identity
          * @param pathId selected immutable issuer chain path identity
          * @param membershipCount number of issuer-generation members retained by the authority
-         * @throws NullPointerException if {@code caId} is null; or if {@code state} is null; or if {@code generationId} is null; or if {@code pathId} is null
+         * @throws NullPointerException if {@code caId} is null; or if {@code state} is null; or if
+         * {@code generationId} is null; or if {@code pathId} is null
          */
         Head {
             Objects.requireNonNull(caId); Objects.requireNonNull(state);

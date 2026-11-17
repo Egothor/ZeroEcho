@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.server.PkiServerConfiguration;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -40,8 +43,8 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -54,9 +57,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.server.PkiServerConfiguration;
-
 /**
  * Centralized owner of all bounded server-created threads, queues and permits.
  */
@@ -64,63 +64,67 @@ public final class ServerRuntime implements AutoCloseable {
     /**
      * Name prefix for administrative HTTPS dispatch threads.
      */
-    static final String TRANSPORT_PREFIX = "zeroecho-pki-https-";
+    /* default */ static final String TRANSPORT_PREFIX = "zeroecho-pki-https-";
     /**
      * Name prefix for bounded administrative operation workers.
      */
-    static final String OPERATION_PREFIX = "zeroecho-pki-operation-";
+    /* default */ static final String OPERATION_PREFIX = "zeroecho-pki-operation-";
     /**
      * Name prefix for public repository HTTPS dispatch threads.
      */
-    static final String PUBLIC_TRANSPORT_PREFIX = "zeroecho-pki-public-https-";
+    /* default */ static final String PUBLIC_TRANSPORT_PREFIX = "zeroecho-pki-public-https-";
     /**
      * Name prefix for bounded public repository streaming workers.
      */
-    static final String PUBLIC_STREAM_PREFIX = "zeroecho-pki-public-stream-";
+    /* default */ static final String PUBLIC_STREAM_PREFIX = "zeroecho-pki-public-stream-";
     /**
      * Name prefix for ACME HTTPS dispatch threads.
      */
-    static final String ACME_TRANSPORT_PREFIX = "zeroecho-pki-acme-https-";
+    /* default */ static final String ACME_TRANSPORT_PREFIX = "zeroecho-pki-acme-https-";
     /**
      * Name prefix for bounded ACME protocol workers.
      */
-    static final String ACME_PROTOCOL_PREFIX = "zeroecho-pki-acme-protocol-";
+    /* default */ static final String ACME_PROTOCOL_PREFIX = "zeroecho-pki-acme-protocol-";
     /**
      * Name prefix for separately admitted ACME challenge-validation workers.
      */
-    static final String ACME_VALIDATION_PREFIX = "zeroecho-pki-acme-validation-";
+    /* default */ static final String ACME_VALIDATION_PREFIX = "zeroecho-pki-acme-validation-";
     /**
      * Name prefix for OCSP HTTPS dispatch threads.
      */
-    static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
+    /* default */ static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
     /**
      * Name prefix for bounded OCSP response workers.
      */
-    static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
+    /* default */ static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
     /**
      * Name prefix for SCEP HTTPS dispatch threads.
      */
-    static final String SCEP_TRANSPORT_PREFIX = "zeroecho-pki-scep-https-";
+    /* default */ static final String SCEP_TRANSPORT_PREFIX = "zeroecho-pki-scep-https-";
     /**
      * Name prefix for bounded SCEP operation workers.
      */
-    static final String SCEP_OPERATION_PREFIX = "zeroecho-pki-scep-operation-";
+    /* default */ static final String SCEP_OPERATION_PREFIX = "zeroecho-pki-scep-operation-";
     /**
      * Name prefix for CMP HTTPS dispatch threads.
      */
-    static final String CMP_TRANSPORT_PREFIX = "zeroecho-pki-cmp-https-";
+    /* default */ static final String CMP_TRANSPORT_PREFIX = "zeroecho-pki-cmp-https-";
     /**
      * Name prefix for bounded CMP operation workers.
      */
-    static final String CMP_OPERATION_PREFIX = "zeroecho-pki-cmp-operation-";
+    /* default */ static final String CMP_OPERATION_PREFIX = "zeroecho-pki-cmp-operation-";
     /**
      * Name assigned to the server lifecycle shutdown-hook thread.
      */
-    static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
+    /* default */ static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
     private static final ThreadLocal<WorkerType> WORKER_MARKER = new ThreadLocal<>();
 
-    // Virtual threads handle transport dispatch — no sizing needed; each request gets its own VT.
+    // Virtual threads handle transport dispatch — no sizing needed; each request gets its own VT. The standalone
+    // runtime owns this bounded executor and its shutdown lifecycle.
+    @SuppressWarnings("PMD.DoNotUseThreads")
     private final ExecutorService transport;
+    // The standalone runtime owns this bounded executor and its shutdown lifecycle.
+    @SuppressWarnings("PMD.DoNotUseThreads")
     private final ThreadPoolExecutor operations;
     private final Semaphore admitted;
     private final Set<CancellationToken> cancellations = ConcurrentHashMap.newKeySet();
@@ -134,7 +138,7 @@ public final class ServerRuntime implements AutoCloseable {
      * @param configuration admission, worker, queue, deadline and shutdown limits
      * @throws NullPointerException if the configuration is null
      */
-    ServerRuntime(PkiServerConfiguration.Execution configuration) {
+    /* default */ ServerRuntime(PkiServerConfiguration.Execution configuration) {
         this(configuration, Lane.ADMIN);
     }
 
@@ -145,7 +149,7 @@ public final class ServerRuntime implements AutoCloseable {
      * @param publicLane whether to use public repository thread names
      * @throws NullPointerException if the configuration is null
      */
-    ServerRuntime(PkiServerConfiguration.Execution configuration, boolean publicLane) {
+    /* default */ ServerRuntime(PkiServerConfiguration.Execution configuration, boolean publicLane) {
         this(configuration, publicLane ? Lane.PUBLIC : Lane.ADMIN);
     }
 
@@ -156,27 +160,49 @@ public final class ServerRuntime implements AutoCloseable {
      * @param lane protocol lane used for transport and operation thread naming
      * @throws NullPointerException if the configuration is null
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     ServerRuntime(PkiServerConfiguration.Execution configuration, Lane lane) {
         this.configuration = configuration;
-        String transportPrefix = lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
-                : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX
-                        : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX
-                                : lane == Lane.EST ? "zeroecho-pki-est-https-"
-                                        : lane == Lane.SCEP ? SCEP_TRANSPORT_PREFIX
-                                                : lane == Lane.CMP ? CMP_TRANSPORT_PREFIX
-                                                        : TRANSPORT_PREFIX;
-        // Virtual threads: each incoming HTTP request dispatches on its own VT; no pool sizing needed.
-        transport = Executors.newThreadPerTaskExecutor(
-                new NamedThreadFactory(transportPrefix, WorkerType.TRANSPORT, true));
-        operations = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
-                new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_STREAM_PREFIX
-                        : lane == Lane.ACME ? ACME_PROTOCOL_PREFIX
-                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX
-                                        : lane == Lane.EST ? "zeroecho-pki-est-operation-"
-                                                : lane == Lane.SCEP ? SCEP_OPERATION_PREFIX
-                                                        : lane == Lane.CMP ? CMP_OPERATION_PREFIX
-                                                                : OPERATION_PREFIX,
-                        WorkerType.OPERATION));
+        String transportPrefix =
+                lane == Lane.PUBLIC
+                        ? PUBLIC_TRANSPORT_PREFIX
+                        : lane == Lane.ACME
+                                ? ACME_TRANSPORT_PREFIX
+                                : lane == Lane.OCSP
+                                        ? OCSP_TRANSPORT_PREFIX
+                                        : lane == Lane.EST
+                                                ? "zeroecho-pki-est-https-"
+                                                : lane == Lane.SCEP
+                                                        ? SCEP_TRANSPORT_PREFIX
+                                                        : lane == Lane.CMP
+                                                                ? CMP_TRANSPORT_PREFIX
+                                                                : TRANSPORT_PREFIX;
+        // Virtual threads: each incoming HTTP request dispatches on its own VT; no pool sizing
+        // needed.
+        transport =
+                Executors.newThreadPerTaskExecutor(
+                        new NamedThreadFactory(transportPrefix, WorkerType.TRANSPORT, true));
+        operations =
+                pool(
+                        configuration.operationWorkers(),
+                        configuration.operationQueueCapacity(),
+                        new NamedThreadFactory(
+                                lane == Lane.PUBLIC
+                                        ? PUBLIC_STREAM_PREFIX
+                                        : lane == Lane.ACME
+                                                ? ACME_PROTOCOL_PREFIX
+                                                : lane == Lane.OCSP
+                                                        ? OCSP_OPERATION_PREFIX
+                                                        : lane == Lane.EST
+                                                                ? "zeroecho-pki-est-operation-"
+                                                                : lane == Lane.SCEP
+                                                                        ? SCEP_OPERATION_PREFIX
+                                                                        : lane == Lane.CMP
+                                                                                ? CMP_OPERATION_PREFIX
+                                                                                : OPERATION_PREFIX,
+                                WorkerType.OPERATION));
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
@@ -185,6 +211,9 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return runtime-owned executor; callers must not shut it down independently
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     ExecutorService transportExecutor() {
         return transport;
     }
@@ -259,6 +288,9 @@ public final class ServerRuntime implements AutoCloseable {
          * @return resource-free result; a late result may be discarded
          * @throws Exception if execution fails
          */
+        // Preserve the existing Callable-like callback contract for arbitrary checked task
+        // failures.
+        @SuppressWarnings("PMD.SignatureDeclareThrowsException")
         T call(CancellationSignal cancellation) throws Exception;
     }
 
@@ -270,13 +302,23 @@ public final class ServerRuntime implements AutoCloseable {
      * @return tracked submission; callers invoke its finish hook after observing the result
      * @throws RejectedExecutionException if the runtime is quiescing or its bounded queue is full
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     <T> Submitted<T> submit(CancellableCallable<T> task) {
-        if (!accepting.get()) throw new RejectedExecutionException("Server is not accepting operations");
+        if (!accepting.get()) {
+            throw new RejectedExecutionException("Server is not accepting operations");
+        }
         CancellationToken cancellation = new CancellationToken();
-        TrackedFutureTask<T> future = new TrackedFutureTask<>(operations, () -> {
-            cancellation.throwIfCancelled();
-            return task.call(cancellation);
-        }, futures, () -> cancellations.remove(cancellation));
+        TrackedFutureTask<T> future =
+                new TrackedFutureTask<>(
+                        operations,
+                        () -> {
+                            cancellation.throwIfCancelled();
+                            return task.call(cancellation);
+                        },
+                        futures,
+                        () -> cancellations.remove(cancellation));
         cancellations.add(cancellation);
         futures.add(future);
         try {
@@ -293,7 +335,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * <p>Already admitted requests and running operations are not cancelled.</p>
      */
-    void quiesce() {
+    /* default */ void quiesce() {
         accepting.set(false);
     }
 
@@ -302,7 +344,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return whether new work is currently accepted
      */
-    boolean accepting() {
+    /* default */ boolean accepting() {
         return accepting.get();
     }
 
@@ -311,6 +353,9 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return current number of queued operation tasks
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     int operationQueueSize() {
         return operations.getQueue().size();
     }
@@ -320,6 +365,9 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return approximate number of operation workers executing tasks
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     int activeOperations() {
         return operations.getActiveCount();
     }
@@ -329,7 +377,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return number of operation futures still tracked for lifecycle cleanup
      */
-    int trackedOperationFutures() {
+    /* default */ int trackedOperationFutures() {
         return futures.size();
     }
 
@@ -338,7 +386,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return number of cancellation tokens still tracked for executing or queued work
      */
-    int trackedCancellationTokens() {
+    /* default */ int trackedCancellationTokens() {
         return cancellations.size();
     }
 
@@ -347,7 +395,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @return whether the current thread carries a server-runtime worker marker
      */
-    static boolean isWorkerThread() {
+    /* default */ static boolean isWorkerThread() {
         return WORKER_MARKER.get() != null;
     }
 
@@ -357,6 +405,9 @@ public final class ServerRuntime implements AutoCloseable {
      * @param task shutdown action executed when the returned thread starts
      * @return unstarted thread with the stable server shutdown name
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    /* default */ @SuppressWarnings({"PMD.DoNotUseThreads"})
     static Thread shutdownHook(Runnable task) {
         return new Thread(task, SHUTDOWN_NAME);
     }
@@ -375,6 +426,9 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @throws IllegalStateException if either executor remains live after the applicable shutdown attempts
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    @SuppressWarnings({"PMD.DoNotUseThreads"})
     @Override
     public void close() {
         quiesce();
@@ -382,24 +436,8 @@ public final class ServerRuntime implements AutoCloseable {
         operations.shutdown();
         boolean transportWorker = WORKER_MARKER.get() == WorkerType.TRANSPORT;
         boolean operationWorker = WORKER_MARKER.get() == WorkerType.OPERATION;
-        if (!operationWorker) {
-            await(operations, configuration.gracefulShutdown());
-        }
-        if (!operations.isTerminated()) {
-            for (CancellationToken cancellation : cancellations) cancellation.cancel();
-            if (!operationWorker) {
-                for (Future<?> future : futures) future.cancel(true);
-            }
-            cancelNeverStarted(operations.shutdownNow());
-            if (!operationWorker) {
-                await(operations, configuration.forcedShutdown());
-            }
-        }
-        if (!transportWorker) awaitService(transport, configuration.gracefulShutdown());
-        if (!transport.isTerminated()) {
-            transport.shutdownNow();
-            if (!transportWorker) awaitService(transport, configuration.forcedShutdown());
-        }
+        closeOperations(operationWorker);
+        closeTransport(transportWorker);
         if (!operations.isTerminated() || !transport.isTerminated()) {
             throw shutdownTimeout();
         }
@@ -408,7 +446,7 @@ public final class ServerRuntime implements AutoCloseable {
     /**
      * Protocol identity used to name and isolate runtime execution owners.
      */
-    enum Lane {
+    /* default */ enum Lane {
         /**
          * Administrative API dispatch and operation execution.
          */
@@ -442,7 +480,9 @@ public final class ServerRuntime implements AutoCloseable {
     /**
      * One separately admitted bounded challenge-validation execution lane.
      */
-    static final class ChallengeRuntime implements AutoCloseable {
+    /* default */ static final class ChallengeRuntime implements AutoCloseable {
+        // The standalone runtime owns this bounded executor and its shutdown lifecycle.
+        @SuppressWarnings("PMD.DoNotUseThreads")
         private final ThreadPoolExecutor executor;
         private final Semaphore admitted;
         private final Duration graceful;
@@ -456,7 +496,7 @@ public final class ServerRuntime implements AutoCloseable {
          * @param configuration admission, queue, worker and shutdown bounds
          * @throws NullPointerException if configuration is null
          */
-        ChallengeRuntime(PkiServerConfiguration.Execution configuration) {
+        /* default */ ChallengeRuntime(PkiServerConfiguration.Execution configuration) {
             executor = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
                     new NamedThreadFactory(ACME_VALIDATION_PREFIX, WorkerType.VALIDATION));
             admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
@@ -468,11 +508,12 @@ public final class ServerRuntime implements AutoCloseable {
          *
          * @return whether a permit was acquired; a successful caller must invoke {@link #release()}
          */
-        boolean tryAdmit() { return accepting.get() && admitted.tryAcquire(); }
+        /* default */ boolean tryAdmit() { return accepting.get() && admitted.tryAcquire(); }
         /**
          * Returns exactly one validation permit previously acquired by {@link #tryAdmit()}.
          */
-        void release() { admitted.release(); }
+        /* default */ void release() { admitted.release(); }
+
         /**
          * Queues tracked challenge-validation work on the bounded validation lane.
          *
@@ -481,9 +522,17 @@ public final class ServerRuntime implements AutoCloseable {
          * @return future supporting result observation and interruption-based cancellation
          * @throws RejectedExecutionException if the lane is quiescing or its queue is full
          */
-        <T> Future<T> submit(java.util.concurrent.Callable<T> work) {
-            if (!accepting.get()) throw new RejectedExecutionException("ACME validation is not accepting work");
-            TrackedFutureTask<T> future = new TrackedFutureTask<>(executor, work, futures, () -> { });
+        // The standalone transport owns bounded task executors and preserves cancellation/thread
+        // lifetime. This
+        // standalone validation lane owns submission to its bounded managed executor.
+        /* default */
+        @SuppressWarnings("PMD.DoNotUseThreads")
+        <T> Future<T> submit(Callable<T> work) {
+            if (!accepting.get()) {
+                throw new RejectedExecutionException("ACME validation is not accepting work");
+            }
+            TrackedFutureTask<T> future =
+                    new TrackedFutureTask<>(executor, work, futures, () -> {});
             futures.add(future);
             try {
                 executor.execute(future);
@@ -493,16 +542,18 @@ public final class ServerRuntime implements AutoCloseable {
                 throw failure;
             }
         }
+
         /**
          * Returns the number of validation futures retained for lifecycle cleanup.
          *
          * @return current tracking count
          */
-        int trackedFutures() { return futures.size(); }
+        /* default */ int trackedFutures() { return futures.size(); }
         /**
          * Stops accepting new validation work and admission attempts.
          */
-        void quiesce() { accepting.set(false); }
+        /* default */ void quiesce() { accepting.set(false); }
+
         /**
          * Stops validation admission and shuts down the bounded challenge-validation executor.
          *
@@ -513,22 +564,44 @@ public final class ServerRuntime implements AutoCloseable {
          * @throws IllegalStateException if validation execution remains live after the applicable shutdown
          *         attempts
          */
-        @Override public void close() {
-            quiesce(); executor.shutdown();
+        // This managed validation lane owns executor cancellation and shutdown. The standalone
+        // transport owns
+        // bounded task executors and preserves cancellation/thread lifetime.
+        @SuppressWarnings({"PMD.DoNotUseThreads"})
+        @Override
+        public void close() {
+            quiesce();
+            executor.shutdown();
             boolean worker = WORKER_MARKER.get() == WorkerType.VALIDATION;
-            if (!worker) await(executor, graceful);
+            if (!worker) {
+                await(executor, graceful);
+            }
             if (!executor.isTerminated()) {
                 futures.forEach(value -> value.cancel(true));
                 cancelNeverStarted(executor.shutdownNow());
-                if (!worker) await(executor, forced);
+                if (!worker) {
+                    await(executor, forced);
+                }
             }
-            if (!executor.isTerminated()) throw shutdownTimeout();
+            if (!executor.isTerminated()) {
+                throw shutdownTimeout();
+            }
         }
     }
 
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    @SuppressWarnings({"PMD.DoNotUseThreads"})
     private static ThreadPoolExecutor pool(int workers, int queueCapacity, ThreadFactory factory) {
-        ThreadPoolExecutor result = new ThreadPoolExecutor(workers, workers, 0L, TimeUnit.MILLISECONDS,
-                new ArrayBlockingQueue<>(queueCapacity), factory, new ThreadPoolExecutor.AbortPolicy());
+        ThreadPoolExecutor result =
+                new ThreadPoolExecutor(
+                        workers,
+                        workers,
+                        0L,
+                        TimeUnit.MILLISECONDS,
+                        new ArrayBlockingQueue<>(queueCapacity),
+                        factory,
+                        new ThreadPoolExecutor.AbortPolicy());
         result.prestartAllCoreThreads();
         return result;
     }
@@ -541,13 +614,19 @@ public final class ServerRuntime implements AutoCloseable {
         }
     }
 
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    @SuppressWarnings({"PMD.DoNotUseThreads"})
     private static void await(ThreadPoolExecutor executor, Duration duration) {
         awaitService(executor, duration);
     }
 
+    // The standalone transport owns bounded task executors and preserves cancellation/thread
+    // lifetime.
+    @SuppressWarnings({"PMD.DoNotUseThreads"})
     private static void awaitService(ExecutorService executor, Duration duration) {
         try {
-            if (!executor.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS)) return;
+            executor.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
@@ -566,7 +645,7 @@ public final class ServerRuntime implements AutoCloseable {
      * @param cancellation runtime-owned cancellation token
      * @param completed idempotent tracking-retirement callback
      */
-    record Submitted<T>(Future<T> future, CancellationToken cancellation, Runnable completed) {
+    /* default */ record Submitted<T>(Future<T> future, CancellationToken cancellation, Runnable completed) {
         /**
          * Requires all submission ownership components.
          *
@@ -575,23 +654,26 @@ public final class ServerRuntime implements AutoCloseable {
          * @param completed tracking-retirement callback; must not be null
          * @throws NullPointerException if any ownership component is null
          */
-        Submitted {
-            if (future == null || cancellation == null || completed == null) {
-                throw new NullPointerException("Submitted operation fields must not be null");
-            }
+        /* default */ Submitted {
+            Objects.requireNonNull(future, "Submitted operation fields must not be null");
+            Objects.requireNonNull(cancellation, "Submitted operation fields must not be null");
+            Objects.requireNonNull(completed, "Submitted operation fields must not be null");
         }
+
         /**
          * Runs tracking retirement once the future has completed execution.
          *
          * <p>The supplied callback leaves a cancelled but still executing operation tracked.</p>
          */
-        void finish() { completed.run(); }
+        /* default */ void finish() { completed.run(); }
     }
 
     /**
      * Future whose exact task and optional companion state retire at execution completion.
      */
     private static final class TrackedFutureTask<T> extends FutureTask<T> {
+        // The standalone runtime owns this bounded executor and its shutdown lifecycle.
+        @SuppressWarnings("PMD.DoNotUseThreads")
         private final ThreadPoolExecutor executor;
         private final Set<Future<?>> futures;
         private final Runnable additionalCleanup;
@@ -599,8 +681,14 @@ public final class ServerRuntime implements AutoCloseable {
         private final AtomicBoolean executionComplete = new AtomicBoolean();
         private final AtomicBoolean cleaned = new AtomicBoolean();
 
-        private TrackedFutureTask(ThreadPoolExecutor executor, Callable<T> callable,
-                Set<Future<?>> futures, Runnable additionalCleanup) {
+        // The standalone transport owns bounded task executors and preserves cancellation/thread
+        // lifetime.
+        @SuppressWarnings({"PMD.DoNotUseThreads"})
+        private TrackedFutureTask(
+                ThreadPoolExecutor executor,
+                Callable<T> callable,
+                Set<Future<?>> futures,
+                Runnable additionalCleanup) {
             super(callable);
             this.executor = executor;
             this.futures = futures;
@@ -623,7 +711,11 @@ public final class ServerRuntime implements AutoCloseable {
         /**
          * {@inheritDoc}
          */
-        @Override protected void done() {
+        // The standalone transport owns bounded task executors and preserves cancellation/thread
+        // lifetime.
+        @SuppressWarnings({"PMD.DoNotUseThreads"})
+        @Override
+        protected void done() {
             if (!started.get()) {
                 executor.remove(this);
             }
@@ -649,7 +741,7 @@ public final class ServerRuntime implements AutoCloseable {
      *
      * @param <T> independently owned operation result type
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     interface CancellableCallable<T> {
         /**
          * Executes the operation while observing lifecycle cancellation.
@@ -658,26 +750,38 @@ public final class ServerRuntime implements AutoCloseable {
          * @return independently owned result
          * @throws Exception if execution fails or cancellation is propagated
          */
+        // Preserve the existing Callable-like callback contract for arbitrary checked task
+        // failures.
+        @SuppressWarnings("PMD.SignatureDeclareThrowsException")
         T call(CancellationToken cancellation) throws Exception;
     }
 
     /**
      * Thread-safe cooperative cancellation signal combined with the current thread's interrupt status.
      */
-    static final class CancellationToken implements CancellationSignal {
+    /* default */ static final class CancellationToken implements CancellationSignal {
         private final AtomicBoolean cancelled = new AtomicBoolean();
+
         /**
          * Returns whether cancellation was requested or the observing thread is interrupted.
          *
          * @return whether this operation should stop cooperatively
          */
-        @Override public boolean isCancelled() { return cancelled.get() || Thread.currentThread().isInterrupted(); }
+        // The standalone transport owns bounded task executors and preserves cancellation/thread
+        // lifetime.
+        @SuppressWarnings({"PMD.DoNotUseThreads"})
+        @Override
+        public boolean isCancelled() {
+            return cancelled.get() || Thread.currentThread().isInterrupted();
+        }
+
         /**
          * Permanently requests cooperative cancellation for this operation.
          */
-        void cancel() { cancelled.set(true); }
+        /* default */ void cancel() { cancelled.set(true); }
     }
 
+    /** Names and marks runtime-owned worker threads for lane-aware shutdown. */
     private static final class NamedThreadFactory implements ThreadFactory {
         private final String prefix;
         private final WorkerType workerType;
@@ -691,20 +795,28 @@ public final class ServerRuntime implements AutoCloseable {
             this.workerType = workerType;
             this.virtual = virtual;
         }
+
         /**
          * {@inheritDoc}
          */
-        @Override public Thread newThread(Runnable task) {
-            Runnable marked = () -> {
-                WORKER_MARKER.set(workerType);
-                try {
-                    task.run();
-                } finally {
-                    WORKER_MARKER.remove();
-                }
-            };
+        // The standalone transport owns bounded task executors and preserves cancellation/thread
+        // lifetime.
+        @SuppressWarnings({"PMD.DoNotUseThreads"})
+        @Override
+        public Thread newThread(Runnable task) {
+            Runnable marked =
+                    () -> {
+                        WORKER_MARKER.set(workerType);
+                        try {
+                            task.run();
+                        } finally {
+                            WORKER_MARKER.remove();
+                        }
+                    };
             if (virtual) {
-                return Thread.ofVirtual().name(prefix + sequence.incrementAndGet()).unstarted(marked);
+                return Thread.ofVirtual()
+                        .name(prefix + sequence.incrementAndGet())
+                        .unstarted(marked);
             }
             Thread thread = new Thread(marked, prefix + sequence.incrementAndGet());
             thread.setDaemon(false);
@@ -712,5 +824,46 @@ public final class ServerRuntime implements AutoCloseable {
         }
     }
 
-    private enum WorkerType { TRANSPORT, OPERATION, VALIDATION }
+    /** Identifies the current owned worker lane when deciding whether shutdown may wait. */
+    private enum WorkerType {
+        TRANSPORT,
+        OPERATION,
+        VALIDATION
+    }
+
+    // The standalone runtime owns the existing bounded cancellation/wait/shutdown sequence.
+    @SuppressWarnings("PMD.DoNotUseThreads")
+    private void closeOperations(boolean operationWorker) {
+        if (!operationWorker) {
+            await(operations, configuration.gracefulShutdown());
+        }
+        if (!operations.isTerminated()) {
+            for (CancellationToken cancellation : cancellations) {
+                cancellation.cancel();
+            }
+            if (!operationWorker) {
+                for (Future<?> future : futures) {
+                    future.cancel(true);
+                }
+            }
+            cancelNeverStarted(operations.shutdownNow());
+            if (!operationWorker) {
+                await(operations, configuration.forcedShutdown());
+            }
+        }
+    }
+
+    // The standalone runtime owns the existing bounded transport wait/shutdown sequence.
+    @SuppressWarnings("PMD.DoNotUseThreads")
+    private void closeTransport(boolean transportWorker) {
+        if (!transportWorker) {
+            awaitService(transport, configuration.gracefulShutdown());
+        }
+        if (!transport.isTerminated()) {
+            transport.shutdownNow();
+            if (!transportWorker) {
+                awaitService(transport, configuration.forcedShutdown());
+            }
+        }
+    }
 }

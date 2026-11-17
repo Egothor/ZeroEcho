@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -102,7 +104,7 @@ final class CredentialContent {
             readExact(store, reference, result);
             return result;
         } catch (IOException exception) {
-            java.util.Arrays.fill(result, (byte) 0);
+            Arrays.fill(result, (byte) 0);
             throw new PkiException("Credential content failed: code=CONTENT_IO_FAILED", exception);
         }
     }

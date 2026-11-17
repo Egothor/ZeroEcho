@@ -192,7 +192,7 @@ public final class EnrollmentEndpointRegistry { // NOPMD CyclomaticComplexity - 
         Objects.requireNonNull(endpoint,"endpoint");
         synchronized(control) { // NOPMD AvoidSynchronizedStatement - Pure validation shares the authoritative policy monitor with registration.
             requireBinding(endpoint,true);
-            if(runtime!=null)runtime.validateEndpoint(endpoint);
+            if(runtime!=null){ runtime.validateEndpoint(endpoint); }
         }
     }
 

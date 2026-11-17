@@ -68,6 +68,7 @@ import zeroecho.pki.server.ServerControlStore;
  * @since 1.0
  */
 public final class EnrollmentProfileService {
+    private static final int LEGACY_VERSION = 2;
 
     private static final int VERSION = 1;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
@@ -117,7 +118,7 @@ public final class EnrollmentProfileService {
      */
     public void validateRegistration(EnrollmentProfile profile) {
         Objects.requireNonNull(profile,"profile");record(profile,1);
-        if(find(profile.id()).isPresent())throw new IllegalStateException("Enrollment profile already exists");
+        if(find(profile.id()).isPresent()){ throw new IllegalStateException("Enrollment profile already exists"); }
     }
 
     /**
@@ -128,7 +129,7 @@ public final class EnrollmentProfileService {
      */
     public void validateUpdate(EnrollmentProfile profile) {
         synchronized(control) { // NOPMD AvoidSynchronizedStatement - Pure validation shares the authoritative policy monitor.
-            var existing=require(profile.id());
+            ServerControlStore.ProtocolRecord existing=require(profile.id());
             EnrollmentEndpointRegistry.requireCompatibleProfile(control,profile);
             record(profile,Math.incrementExact(decode(existing).revision()));
         }
@@ -308,7 +309,7 @@ public final class EnrollmentProfileService {
             }
             writeCollection(output, profile.requiredSanDomains());
             output.writeBoolean(profile.requireApproval());
-            if (profile.sdkProfile().isPresent()) write(output, profile.sdkProfile().orElseThrow());
+            if (profile.sdkProfile().isPresent()) { write(output, profile.sdkProfile().orElseThrow()); }
             output.flush();
             if (bytes.size() > MAXIMUM_PAYLOAD_BYTES) {
                 throw new IllegalArgumentException("Enrollment profile exceeds payload bound");
@@ -326,9 +327,7 @@ public final class EnrollmentProfileService {
         }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload))) {
             int version = input.readInt();
-            if (version != VERSION && version != 2) {
-                throw corrupt();
-            }
+            ProfileFraming.requireSupportedVersion(version);
             long revision = input.readLong();
             if (revision <= 0) {
                 throw corrupt();
@@ -346,7 +345,7 @@ public final class EnrollmentProfileService {
             List<String> domains = readCollection(input);
             boolean approval = input.readBoolean();
             EnrollmentProfile profile = new EnrollmentProfile(id, displayName, state, certificateProfileId,
-                    authorityIds, subjectPattern, domains, approval, version == 2 ? Optional.of(read(input)) : Optional.empty());
+                    authorityIds, subjectPattern, domains, approval, version == LEGACY_VERSION ? Optional.of(read(input)) : Optional.empty());
             if (!id.equals(record.recordId()) || input.read() != -1
                     || !Arrays.equals(payload, encode(profile, revision))) {
                 throw corrupt();
@@ -418,4 +417,15 @@ public final class EnrollmentProfileService {
     }
 
     private record Stored(EnrollmentProfile profile, long revision) { }
+
+
+
+
+    /** Groups one bounded protocol validation responsibility. */
+    private static final class ProfileFraming {
+        private static void requireSupportedVersion(int version) {
+            if (version != VERSION && version != LEGACY_VERSION) { throw corrupt(); }
+        }
+    }
+
 }

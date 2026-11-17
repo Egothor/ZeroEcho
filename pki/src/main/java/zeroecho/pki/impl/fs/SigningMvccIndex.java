@@ -76,11 +76,12 @@ import zeroecho.pki.spi.store.MetadataKey;
 // would expose mutable ownership or obscure the failure-free root publication.
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource", "PMD.ConfusingTernary",
-        "PMD.CompareObjectsWithEquals", "PMD.ControlStatementBraces",
+        "PMD.CompareObjectsWithEquals",
         "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects",
         "PMD.NcssCount", "PMD.NPathComplexity", "PMD.TooManyMethods",
         "PMD.UseTryWithResources" })
 final class SigningMvccIndex implements AutoCloseable {
+    private static final String KEY_ARGUMENT = "key";
     /**
      * Maximum indexed key count for the four-gibibyte sizing profile.
      */
@@ -195,7 +196,7 @@ final class SigningMvccIndex implements AutoCloseable {
      * @throws NullPointerException if key is null
      */
     /* default */ static long residentEntryBytes(MetadataKey key) {
-        return CanonicalKey.of(Objects.requireNonNull(key, "key")).estimatedResidentBytes();
+        return CanonicalKey.of(Objects.requireNonNull(key, KEY_ARGUMENT)).estimatedResidentBytes();
     }
 
     /**
@@ -220,7 +221,7 @@ final class SigningMvccIndex implements AutoCloseable {
      * @throws IllegalStateException if the index or snapshot is closed
      */
     /* default */ Optional<SnapshotRecord> lookup(MetadataKey key) {
-        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(key, KEY_ARGUMENT);
         readLock.lock();
         try {
             requireOpen();
@@ -702,8 +703,8 @@ final class SigningMvccIndex implements AutoCloseable {
             } finally {
                 if (!installed) {
                     rollbackSlots(plans, slots);
-                    if (newReferences != null) newReferences.close();
-                    if (nodeReservation != null) nodeReservation.close();
+                    if (newReferences != null) { newReferences.close(); }
+                    if (nodeReservation != null) { nodeReservation.close(); }
                     baseReservation.close();
                 }
             }
@@ -1442,8 +1443,8 @@ final class SigningMvccIndex implements AutoCloseable {
         if (count == null || count <= 0) {
             throw new IllegalStateException("signing index generation accounting is inconsistent");
         }
-        if (count == 1) references.remove(generationId);
-        else references.put(generationId, count - 1);
+        if (count == 1) { references.remove(generationId); }
+        else { references.put(generationId, count - 1); }
     }
 
     private void rollbackSlots(List<UpdatePlan> plans, List<PrimarySlot> slots) {
@@ -2024,7 +2025,9 @@ final class SigningMvccIndex implements AutoCloseable {
          * @param maximumSnapshots maximum number of simultaneously pinned index snapshots
          * @param maximumSnapshotRevisionSpan maximum revision distance retained for snapshots
          * @param maxRetainedObsoleteVersions maximum obsolete versions retained for live snapshot readers
-         * @throws IllegalArgumentException if {@code (maximumKeys <= 0 || maximumKeys > FOUR_GIB_MAXIMUM_KEYS || maximumSnapshots <= 0 || maximumSnapshotRevisionSpan <= 0L || maxRetainedObsoleteVersions != 0L)}
+         * @throws IllegalArgumentException if {@code (maximumKeys <= 0 || maximumKeys >
+         * FOUR_GIB_MAXIMUM_KEYS || maximumSnapshots <= 0 || maximumSnapshotRevisionSpan <= 0L ||
+         * maxRetainedObsoleteVersions != 0L)}
          */
         Configuration {
             if (maximumKeys <= 0 || maximumKeys > FOUR_GIB_MAXIMUM_KEYS
@@ -2139,7 +2142,7 @@ final class SigningMvccIndex implements AutoCloseable {
          * @throws IllegalArgumentException if {@code (sequence < 0L)}
          */
         Mutation {
-            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(key, KEY_ARGUMENT);
             if (sequence < 0L) {
                 throw new IllegalArgumentException("signing mutation sequence is invalid");
             }
@@ -2187,7 +2190,8 @@ final class SigningMvccIndex implements AutoCloseable {
          * @param sequence exact persisted record sequence
          * @param mutations ordered immutable mutation descriptors
          * @throws NullPointerException if {@code mutations} is null
-         * @throws IllegalArgumentException if {@code (revision <= 0L || sequence < 0L || mutations.size() > MAX_MUTATIONS_PER_REVISION)}
+         * @throws IllegalArgumentException if {@code (revision <= 0L || sequence < 0L ||
+         * mutations.size() > MAX_MUTATIONS_PER_REVISION)}
          */
         CommittedFrame {
             mutations = List.copyOf(Objects.requireNonNull(mutations, "mutations"));
@@ -2216,7 +2220,7 @@ final class SigningMvccIndex implements AutoCloseable {
          * @throws IllegalArgumentException if {@code (revision <= 0L)}
          */
         SnapshotRecord {
-            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(key, KEY_ARGUMENT);
             Objects.requireNonNull(pointer, "pointer");
             if (revision <= 0L) {
                 throw new IllegalArgumentException("signing snapshot record revision is invalid");
@@ -2242,7 +2246,7 @@ final class SigningMvccIndex implements AutoCloseable {
          * @throws IllegalArgumentException if {@code (revision <= 0L)}
          */
         RecoveredRecord {
-            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(key, KEY_ARGUMENT);
             Objects.requireNonNull(pointer, "pointer");
             if (revision <= 0L) {
                 throw new IllegalArgumentException("signing recovery record revision is invalid");
@@ -2551,12 +2555,12 @@ final class SigningMvccIndex implements AutoCloseable {
             while (true) {
                 PreparedApply rollback = preparedApplies.removeLast();
                 rollback.rollbackOne();
-                if (rollback == this) break;
+                if (rollback == this) { break; }
             }
         }
 
         private void rollbackOne() {
-            if (!active) return;
+            if (!active) { return; }
             active = false;
             rollbackSlots(plans, slots);
             newReferences.close();
@@ -2653,7 +2657,7 @@ final class SigningMvccIndex implements AutoCloseable {
             state.readAccess.lock();
             try {
                 requireOpen();
-                OrderedNode node = find(state.root, Objects.requireNonNull(key, "key"));
+                OrderedNode node = find(state.root, Objects.requireNonNull(key, KEY_ARGUMENT));
                 return node == null ? Optional.empty() : Optional.of(node.entry.record);
             } finally {
                 state.readAccess.unlock();

@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.time.Instant;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -74,7 +76,7 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
         "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidSynchronizedStatement",
         "PMD.CloseResource", "PMD.CommentRequired", "PMD.CompareObjectsWithEquals",
-        "PMD.ControlStatementBraces", "PMD.DataClass",
+        "PMD.DataClass",
         "PMD.DoNotUseThreads",
         "PMD.UnusedNullCheckInEquals", "PMD.UseTryWithResources", "PMD.CouplingBetweenObjects" })
 final class SegmentedTransactionalMetadataStore implements TransactionalMetadataStore { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
@@ -464,11 +466,11 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             SigningLedgerStoreEngine.SigningAdmission signingAdmission,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) throws IOException {
         requireOpen();
-        if (signingAdmission != null) engine.requireSigningAdmission(signingAdmission);
+        if (signingAdmission != null) { engine.requireSigningAdmission(signingAdmission); }
         int count = activeTransactions.incrementAndGet();
         if (count > MAXIMUM_ACTIVE_TRANSACTIONS) {
             activeTransactions.decrementAndGet();
-            if (signingAdmission != null) signingAdmission.close();
+            if (signingAdmission != null) { signingAdmission.close(); }
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED,
                     "Metadata transaction capacity is exhausted");
         }
@@ -481,7 +483,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         } finally {
             if (!issued) {
                 activeTransactions.decrementAndGet();
-                if (signingAdmission != null) signingAdmission.close();
+                if (signingAdmission != null) { signingAdmission.close(); }
             }
         }
     }
@@ -716,7 +718,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
      * @throws IOException if projection capture is interrupted or due selection fails
      * @throws IllegalStateException if the store is closed
      */
-    /* default */ List<String> selectSigningDue(java.time.Instant cutoff, int maximumResults)
+    /* default */ List<String> selectSigningDue(Instant cutoff, int maximumResults)
             throws IOException {
         requireOpen(); return engine.selectDue(cutoff, maximumResults);
     }
@@ -732,7 +734,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
      * @throws IOException if projection capture or due selection fails
      * @throws IllegalStateException if the store is closed
      */
-    /* default */ SigningDuePage pageSigningDue(java.time.Instant cutoff,
+    /* default */ SigningDuePage pageSigningDue(Instant cutoff,
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
             int maximumResults) throws IOException {
         requireOpen();
@@ -772,7 +774,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             transferred = true;
             return page;
         } finally {
-            if (!transferred) owners.close();
+            if (!transferred) { owners.close(); }
         }
     }
 
@@ -829,7 +831,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
      * @return bounded operation identity list from the retention index
      * @throws IllegalStateException if the store is closed
      */
-    /* default */ List<String> selectSigningRetention(java.time.Instant createdAtCutoff,
+    /* default */ List<String> selectSigningRetention(Instant createdAtCutoff,
             int maximumResults) {
         requireOpen(); return engine.selectRetention(createdAtCutoff, maximumResults);
     }
@@ -911,7 +913,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 List<SigningMvccIndex.SnapshotRecord> page = source.rangeFrom(lower, PAGE_SIZE + 1);
                 int offset = previous != null && !page.isEmpty() && page.getFirst().key().equals(previous)
                         ? 1 : 0;
-                if (offset >= page.size()) break;
+                if (offset >= page.size()) { break; }
                 for (; offset < page.size(); offset++) {
                     SigningMvccIndex.SnapshotRecord record = page.get(offset);
                     previous = record.key();
@@ -927,7 +929,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                         pinnedWatermark = recordWatermark;
                         continue;
                     }
-                    if (excluded.contains(record.key().namespace())) continue;
+                    if (excluded.contains(record.key().namespace())) { continue; }
                     byte[] value = engine.readValue(record);
                     try (MetadataTransaction transaction = target.beginTransaction();
                             RepeatableContent content = new ByteContent(value)) {
@@ -939,7 +941,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                         target.acknowledge(committed.transactionId());
                     }
                 }
-                if (page.size() <= PAGE_SIZE) break;
+                if (page.size() <= PAGE_SIZE) { break; }
             }
             for (SigningLedgerStoreEngine.SnapshotOutcome outcome : retainedOutcomes) {
                 target.engine.restoreOutcome(outcome);
@@ -1042,7 +1044,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             return snapshot;
         }
         private void requirePageOpen() {
-            if (pageClosed.get()) throw new IllegalStateException("signing owner page is closed");
+            if (pageClosed.get()) { throw new IllegalStateException("signing owner page is closed"); }
         }
         /**
          * {@inheritDoc}
@@ -1060,15 +1062,15 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
      */
     @Override
     public void close() throws IOException {
-        if (!closed.compareAndSet(false, true)) return;
+        if (!closed.compareAndSet(false, true)) { return; }
         List<SnapshotImpl> open;
         synchronized (snapshots) { open = List.copyOf(snapshots); }
-        for (SnapshotImpl snapshot : open) snapshot.close();
+        for (SnapshotImpl snapshot : open) { snapshot.close(); }
         engine.close();
     }
 
     private void requireOpen() {
-        if (closed.get()) throw new IllegalStateException("Metadata store is closed");
+        if (closed.get()) { throw new IllegalStateException("Metadata store is closed"); }
     }
 
     private final class TransactionImpl implements MetadataTransaction {
@@ -1103,7 +1105,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
          */
         @Override public void replace(MetadataKey key, long expectedRevision,
                 RepeatableContent content, CancellationSignal cancellation) throws IOException {
-            if (expectedRevision < 0L) throw new IllegalArgumentException("expectedRevision");
+            if (expectedRevision < 0L) { throw new IllegalArgumentException("expectedRevision"); }
             stage(SigningTransactionPayloadCodec.MutationKind.REPLACE, key, expectedRevision,
                     content, cancellation);
         }
@@ -1112,7 +1114,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
          */
         @Override public void delete(MetadataKey key, long expectedRevision) {
             requireActive();
-            if (expectedRevision < 0L) throw new IllegalArgumentException("expectedRevision");
+            if (expectedRevision < 0L) { throw new IllegalArgumentException("expectedRevision"); }
             admit(new SigningTransactionPayloadCodec.Mutation(
                     SigningTransactionPayloadCodec.MutationKind.DELETE,
                     Objects.requireNonNull(key, "key"), expectedRevision, null));
@@ -1142,10 +1144,10 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 while (offset < bytes.length) {
                     throwIfCancelled(cancellation);
                     int count = input.read(bytes, offset, bytes.length - offset);
-                    if (count <= 0) throw integrity("Metadata content is shorter than declared");
+                    if (count <= 0) { throw integrity("Metadata content is shorter than declared"); }
                     offset += count;
                 }
-                if (input.read() >= 0) throw integrity("Metadata content is longer than declared");
+                if (input.read() >= 0) { throw integrity("Metadata content is longer than declared"); }
             }
             admit(new SigningTransactionPayloadCodec.Mutation(kind,
                     Objects.requireNonNull(key, "key"), expectedRevision, bytes));
@@ -1165,7 +1167,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
          */
         @Override public MetadataCommitResult commit() throws IOException {
             requireActive();
-            if (mutations.isEmpty()) throw new IllegalStateException("Metadata transaction is empty");
+            if (mutations.isEmpty()) { throw new IllegalStateException("Metadata transaction is empty"); }
             state = State.TERMINAL;
             try {
                 return engine.commit(id, List.copyOf(mutations.values()),
@@ -1181,7 +1183,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             if (state == State.ACTIVE) {
                 state = State.TERMINAL;
                 try {
-                    if (signingAdmission != null) signingAdmission.close();
+                    if (signingAdmission != null) { signingAdmission.close(); }
                     engine.reject(id, MetadataCommitResult.FailureCategory.CANCELLED);
                 }
                 finally { release(); }
@@ -1190,23 +1192,23 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         /**
          * {@inheritDoc}
          */
-        @Override public void close() throws IOException { if (state == State.ACTIVE) abort(); }
+        @Override public void close() throws IOException { if (state == State.ACTIVE) { abort(); } }
         private void release() {
             for (SigningTransactionPayloadCodec.Mutation mutation : mutations.values()) {
                 byte[] value = mutation.content();
-                if (value != null) Arrays.fill(value, (byte) 0);
+                if (value != null) { Arrays.fill(value, (byte) 0); }
             }
             mutations.clear();
-            if (signingAdmission != null) signingAdmission.close();
+            if (signingAdmission != null) { signingAdmission.close(); }
             activeTransactions.decrementAndGet();
         }
         private void requireActive() {
             requireOwner(); requireOpen();
-            if (state != State.ACTIVE) throw new IllegalStateException("Metadata transaction is terminal");
+            if (state != State.ACTIVE) { throw new IllegalStateException("Metadata transaction is terminal"); }
         }
         private void requireOwner() {
             if (Thread.currentThread() != owner)
-                throw new IllegalStateException("Metadata transaction is thread-confined");
+                { throw new IllegalStateException("Metadata transaction is thread-confined"); }
         }
     }
 
@@ -1257,7 +1259,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             }
         }
         private void requireSnapshotOpen() {
-            if (snapshotClosed.get()) throw new IllegalStateException("Metadata snapshot is closed");
+            if (snapshotClosed.get()) { throw new IllegalStateException("Metadata snapshot is closed"); }
         }
 
         private final class CursorImpl implements MetadataCursor {
@@ -1279,12 +1281,12 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
                 while (offset >= page.size()) {
                     page = snapshot.rangeFrom(nextLower, PAGE_SIZE + 1); offset = 0;
-                    if (page.isEmpty()) return Optional.empty();
-                    if (lastReturned != null && page.getFirst().key().equals(lastReturned)) offset++;
-                    if (offset >= page.size()) return Optional.empty();
+                    if (page.isEmpty()) { return Optional.empty(); }
+                    if (lastReturned != null && page.getFirst().key().equals(lastReturned)) { offset++; }
+                    if (offset >= page.size()) { return Optional.empty(); }
                 }
                 SigningMvccIndex.SnapshotRecord value = page.get(offset++);
-                if (!range.contains(value.key())) return Optional.empty();
+                if (!range.contains(value.key())) { return Optional.empty(); }
                 lastReturned = value.key(); nextLower = lastReturned;
                 return Optional.of(record(value));
             }
@@ -1294,7 +1296,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             @Override public void close() { cursorClosed = true; page = List.of(); }
             private void requireCursorOpen() {
                 requireSnapshotOpen();
-                if (cursorClosed) throw new IllegalStateException("Metadata cursor is closed");
+                if (cursorClosed) { throw new IllegalStateException("Metadata cursor is closed"); }
             }
         }
 
@@ -1346,7 +1348,7 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             @Override public void close() { recordClosed.set(true); }
             private void requireRecordOpen() {
                 requireSnapshotOpen();
-                if (recordClosed.get()) throw new IllegalStateException("Metadata record is closed");
+                if (recordClosed.get()) { throw new IllegalStateException("Metadata record is closed"); }
             }
         }
     }

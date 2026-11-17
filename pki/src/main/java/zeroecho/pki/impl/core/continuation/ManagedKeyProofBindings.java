@@ -34,11 +34,6 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -49,6 +44,12 @@ import zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.StagedContentStore;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 /**
  * Configuration-independent immutable proof bindings shared by admission,
@@ -64,7 +65,9 @@ public final class ManagedKeyProofBindings {
      * @return deterministic private correlation
      */
     public static String correlation(PkiId operationId) {
-        return "key-proof." + ContentCommitment.sha256(operationId.value().getBytes(StandardCharsets.UTF_8)).sha256();
+        return "key-proof."
+                + ContentCommitment.sha256(operationId.value().getBytes(StandardCharsets.UTF_8))
+                        .sha256();
     }
 
     /**
@@ -75,8 +78,13 @@ public final class ManagedKeyProofBindings {
     public static DomainCommandEncoding.Decoded requireEnvelope(SignWorkflowStore.AcceptanceEnvelope envelope) {
         SignWorkflowStore.OuterCommand outer = envelope.outer().orElseThrow(ManagedKeyProofBindings::invalid);
         if (outer.kind() != DomainContinuationStore.Kind.KEY_PROOF) { throw invalid(); }
-        DomainCommandEncoding.Decoded command = DomainContinuationValidation.validate(new DomainContinuationTemplate(
-                outer.kind(), java.util.Optional.of(outer.correlationId()), outer.command(), outer.commandCommitment()));
+        DomainCommandEncoding.Decoded command =
+                DomainContinuationValidation.validate(
+                        new DomainContinuationTemplate(
+                                outer.kind(),
+                                java.util.Optional.of(outer.correlationId()),
+                                outer.command(),
+                                outer.commandCommitment()));
         SigningSubmissionId id = SigningSubmissionId.parse(envelope.operationId());
         ManagedKeyProofChallenge.requireOperation(envelope.operationId(), command.field(6));
         if (!command.field(6).equals(envelope.providerNamespace()) || !id.namespace().equals(envelope.providerNamespace())
@@ -104,8 +112,9 @@ public final class ManagedKeyProofBindings {
     }
 
     /**
-     * Reads one live candidate to exact EOF and requires all challenge commitments.
-     * Store/content I/O failures propagate without being classified as invalid signatures.
+     * Reads one live candidate to exact EOF and requires all challenge commitments. Store/content
+     * I/O failures propagate without being classified as invalid signatures.
+     *
      * @param store owning staged-content store
      * @param operationId exact submission ID
      * @param deadline exact accepted deadline
@@ -115,9 +124,14 @@ public final class ManagedKeyProofBindings {
      * @return exact bounded challenge bytes for verification
      * @throws IOException if content cannot be read or does not match its commitment
      */
-    public static byte[] readChallenge(StagedContentStore store, PkiId operationId, java.time.Instant deadline,
+    public static byte[] readChallenge(
+            StagedContentStore store,
+            PkiId operationId,
+            java.time.Instant deadline,
             java.util.Optional<ManagedKeyProofChallenge.CaContext> context,
-            DomainCommandEncoding.Decoded command, DurableContentReference candidate) throws IOException {
+            DomainCommandEncoding.Decoded command,
+            DurableContentReference candidate)
+            throws IOException {
         requireCandidate(command, candidate);
         int length = Math.toIntExact(candidate.length());
         try (RepeatableContent content = store.openContent(candidate); InputStream input = content.openStream()) {
@@ -149,8 +163,10 @@ public final class ManagedKeyProofBindings {
         if ((domain.state() == DomainContinuationStore.State.SIGNING || domain.state() == DomainContinuationStore.State.PUBLISHING)
                 && domain.signingContent().filter(envelope.candidate()::equals).isEmpty()) { throw invalid(); }
         if (domain.state() == DomainContinuationStore.State.PUBLISHING || domain.state() == DomainContinuationStore.State.COMPLETED) {
-            boolean succeeded = workflow.state() == SignWorkflowStore.State.SUCCEEDED
-                    || workflow.state() == SignWorkflowStore.State.RETIRED && workflow.detailCode().filter("SIGNED"::equals).isPresent();
+            boolean succeeded =
+                    workflow.state() == SignWorkflowStore.State.SUCCEEDED
+                            || workflow.state() == SignWorkflowStore.State.RETIRED
+                                    && workflow.detailCode().filter("SIGNED"::equals).isPresent();
             EncodedObject signature = workflow.result().orElseThrow(ManagedKeyProofBindings::invalid);
             if (!succeeded || signature.encoding() != Encoding.BINARY || signature.byteLength() > 1_048_576) { throw invalid(); }
         }
@@ -166,8 +182,10 @@ public final class ManagedKeyProofBindings {
     public static EncodedObject result(DomainContinuationStore.Record domain) {
         if (domain.kind() != DomainContinuationStore.Kind.KEY_PROOF
                 || !DomainContinuationTemplate.commitment(domain.command()).equals(domain.commandCommitment())) { throw invalid(); }
-        return new EncodedObject(Encoding.BINARY, ("proof:" + domain.commandCommitment().substring("domain:v1:".length()))
-                .getBytes(StandardCharsets.US_ASCII));
+        return new EncodedObject(
+                Encoding.BINARY,
+                ("proof:" + domain.commandCommitment().substring("domain:v1:".length()))
+                        .getBytes(StandardCharsets.US_ASCII));
     }
 
     /**

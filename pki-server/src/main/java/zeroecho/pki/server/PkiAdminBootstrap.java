@@ -33,22 +33,22 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-
-import zeroecho.core.storage.KeyringPassword;
-import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
 /**
  * Offline, one-shot creation of the initial administrator pair and nginx transport identity.
@@ -59,9 +59,11 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
  * rather than retried. This tool never opens an HTTP listener or issues certificates.</p>
  */
 public final class PkiAdminBootstrap {
+    private static final int INITIAL_IDENTITY_COUNT = 3;
     private static final String ACTOR = "system";
-    private static final String HELP = "Usage: zeroecho-pki-admin-bootstrap --config PATH --admin-id ID "
-            + "--approver-id ID --proxy-id ID\n";
+    private static final String HELP =
+            "Usage: zeroecho-pki-admin-bootstrap --config PATH --admin-id ID "
+                    + "--approver-id ID --proxy-id ID\n";
 
     private PkiAdminBootstrap() { }
 
@@ -72,39 +74,54 @@ public final class PkiAdminBootstrap {
      */
     public static void main(String[] arguments) {
         int result = run(arguments);
-        if (result != 0) System.exit(result);
+        if (result != 0) {
+            System.exit(result);
+        }
     }
 
     /**
-     * Runs initial administrator bootstrap and reports classified process status without exiting the JVM.
+     * Runs initial administrator bootstrap and reports classified process status without exiting
+     * the JVM.
      *
      * @param arguments exact command-line arguments; no null entries
-     * @return zero on success/help, two for refused input/prerequisites, or three for an unconfirmed runtime failure
+     * @return zero on success/help, two for refused input/prerequisites, or three for an
+     *     unconfirmed runtime failure
      * @throws NullPointerException if the arguments array is null
      */
-    static int run(String[] arguments) {
+    // CLI errors retain the existing classified exit status and sanitized startup diagnostic.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    /* default */ static int run(String... arguments) {
         if (arguments.length == 1 && "--help".equals(arguments[0])) {
             System.out.print(HELP);
             return 0;
         }
         try {
             Map<String, String> options = options(arguments);
-            PkiServerConfiguration configuration = PkiServerConfigurationCodec.read(Path.of(options.get("--config")));
-            bootstrap(configuration, options.get("--admin-id"), options.get("--approver-id"), options.get("--proxy-id"));
-            System.out.println("Initial administrator identities created; bootstrap cannot be repeated.");
+            PkiServerConfiguration configuration =
+                    PkiServerConfigurationCodec.read(Path.of(options.get("--config")));
+            bootstrap(
+                    configuration,
+                    options.get("--admin-id"),
+                    options.get("--approver-id"),
+                    options.get("--proxy-id"));
+            System.out.println(
+                    "Initial administrator identities created; bootstrap cannot be repeated.");
             return 0;
         } catch (IllegalArgumentException | IOException failure) {
             System.err.println("Administrator bootstrap refused: " + failure.getMessage());
             return 2;
         } catch (RuntimeException failure) {
-            System.err.println("Administrator bootstrap failed; inspect retained state before recovery.");
+            System.err.println(
+                    "Administrator bootstrap failed; inspect retained state before recovery.");
             return 3;
         }
     }
 
-    private static Map<String, String> options(String[] arguments) {
+    private static Map<String, String> options(String... arguments) {
         Set<String> names = Set.of("--config", "--admin-id", "--approver-id", "--proxy-id");
-        if (arguments.length != names.size() * 2) throw new IllegalArgumentException(HELP.strip());
+        if (arguments.length != names.size() * 2) {
+            throw new IllegalArgumentException(HELP.strip());
+        }
         Map<String, String> options = new HashMap<>();
         for (int index = 0; index < arguments.length; index += 2) {
             if (!names.contains(arguments[index]) || options.putIfAbsent(arguments[index], arguments[index + 1]) != null) {
@@ -115,29 +132,43 @@ public final class PkiAdminBootstrap {
     }
 
     /**
-     * Creates the initial three mapped identities and explicit grants in fresh durable server state.
+     * Creates the initial three mapped identities and explicit grants in fresh durable server
+     * state.
      *
-     * <p>A durable reservation prevents bootstrap replay after an interrupted invocation.</p>
+     * <p>A durable reservation prevents bootstrap replay after an interrupted invocation.
      *
      * @param configuration validated server configuration and authentication mappings
      * @param administrator exact original administrator principal identity
      * @param approver exact original separate approver principal identity
      * @param proxy exact original reverse-proxy service principal identity
      * @throws IOException if configuration state or durable control resources cannot be accessed
-     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
-     *         match
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state
+     *     do not match
      */
-    static void bootstrap(PkiServerConfiguration configuration, String administrator, String approver, String proxy)
+    /* default */ static void bootstrap(
+            PkiServerConfiguration configuration,
+            String administrator,
+            String approver,
+            String proxy)
             throws IOException {
         validate(configuration, administrator, approver, proxy);
-        configuration.realm().initialAdministratorPrincipalId().ifPresent(initial -> {
-            if (!initial.equals(administrator)) throw new IllegalArgumentException("Initial administrator differs from bootstrap");
-        });
+        configuration
+                .realm()
+                .initialAdministratorPrincipalId()
+                .ifPresent(
+                        initial -> {
+                            if (!initial.equals(administrator)) {
+                                throw new IllegalArgumentException(
+                                        "Initial administrator differs from bootstrap");
+                            }
+                        });
         Path control = configuration.realm().controlLogPath();
-        Path root = Path.of(configuration.realm().pkiSessionConfiguration().store().require("root"));
+        Path root =
+                Path.of(configuration.realm().pkiSessionConfiguration().store().require("root"));
         requireFresh(control, root);
         Files.createDirectories(control.getParent());
-        Path reservation = control.resolveSibling(control.getFileName() + ".admin-bootstrap-started");
+        Path reservation =
+                control.resolveSibling(control.getFileName() + ".admin-bootstrap-started");
         try (FileChannel channel = FileChannel.open(reservation, StandardOpenOption.CREATE_NEW,
                 StandardOpenOption.WRITE)) {
             channel.force(true);
@@ -152,18 +183,36 @@ public final class PkiAdminBootstrap {
                     Optional.empty(), Optional.empty());
             context.createPrincipal(new SecurityPrincipal(proxy, SecurityPrincipal.Type.SERVICE,
                     "Initial reverse proxy", Optional.empty(), Map.of(), true), ACTOR);
-            context.grant(grant("bootstrap.proxy-forward", proxy, Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY,
-                    Permission.ResourceType.REALM, scope, Permission.DataView.METADATA_REDACTED), ACTOR);
+            context.grant(
+                    grant(
+                            "bootstrap.proxy-forward",
+                            proxy,
+                            Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY,
+                            Permission.ResourceType.REALM,
+                            scope,
+                            Permission.DataView.METADATA_REDACTED),
+                    ACTOR);
             for (String principal : List.of(administrator, approver)) {
-                context.createPrincipal(new SecurityPrincipal(principal, SecurityPrincipal.Type.USER,
-                        principal, Optional.empty(), Map.of(), true), ACTOR);
-                if (principal.equals(administrator)) context.recordInitialAdministrator(administrator);
-                String prefix = principal.equals(administrator) ? "bootstrap.admin." : "bootstrap.approver.";
-                for (Permission.Grant permission : catalogGrants(principal, prefix, scope)) context.grant(permission, ACTOR);
+                context.createPrincipal(initialPrincipal(principal, proxy), ACTOR);
+                if (principal.equals(administrator)) {
+                    context.recordInitialAdministrator(administrator);
+                }
+                String prefix =
+                        principal.equals(administrator)
+                                ? "bootstrap.admin."
+                                : "bootstrap.approver.";
+                for (Permission.Grant permission : catalogGrants(principal, prefix, scope)) {
+                    context.grant(permission, ACTOR);
+                }
                 context.grant(realmReadGrant(principal, prefix, scope), ACTOR);
-                for(Permission.Grant permission:certificateAccessGrants(principal,prefix,scope))context.grant(permission,ACTOR);
+                for (Permission.Grant permission :
+                        certificateAccessGrants(principal, prefix, scope)) {
+                    context.grant(permission, ACTOR);
+                }
                 context.grant(statusAccessGrant(principal,prefix,scope),ACTOR);
-                if (principal.equals(administrator)) context.grant(rootApprovalGrant(administrator, scope), ACTOR);
+                if (principal.equals(administrator)) {
+                    context.grant(rootApprovalGrant(administrator, scope), ACTOR);
+                }
                 if (principal.equals(administrator) && configuration.realm().initialAdministratorPrincipalId().isPresent()) {
                     context.grant(managedGenerationGrant(administrator, scope), ACTOR);
                 }
@@ -179,26 +228,35 @@ public final class PkiAdminBootstrap {
      * @param approver exact original separate approver principal identity
      * @param proxy exact original reverse-proxy service principal identity
      * @throws IOException if configuration state or durable control resources cannot be accessed
-     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
-     *         match
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state
+     *     do not match
      */
-    static void provisionRootAdmin(PkiServerConfiguration configuration, String administrator, String approver, String proxy)
+    /* default */ static void provisionRootAdmin(
+            PkiServerConfiguration configuration,
+            String administrator,
+            String approver,
+            String proxy)
             throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,true,false,false);
     }
 
     /**
-     * Provisions explicit certificate metadata/content permissions for the original bootstrap identities.
+     * Provisions explicit certificate metadata/content permissions for the original bootstrap
+     * identities.
      *
      * @param configuration validated server configuration and authentication mappings
      * @param administrator exact original administrator principal identity
      * @param approver exact original separate approver principal identity
      * @param proxy exact original reverse-proxy service principal identity
      * @throws IOException if configuration state or durable control resources cannot be accessed
-     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
-     *         match
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state
+     *     do not match
      */
-    static void provisionCertificateAccess(PkiServerConfiguration configuration,String administrator,String approver,String proxy)
+    /* default */ static void provisionCertificateAccess(
+            PkiServerConfiguration configuration,
+            String administrator,
+            String approver,
+            String proxy)
             throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,false,true,false);
     }
@@ -211,125 +269,113 @@ public final class PkiAdminBootstrap {
      * @param approver exact original separate approver principal identity
      * @param proxy exact original reverse-proxy service principal identity
      * @throws IOException if configuration state or durable control resources cannot be accessed
-     * @throws IllegalArgumentException if principal identities or required original bootstrap state do not
-     *         match
+     * @throws IllegalArgumentException if principal identities or required original bootstrap state
+     *     do not match
      */
-    static void provisionStatusAccess(PkiServerConfiguration configuration,String administrator,String approver,String proxy)throws IOException {
+    /* default */ static void provisionStatusAccess(
+            PkiServerConfiguration configuration,
+            String administrator,
+            String approver,
+            String proxy)
+            throws IOException {
         provisionInitialCapabilities(configuration,administrator,approver,proxy,false,false,true);
     }
 
     private static void provisionInitialCapabilities(PkiServerConfiguration configuration,String administrator,String approver,String proxy,
             boolean rootApproval,boolean certificateAccess,boolean statusAccess)throws IOException {
-        validate(configuration, administrator, approver, proxy);
-        Path control = configuration.realm().controlLogPath();
-        Path reservation = control.resolveSibling(control.getFileName() + ".admin-bootstrap-started");
-        Path root = Path.of(configuration.realm().pkiSessionConfiguration().store().require("root"));
-        if (!Files.isRegularFile(control, LinkOption.NOFOLLOW_LINKS)
-                || !Files.isRegularFile(reservation, LinkOption.NOFOLLOW_LINKS) || Files.size(reservation) != 0
-                || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
-                || !Files.isRegularFile(root.resolve("VERSION"), LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalArgumentException("Root designation requires an existing initial bootstrap");
-        }
-        try (ServerRealmContext context = ServerRealmContext.open(configuration.realm(), dependencies(configuration))) {
-            Permission.Scope scope = new Permission.Scope(configuration.realm().realmId(), Optional.empty(), Optional.empty(), Optional.empty());
-            Permission.Grant own = rootApprovalGrant(administrator, scope);
-            for (String principal : List.of(proxy, administrator, approver)) {
-                SecurityPrincipal expected = new SecurityPrincipal(principal,
-                        principal.equals(proxy) ? SecurityPrincipal.Type.SERVICE : SecurityPrincipal.Type.USER,
-                        principal.equals(proxy) ? "Initial reverse proxy" : principal, Optional.empty(), Map.of(), true);
-                if (!context.principal(principal).equals(expected)) throw new IllegalArgumentException("Initial principal changed; root designation refused");
-                Map<String, Permission.Grant> grants = new java.util.LinkedHashMap<>();
-                if (principal.equals(proxy)) {
-                    Permission.Grant forwarding = grant("bootstrap.proxy-forward", proxy, Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY,
-                            Permission.ResourceType.REALM, scope, Permission.DataView.METADATA_REDACTED);
-                    grants.put(forwarding.grantId(), forwarding);
-                } else {
-                    String prefix = principal.equals(administrator) ? "bootstrap.admin." : "bootstrap.approver.";
-                    catalogGrants(principal, prefix, scope).forEach(permission -> grants.put(permission.grantId(), permission));
-                    Permission.Grant realm = realmReadGrant(principal, prefix, scope);
-                    grants.put(realm.grantId(), realm);
-                    if (principal.equals(administrator)) {
-                        grants.put(own.grantId(), own);
-                        var generation = managedGenerationGrant(administrator, scope);
-                        grants.put(generation.grantId(), generation);
-                    }
-                    certificateAccessGrants(principal,prefix,scope).forEach(permission -> grants.put(permission.grantId(),permission));
-                    var status=statusAccessGrant(principal,prefix,scope);grants.put(status.grantId(),status);
-                }
-                for (Permission.Grant permission : context.directGrants(principal)) {
-                    if (!permission.equals(grants.remove(permission.grantId()))) {
-                        throw new IllegalArgumentException("Initial permissions changed; root designation refused");
-                    }
-                }
-                if(!principal.equals(proxy)) {
-                    String prefix=principal.equals(administrator)?"bootstrap.admin.":"bootstrap.approver.";
-                    for(var optional:certificateAccessGrants(principal,prefix,scope))grants.remove(optional.grantId());
-                    grants.remove(statusAccessGrant(principal,prefix,scope).grantId());
-                    if(principal.equals(administrator)) {
-                        grants.remove(own.grantId());
-                        grants.remove(managedGenerationGrant(administrator, scope).grantId());
-                    }
-                }
-                if(!grants.isEmpty())throw new IllegalArgumentException("Initial permissions incomplete; capability provisioning refused");
-            }
-            if (rootApproval && context.directGrants(administrator).stream().noneMatch(permission -> permission.grantId().equals(own.grantId()))) {
-                context.grant(own, administrator);
-            }
-            context.recordInitialAdministrator(administrator);
-            if (configuration.realm().initialAdministratorPrincipalId().isPresent()) {
-                var generation = managedGenerationGrant(administrator, scope);
-                if (context.directGrants(administrator).stream().noneMatch(value -> value.grantId().equals(generation.grantId()))) {
-                    context.grant(generation, administrator);
-                }
-            }
-            if(certificateAccess)for(String principal:List.of(administrator,approver)) {
-                String prefix=principal.equals(administrator)?"bootstrap.admin.":"bootstrap.approver.";
-                for(var permission:certificateAccessGrants(principal,prefix,scope)) {
-                    if(context.directGrants(principal).stream().noneMatch(value -> value.grantId().equals(permission.grantId())))context.grant(permission,administrator);
-                }
-            }
-            if(statusAccess)for(String principal:List.of(administrator,approver)) {
-                String prefix=principal.equals(administrator)?"bootstrap.admin.":"bootstrap.approver.";
-                var permission=statusAccessGrant(principal,prefix,scope);
-                if(context.directGrants(principal).stream().noneMatch(value -> value.grantId().equals(permission.grantId())))context.grant(permission,administrator);
-            }
-        }
+        new InitialCapabilities(
+                        configuration,
+                        administrator,
+                        approver,
+                        proxy,
+                        rootApproval,
+                        certificateAccess,
+                        statusAccess)
+                .provision();
     }
 
     private static Permission.Grant statusAccessGrant(String principal,String prefix,Permission.Scope scope) {
-        return grant(prefix+"status-download",principal,Permission.Action.CRL_DOWNLOAD,Permission.ResourceType.STATUS_OBJECT,scope,Permission.DataView.CONTENT_FULL);
+        return grant(
+                prefix + "status-download",
+                principal,
+                Permission.Action.CRL_DOWNLOAD,
+                Permission.ResourceType.STATUS_OBJECT,
+                scope,
+                Permission.DataView.CONTENT_FULL);
     }
 
     private static List<Permission.Grant> certificateAccessGrants(String principal,String prefix,Permission.Scope scope) {
-        return List.of(grant(prefix+"certificate-read-content",principal,Permission.Action.CERTIFICATE_READ_CONTENT,
-                        Permission.ResourceType.CERTIFICATE,scope,Permission.DataView.CONTENT_FULL),
-                grant(prefix+"certificate-download",principal,Permission.Action.CERTIFICATE_DOWNLOAD,
-                        Permission.ResourceType.CERTIFICATE,scope,Permission.DataView.CONTENT_FULL));
+        return List.of(
+                grant(
+                        prefix + "certificate-read-content",
+                        principal,
+                        Permission.Action.CERTIFICATE_READ_CONTENT,
+                        Permission.ResourceType.CERTIFICATE,
+                        scope,
+                        Permission.DataView.CONTENT_FULL),
+                grant(
+                        prefix + "certificate-download",
+                        principal,
+                        Permission.Action.CERTIFICATE_DOWNLOAD,
+                        Permission.ResourceType.CERTIFICATE,
+                        scope,
+                        Permission.DataView.CONTENT_FULL));
     }
 
     private static Permission.Grant rootApprovalGrant(String principal, Permission.Scope scope) {
-        return new Permission.Grant("bootstrap.admin.approval-own", principal, Permission.Effect.ALLOW,
-                Permission.Action.APPROVAL_DECIDE_OWN, Permission.ResourceType.APPROVAL, scope, Permission.Relationship.OWN,
-                Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true);
+        return new Permission.Grant(
+                "bootstrap.admin.approval-own",
+                principal,
+                Permission.Effect.ALLOW,
+                Permission.Action.APPROVAL_DECIDE_OWN,
+                Permission.ResourceType.APPROVAL,
+                scope,
+                Permission.Relationship.OWN,
+                Permission.DataView.METADATA_REDACTED,
+                Set.of(),
+                Optional.empty(),
+                true);
     }
 
     private static Permission.Grant managedGenerationGrant(String principal, Permission.Scope scope) {
-        return grant("bootstrap.admin.managed-key-generate", principal, Permission.Action.MANAGED_KEY_GENERATE,
-                Permission.ResourceType.MANAGED_KEY, scope, Permission.DataView.METADATA_REDACTED);
+        return grant(
+                "bootstrap.admin.managed-key-generate",
+                principal,
+                Permission.Action.MANAGED_KEY_GENERATE,
+                Permission.ResourceType.MANAGED_KEY,
+                scope,
+                Permission.DataView.METADATA_REDACTED);
     }
 
     private static List<Permission.Grant> catalogGrants(String principal, String prefix, Permission.Scope scope) {
         List<Permission.Grant> permissions = new ArrayList<>();
         int index = 0;
-        for (OperationSecurityDescriptors.Descriptor descriptor : new OperationSecurityDescriptors()
-                .descriptors().values().stream()
-                .filter(descriptor -> !descriptor.operationId().equals(ServerControlOperation.GenerateManagedKey.NAME))
-                // Inventory aliases the existing search permission; preserve every historical numbered grant.
-                .filter(descriptor -> !descriptor.operationId().equals(zeroecho.pki.application.PkiOperation.ListCredentials.NAME))
-                // Managed responder issuance reuses CERTIFICATE_ISSUE; keep the historical numbered grant sequence.
-                .filter(descriptor -> !descriptor.operationId().equals(zeroecho.pki.application.PkiSigningOperation.IssueOcspResponderCertificate.NAME))
-                .sorted(java.util.Comparator.comparing(
-                        OperationSecurityDescriptors.Descriptor::operationId)).toList()) {
+        for (OperationSecurityDescriptors.Descriptor descriptor :
+                new OperationSecurityDescriptors()
+                        .descriptors().values().stream()
+                                .filter(
+                                        descriptor ->
+                                                !ServerControlOperation.GenerateManagedKey.NAME
+                                                        .equals(descriptor.operationId()))
+                                // Inventory aliases the existing search permission; preserve every
+                                // historical numbered grant.
+                                .filter(
+                                        descriptor ->
+                                                !zeroecho.pki.application.PkiOperation
+                                                        .ListCredentials.NAME
+                                                        .equals(descriptor.operationId()))
+                                // Managed responder issuance reuses CERTIFICATE_ISSUE; keep the
+                                // historical numbered grant sequence.
+                                .filter(
+                                        descriptor ->
+                                                !zeroecho.pki.application.PkiSigningOperation
+                                                        .IssueOcspResponderCertificate.NAME
+                                                        .equals(descriptor.operationId()))
+                                .sorted(
+                                        java.util.Comparator.comparing(
+                                                OperationSecurityDescriptors.Descriptor
+                                                        ::operationId))
+                                .toList()) {
             permissions.add(grant(prefix + index++, principal, descriptor.action(), descriptor.resourceType(),
                     scope, descriptor.dataView()));
         }
@@ -337,23 +383,33 @@ public final class PkiAdminBootstrap {
     }
 
     private static Permission.Grant realmReadGrant(String principal, String prefix, Permission.Scope scope) {
-        return grant(prefix + "realm-read", principal, Permission.Action.REALM_READ, Permission.ResourceType.REALM,
-                scope, Permission.DataView.METADATA_REDACTED);
+        return grant(
+                prefix + "realm-read",
+                principal,
+                Permission.Action.REALM_READ,
+                Permission.ResourceType.REALM,
+                scope,
+                Permission.DataView.METADATA_REDACTED);
     }
 
     private static PkiSessionRuntimeDependencies dependencies(PkiServerConfiguration configuration) {
         Optional<String> environment = configuration.runtime().keyUnlockEnvironmentVariable();
-        if (environment.isEmpty()) return PkiSessionRuntimeDependencies.none();
-        return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> {
-            String value = System.getenv(environment.orElseThrow());
-            if (value == null || value.isEmpty()) throw new IOException("Configured key unlock source is unavailable");
-            char[] secret = value.toCharArray();
-            try {
-                return new KeyringPassword(secret);
-            } finally {
-                java.util.Arrays.fill(secret, '\0');
-            }
-        });
+        if (environment.isEmpty()) {
+            return PkiSessionRuntimeDependencies.none();
+        }
+        return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
+                () -> {
+                    String value = System.getenv(environment.orElseThrow());
+                    if (value == null || value.isEmpty()) {
+                        throw new IOException("Configured key unlock source is unavailable");
+                    }
+                    char[] secret = value.toCharArray();
+                    try {
+                        return new KeyringPassword(secret);
+                    } finally {
+                        java.util.Arrays.fill(secret, '\0');
+                    }
+                });
     }
 
     private static void requireFresh(Path control, Path root) throws IOException {
@@ -364,56 +420,311 @@ public final class PkiAdminBootstrap {
             if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) {
                 throw new IllegalArgumentException("PKI root is not a fresh directory");
             }
-            try (var entries = Files.list(root)) {
-                if (entries.findAny().isPresent()) throw new IllegalArgumentException("PKI store is not empty");
+            try (java.util.stream.Stream<Path> entries = Files.list(root)) {
+                if (entries.findAny().isPresent()) {
+                    throw new IllegalArgumentException("PKI store is not empty");
+                }
             }
         }
     }
 
     private static void validate(PkiServerConfiguration configuration, String administrator, String approver, String proxy) {
-        configuration.realm().initialAdministratorPrincipalId().ifPresent(initial -> {
-            if (!initial.equals(administrator)) throw new IllegalArgumentException("Initial administrator differs from bootstrap");
-        });
+        BootstrapValidation.validate(configuration, administrator, approver, proxy);
+    }
+
+    private static Permission.Grant grant(
+            String id,
+            String principal,
+            Permission.Action action,
+            Permission.ResourceType resource,
+            Permission.Scope scope,
+            Permission.DataView view) {
+        return new Permission.Grant(
+                id,
+                principal,
+                Permission.Effect.ALLOW,
+                action,
+                resource,
+                scope,
+                Permission.Relationship.ANY,
+                view,
+                Set.of(),
+                Optional.empty(),
+                true);
+    }
+
+    /** Original bootstrap identity, mapping and approval-policy invariants. */
+    private static final class BootstrapValidation {
+        private static void validate(
+                PkiServerConfiguration configuration,
+                String administrator,
+                String approver,
+                String proxy) {
+
+            configuration
+                    .realm()
+                    .initialAdministratorPrincipalId()
+                    .ifPresent(
+                            initial -> {
+                                if (!initial.equals(administrator)) {
+                                    throw new IllegalArgumentException(
+                                            "Initial administrator differs from bootstrap");
+                                }
+                            });
         List<String> identities = List.of(administrator, approver, proxy);
         identities.forEach(Permission::requirePrincipal);
-        if (new HashSet<>(identities).size() != 3) throw new IllegalArgumentException("Bootstrap identities must differ");
+            if (new HashSet<>(identities).size() != INITIAL_IDENTITY_COUNT) {
+                throw new IllegalArgumentException("Bootstrap identities must differ");
+            }
         if (!"fs".equals(configuration.realm().pkiSessionConfiguration().store().backendId())) {
             throw new IllegalArgumentException("Bootstrap requires a filesystem store");
         }
-        var authentication = configuration.authentication();
+            PkiServerConfiguration.Authentication authentication = configuration.authentication();
         if (authentication.mode() != AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY
                 || !authentication.trustedProxyPrincipalIds().equals(Set.of(proxy))) {
-            throw new IllegalArgumentException("Bootstrap requires the selected trusted reverse proxy");
+                throw new IllegalArgumentException(
+                        "Bootstrap requires the selected trusted reverse proxy");
         }
+            requireMappings(authentication, identities, proxy);
+            requireApprovalPolicies(configuration, administrator, approver);
+        }
+
+        private static void requireMappings(
+                PkiServerConfiguration.Authentication authentication,
+                List<String> identities,
+                String proxy) {
         Set<String> hashes = new HashSet<>();
         for (String identity : identities) {
-            var mappings = identity.equals(proxy) ? authentication.proxyTransportMappings()
-                    : authentication.forwardedClientMappings();
-            var selected = mappings.stream().filter(mapping -> mapping.principalId().equals(identity)).toList();
+                List<PkiServerConfiguration.ClientCertificateMapping> mappings =
+                        identity.equals(proxy)
+                                ? authentication.proxyTransportMappings()
+                                : authentication.forwardedClientMappings();
+                List<PkiServerConfiguration.ClientCertificateMapping> selected =
+                        mappings.stream()
+                                .filter(mapping -> mapping.principalId().equals(identity))
+                                .toList();
             if (selected.size() != 1 || selected.getFirst().certificateSha256().isEmpty()
                     || selected.getFirst().subjectPublicKeyInfoSha256().isPresent()
                     || selected.getFirst().issuerSerialSha256().isPresent()
                     || !hashes.add(selected.getFirst().certificateSha256().orElseThrow())) {
-                throw new IllegalArgumentException("Each bootstrap identity needs a distinct certificate-only mapping");
+                    throw new IllegalArgumentException(
+                            "Each bootstrap identity needs a distinct certificate-only mapping");
             }
         }
         if (authentication.proxyTransportMappings().size() != 1
                 || authentication.forwardedClientMappings().size() != 2) {
-            throw new IllegalArgumentException("Bootstrap config must map exactly the three initial identities");
+                throw new IllegalArgumentException(
+                        "Bootstrap config must map exactly the three initial identities");
         }
+        }
+
+        private static void requireApprovalPolicies(
+                PkiServerConfiguration configuration, String administrator, String approver) {
         for (ApprovalService.Policy policy : configuration.realm().approvalPolicies().values()) {
             if (!policy.requesterSeparation() || policy.threshold() != 1
                     || !policy.eligibleApprovers().contains(approver) || !policy.eligibleApprovers().contains(administrator)
                     || !policy.requiredRoleTemplateIds().isEmpty()
                     || !Set.of(administrator, approver).containsAll(policy.eligibleApprovers())) {
-                throw new IllegalArgumentException("Bootstrap requires independent approval by an initial administrator");
+                    throw new IllegalArgumentException(
+                            "Bootstrap requires independent approval by an initial administrator");
+            }
+        }
+        }
+    }
+
+    /** Reconciles and extends only the unchanged initial-principal capability set. */
+    private static final class InitialCapabilities {
+        private final PkiServerConfiguration configuration;
+        private final String administrator;
+        private final String approver;
+        private final String proxy;
+        private final boolean rootApproval;
+        private final boolean certificateAccess;
+        private final boolean statusAccess;
+
+        private InitialCapabilities(
+                PkiServerConfiguration configuration,
+                String administrator,
+                String approver,
+                String proxy,
+                boolean rootApproval,
+                boolean certificateAccess,
+                boolean statusAccess) {
+            this.configuration = configuration;
+            this.administrator = administrator;
+            this.approver = approver;
+            this.proxy = proxy;
+            this.rootApproval = rootApproval;
+            this.certificateAccess = certificateAccess;
+            this.statusAccess = statusAccess;
+        }
+
+        private void provision() throws IOException {
+
+            validate(configuration, administrator, approver, proxy);
+            Path control = configuration.realm().controlLogPath();
+            Path reservation =
+                    control.resolveSibling(control.getFileName() + ".admin-bootstrap-started");
+            Path root =
+                    Path.of(
+                            configuration
+                                    .realm()
+                                    .pkiSessionConfiguration()
+                                    .store()
+                                    .require("root"));
+            if (!Files.isRegularFile(control, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(reservation, LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(reservation) != 0
+                    || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(root.resolve("VERSION"), LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException(
+                        "Root designation requires an existing initial bootstrap");
+            }
+            try (ServerRealmContext context =
+                    ServerRealmContext.open(configuration.realm(), dependencies(configuration))) {
+                Permission.Scope scope =
+                        new Permission.Scope(
+                                configuration.realm().realmId(),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty());
+                Permission.Grant own = rootApprovalGrant(administrator, scope);
+                for (String principal : List.of(proxy, administrator, approver)) {
+                    requireInitialPrincipal(context, scope, own, principal);
+                }
+                if (rootApproval
+                        && context.directGrants(administrator).stream()
+                                .noneMatch(
+                                        permission -> permission.grantId().equals(own.grantId()))) {
+                    context.grant(own, administrator);
+                }
+                context.recordInitialAdministrator(administrator);
+                if (configuration.realm().initialAdministratorPrincipalId().isPresent()) {
+                    Permission.Grant generation = managedGenerationGrant(administrator, scope);
+                    if (context.directGrants(administrator).stream()
+                            .noneMatch(value -> value.grantId().equals(generation.grantId()))) {
+                        context.grant(generation, administrator);
+                    }
+                }
+                grantAccessCapabilities(context, scope);
+            }
+        }
+
+        private void requireInitialPrincipal(
+                ServerRealmContext context,
+                Permission.Scope scope,
+                Permission.Grant own,
+                String principal) {
+
+            SecurityPrincipal expected = initialPrincipal(principal, proxy);
+            if (!context.principal(principal).equals(expected)) {
+                throw new IllegalArgumentException(
+                        "Initial principal changed; root designation refused");
+            }
+            Map<String, Permission.Grant> grants = expectedGrants(principal, scope, own);
+            for (Permission.Grant permission : context.directGrants(principal)) {
+                if (!permission.equals(grants.remove(permission.grantId()))) {
+                    throw new IllegalArgumentException(
+                            "Initial permissions changed; root designation refused");
+                }
+            }
+            if (!principal.equals(proxy)) {
+                String prefix =
+                        principal.equals(administrator)
+                                ? "bootstrap.admin."
+                                : "bootstrap.approver.";
+                for (Permission.Grant optional :
+                        certificateAccessGrants(principal, prefix, scope)) {
+                    grants.remove(optional.grantId());
+                }
+                grants.remove(statusAccessGrant(principal, prefix, scope).grantId());
+                if (principal.equals(administrator)) {
+                    grants.remove(own.grantId());
+                    grants.remove(managedGenerationGrant(administrator, scope).grantId());
+                }
+            }
+            if (!grants.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Initial permissions incomplete; capability provisioning refused");
+            }
+        }
+
+        private Map<String, Permission.Grant> expectedGrants(
+                String principal, Permission.Scope scope, Permission.Grant own) {
+            Map<String, Permission.Grant> grants = new java.util.LinkedHashMap<>();
+            if (principal.equals(proxy)) {
+                Permission.Grant forwarding =
+                        grant(
+                                "bootstrap.proxy-forward",
+                                proxy,
+                                Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY,
+                                Permission.ResourceType.REALM,
+                                scope,
+                                Permission.DataView.METADATA_REDACTED);
+                grants.put(forwarding.grantId(), forwarding);
+            } else {
+                String prefix =
+                        principal.equals(administrator)
+                                ? "bootstrap.admin."
+                                : "bootstrap.approver.";
+                catalogGrants(principal, prefix, scope)
+                        .forEach(permission -> grants.put(permission.grantId(), permission));
+                Permission.Grant realm = realmReadGrant(principal, prefix, scope);
+                grants.put(realm.grantId(), realm);
+                if (principal.equals(administrator)) {
+                    grants.put(own.grantId(), own);
+                    Permission.Grant generation = managedGenerationGrant(administrator, scope);
+                    grants.put(generation.grantId(), generation);
+                }
+                certificateAccessGrants(principal, prefix, scope)
+                        .forEach(permission -> grants.put(permission.grantId(), permission));
+                Permission.Grant status = statusAccessGrant(principal, prefix, scope);
+                grants.put(status.grantId(), status);
+            }
+            return grants;
+        }
+
+        private void grantAccessCapabilities(ServerRealmContext context, Permission.Scope scope) {
+            if (certificateAccess) {
+                for (String principal : List.of(administrator, approver)) {
+                    String prefix =
+                            principal.equals(administrator)
+                                    ? "bootstrap.admin."
+                                    : "bootstrap.approver.";
+                    for (Permission.Grant permission :
+                            certificateAccessGrants(principal, prefix, scope)) {
+                        if (context.directGrants(principal).stream()
+                                .noneMatch(value -> value.grantId().equals(permission.grantId()))) {
+                            context.grant(permission, administrator);
+                        }
+                    }
+                }
+            }
+            if (statusAccess) {
+                for (String principal : List.of(administrator, approver)) {
+                    String prefix =
+                            principal.equals(administrator)
+                                    ? "bootstrap.admin."
+                                    : "bootstrap.approver.";
+                    Permission.Grant permission = statusAccessGrant(principal, prefix, scope);
+                    if (context.directGrants(principal).stream()
+                            .noneMatch(value -> value.grantId().equals(permission.grantId()))) {
+                        context.grant(permission, administrator);
+                    }
+                }
             }
         }
     }
 
-    private static Permission.Grant grant(String id, String principal, Permission.Action action,
-            Permission.ResourceType resource, Permission.Scope scope, Permission.DataView view) {
-        return new Permission.Grant(id, principal, Permission.Effect.ALLOW, action, resource, scope,
-                Permission.Relationship.ANY, view, Set.of(), Optional.empty(), true);
+    private static SecurityPrincipal initialPrincipal(String principal, String proxy) {
+        return new SecurityPrincipal(
+                principal,
+                principal.equals(proxy)
+                        ? SecurityPrincipal.Type.SERVICE
+                        : SecurityPrincipal.Type.USER,
+                principal.equals(proxy) ? "Initial reverse proxy" : principal,
+                Optional.empty(),
+                Map.of(),
+                true);
     }
 }

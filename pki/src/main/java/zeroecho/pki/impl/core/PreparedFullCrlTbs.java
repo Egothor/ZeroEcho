@@ -34,6 +34,15 @@
 
 package zeroecho.pki.impl.core;
 
+import java.io.IOException;
+import java.util.Objects;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.api.ca.IssuerKeyBinding;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pkix.Pkix;
+
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.OptionalLong;
@@ -122,10 +131,10 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
      * @param hybrid optional captured two-role alternative-transcript preparation
      */
     public PreparedFullCrlTbs {
-        java.util.Objects.requireNonNull(hybrid, "hybrid");
+        Objects.requireNonNull(hybrid, "hybrid");
         if (hybrid.isPresent()) {
             Hybrid selected = hybrid.orElseThrow();
-            zeroecho.pki.api.ca.IssuerKeyBinding primary = selected.binding().primary();
+            IssuerKeyBinding primary = selected.binding().primary();
             if (!selected.binding().issuerId().equals(issuerGenerationId)
                     || !selected.binding().authorityId().equals(authorityId)
                     || !selected.binding().credentialId().equals(issuerCredentialId)
@@ -136,16 +145,16 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
                     || !signatureBinding.algorithmIdentity().equals(primary.signatureAlgorithm())
                     || signatureBinding.role() != X509AlgorithmBinding.Role.CRL_SIGNATURE
                     || !signatureBinding.oid().equals(signatureIdentifier.oid())
-                    || !(switch (signatureBinding.parameterRule()) {
+                    || !switch (signatureBinding.parameterRule()) {
                         case ABSENT -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.ABSENT;
                         case DER_NULL -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.DER_NULL;
                         case STRUCTURED_DER -> signatureIdentifier.parameterForm() == X509AlgorithmIdentifier.ParameterForm.EXACT_DER;
-                    })) {
+                    }) {
                 throw new IllegalArgumentException("Hybrid CRL selected native role differs");
             }
             requireAlgorithm(signatureIdentifier);
-            java.util.Objects.requireNonNull(tbsContent, "tbsContent");
-            if (tbsContent.encoding() != zeroecho.pki.api.Encoding.DER
+            Objects.requireNonNull(tbsContent, "tbsContent");
+            if (tbsContent.encoding() != Encoding.DER
                     || tbsContent.lifecycle() != DurableContentReference.Lifecycle.OPERATION || tbsContent.length() <= 0) {
                 throw new IllegalArgumentException("Hybrid CRL transcript content is invalid");
             }
@@ -153,11 +162,11 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
     }
 
     private static void requireAlgorithm(X509AlgorithmIdentifier identifier) {
-        byte[] der = zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(
-                zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter.toLib(identifier));
+        byte[] der = Pkix.encodeAlgorithmIdentifier(
+                BcX509AlgorithmAdapter.toLib(identifier));
         try {
-            new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(der, 16_384);
-        } catch (java.io.IOException invalid) {
+            new StreamingDerReader().validate(der, 16_384);
+        } catch (IOException invalid) {
             throw new IllegalArgumentException("Invalid CRL AlgorithmIdentifier", invalid);
         }
     }
@@ -196,6 +205,8 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
      * @param tbsContent completed operation-owned DER TBSCertList reference
      * @param base validated full CRL base, or an empty optional for a full CRL
      */
+    // Retain the established public compatibility constructor.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, PkiId issuerCredentialId,
             CertificateProfileRef profile, DurableContentReference issuerContent, String scopeDigest,
             String profilePolicyCommitment, String x509BindingCommitment, KeyRef signingKeyRef,
@@ -225,7 +236,9 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
      * @param alternativeMaximumSignatureBytes alternative signature bound, between 1 and 1,048,576 bytes
      * @param primaryMaximumSignatureBytes primary signature bound, between 1 and 1,048,576 bytes
      */
-    public record Hybrid(zeroecho.pki.api.ca.IssuerCryptographicBinding binding,
+    // Component names are retained public accessors used by existing callers.
+    @SuppressWarnings("PMD.LongVariable")
+    public record Hybrid(IssuerCryptographicBinding binding,
             X509AlgorithmIdentifier alternativeIdentifier, String tupleCommitment, PkiId lineageId,
             String primaryPlanCommitment, String alternativePlanCommitment,
             int alternativeMaximumSignatureBytes, int primaryMaximumSignatureBytes) {
@@ -243,9 +256,9 @@ public record PreparedFullCrlTbs(PkiId authorityId, PkiId issuerGenerationId, Pk
          * @param primaryMaximumSignatureBytes primary signature bound, between 1 and 1,048,576 bytes
          */
         public Hybrid {
-            java.util.Objects.requireNonNull(binding, "binding");
-            java.util.Objects.requireNonNull(alternativeIdentifier, "alternativeIdentifier");
-            java.util.Objects.requireNonNull(lineageId, "lineageId");
+            Objects.requireNonNull(binding, "binding");
+            Objects.requireNonNull(alternativeIdentifier, "alternativeIdentifier");
+            Objects.requireNonNull(lineageId, "lineageId");
             if (binding.alternative().isEmpty() || alternativeMaximumSignatureBytes < 1 || alternativeMaximumSignatureBytes > 1_048_576
                     || primaryMaximumSignatureBytes < 1 || primaryMaximumSignatureBytes > 1_048_576) {
                 throw new IllegalArgumentException("Invalid hybrid CRL role or bound");

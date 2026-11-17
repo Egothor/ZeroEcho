@@ -76,7 +76,8 @@ public interface RevocationTransitionFeed extends AutoCloseable {
         /**
          * Validates and snapshots the immutable position value.
          * @param value bounded URL-safe opaque value
-         * @throws IllegalArgumentException if value is null, empty, excessive or contains characters outside the URL-safe opaque-position alphabet
+         * @throws IllegalArgumentException if value is null, empty, excessive or contains characters
+         * outside the URL-safe opaque-position alphabet
          */
         public Position {
             if (value == null || value.isEmpty() || value.length() > MAXIMUM_POSITION_CHARACTERS
@@ -106,7 +107,8 @@ public interface RevocationTransitionFeed extends AutoCloseable {
          * @param globalRevision captured global append revision, zero for an empty log
          * @param transitionCommitment captured chain commitment, including the genesis commitment
          * @throws NullPointerException if sourceStoreId is null
-         * @throws IllegalArgumentException if globalRevision is negative or transitionCommitment is null or not 64 lowercase hexadecimal characters
+         * @throws IllegalArgumentException if globalRevision is negative or transitionCommitment is
+         * null or not 64 lowercase hexadecimal characters
          */
         public HighWatermark {
             Objects.requireNonNull(sourceStoreId, "sourceStoreId");
@@ -136,7 +138,8 @@ public interface RevocationTransitionFeed extends AutoCloseable {
          * @param nextPosition opaque exclusive position immediately after this entry
          * @param record existing immutable revocation record
          * @throws NullPointerException if sourceStoreId, nextPosition, record is null
-         * @throws IllegalArgumentException if globalRevision is not positive or transitionCommitment is null or not 64 lowercase hexadecimal characters
+         * @throws IllegalArgumentException if globalRevision is not positive or transitionCommitment is
+         * null or not 64 lowercase hexadecimal characters
          */
         public Entry {
             Objects.requireNonNull(sourceStoreId, "sourceStoreId");

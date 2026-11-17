@@ -82,11 +82,9 @@ public final class X509ExecutionPlan<E> {
     /**
      * Returns the exact runtime executor bound by the authority.
      *
-     * <p>
-     * An execution boundary must call
-     * {@link X509AuthoritySnapshot#authorize(X509ExecutionPlan, Object, zeroecho.core.spi.AlgorithmExecutionCapability.Direction)}
-     * immediately before invoking this object.
-     * </p>
+     * <p>An execution boundary must call {@link X509AuthoritySnapshot#authorize(X509ExecutionPlan,
+     * Object, zeroecho.core.spi.AlgorithmExecutionCapability.Direction)} immediately before
+     * invoking this object.
      *
      * @return process-local executor
      */

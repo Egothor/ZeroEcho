@@ -33,12 +33,12 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.util.Objects;
-
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
+
+import java.util.Objects;
 
 /**
  * Edge adapter between the provider-neutral X.509 binding authority and the
@@ -69,7 +69,7 @@ public final class BcX509AlgorithmAdapter {
      * Resolves an exact identity and converts it to the PKIX library value type.
      *
      * @param identity exact identity
-     * @param role     closed X.509 role
+     * @param role closed X.509 role
      * @return exact library algorithm identifier
      */
     public zeroecho.pkix.AlgorithmIdentifier encode(AlgorithmIdentity identity, X509AlgorithmRole role) {
@@ -80,7 +80,7 @@ public final class BcX509AlgorithmAdapter {
      * Converts and reverse-resolves a PKIX library algorithm identifier.
      *
      * @param identifier PKIX library structural representation
-     * @param role       closed X.509 role
+     * @param role closed X.509 role
      * @return exact provider-independent identity
      * @throws IllegalArgumentException if encoding or parameters are invalid
      */

@@ -33,6 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
+
+import zeroecho.pki.server.PkiServerConfiguration;
+import zeroecho.pki.server.ServerRealmContext;
+import zeroecho.pki.server.est.EstHttpHandler;
+import zeroecho.pki.server.est.EstService;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
@@ -42,15 +51,6 @@ import java.util.function.BooleanSupplier;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
-
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
-import zeroecho.pki.server.PkiServerConfiguration;
-import zeroecho.pki.server.ServerRealmContext;
-import zeroecho.pki.server.est.EstHttpHandler;
-import zeroecho.pki.server.est.EstService;
 
 /**
  * Lifecycle owner for the optional EST RFC 7030 HTTPS listener.
@@ -64,7 +64,7 @@ import zeroecho.pki.server.est.EstService;
  *
  * @since 1.0
  */
-@SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ControlStatementBraces" })
+@SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
 public final class EstTransport implements AutoCloseable {
 
     private final HttpsServer listener;
@@ -187,7 +187,11 @@ public final class EstTransport implements AutoCloseable {
     }
 
     private static void closePartial(HttpsServer listener, ServerRuntime protocol) {
-        if (listener != null) listener.stop(0);
-        if (protocol != null) protocol.close();
+        if (listener != null) {
+            listener.stop(0);
+        }
+        if (protocol != null) {
+            protocol.close();
+        }
     }
 }

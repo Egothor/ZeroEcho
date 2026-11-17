@@ -143,7 +143,8 @@ final class SigningArtifactCatalog {
          * @param generationIdentity exact immutable artifact generation identity
          * @param name validated store-local artifact name
          * @param kind closed Kind discriminator
-         * @throws IllegalArgumentException if {@code (generationIdentity < 0L)}; or if {@code (!name.equals(canonicalName(generationIdentity, name, kind)))}
+         * @throws IllegalArgumentException if {@code (generationIdentity < 0L)}; or if {@code
+         * (!name.equals(canonicalName(generationIdentity, name, kind)))}
          * @throws NullPointerException if {@code name} is null; or if {@code kind} is null
          */
         Artifact {

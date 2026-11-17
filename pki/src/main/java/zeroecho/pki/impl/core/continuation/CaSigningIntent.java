@@ -34,6 +34,13 @@
 
 package zeroecho.pki.impl.core.continuation;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -45,12 +52,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Objects;
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.KeyRef;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SubjectRef;
-import zeroecho.pki.api.profile.CertificateProfileRef;
 
 /**
  * Pure, domain-separated commitment to an intermediate CA signing intent.
@@ -62,6 +63,7 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * This helper does not change the live command or challenge serialization.
  */
 public final class CaSigningIntent {
+    private static final int LIFECYCLE_FIELDS = 26;
     private static final String DOMAIN = "zeroecho.ca-signing-intent:v1";
     private static final String PREFIX = "ca-intent:v1:";
     private static final int FIELD_COUNT = 21;
@@ -87,10 +89,14 @@ public final class CaSigningIntent {
      */
     public static String commitment(DomainCommandEncoding.Decoded command, AlgorithmIdentity signatureAlgorithm) {
         Objects.requireNonNull(command, "command");
-        if (command.fields().size() == 25 || command.fields().size() == 26) {
+        if (command.fields().size() == 25 || command.fields().size() == LIFECYCLE_FIELDS) {
             CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-            if (command.fields().size() == 26) CaLifecycleContextCodec.decode(command.field(25));
-        } else command.requireFields(23);
+            if (command.fields().size() == LIFECYCLE_FIELDS) {
+                CaLifecycleContextCodec.decode(command.field(25));
+            }
+        } else {
+            command.requireFields(23);
+        }
         Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
         if (!IntermediateSigningCommand.supports(command.operation())
                 || signatureAlgorithm.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
@@ -112,21 +118,7 @@ public final class CaSigningIntent {
     // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
     @SuppressWarnings({ "PMD.PreserveStackTrace" })
     public static String commitmentOfCanonicalAlgorithm(DomainCommandEncoding.Decoded command, String algorithm) {
-        Objects.requireNonNull(command, "command");
-        if (command.fields().size() == 25 || command.fields().size() == 26) {
-            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-            if (command.fields().size() == 26) CaLifecycleContextCodec.decode(command.field(25));
-        } else command.requireFields(23);
-        if (!IntermediateSigningCommand.supports(command.operation()) || Objects.requireNonNull(algorithm, "algorithm").isBlank()) {
-            throw invalid();
-        }
-        long size = 4L + DOMAIN.length() + 4L + command.operation().length() + 4L
-                + ManagedKeyProofCommand.utf8Length(algorithm, 8192) + 4L;
-        for (int index = 0; index < command.fields().size(); index++) {
-            if (isProofField(index)) { continue; }
-            size += 4L + ManagedKeyProofCommand.utf8Length(command.field(index), ManagedKeyProofCommand.MAX_COMMAND_BYTES);
-            if (size > ManagedKeyProofCommand.MAX_COMMAND_BYTES) { throw invalid(); }
-        }
+        requireCanonicalCapture(command, algorithm);
         try {
             validateFields(command);
         } catch (java.time.DateTimeException malformed) {
@@ -188,5 +180,42 @@ public final class CaSigningIntent {
     }
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("CA signing intent is invalid");
+    }
+
+    private static void requireCanonicalCapture(
+            DomainCommandEncoding.Decoded command, String algorithm) {
+        Objects.requireNonNull(command, "command");
+        if (command.fields().size() == 25 || command.fields().size() == LIFECYCLE_FIELDS) {
+            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+            if (command.fields().size() == LIFECYCLE_FIELDS) {
+                CaLifecycleContextCodec.decode(command.field(25));
+            }
+        } else {
+            command.requireFields(23);
+        }
+        if (!IntermediateSigningCommand.supports(command.operation())
+                || Objects.requireNonNull(algorithm, "algorithm").isBlank()) {
+            throw invalid();
+        }
+        long size =
+                4L
+                        + DOMAIN.length()
+                        + 4L
+                        + command.operation().length()
+                        + 4L
+                        + ManagedKeyProofCommand.utf8Length(algorithm, 8192)
+                        + 4L;
+        for (int index = 0; index < command.fields().size(); index++) {
+            if (isProofField(index)) {
+                continue;
+            }
+            size +=
+                    4L
+                            + ManagedKeyProofCommand.utf8Length(
+                                    command.field(index), ManagedKeyProofCommand.MAX_COMMAND_BYTES);
+            if (size > ManagedKeyProofCommand.MAX_COMMAND_BYTES) {
+                throw invalid();
+            }
+        }
     }
 }

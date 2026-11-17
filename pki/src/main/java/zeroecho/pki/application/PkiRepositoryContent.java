@@ -106,7 +106,7 @@ public final class PkiRepositoryContent implements AutoCloseable {
         this.role = Objects.requireNonNull(role, "role");
         this.contentLength = contentLength;
         this.contentDigest = Objects.requireNonNull(contentDigest, "contentDigest");
-        if (contentLength < 0 || !contentDigest.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid content commitment");
+        if (contentLength < 0 || !contentDigest.matches("[0-9a-f]{64}")) { throw new IllegalArgumentException("Invalid content commitment"); }
         this.content = Objects.requireNonNull(content, "content");
     }
 

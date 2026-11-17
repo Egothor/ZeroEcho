@@ -52,7 +52,10 @@ import zeroecho.pki.server.RealmId;
  * by a canonical identity and every mutable record carries a complete SHA-256
  * commitment used for compare-and-set persistence.</p>
  */
+// Retains the public ACME state namespace and nested-type binary names without allowing instances.
+@SuppressWarnings({ "PMD.MissingStaticMethodInNonInstantiatableClass" })
 public final class AcmeState {
+    private static final int MAXIMUM_ACCOUNT_KEY_ALIASES = 20_000;
     /**
      * Supported identifier kinds.
      */
@@ -396,10 +399,10 @@ public final class AcmeState {
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(updatedAt, "updatedAt");
             digest(commitment);
             keyHistory = List.copyOf(Objects.requireNonNull(keyHistory, "keyHistory"));
-            if (keyHistory.isEmpty() || keyHistory.size() > 256) throw new IllegalArgumentException("ACME key history bound is invalid");
-            java.util.HashSet<String> identities = new java.util.HashSet<>();
+            if (keyHistory.isEmpty() || keyHistory.size() > 256) { throw new IllegalArgumentException("ACME key history bound is invalid"); }
+            Set<String> identities = new java.util.HashSet<>();
             for (AccountKeyIdentity key : keyHistory) {
-                if (!identities.add(key.canonicalSha256())) throw new IllegalArgumentException("ACME key history contains duplicate keys");
+                if (!identities.add(key.canonicalSha256())) { throw new IllegalArgumentException("ACME key history contains duplicate keys"); }
             }
             zeroecho.pkix.PublicKeyIdentity current = zeroecho.pkix.PublicKeyIdentity.fromSubjectPublicKeyInfo(publicKeySpki);
             if (keyHistory.stream().noneMatch(key -> key.canonicalSha256().equals(current.canonicalSha256())
@@ -425,6 +428,8 @@ public final class AcmeState {
          * @param updatedAt update time
          * @param commitment complete record commitment
          */
+        // Retains the existing public source and binary-compatible protocol contract.
+        @SuppressWarnings({ "PMD.ExcessiveParameterList" })
         public Account(String accountId, String directoryId, int directoryRevision, String directoryPolicyCommitment,
                 String keyThumbprint, byte[] publicKeySpki, AccountStatus status, List<String> contacts, boolean termsAgreed,
                 Optional<String> eabPolicyCommitment, Instant createdAt, Instant updatedAt, String commitment) {
@@ -460,10 +465,10 @@ public final class AcmeState {
         public AccountKeyIdentity {
             digest(canonicalSha256);
             legacySpkiSha256 = Set.copyOf(Objects.requireNonNull(legacySpkiSha256, "legacySpkiSha256"));
-            if (legacySpkiSha256.isEmpty() || legacySpkiSha256.size() > 3) throw new IllegalArgumentException("ACME key encoding bound is invalid");
+            if (legacySpkiSha256.isEmpty() || legacySpkiSha256.size() > 3) { throw new IllegalArgumentException("ACME key encoding bound is invalid"); }
             legacySpkiSha256.forEach(AcmeState::digest);
             aliases = Set.copyOf(Objects.requireNonNull(aliases, "aliases"));
-            if (aliases.size() > 20_000) throw new IllegalArgumentException("ACME key alias bound is invalid");
+            if (aliases.size() > MAXIMUM_ACCOUNT_KEY_ALIASES) { throw new IllegalArgumentException("ACME key alias bound is invalid"); }
             aliases.forEach(AcmeState::id);
         }
 
@@ -565,7 +570,7 @@ public final class AcmeState {
             issuanceCommitment = Objects.requireNonNull(issuanceCommitment, "issuanceCommitment");
             issuanceCommitment.ifPresent(AcmeState::digest);
             signingOperationId = Objects.requireNonNull(signingOperationId, "signingOperationId");
-            if ((status == OrderStatus.VALID) != credentialId.isPresent()) {
+            if (status == OrderStatus.VALID != credentialId.isPresent()) {
                 throw new IllegalArgumentException("ACME order credential state mismatch");
             }
             if (signingOperationId.isPresent() && issuanceCommitment.isEmpty()
@@ -573,7 +578,7 @@ public final class AcmeState {
                 throw new IllegalArgumentException("ACME order lacks its durable issuance binding");
             }
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(expiresAt, "expiresAt");
-            if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("ACME order expiry is invalid");
+            if (!expiresAt.isAfter(createdAt)) { throw new IllegalArgumentException("ACME order expiry is invalid"); }
             digest(commitment);
         }
     }
@@ -615,7 +620,7 @@ public final class AcmeState {
             challengeIds = distinctIds(challengeIds, 16, "challenge");
             Objects.requireNonNull(expiresAt, "expiresAt");
             evidenceId = Objects.requireNonNull(evidenceId, "evidenceId"); evidenceId.ifPresent(AcmeState::id);
-            if ((status == AuthorizationStatus.VALID) != evidenceId.isPresent()) {
+            if (status == AuthorizationStatus.VALID != evidenceId.isPresent()) {
                 throw new IllegalArgumentException("ACME authorization evidence state mismatch");
             }
             digest(commitment);
@@ -668,11 +673,11 @@ public final class AcmeState {
                 throw new IllegalArgumentException("ACME challenge token is invalid");
             }
             Objects.requireNonNull(status, "status"); id(providerId);
-            if (attempt < 0) throw new IllegalArgumentException("ACME challenge attempt is invalid");
+            if (attempt < 0) { throw new IllegalArgumentException("ACME challenge attempt is invalid"); }
             failureCode = Objects.requireNonNull(failureCode, "failureCode");
-            failureCode.ifPresent(value -> { if (!value.matches("[A-Z0-9_]{1,64}")) throw new IllegalArgumentException("ACME failure code is invalid"); });
+            failureCode.ifPresent(value -> { if (!value.matches("[A-Z0-9_]{1,64}")) { throw new IllegalArgumentException("ACME failure code is invalid"); } });
             evidenceId = Objects.requireNonNull(evidenceId, "evidenceId"); evidenceId.ifPresent(AcmeState::id);
-            if ((status == ChallengeStatus.VALID) != evidenceId.isPresent()) {
+            if (status == ChallengeStatus.VALID != evidenceId.isPresent()) {
                 throw new IllegalArgumentException("ACME challenge evidence state mismatch");
             }
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(updatedAt, "updatedAt");
@@ -730,10 +735,10 @@ public final class AcmeState {
             digest(keyAuthorizationCommitment); digest(directoryPolicyCommitment);
             positive(attempt, "validation attempt"); Objects.requireNonNull(validatedAt, "validatedAt");
             Objects.requireNonNull(expiresAt, "expiresAt");
-            if (!expiresAt.isAfter(validatedAt)) throw new IllegalArgumentException("ACME evidence expiry is invalid");
+            if (!expiresAt.isAfter(validatedAt)) { throw new IllegalArgumentException("ACME evidence expiry is invalid"); }
             Objects.requireNonNull(result, "result");
             failureCode = Objects.requireNonNull(failureCode, "failureCode");
-            if ((result == EvidenceResult.INVALID) != failureCode.isPresent()) {
+            if (result == EvidenceResult.INVALID != failureCode.isPresent()) {
                 throw new IllegalArgumentException("ACME evidence result classification mismatch");
             }
             digest(commitment);
@@ -758,7 +763,7 @@ public final class AcmeState {
         }
     }
     private static void positive(int value, String name) {
-        if (value <= 0) throw new IllegalArgumentException(name + " is invalid");
+        if (value <= 0) { throw new IllegalArgumentException(name + " is invalid"); }
     }
     private static void positive(Duration value, Duration maximum, String name) {
         if (value == null || value.isZero() || value.isNegative() || value.compareTo(maximum) > 0) {
@@ -767,12 +772,12 @@ public final class AcmeState {
     }
     private static <T> Set<T> nonEmpty(Set<T> source, String name) {
         Set<T> result = Set.copyOf(Objects.requireNonNull(source, name));
-        if (result.isEmpty() || result.size() > 64) throw new IllegalArgumentException(name + " is invalid");
+        if (result.isEmpty() || result.size() > 64) { throw new IllegalArgumentException(name + " is invalid"); }
         return result;
     }
     private static Set<String> nonEmptyStrings(Set<String> source, String name) {
         Set<String> result = nonEmpty(source, name);
-        result.forEach(value -> { if (value.isBlank() || value.length() > 256) throw new IllegalArgumentException(name + " is invalid"); });
+        result.forEach(value -> { if (value.isBlank() || value.length() > 256) { throw new IllegalArgumentException(name + " is invalid"); } });
         return result;
     }
     private static List<Identifier> distinctIdentifiers(List<Identifier> source) {

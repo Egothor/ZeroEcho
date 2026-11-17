@@ -34,6 +34,8 @@
 
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.request.X509EnrollmentPayload;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -73,7 +75,7 @@ public record CorrelatedIssuanceIdentity(String correlationId, String effectiveC
         EndEntityIssuanceRequest request = correlated.request();
         IssuanceIntent intent = correlated.intent();
         MessageDigest commitment = sha256();
-        field(commitment, request.payload().kind() == zeroecho.pki.api.request.X509EnrollmentPayload.Kind.PKCS10
+        field(commitment, request.payload().kind() == X509EnrollmentPayload.Kind.PKCS10
                 ? "zeroecho:pki:issuance-effective-command:v1" : "zeroecho:pki:issuance-effective-command:crmf:v1");
         field(commitment, intent.issuanceId());
         field(commitment, request.issuerCaId().value());

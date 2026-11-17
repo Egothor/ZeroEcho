@@ -33,23 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import zeroecho.pkix.cmp.CrmfRequest;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.security.MessageDigest;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-
-import zeroecho.pkix.Pkix;
-import zeroecho.pkix.RelativeDistinguishedName;
-import zeroecho.pkix.UnsupportedDirectoryStringException;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -66,32 +49,49 @@ import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.RelativeDistinguishedName;
+import zeroecho.pkix.UnsupportedDirectoryStringException;
+import zeroecho.pkix.cmp.CrmfRequest;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.security.MessageDigest;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
 
 /**
- * Parser for X.509 PKCS#10 certification requests, routed through the ZeroEcho
- * PKIX library.
+ * Parser for X.509 PKCS#10 certification requests, routed through the ZeroEcho PKIX library.
  *
- * <p>
- * This parser converts an incoming {@link CertificationRequest} in the X.509
- * framework format into a normalized {@link ParsedCertificationRequest} used by
- * the PKI core. It supports CSR input encoded either directly as DER or as PEM
- * carrying a PKCS#10 object that can be converted to DER.
- * </p>
+ * <p>This parser converts an incoming {@link CertificationRequest} in the X.509 framework format
+ * into a normalized {@link ParsedCertificationRequest} used by the PKI core. It supports CSR input
+ * encoded either directly as DER or as PEM carrying a PKCS#10 object that can be converted to DER.
  *
- * <p>
- * Ordinary parsing does not verify proof of possession or issuance policy.
- * The explicit SDK method additionally verifies the original primary CSR proof;
- * fresh dual-key proofs and issuance policy remain separate responsibilities.
- * </p>
+ * <p>Ordinary parsing does not verify proof of possession or issuance policy. The explicit SDK
+ * method additionally verifies the original primary CSR proof; fresh dual-key proofs and issuance
+ * policy remain separate responsibilities.
  *
  * <h2>Thread-safety</h2>
- * <p>
- * This class is stateless and thread-safe.
- * </p>
+ *
+ * <p>This class is stateless and thread-safe.
  */
 // PMD cannot infer the redaction boundary or the explicit closed parsing grammar.
-@SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity", "PMD.AvoidUsingHardCodedIP" })
+@SuppressWarnings({
+    "PMD.PreserveStackTrace",
+    "PMD.CyclomaticComplexity",
+    "PMD.AvoidUsingHardCodedIP"
+})
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
+    private static final String ALTERNATIVE_SPKI_OID =
+            org.bouncycastle.asn1.x509.Extension.subjectAltPublicKeyInfo.getId();
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
     private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
     /**
@@ -169,6 +169,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     /**
      * Parses the explicit v1 PKCS#10 SDK variant and verifies its original primary signature.
      * Ordinary parsing retains its closed extension policy.
+     *
      * @param request exact DER PKCS#10 carrying one alternative subject SPKI request
      * @return separate normalized two-subject-key view
      * @throws PkiException for malformed DER, unsupported keys or an invalid primary proof
@@ -176,24 +177,33 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      */
     public zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parseHybridSdk(CertificationRequest request) {
         Objects.requireNonNull(request, "request");
-        if (request.encoded().encoding() != Encoding.DER) throw new PkiException("SDK_REQUEST_DER_REQUIRED");
+        if (request.encoded().encoding() != Encoding.DER) {
+            throw new PkiException("SDK_REQUEST_DER_REQUIRED");
+        }
         byte[] der = request.encoded().bytes();
         try {
             new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
             if (!java.util.Arrays.equals(der, org.bouncycastle.asn1.ASN1Primitive.fromByteArray(der).getEncoded("DER"))) {
                 throw new PkiException("SDK_REQUEST_NONCANONICAL");
             }
-            var alternative = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+            java.util.concurrent.atomic.AtomicReference<byte[]> alternative = new java.util.concurrent.atomic.AtomicReference<>();
             ParsedCertificationRequest parsed = parse(request, alternative::set);
-            if (alternative.get() == null) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
-            var result = new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(parsed, new EncodedObject(Encoding.DER, alternative.get()));
+            if (alternative.get() == null) {
+                throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+            }
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest result =
+                    new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(
+                            parsed, new EncodedObject(Encoding.DER, alternative.get()));
             BcHybridSdkProofVerifier.requireRequest(result);
             return result;
-        } catch (java.io.IOException malformed) { throw new PkiException("SDK_REQUEST_INVALID"); }
+        } catch (java.io.IOException malformed) {
+            throw new PkiException("SDK_REQUEST_INVALID");
+        }
     }
 
     /**
      * Parses and verifies the fixed SDK suite in one explicitly typed original request.
+     *
      * @param payload canonical single PKCS#10 or CRMF request
      * @return normalized dual-key request with verified original primary proof
      * @throws PkiException for unsupported syntax, extension, suite or proof
@@ -209,35 +219,61 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         try {
             new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
             CrmfRequest crmf = CrmfRequest.parse(der);
-            var standard = new java.util.ArrayList<zeroecho.pkix.CertificateExtension>();
-            var seen = new java.util.HashSet<String>(); byte[] alternative = null;
-            for (var extension : crmf.requestedExtensions()) {
-                if (!seen.add(extension.oid())) throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
-                if (extension.oid().equals("2.5.29.72")) {
-                    if (extension.critical() || extension.derValue().length > 8192) throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+            List<zeroecho.pkix.CertificateExtension> standard = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            byte[] alternative = null;
+            for (zeroecho.pkix.CertificateExtension extension : crmf.requestedExtensions()) {
+                if (!seen.add(extension.oid())) {
+                    throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
+                }
+                if (ALTERNATIVE_SPKI_OID.equals(extension.oid())) {
+                    if (extension.critical() || extension.derValue().length > 8192) {
+                        throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+                    }
                     alternative = extension.derValue();
-                } else standard.add(extension);
+                } else {
+                    standard.add(extension);
+                }
             }
-            if (alternative == null) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
-            var subject = parseSubject(crmf.subject()); var sans = parseRequestedExtensions(standard);
-            var primary = new ParsedCertificationRequest(new PkiId("crmf:" + sha256Hex(der)),
-                    BcX509CredentialFramework.FORMAT_ID, subjectReference(subject),
-                    new EncodedObject(Encoding.DER, crmf.subjectPublicKeyInfo()), Optional.empty(), Optional.empty(),
-                    subject, sans, !sans.isEmpty(), SimpleAttributeSet.builder()
-                            .put(BcX509Attributes.CRMF_DER, new AttributeValue.BytesValue(der)).build());
-            var result = new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(primary,
-                    new EncodedObject(Encoding.DER, alternative), payload);
+            if (alternative == null) {
+                throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+            }
+            List<SubjectRdn> subject = parseSubject(crmf.subject());
+            List<SubjectAlternativeName> sans = parseRequestedExtensions(standard);
+            ParsedCertificationRequest primary =
+                    new ParsedCertificationRequest(
+                            new PkiId("crmf:" + sha256Hex(der)),
+                            BcX509CredentialFramework.FORMAT_ID,
+                            subjectReference(subject),
+                            new EncodedObject(Encoding.DER, crmf.subjectPublicKeyInfo()),
+                            Optional.empty(),
+                            Optional.empty(),
+                            subject,
+                            sans,
+                            !sans.isEmpty(),
+                            SimpleAttributeSet.builder()
+                                    .put(
+                                            BcX509Attributes.CRMF_DER,
+                                            new AttributeValue.BytesValue(der))
+                                    .build());
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest result =
+                    new zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest(
+                            primary, new EncodedObject(Encoding.DER, alternative), payload);
             BcHybridSdkProofVerifier.requireRequest(result);
             return result;
-        } catch (java.io.IOException | IllegalArgumentException malformed) { throw new PkiException("SDK_REQUEST_INVALID"); }
+        } catch (java.io.IOException | IllegalArgumentException malformed) {
+            throw new PkiException("SDK_REQUEST_INVALID");
+        }
     }
 
-    private ParsedCertificationRequest parse(CertificationRequest request, java.util.function.Consumer<byte[]> alternative) {
+    private ParsedCertificationRequest parse(
+            CertificationRequest request, java.util.function.Consumer<byte[]> alternative) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
         if (!BcX509CredentialFramework.FORMAT_ID.equals(request.formatId())) {
-            throw new IllegalArgumentException("Unsupported request formatId: " + request.formatId().value());
+            throw new IllegalArgumentException(
+                    "Unsupported request formatId: " + request.formatId().value());
         }
 
         EncodedObject enc = request.encoded();
@@ -311,7 +347,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             spki = Pkix.subjectPublicKeyInfo(certificate);
             certificateDer = certificate.getEncoded();
         } catch (RuntimeException | java.security.cert.CertificateEncodingException ex) {
-            throw new PkiException("Failed to read certificate for reconstruction: code=CSR_SPKI_INVALID");
+            throw new PkiException(
+                    "Failed to read certificate for reconstruction: code=CSR_SPKI_INVALID");
         }
         try {
             EncodedObject publicKeyInfo = new EncodedObject(Encoding.DER, spki.clone());
@@ -353,7 +390,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         }
     }
 
-    // Each approved RDN requires one immutable typed value; providers use several malformed-name exceptions.
+    // Each approved RDN requires one immutable typed value; providers use several malformed-name
+    // exceptions.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private static List<SubjectRdn> parseSubject(javax.security.auth.x500.X500Principal subject) {
         byte[] encoded = subject.getEncoded();
@@ -385,7 +423,10 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     }
 
     private static SubjectRef subjectReference(List<SubjectRdn> rdns) {
-        return new SubjectRef(rdns.isEmpty() ? "x509:empty-subject" : BcX509ProfileSupport.subjectRefString(rdns));
+        return new SubjectRef(
+                rdns.isEmpty()
+                        ? "x509:empty-subject"
+                        : BcX509ProfileSupport.subjectRefString(rdns));
     }
 
     // The branches enforce the closed PKCS#10 extensionRequest grammar.
@@ -401,7 +442,9 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
                 extensionRequests.add(attribute);
             } else if ("1.2.840.113549.1.9.7".equals(attribute.oid()) && !challengePresent) {
                 try { attribute.challengePassword(); }
-                catch (IllegalArgumentException invalid) { throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED"); }
+                catch (IllegalArgumentException invalid) {
+                    throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED");
+                }
                 challengePresent = true;
             } else if (zeroecho.pkix.EstKeygen.CAPABILITIES_OID.equals(attribute.oid())
                     || zeroecho.pkix.EstKeygen.RECIPIENT_KEY_ID_OID.equals(attribute.oid())) {
@@ -414,8 +457,10 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_UNSUPPORTED");
         }
         if (estKeygenAttributes) {
-            try { zeroecho.pkix.EstKeygen.requireAttributes(csr.encoded()); }
-            catch (IllegalArgumentException malformed) { throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED"); }
+            try {
+                zeroecho.pkix.EstKeygen.requireAttributes(csr.encoded());
+            } catch (IllegalArgumentException malformed) {
+                throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_MALFORMED"); }
         }
         if (extensionRequests.isEmpty()) {
             return List.of();
@@ -433,23 +478,33 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         if (extensions.isEmpty()) {
             throw new PkiException("CSR extensions rejected: code=EXTENSION_UNSUPPORTED");
         }
-        if (alternative == null) return parseRequestedExtensions(extensions);
-        var standard = new java.util.ArrayList<zeroecho.pkix.CertificateExtension>();
-        var seen = new java.util.HashSet<String>(); boolean alternativePresent = false;
-        for (var extension : extensions) {
-            if (!seen.add(extension.oid())) throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
-            if (extension.oid().equals("2.5.29.72")) {
-                if (extension.critical() || extension.derValue().length > 8192) throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+        if (alternative == null) {
+            return parseRequestedExtensions(extensions);
+        }
+        List<zeroecho.pkix.CertificateExtension> standard = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        boolean alternativePresent = false;
+        for (zeroecho.pkix.CertificateExtension extension : extensions) {
+            if (!seen.add(extension.oid())) {
+                throw new PkiException("SDK_REQUEST_DUPLICATE_EXTENSION");
+            }
+            if (ALTERNATIVE_SPKI_OID.equals(extension.oid())) {
+                if (extension.critical() || extension.derValue().length > 8192) {
+                    throw new PkiException("SDK_SUBJECT_KEY_INVALID");
+                }
                 alternative.accept(extension.derValue()); alternativePresent = true;
             } else {
                 standard.add(extension);
             }
         }
-        if (!alternativePresent) throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+        if (!alternativePresent) {
+            throw new PkiException("SDK_ALTERNATIVE_SUBJECT_KEY_REQUIRED");
+        }
         return parseRequestedExtensions(standard);
     }
 
-    private static List<SubjectAlternativeName> parseRequestedExtensions(List<zeroecho.pkix.CertificateExtension> extensions) {
+    private static List<SubjectAlternativeName> parseRequestedExtensions(
+            List<zeroecho.pkix.CertificateExtension> extensions) {
         if (extensions.isEmpty()) {
             return List.of();
         }
@@ -492,12 +547,14 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     private static SubjectAlternativeName parseGeneralName(zeroecho.pkix.GeneralName name) {
         return switch (name) {
             case zeroecho.pkix.GeneralName.DnsName dns -> new SubjectAlternativeName.DnsName(dns.value());
-            case zeroecho.pkix.GeneralName.IpAddress ip -> new SubjectAlternativeName.IpAddress(ipOctets(ip.value()));
+            case zeroecho.pkix.GeneralName.IpAddress ip ->
+                    new SubjectAlternativeName.IpAddress(ipOctets(ip.value()));
             case zeroecho.pkix.GeneralName.UniformResourceIdentifier uri ->
-                new SubjectAlternativeName.UriName(uri.value());
-            case zeroecho.pkix.GeneralName.Rfc822Name email -> new SubjectAlternativeName.Rfc822Name(email.value());
+                    new SubjectAlternativeName.UriName(uri.value());
+            case zeroecho.pkix.GeneralName.Rfc822Name email ->
+                    new SubjectAlternativeName.Rfc822Name(email.value());
             case zeroecho.pkix.GeneralName.OtherName ignored ->
-                throw new PkiException("CSR extensions rejected: code=SAN_MALFORMED");
+                    throw new PkiException("CSR extensions rejected: code=SAN_MALFORMED");
             default -> throw new PkiException("CSR extensions rejected: code=SAN_TYPE_UNSUPPORTED");
         };
     }
@@ -510,7 +567,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             case 6 -> new SubjectAlternativeName.UriName((String) value);
             case 1 -> new SubjectAlternativeName.Rfc822Name((String) value);
             case 7 -> new SubjectAlternativeName.IpAddress(ipOctets((String) value));
-            default -> throw new PkiException("Certificate SAN rejected: code=SAN_TYPE_UNSUPPORTED");
+            default ->
+                    throw new PkiException("Certificate SAN rejected: code=SAN_TYPE_UNSUPPORTED");
         };
     }
 
@@ -544,7 +602,9 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             return switch (obj.encoding()) {
                 case DER -> throw new IllegalStateException("DER handled before PEM conversion");
                 case PEM -> readPemContentOrThrow(encoded);
-                default -> throw new IllegalArgumentException("Unsupported CSR encoding: " + obj.encoding());
+                default ->
+                        throw new IllegalArgumentException(
+                                "Unsupported CSR encoding: " + obj.encoding());
             };
         } finally {
             java.util.Arrays.fill(encoded, (byte) 0);

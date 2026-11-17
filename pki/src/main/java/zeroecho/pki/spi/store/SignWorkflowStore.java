@@ -474,6 +474,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
     record CaSubjectProofStep(PkiId operationId, KeyRef subjectKeyRef,
             String algorithmId, DurableContentReference challenge, SubjectKeyRole role) {
         /**
+         * Existing managed-proof challenge bound: command + SPKI + framing.
+         */
+        public static final int MAXIMUM_CHALLENGE_BYTES = 2 * 1_048_576 + 8_192;
+
+        /**
          * Preserves the primary-only descriptor.
          * @param operationId distinct provider-step identity
          * @param subjectKeyRef managed subject key reference
@@ -485,10 +490,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
         public CaSubjectProofStep(PkiId operationId, KeyRef subjectKeyRef, String algorithmId, DurableContentReference challenge) {
             this(operationId, subjectKeyRef, algorithmId, challenge, SubjectKeyRole.PRIMARY);
         }
-        /**
-         * Existing managed-proof challenge bound: command + SPKI + framing.
-         */
-        public static final int MAXIMUM_CHALLENGE_BYTES = 2 * 1_048_576 + 8192;
+
 
         /**
          * Checks descriptor bounds and canonical provider-step identity without reading its challenge.
@@ -515,11 +517,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
             if (!new String(keyBytes, StandardCharsets.UTF_8).equals(subjectKeyRef.value())) {
                 throw new IllegalArgumentException("CA subject proof key is not strict UTF-8");
             }
-            if (algorithmId.isBlank() || algorithmId.length() > 8192) {
+            if (algorithmId.isBlank() || algorithmId.length() > 8_192) {
                 throw new IllegalArgumentException("CA subject proof algorithm text is invalid");
             }
             byte[] algorithmBytes = algorithmId.getBytes(StandardCharsets.UTF_8);
-            if (algorithmBytes.length > 8192
+            if (algorithmBytes.length > 8_192
                     || !new String(algorithmBytes, StandardCharsets.UTF_8).equals(algorithmId)
                     || challenge.encoding() != Encoding.BINARY
                     || challenge.lifecycle() != DurableContentReference.Lifecycle.OPERATION
@@ -856,7 +858,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * Preserves the existing single-proof acceptance constructor.
          * @param operationId canonical accepted operation identity
          * @param providerNamespace accepted signing provider namespace
-         * @param providerConfigurationCommitment immutable provider configuration commitment
+         * @param providerCommitment immutable provider configuration commitment
          * @param accessContext trusted acceptance access context
          * @param keyRef final issuer signing key reference
          * @param fairnessAuthorityId authority for scheduling fairness
@@ -871,11 +873,13 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @throws NullPointerException if a required delegated-constructor component or list element is null
          * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
-        public AcceptanceCommand(PkiId operationId, String providerNamespace, ConfigurationCommitment providerConfigurationCommitment,
+        // Preserve the established public constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public AcceptanceCommand(PkiId operationId, String providerNamespace, ConfigurationCommitment providerCommitment,
                 AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId, String algorithmId, Encoding signatureEncoding,
                 Instant createdAt, Instant deadline, DurableContentReference candidate, Optional<OuterCommand> outer, Mode mode,
                 Optional<CaSubjectProofStep> proofStep) {
-            this(operationId, providerNamespace, providerConfigurationCommitment, accessContext, keyRef, fairnessAuthorityId,
+            this(operationId, providerNamespace, providerCommitment, accessContext, keyRef, fairnessAuthorityId,
                     algorithmId, signatureEncoding, createdAt, deadline, candidate, outer, mode, proofStep, Optional.empty());
         }
         /**
@@ -935,8 +939,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                 proof.requireParent(operationId);
                 if (mode != Mode.NORMAL || outer.filter(value -> value.kind() == DomainContinuationStore.Kind.CA
                         || value.kind() == DomainContinuationStore.Kind.ISSUANCE
-                            && zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(value.command())
-                                .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)).isEmpty()
+                            && zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION
+                                .equals(zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(value.command()))).isEmpty()
                         || !proof.challenge().storeId().equals(candidate.storeId())
                         || proof.challenge().contentId().equals(candidate.contentId())
                         || candidate.encoding() != Encoding.DER || signatureEncoding != Encoding.BINARY) {
@@ -1003,7 +1007,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @param operationId canonical accepted operation identity
          * @param acceptanceCommitment canonical commitment of the immutable accepted input
          * @param providerNamespace accepted signing provider namespace
-         * @param providerConfigurationCommitment immutable provider configuration commitment
+         * @param providerCommitment immutable provider configuration commitment
          * @param accessContext trusted acceptance access context
          * @param keyRef final issuer signing key reference
          * @param fairnessAuthorityId authority for scheduling fairness
@@ -1018,11 +1022,13 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @throws NullPointerException if a required delegated-constructor component or list element is null
          * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
-        public AcceptanceEnvelope(PkiId operationId, AcceptanceCommitment acceptanceCommitment, String providerNamespace, ConfigurationCommitment providerConfigurationCommitment,
+        // Preserve the established public constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public AcceptanceEnvelope(PkiId operationId, AcceptanceCommitment acceptanceCommitment, String providerNamespace, ConfigurationCommitment providerCommitment,
                 AccessContext accessContext, KeyRef keyRef, PkiId fairnessAuthorityId, String algorithmId, Encoding signatureEncoding,
                 Instant createdAt, Instant deadline, DurableContentReference candidate, Optional<OuterCommand> outer, Mode mode,
                 Optional<CaSubjectProofStep> proofStep) {
-            this(operationId, acceptanceCommitment, providerNamespace, providerConfigurationCommitment, accessContext, keyRef, fairnessAuthorityId,
+            this(operationId, acceptanceCommitment, providerNamespace, providerCommitment, accessContext, keyRef, fairnessAuthorityId,
                     algorithmId, signatureEncoding, createdAt, deadline, candidate, outer, mode, proofStep, Optional.empty());
         }
         /**
@@ -1162,6 +1168,8 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
          * @throws NullPointerException if a required delegated-constructor component or list element is null
          * @throws IllegalArgumentException if the delegated structural or consistency checks fail
          */
+        // Preserve the established public constructor signature.
+        @SuppressWarnings("PMD.ExcessiveParameterList")
         public MutableState(PkiId operationId, State state, long revision, long fence, Optional<Instant> leaseUntil,
                 Optional<PkiId> downstreamOperationId, Optional<String> detailCode, Optional<EncodedObject> result,
                 Optional<Instant> providerUpdatedAt, int failureCount, Optional<Instant> nextEligibleAt,
@@ -1326,6 +1334,11 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                     && mutable.result().isEmpty()) {
                 throw new IllegalArgumentException("Proof verification requires its retained signature");
             }
+            validateAlternativeProofCompletion(stage, mutable);
+            validateFinalResult(stage, mutable);
+        }
+
+        private static void validateAlternativeProofCompletion(Stage stage, MutableState mutable) {
             if (stage == Stage.CA_ALT_PROOF && (mutable.state() == State.INTENT || mutable.state() == State.DISPATCHED
                     || mutable.state() == State.CANCELLING) && (mutable.result().isPresent() || mutable.alternativeProofOutcome().isPresent())) {
                 throw new IllegalArgumentException("Unfinished alternative proof cannot retain terminal evidence");
@@ -1334,7 +1347,6 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
                     .filter(value -> value.disposition() == ObservationState.SUCCEEDED).isEmpty()) {
                 throw new IllegalArgumentException("Alternative verification requires successful proof evidence");
             }
-            validateFinalResult(stage, mutable);
         }
 
         private static void validateFinalResult(Stage stage, MutableState mutable) {
@@ -1960,7 +1972,7 @@ public interface SignWorkflowStore { // NOPMD - ExcessivePublicCount: nested val
      */
     default List<Workflow> selectDueSignWorkflows(Instant cutoffInclusive, int maximumRecords) {
         Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
-        if (maximumRecords < 1 || maximumRecords > 4096) {
+        if (maximumRecords < 1 || maximumRecords > 4_096) {
             throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
         }
         return listSignWorkflows().stream()

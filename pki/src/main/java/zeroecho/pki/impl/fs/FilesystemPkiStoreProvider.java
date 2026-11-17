@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Optional;
+
 import java.nio.file.Path;
 import java.math.BigInteger;
 import java.util.Objects;
@@ -191,7 +193,7 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
                 throw new IllegalArgumentException("Unknown credential search option");
             }
         }
-        return options.withCredentialSearch(java.util.Optional.of(new FsPkiStoreOptions.CredentialSearch(
+        return options.withCredentialSearch(Optional.of(new FsPkiStoreOptions.CredentialSearch(
                 searchInteger(config, "credentialSearchCacheKiB"), searchInteger(config, "credentialSearchQueryTimeoutMillis"),
                 searchInteger(config, "credentialSearchMaximumCertificateBytes"))));
     }

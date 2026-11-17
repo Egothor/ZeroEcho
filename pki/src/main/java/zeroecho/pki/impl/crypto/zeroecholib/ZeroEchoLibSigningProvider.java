@@ -34,13 +34,31 @@
 
 package zeroecho.pki.impl.crypto.zeroecholib;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.alg.common.sig.SignatureInteropProfiles;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spi.KeyringUnlockProvider;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.core.storage.KeyringSignatureExecutor;
+import zeroecho.core.storage.KeyringStore;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.crypto.AltSigningCapability;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
@@ -61,24 +79,6 @@ import java.util.function.BiConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import zeroecho.core.alg.BootstrapAlgorithmIdentities;
-import zeroecho.core.alg.common.sig.SignatureInteropProfiles;
-import zeroecho.core.io.RepeatableContent;
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.core.spi.KeyringUnlockProvider;
-import zeroecho.core.storage.KeyringPassword;
-import zeroecho.core.storage.KeyringSignatureExecutor;
-import zeroecho.core.storage.KeyringStore;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.KeyRef;
-import zeroecho.pki.api.PkiException;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.spi.crypto.AltSigningCapability;
-import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
-import zeroecho.pki.spi.crypto.SigningProvider;
-import zeroecho.sdk.ZeroEchoSession;
-
 /**
  * Inline ZeroEcho-lib signing provider.
  *
@@ -92,6 +92,7 @@ import zeroecho.sdk.ZeroEchoSession;
 @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidCatchingGenericException" })
 public final class ZeroEchoLibSigningProvider implements SigningProvider, PublicKeyInfoSource, AltSigningCapability,
         zeroecho.pki.spi.crypto.ManagedKeyGeneration {
+    private static final String PRIVATE_SUFFIX = ".priv";
     private static final long NO_FENCE = 0L;
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSigningProvider.class.getName());
 
@@ -125,17 +126,26 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
      * @param unlockProvider configured credential provider for lazy keyring unlocking
      * @param commitment base provider configuration commitment
      * @throws NullPointerException if the standalone scope or required commitment input is null
-     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank
+     *     or the operation horizon is not positive
      */
-    /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
-            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
-            KeyringUnlockProvider unlockProvider, ConfigurationCommitment commitment) {
+    /* default */ ZeroEchoLibSigningProvider(
+            String id,
+            Path keyringPath,
+            Path standaloneScope,
+            Clock clock,
+            Duration operationHorizon,
+            String keyRefPrefix,
+            boolean requireComponentSuffix,
+            KeyringUnlockProvider unlockProvider,
+            ConfigurationCommitment commitment) {
         this(id, keyringPath, standaloneScope, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
                 unlockProvider, (category, cleared) -> { }, new ZeroEchoSession(), commitment);
     }
 
     /**
-     * Configures a provider around an already opened keyring and derives its configuration commitment.
+     * Configures a provider around an already opened keyring and derives its configuration
+     * commitment.
      *
      * @param id nonblank provider identity
      * @param keyringPath configured keyring path; opened lazily
@@ -147,11 +157,19 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
      * @param unlockProvider configured credential provider for lazy keyring unlocking
      * @param keyring already opened keyring retained by this provider
      * @throws NullPointerException if the standalone scope or required commitment input is null
-     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank
+     *     or the operation horizon is not positive
      */
-    /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
-            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
-            KeyringUnlockProvider unlockProvider, KeyringStore keyring) {
+    /* default */ ZeroEchoLibSigningProvider(
+            String id,
+            Path keyringPath,
+            Path standaloneScope,
+            Clock clock,
+            Duration operationHorizon,
+            String keyRefPrefix,
+            boolean requireComponentSuffix,
+            KeyringUnlockProvider unlockProvider,
+            KeyringStore keyring) {
         this(id, keyringPath, standaloneScope, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
                 unlockProvider, (category, cleared) -> { }, new ZeroEchoSession(),
                 configurationCommitment(keyring, id, operationHorizon, keyRefPrefix, requireComponentSuffix));
@@ -172,12 +190,21 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
      * @param cleanupObserver observer called with category and owned bytes after clearing
      * @param commitment base provider configuration commitment
      * @throws NullPointerException if the standalone scope or required commitment input is null
-     * @throws IllegalArgumentException if required configuration is absent, the identity is blank or the operation horizon is not positive
+     * @throws IllegalArgumentException if required configuration is absent, the identity is blank
+     *     or the operation horizon is not positive
      */
+    /* default */
     @SuppressWarnings("PMD.ExcessiveParameterList")
-    /* default */ ZeroEchoLibSigningProvider(String id, Path keyringPath, Path standaloneScope, Clock clock,
-            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
-            KeyringUnlockProvider unlockProvider, BiConsumer<String, byte[]> cleanupObserver,
+    ZeroEchoLibSigningProvider(
+            String id,
+            Path keyringPath,
+            Path standaloneScope,
+            Clock clock,
+            Duration operationHorizon,
+            String keyRefPrefix,
+            boolean requireComponentSuffix,
+            KeyringUnlockProvider unlockProvider,
+            BiConsumer<String, byte[]> cleanupObserver,
             ConfigurationCommitment commitment) {
         this(id, keyringPath, standaloneScope, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
                 unlockProvider, cleanupObserver, new ZeroEchoSession(), commitment);
@@ -202,8 +229,11 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         this.keyringUnlockProvider = unlockProvider;
         this.cleanupObserver = cleanupObserver;
         this.session = Objects.requireNonNull(session, "session must not be null");
-        this.configurationCommitment = inputCapabilities().commitment(
-                Objects.requireNonNull(commitment, "commitment must not be null"), supportedAlgorithms());
+        this.configurationCommitment =
+                inputCapabilities()
+                        .commitment(
+                                Objects.requireNonNull(commitment, "commitment must not be null"),
+                                supportedAlgorithms());
     }
 
     /**
@@ -253,7 +283,8 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         domainLock.lock();
         try {
             if (boundNamespace != null && !boundNamespace.equals(namespace)) {
-                throw new IllegalArgumentException("ZeroEchoLib provider belongs to a different signing domain");
+                throw new IllegalArgumentException(
+                        "ZeroEchoLib provider belongs to a different signing domain");
             }
             boundNamespace = namespace;
         } finally {
@@ -270,7 +301,8 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         Objects.requireNonNull(control, "control").requireActive(now());
         requireExactDomain(request);
         if (!configurationCommitment.matches(request.configurationCommitment())) {
-            throw new IllegalArgumentException("Signing provider configuration commitment mismatch");
+            throw new IllegalArgumentException(
+                    "Signing provider configuration commitment mismatch");
         }
         byte[] signatureBytes = null;
         try {
@@ -362,25 +394,36 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
     }
 
     /**
-     * Visits private-key references already known by this local keyring without opening private key material.
-     * The keyring alias snapshot is bounded by its existing entry limit; callbacks are never retained.
-     * Duplicate logical aliases may be visited and must be deduplicated by a collecting caller.
+     * Visits private-key references already known by this local keyring without opening private key
+     * material. The keyring alias snapshot is bounded by its existing entry limit; callbacks are
+     * never retained. Duplicate logical aliases may be visited and must be deduplicated by a
+     * collecting caller.
+     *
      * @param visitor consumer of canonical non-secret key references
      * @throws IllegalStateException when the keyring is unavailable
      * @throws NullPointerException if {@code visitor} is null
      */
-    // The provider owns the borrowed keyring; closing it during enumeration would invalidate subsequent signing.
-    // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
-    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
-    @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.CloseResource", "PMD.PreserveStackTrace" })
+    // The provider owns the borrowed keyring; closing it during enumeration would invalidate
+    // subsequent signing.
+    // Each iteration requires its own immutable value or failure object; sharing would conflate
+    // distinct records or attempts.
+    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary
+    // exception.
+    @SuppressWarnings({
+        "PMD.AvoidInstantiatingObjectsInLoops",
+        "PMD.CloseResource",
+        "PMD.PreserveStackTrace"
+    })
     public void visitKnownKeyReferences(java.util.function.Consumer<KeyRef> visitor) {
         Objects.requireNonNull(visitor, "visitor");
         try {
             KeyringStore keyring = requireKeyring();
             for (String alias : keyring.aliases()) {
-                if (keyring.contains(alias + ".prv")) { visitor.accept(new KeyRef(keyRefPrefix + alias + ".prv")); }
-                if (alias.startsWith("managed-") && keyring.contains(alias + ".priv")) {
-                    visitor.accept(new KeyRef(keyRefPrefix + alias + ".priv"));
+                if (keyring.contains(alias + ".prv")) {
+                    visitor.accept(new KeyRef(keyRefPrefix + alias + ".prv"));
+                }
+                if (alias.startsWith("managed-") && keyring.contains(alias + PRIVATE_SUFFIX)) {
+                    visitor.accept(new KeyRef(keyRefPrefix + alias + PRIVATE_SUFFIX));
                 }
             }
         } catch (IOException | GeneralSecurityException failure) {
@@ -397,13 +440,18 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         try {
             KeyRefParts parts = parseKeyRef(keyRef);
             String privateAlias = parts.privateAlias;
-            String logicalAlias = privateAlias.endsWith(".priv")
-                    ? privateAlias.substring(0, privateAlias.length() - 5)
-                    : privateAlias.endsWith(".prv") ? privateAlias.substring(0, privateAlias.length() - 4) : privateAlias;
+            String logicalAlias =
+                    privateAlias.endsWith(PRIVATE_SUFFIX)
+                            ? privateAlias.substring(0, privateAlias.length() - 5)
+                            : privateAlias.endsWith(".prv")
+                                    ? privateAlias.substring(0, privateAlias.length() - 4)
+                                    : privateAlias;
             PublicKey publicKey = requireKeyring().getPublic(logicalAlias);
             return new EncodedObject(Encoding.DER, publicKey.getEncoded());
         } catch (InvalidRequestException | IOException | GeneralSecurityException failure) {
-            throw new PkiException("Managed public key resolution failed: code=PUBLIC_KEY_RESOLUTION_FAILED", failure);
+            throw new PkiException(
+                    "Managed public key resolution failed: code=PUBLIC_KEY_RESOLUTION_FAILED",
+                    failure);
         }
     }
 
@@ -534,8 +582,10 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
         Objects.requireNonNull(parameters, "parameters");
         lifecycleLock.lock();
         try {
-            KeyringStore keys = requireKeyring();
-            if (keys.contains(alias)) throw new IllegalStateException("Managed key slot is occupied");
+            requireKeyring();
+            if (keyringOrNull.contains(alias)) {
+                throw new IllegalStateException("Managed key slot is occupied");
+            }
             java.security.KeyPair pair = switch (parameters) {
                 case ECDSA_P384 -> session.keyBuilders().asymmetric().generateKeyPair("ECDSA",
                         zeroecho.core.alg.ecdsa.EcdsaCurveSpec.P384);
@@ -555,7 +605,7 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 case ML_DSA_87 -> "ML-DSA";
             };
             try {
-                keys.putKeyPairIfAbsent(alias, algorithm, pair);
+                keyringOrNull.putKeyPairIfAbsent(alias, algorithm, pair);
                 return observe(reservationId, parameters).orElseThrow();
             } finally {
                 try { pair.getPrivate().destroy(); }
@@ -564,44 +614,68 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 }
             }
         } catch (IOException | GeneralSecurityException failure) {
-            throw new IllegalStateException("Managed key publication requires reconciliation", failure);
+            throw new IllegalStateException(
+                    "Managed key publication requires reconciliation", failure);
         } finally {
             lifecycleLock.unlock();
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /** {@inheritDoc} */
     @Override
+    // The public observation failure intentionally excludes provider/keyring diagnostics.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public Optional<Result> observe(String reservationId, Parameters parameters) {
         String alias = generationAlias(reservationId);
         Objects.requireNonNull(parameters, "parameters");
         lifecycleLock.lock();
         try {
-            KeyringStore keys = requireKeyring();
-            if (!keys.contains(alias)) return Optional.empty();
-            if (!keys.contains(alias + ".pub") || !keys.contains(alias + ".priv")) {
+            requireKeyring();
+            if (!keyringOrNull.contains(alias)) {
+                return Optional.empty();
+            }
+            if (!keyringOrNull.contains(alias + ".pub")
+                    || !keyringOrNull.contains(alias + PRIVATE_SUFFIX)) {
                 throw new IllegalStateException("Managed key pair is incomplete");
             }
-            PublicKey publicKey = keys.getPublic(alias);
+            PublicKey publicKey = keyringOrNull.getPublic(alias);
             org.bouncycastle.asn1.x509.SubjectPublicKeyInfo info =
                     org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(publicKey.getEncoded());
             String oid = info.getAlgorithm().getAlgorithm().getId();
-            boolean matches = switch (parameters) {
-                case ECDSA_P384 -> "1.2.840.10045.2.1".equals(oid)
-                        && org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(info.getAlgorithm().getParameters())
-                                .getId().equals("1.3.132.0.34");
-                case RSA_4096 -> "1.2.840.113549.1.1.1".equals(oid)
-                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(info.parsePublicKey()).getModulus().bitLength() == 4096
-                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(info.parsePublicKey()).getPublicExponent()
-                                .equals(java.math.BigInteger.valueOf(65537));
-                case ML_DSA_87 -> "2.16.840.1.101.3.4.3.19".equals(oid)
-                        && info.getAlgorithm().getParameters() == null;
-            };
-            if (!matches) throw new IllegalStateException("Managed key parameters conflict");
-            return Optional.of(new Result(new KeyRef(keyRefPrefix + alias + ".priv"), parameters,
-                    new EncodedObject(Encoding.DER, publicKey.getEncoded())));
+            boolean matches =
+                    switch (parameters) {
+                        case ECDSA_P384 ->
+                                "1.2.840.10045.2.1".equals(oid)
+                                        && "1.3.132.0.34"
+                                                .equals(
+                                                        org.bouncycastle.asn1.ASN1ObjectIdentifier
+                                                                .getInstance(
+                                                                        info.getAlgorithm()
+                                                                                .getParameters())
+                                                                .getId());
+                        case RSA_4096 ->
+                                "1.2.840.113549.1.1.1".equals(oid)
+                                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(
+                                                                info.parsePublicKey())
+                                                        .getModulus()
+                                                        .bitLength()
+                                                == 4096
+                                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(
+                                                        info.parsePublicKey())
+                                                .getPublicExponent()
+                                                .equals(java.math.BigInteger.valueOf(65_537));
+                        case ML_DSA_87 ->
+                                "2.16.840.1.101.3.4.3.19".equals(oid)
+                                        && info.getAlgorithm().getParameters() == null;
+                    };
+            if (!matches) {
+                throw new IllegalStateException("Managed key parameters conflict");
+            }
+            return Optional.of(
+                    new Result(
+                            new KeyRef(keyRefPrefix + alias + PRIVATE_SUFFIX),
+                            parameters,
+                            new EncodedObject(Encoding.DER, publicKey.getEncoded())));
         } catch (IOException | GeneralSecurityException failure) {
             throw new IllegalStateException("Managed key observation is unavailable");
         } finally {
@@ -622,7 +696,7 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             throw new InvalidRequestException(DetailCode.INVALID_KEY_REFERENCE);
         }
         String suffix = raw.substring(keyRefPrefix.length());
-        boolean privateSuffix = suffix.endsWith(".prv") || suffix.endsWith(".priv");
+        boolean privateSuffix = suffix.endsWith(".prv") || suffix.endsWith(PRIVATE_SUFFIX);
         if (requireComponentSuffix && !privateSuffix) {
             throw new InvalidRequestException(DetailCode.INVALID_KEY_REFERENCE);
         }
@@ -657,7 +731,8 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
             tag = keyring.zeroEchoSigningConfigurationTag(id, horizon, prefix, requireSuffix);
             return new ConfigurationCommitment(tag);
         } catch (GeneralSecurityException failure) {
-            throw new IllegalStateException("ZEROECHO_SIGNING_CONFIGURATION_COMMITMENT_FAILED", failure);
+            throw new IllegalStateException(
+                    "ZEROECHO_SIGNING_CONFIGURATION_COMMITMENT_FAILED", failure);
         } finally {
             if (tag != null) {
                 Arrays.fill(tag, (byte) 0);

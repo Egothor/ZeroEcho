@@ -33,10 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.util.Objects;
-import java.util.Optional;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaHeadSnapshot;
+
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Exact expected predecessor for one guarded CA lifecycle publication.
@@ -72,19 +73,26 @@ public record CaLifecycleContext(int version, Operation operation, CaHeadSnapsho
 
     /**
      * Rejects partial evidence and a transition identity on a noncandidate operation.
+     *
      * @param version context version, one
      * @param operation exact lifecycle kind
      * @param expectedHead original selected generation/path and monotonic epoch
      * @param originalCredentialId exact original CA credential
      * @param originalCertificateSha256 lowercase original certificate DER SHA-256
      * @param transitionId root candidate transition identity, absent for immediate publication
-     * @throws NullPointerException if operation, expectedHead, originalCredentialId, transitionId is null
-     * @throws IllegalArgumentException if the version, certificate commitment or lifecycle metadata violates the canonical context contract
+     * @throws NullPointerException if operation, expectedHead, originalCredentialId, transitionId
+     *     is null
+     * @throws IllegalArgumentException if the version, certificate commitment or lifecycle metadata
+     *     violates the canonical context contract
      */
     public CaLifecycleContext {
-        Objects.requireNonNull(operation, "operation"); Objects.requireNonNull(expectedHead, "expectedHead");
-        Objects.requireNonNull(originalCredentialId, "originalCredentialId"); Objects.requireNonNull(transitionId, "transitionId");
-        if (version != 1 || originalCertificateSha256 == null || !originalCertificateSha256.matches("[0-9a-f]{64}")
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(expectedHead, "expectedHead");
+        Objects.requireNonNull(originalCredentialId, "originalCredentialId");
+        Objects.requireNonNull(transitionId, "transitionId");
+        if (version != 1
+                || originalCertificateSha256 == null
+                || !originalCertificateSha256.matches("[0-9a-f]{64}")
                 || transitionId.isPresent() != (operation == Operation.ROOT_CANDIDATE)) {
             throw new IllegalArgumentException("Invalid CA lifecycle context");
         }

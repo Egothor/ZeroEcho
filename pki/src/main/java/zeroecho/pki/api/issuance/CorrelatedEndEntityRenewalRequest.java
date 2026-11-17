@@ -73,7 +73,8 @@ public record CorrelatedEndEntityRenewalRequest(PkiId issuerCaId, EndEntityRenew
      * @param request predecessor and optional validity override
      * @param predecessorSha256 canonical lowercase SHA-256 of the predecessor DER
      * @param intent frozen orchestration identity and selection
-     * @param originalRequest exact protocol request when present; requires fresh PoP, predecessor identity equality and frozen CSR-signature binding validation
+     * @param originalRequest exact protocol request when present; requires fresh PoP, predecessor identity
+     * equality and frozen CSR-signature binding validation
      */
     public CorrelatedEndEntityRenewalRequest {
         Objects.requireNonNull(issuerCaId, "issuerCaId");

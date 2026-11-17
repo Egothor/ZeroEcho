@@ -62,11 +62,15 @@ import zeroecho.pki.api.PkiId;
  * @param originatingSigningOperationId accepted signing operation
  * @param commandCommitment original immutable domain command commitment
  */
+// Record component names are established public accessors and remain source compatible.
+@SuppressWarnings("PMD.LongVariable")
 public record RootTrustAnchorTransition(int version, PkiId transitionId, PkiId caId, CaHeadSnapshot expectedHead,
         PkiId oldCredentialId, String oldCertificateSha256, String oldBindingCommitment,
         PkiId candidateIssuerId, PkiId candidatePathId, PkiId candidateCredentialId,
         String candidateCertificateSha256, String candidateBindingCommitment,
         PkiId originatingSigningOperationId, String commandCommitment) {
+    private static final int LIMIT_1_048_576 = 1_048_576;
+
     /**
      * Checks the transition identity, original fence and candidate-generation coordinates.
      *
@@ -148,7 +152,7 @@ public record RootTrustAnchorTransition(int version, PkiId transitionId, PkiId c
                         oldCertificateSha256, oldBindingCommitment, candidateIssuerId.value(), candidatePathId.value(), candidateCredentialId.value(),
                         candidateCertificateSha256, candidateBindingCommitment, originatingSigningOperationId.value(), commandCommitment}) {
                     byte[] encoded = field.getBytes(StandardCharsets.UTF_8);
-                    if (encoded.length > 1_048_576) {
+                    if (encoded.length > LIMIT_1_048_576) {
                         throw new IllegalArgumentException("Transition coordinate exceeds its bound");
                     }
                     out.writeInt(encoded.length);

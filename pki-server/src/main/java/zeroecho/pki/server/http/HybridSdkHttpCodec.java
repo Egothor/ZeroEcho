@@ -69,18 +69,18 @@ public final class HybridSdkHttpCodec {
      */
     public static Map<String, PkiOperationValue> parse(byte[] document, int maximumBytes,
             boolean acceptance, Set<String> adapterFields) {
-        if (!(StrictJson.parse(document, maximumBytes) instanceof PkiOperationValue.ObjectValue object)) throw invalid();
-        var expected = new java.util.HashSet<>(adapterFields);
+        if (!(StrictJson.parse(document, maximumBytes) instanceof PkiOperationValue.ObjectValue object)) { throw invalid(); }
+        Set<String> expected = new java.util.HashSet<>(adapterFields);
         expected.addAll(Set.of("version", "profile"));
         expected.addAll(acceptance ? Set.of("intentId", "sdkRequestId", "primaryProof", "alternativeProof") : Set.of("clientNonce"));
-        var fields = object.fields();
+        Map<String,PkiOperationValue> fields = object.fields();
         if (!fields.keySet().equals(expected) || !(fields.get("version") instanceof PkiOperationValue.IntegerValue version)
-                || version.value() != 1 || !text(fields, "profile").equals(PROFILE)) throw invalid();
+                || version.value() != 1 || !PROFILE.equals(text(fields, "profile"))) { throw invalid(); }
         if (acceptance) {
-            if (!text(fields, "intentId").matches("[0-9a-f]{64}")) throw invalid();
-            if (!text(fields, "sdkRequestId").matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) throw invalid();
-            bytes(fields, "primaryProof", 1, 104); bytes(fields, "alternativeProof", 4627, 4627);
-        } else bytes(fields, "clientNonce", 32, 32);
+            if (!text(fields, "intentId").matches("[0-9a-f]{64}")) { throw invalid(); }
+            if (!text(fields, "sdkRequestId").matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) { throw invalid(); }
+            bytes(fields, "primaryProof", 1, 104); bytes(fields, "alternativeProof", 4_627, 4_627);
+        } else { bytes(fields, "clientNonce", 32, 32); }
         return Map.copyOf(fields);
     }
     /**
@@ -96,10 +96,10 @@ public final class HybridSdkHttpCodec {
      */
     public static byte[] bytes(Map<String, PkiOperationValue> fields, String name, int minimumBytes, int maximumBytes) {
         String value = text(fields, name);
-        if (value.length() > ((long) maximumBytes * 4 + 2) / 3 || !value.matches("[A-Za-z0-9_-]+")) throw invalid();
+        if (value.length() > ((long) maximumBytes * 4 + 2) / 3 || !value.matches("[A-Za-z0-9_-]+")) { throw invalid(); }
         byte[] decoded = Base64.getUrlDecoder().decode(value);
         if (decoded.length < minimumBytes || decoded.length > maximumBytes
-                || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value)) throw invalid();
+                || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value)) { throw invalid(); }
         return decoded;
     }
     /**
@@ -112,7 +112,7 @@ public final class HybridSdkHttpCodec {
      * @throws IllegalArgumentException if the member is absent or has another type
      */
     public static String text(Map<String, PkiOperationValue> fields, String name) {
-        if (!(fields.get(name) instanceof PkiOperationValue.Text text)) throw invalid();
+        if (!(fields.get(name) instanceof PkiOperationValue.Text text)) { throw invalid(); }
         return text.value();
     }
     /**
@@ -144,8 +144,8 @@ public final class HybridSdkHttpCodec {
      * @throws IllegalArgumentException if the origin or encoded values fail their representation constraints
      */
     public static byte[] capability(String basePath, java.util.List<String> operations, String canonicalOrigin, int maximumBodyBytes) {
-        var fields = new LinkedHashMap<String, PkiOperationValue>();
-        zeroecho.pki.api.hybrid.sdk.HybridSdkFrame.requireOrigin(canonicalOrigin);
+        Map<String,PkiOperationValue> fields = new LinkedHashMap<>();
+        HybridSdkFrame.requireOrigin(canonicalOrigin);
         fields.put("canonicalOrigin", new PkiOperationValue.Text(canonicalOrigin));
         fields.put("maximumRequestDerBytes", new PkiOperationValue.IntegerValue(1_048_576));
         fields.put("maximumDurableAdmissionBytes", new PkiOperationValue.IntegerValue(524_288));
@@ -155,7 +155,7 @@ public final class HybridSdkHttpCodec {
         fields.put("operations", new PkiOperationValue.ListValue(operations.stream().map(value -> (PkiOperationValue) new PkiOperationValue.Text(value)).toList()));
         fields.put("maximumBodyBytes", new PkiOperationValue.IntegerValue(maximumBodyBytes));
         fields.put("maximumPrimaryProofBytes", new PkiOperationValue.IntegerValue(104));
-        fields.put("alternativeProofBytes", new PkiOperationValue.IntegerValue(4627));
+        fields.put("alternativeProofBytes", new PkiOperationValue.IntegerValue(4_627));
         return StrictJson.encode(new PkiOperationValue.ObjectValue(fields));
     }
     private static PkiOperationValue encoded(byte[] bytes) { return new PkiOperationValue.Text(Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)); }

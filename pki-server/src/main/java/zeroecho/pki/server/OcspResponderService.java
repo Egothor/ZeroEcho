@@ -85,11 +85,7 @@ import zeroecho.pki.application.PkiRepository;
  * arbitrary retained response is fresh. Dependency validation uses the supplied
  * server clock; actual response/query verification remains with its runtime.</p>
  */
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ControlStatementBraces",
-        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidLiteralsInIfCondition",
-        "PMD.LinguisticNaming", "PMD.UseObjectForClearerAPI", "PMD.ExcessiveParameterList",
-        "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException", "PMD.UseEnumCollections",
-        "PMD.ExceptionAsFlowControl" })
+@SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidLiteralsInIfCondition", "PMD.LinguisticNaming", "PMD.UseObjectForClearerAPI", "PMD.ExcessiveParameterList", "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException", "PMD.UseEnumCollections", "PMD.ExceptionAsFlowControl"})
 public final class OcspResponderService {
     /**
      * {@code id-kp-OCSPSigning} extended-key-usage OID (RFC 6960).
@@ -114,7 +110,7 @@ public final class OcspResponderService {
          */
         AUTHORIZED_SIGNED_REQUIRED(3);
         private final int code;
-        RequestAuthenticationMode(int code) { this.code = code; }
+        /* default */ RequestAuthenticationMode(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -153,7 +149,7 @@ public final class OcspResponderService {
          */
         VALIDITY_AND_TRUST_ONLY(3);
         private final int code;
-        RequesterRevocationPolicy(int code) { this.code = code; }
+        /* default */ RequesterRevocationPolicy(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -192,7 +188,7 @@ public final class OcspResponderService {
          */
         EXACT_REQUESTER_CERTIFICATE_COMMITMENTS(3);
         private final int code;
-        TrustSelectorType(int code) { this.code = code; }
+        /* default */ TrustSelectorType(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -229,7 +225,7 @@ public final class OcspResponderService {
          */
         ISSUER_AND_SERIAL_COMMITMENT(3);
         private final int code;
-        PrincipalMappingType(int code) { this.code = code; }
+        /* default */ PrincipalMappingType(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -273,8 +269,8 @@ public final class OcspResponderService {
                 throw new IllegalArgumentException("OCSP requester trust selector is empty or oversized");
             }
             for (String identity : identities) {
-                if (type == TrustSelectorType.EXACT_REQUESTER_CERTIFICATE_COMMITMENTS) requireDigest(identity);
-                else new PkiId(identity);
+                if (type == TrustSelectorType.EXACT_REQUESTER_CERTIFICATE_COMMITMENTS) { requireDigest(identity); }
+                else { new PkiId(identity); }
             }
         }
     }
@@ -386,7 +382,7 @@ public final class OcspResponderService {
          */
         DELEGATED_RESPONDER(2);
         private final int code;
-        SigningMode(int code) { this.code = code; }
+        /* default */ SigningMode(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -422,7 +418,7 @@ public final class OcspResponderService {
          */
         REQUIRED(3);
         private final int code;
-        NoncePolicy(int code) { this.code = code; }
+        /* default */ NoncePolicy(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -454,7 +450,7 @@ public final class OcspResponderService {
          */
         ACTIVE(2);
         private final int code;
-        State(int code) { this.code = code; }
+        /* default */ State(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -483,6 +479,8 @@ public final class OcspResponderService {
      * @param alternativeSignatureBindingId optional exact default-equivalent binding
      * @param alternativeSignatureBindingCommitment expected binding or registry commitment
      */
+    // These component names are established public accessor names.
+    @SuppressWarnings("PMD.LongVariable")
     public record SdkConfiguration(String profile, KeyRef alternativeKeyRef, String alternativeSignatureAlgorithm,
             Optional<String> alternativeSignatureBindingId, String alternativeSignatureBindingCommitment) {
         /**
@@ -498,7 +496,7 @@ public final class OcspResponderService {
          *     digest is invalid
          */
         public SdkConfiguration {
-            if (!"zeroecho-hybrid-sdk-v1".equals(profile)) throw new IllegalArgumentException("Unsupported OCSP SDK profile");
+            if (!"zeroecho-hybrid-sdk-v1".equals(profile)) { throw new IllegalArgumentException("Unsupported OCSP SDK profile"); }
             Objects.requireNonNull(alternativeKeyRef,"alternativeKeyRef");
             Permission.requireBounded(alternativeSignatureAlgorithm,128,"SDK alternative signature");
             alternativeSignatureBindingId=Objects.requireNonNull(alternativeSignatureBindingId,"alternativeSignatureBindingId");
@@ -588,7 +586,7 @@ public final class OcspResponderService {
             requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
             requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
             hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
-            if (hybridSdk.isPresent() && signingMode!=SigningMode.DELEGATED_RESPONDER) throw new IllegalArgumentException("SDK requires delegated responder signing");
+            if (hybridSdk.isPresent() && signingMode!=SigningMode.DELEGATED_RESPONDER) { throw new IllegalArgumentException("SDK requires delegated responder signing"); }
         }
 
         /**
@@ -805,7 +803,7 @@ public final class OcspResponderService {
                 throw new IllegalArgumentException("OCSP responder bounds are invalid");
             }
             acceptedHashes = Set.copyOf(Objects.requireNonNull(acceptedHashes));
-            if (acceptedHashes.isEmpty()) throw new IllegalArgumentException("OCSP CertID hashes are empty");
+            if (acceptedHashes.isEmpty()) { throw new IllegalArgumentException("OCSP CertID hashes are empty"); }
             positive(cacheLifetime, responseValidity, "cache lifetime"); Objects.requireNonNull(state);
             Objects.requireNonNull(requestAuthenticationMode, "requestAuthenticationMode");
             requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
@@ -813,7 +811,7 @@ public final class OcspResponderService {
             Objects.requireNonNull(createdAt); requireDigest(configurationCommitment);
             hybridSdk=Objects.requireNonNull(hybridSdk,"hybridSdk");
             if (hybridSdk.isPresent() && (signingMode!=SigningMode.DELEGATED_RESPONDER
-                    || signingKeyRef.equals(hybridSdk.orElseThrow().alternativeKeyRef()))) throw new IllegalArgumentException("SDK requires distinct dedicated delegated roles");
+                    || signingKeyRef.equals(hybridSdk.orElseThrow().alternativeKeyRef()))) { throw new IllegalArgumentException("SDK requires distinct dedicated delegated roles"); }
         }
     }
 
@@ -874,7 +872,7 @@ public final class OcspResponderService {
      */
     public void validateRegistration(Registration supplied) {
         Responder value=draft(Objects.requireNonNull(supplied,"supplied"));
-        if(aliasIndex.containsKey(value.alias())||control.protocolRecord(ServerControlStore.OCSP_RESPONDER,value.responderId()).isPresent())throw new IllegalStateException("Responder identity already exists");
+        if(aliasIndex.containsKey(value.alias())||control.protocolRecord(ServerControlStore.OCSP_RESPONDER,value.responderId()).isPresent()){ throw new IllegalStateException("Responder identity already exists"); }
         validateDependencies(value,false);
         validateSigningMetadata(value);
     }
@@ -887,7 +885,7 @@ public final class OcspResponderService {
      * @throws UnsupportedOperationException if the provider lacks pure key metadata validation
      */
     public void validateActivation(String responderId) {
-        var value=require(responderId);validateDependencies(value,false);
+        Responder value=require(responderId);validateDependencies(value,false);
         validateSigningMetadata(value);
     }
     private void validateSigningMetadata(Responder value) {
@@ -901,7 +899,7 @@ public final class OcspResponderService {
         value.hybridSdk().ifPresent(sdk -> {
             sdk.alternativeSignatureBindingId().ifPresentOrElse(
                     binding -> bindings.require(binding,sdk.alternativeSignatureBindingCommitment()),
-                    () -> {if(!bindings.commitment().equals(sdk.alternativeSignatureBindingCommitment()))throw new IllegalStateException("SDK alternative binding registry differs");});
+                    () -> {if(!bindings.commitment().equals(sdk.alternativeSignatureBindingCommitment())){ throw new IllegalStateException("SDK alternative binding registry differs"); }});
             signing.orElseThrow(() -> new IllegalStateException("OCSP signing service is unavailable")).validateSdkResponderMetadata(
                     value.authorityId(),value.issuerId(),value.responderCredentialId(),value.chainPathId(),
                     new OcspResponseService.SdkSigningRole(value.signingKeyRef(),value.signatureAlgorithm(),value.signatureBindingId()),
@@ -984,7 +982,7 @@ public final class OcspResponderService {
     public Responder requireAlias(String alias) {
         Permission.requireId(alias, "OCSP alias");
         Responder indexed = aliasIndex.get(alias);
-        if (indexed == null) throw new IllegalArgumentException("OCSP responder alias is unavailable");
+        if (indexed == null) { throw new IllegalArgumentException("OCSP responder alias is unavailable"); }
         return indexed;
     }
 
@@ -1316,21 +1314,21 @@ public final class OcspResponderService {
                 DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeInt(value.requestAuthenticationMode().code());
             output.writeBoolean(value.requesterTrustPolicy().isPresent());
-            if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            if (value.requesterTrustPolicy().isPresent()) { writePolicy(output, value.requesterTrustPolicy().orElseThrow()); }
             if (value.hybridSdk().isPresent()) {
                 // The opt-in approval freezes both roles and complete native policy; ordinary policy bytes stay unchanged.
                 write(output,"zeroecho:ocsp-sdk-registration:v1");
                 write(output,value.responderId());write(output,value.alias());write(output,value.authorityId().value());write(output,value.issuerId().value());
                 output.writeInt(value.signingMode().code());write(output,value.responderCredentialId().value());write(output,value.signingKeyRef().value());
                 write(output,value.chainPathId().value());write(output,value.signatureAlgorithm());output.writeBoolean(value.signatureBindingId().isPresent());
-                if(value.signatureBindingId().isPresent())write(output,value.signatureBindingId().orElseThrow());
+                if(value.signatureBindingId().isPresent()){ write(output,value.signatureBindingId().orElseThrow()); }
                 write(output,value.signatureBindingCommitment());output.writeInt(value.responderIdForm().code());
                 output.writeLong(value.responseValidity().toMillis());output.writeInt(value.noncePolicy().code());output.writeInt(value.maximumNonceBytes());
-                output.writeInt(value.acceptedHashes().size());for(var hash:value.acceptedHashes().stream().sorted().toList())output.writeInt(hash.code());
+                output.writeInt(value.acceptedHashes().size());for(OcspResponseService.CertIdHash hash:value.acceptedHashes().stream().sorted().toList()){ output.writeInt(hash.code()); }
                 output.writeInt(value.maximumRequestBytes());output.writeInt(value.maximumEntries());output.writeLong(value.cacheLifetime().toMillis());
-                var sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
+                SdkConfiguration sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
                 write(output,sdk.alternativeSignatureAlgorithm());output.writeBoolean(sdk.alternativeSignatureBindingId().isPresent());
-                if(sdk.alternativeSignatureBindingId().isPresent())write(output,sdk.alternativeSignatureBindingId().orElseThrow());
+                if(sdk.alternativeSignatureBindingId().isPresent()){ write(output,sdk.alternativeSignatureBindingId().orElseThrow()); }
                 write(output,sdk.alternativeSignatureBindingCommitment());
             }
             output.flush(); return sha256(bytes.toByteArray());
@@ -1349,7 +1347,7 @@ public final class OcspResponderService {
             write(output, value.responderCredentialId().value()); write(output, value.signingKeyRef().value());
             write(output, value.chainPathId().value()); write(output, value.signatureAlgorithm());
             output.writeBoolean(value.signatureBindingId().isPresent());
-            if (value.signatureBindingId().isPresent()) write(output, value.signatureBindingId().orElseThrow());
+            if (value.signatureBindingId().isPresent()) { write(output, value.signatureBindingId().orElseThrow()); }
             write(output, value.signatureBindingCommitment()); output.writeInt(value.responderIdForm().code());
             output.writeLong(value.responseValidity().toSeconds()); output.writeInt(value.noncePolicy().code());
             output.writeInt(value.maximumNonceBytes()); output.writeInt(value.acceptedHashes().size());
@@ -1360,11 +1358,11 @@ public final class OcspResponderService {
             output.writeLong(value.cacheLifetime().toSeconds());
             output.writeInt(value.requestAuthenticationMode().code());
             output.writeBoolean(value.requesterTrustPolicy().isPresent());
-            if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            if (value.requesterTrustPolicy().isPresent()) { writePolicy(output, value.requesterTrustPolicy().orElseThrow()); }
             if (value.hybridSdk().isPresent()) {
-                var sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
+                SdkConfiguration sdk=value.hybridSdk().orElseThrow();write(output,sdk.profile());write(output,sdk.alternativeKeyRef().value());
                 write(output,sdk.alternativeSignatureAlgorithm());output.writeBoolean(sdk.alternativeSignatureBindingId().isPresent());
-                if(sdk.alternativeSignatureBindingId().isPresent())write(output,sdk.alternativeSignatureBindingId().orElseThrow());
+                if(sdk.alternativeSignatureBindingId().isPresent()){ write(output,sdk.alternativeSignatureBindingId().orElseThrow()); }
                 write(output,sdk.alternativeSignatureBindingCommitment());
             }
             output.writeInt(value.state().code());
@@ -1375,9 +1373,9 @@ public final class OcspResponderService {
     }
 
     private static Responder decode(byte[] payload) {
-        if (payload.length == 0 || payload.length > 65_536) throw new IllegalStateException("OCSP record bound differs");
+        if (payload.length == 0 || payload.length > 65_536) { throw new IllegalStateException("OCSP record bound differs"); }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload))) {
-            int version=input.readInt();if(version!=2&&version!=3)throw new IOException("OCSP record schema is invalid");
+            int version=input.readInt();if(version!=2&&version!=3){ throw new IOException("OCSP record schema is invalid"); }
             String id = read(input); String alias = read(input); RealmId realm = new RealmId(read(input));
             PkiId authority = new PkiId(read(input)); PkiId issuer = new PkiId(read(input));
             SigningMode mode = SigningMode.fromCode(input.readInt()); PkiId credential = new PkiId(read(input));
@@ -1387,7 +1385,7 @@ public final class OcspResponderService {
             OcspResponseService.ResponderId form = OcspResponseService.ResponderId.fromCode(input.readInt());
             Duration validity = Duration.ofSeconds(input.readLong()); NoncePolicy nonce = NoncePolicy.fromCode(input.readInt());
             int nonceBytes = input.readInt(); int count = input.readInt();
-            if (count < 1 || count > 2) throw new IOException("OCSP hash count differs");
+            if (count < 1 || count > 2) { throw new IOException("OCSP hash count differs"); }
             Set<OcspResponseService.CertIdHash> hashes = new java.util.HashSet<>();
             for (int index = 0; index < count; index++) {
                 hashes.add(OcspResponseService.CertIdHash.fromCode(input.readInt()));
@@ -1399,7 +1397,7 @@ public final class OcspResponderService {
             Optional<SdkConfiguration> sdk=version==3?Optional.of(new SdkConfiguration(read(input),new KeyRef(read(input)),read(input),
                     input.readBoolean()?Optional.of(read(input)):Optional.empty(),read(input))):Optional.empty();
             State state = State.fromCode(input.readInt()); Instant created = Instant.ofEpochMilli(input.readLong());
-            String commitment = read(input); if (input.read() != -1) throw new IOException("Trailing OCSP record data");
+            String commitment = read(input); if (input.read() != -1) { throw new IOException("Trailing OCSP record data"); }
             return new Responder(id, alias, realm, authority, issuer, mode, credential, key, path, algorithm,
                     binding, bindingCommitment, form, validity, nonce, nonceBytes, hashes, requestBytes,
                     entries, cache, authenticationMode, trustPolicy, state, created, commitment,sdk);
@@ -1410,7 +1408,7 @@ public final class OcspResponderService {
 
     private static void write(DataOutputStream output, String value) throws IOException {
         byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
-        if (encoded.length > 16_384) throw new IOException("OCSP string bound differs");
+        if (encoded.length > 16_384) { throw new IOException("OCSP string bound differs"); }
         output.writeInt(encoded.length); output.write(encoded);
     }
 
@@ -1418,7 +1416,7 @@ public final class OcspResponderService {
         output.writeInt(policy.trustSelectors().size());
         for (TrustSelector selector : policy.trustSelectors()) {
             output.writeInt(selector.type().code()); output.writeInt(selector.identities().size());
-            for (String identity : selector.identities().stream().sorted().toList()) write(output, identity);
+            for (String identity : selector.identities().stream().sorted().toList()) { write(output, identity); }
         }
         output.writeInt(policy.principalMappings().size());
         for (PrincipalMapping mapping : policy.principalMappings().stream()
@@ -1444,7 +1442,7 @@ public final class OcspResponderService {
             int identityCount = boundedCount(input.readInt(), 64, "trust identity");
             Set<String> identities = new java.util.HashSet<>();
             for (int identity = 0; identity < identityCount; identity++) {
-                if (!identities.add(read(input))) throw new IOException("Duplicate OCSP trust identity");
+                if (!identities.add(read(input))) { throw new IOException("Duplicate OCSP trust identity"); }
             }
             selectors.add(new TrustSelector(type, identities));
         }
@@ -1464,14 +1462,14 @@ public final class OcspResponderService {
     }
 
     private static int boundedCount(int value, int maximum, String label) throws IOException {
-        if (value < 1 || value > maximum) throw new IOException("OCSP " + label + " count differs");
+        if (value < 1 || value > maximum) { throw new IOException("OCSP " + label + " count differs"); }
         return value;
     }
     private static String read(DataInputStream input) throws IOException {
-        int length = input.readInt(); if (length < 0 || length > 16_384) throw new IOException("OCSP string bound differs");
-        byte[] encoded = input.readNBytes(length); if (encoded.length != length) throw new IOException("OCSP record is truncated");
+        int length = input.readInt(); if (length < 0 || length > 16_384) { throw new IOException("OCSP string bound differs"); }
+        byte[] encoded = input.readNBytes(length); if (encoded.length != length) { throw new IOException("OCSP record is truncated"); }
         String value = new String(encoded, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(encoded, value.getBytes(StandardCharsets.UTF_8))) throw new IOException("OCSP UTF-8 differs");
+        if (!java.util.Arrays.equals(encoded, value.getBytes(StandardCharsets.UTF_8))) { throw new IOException("OCSP UTF-8 differs"); }
         return value;
     }
     private static String sha256(byte[] value) {
@@ -1479,7 +1477,7 @@ public final class OcspResponderService {
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
     private static void requireDigest(String value) {
-        if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("OCSP commitment is invalid");
+        if (value == null || !value.matches("[0-9a-f]{64}")) { throw new IllegalArgumentException("OCSP commitment is invalid"); }
     }
     private static void requirePolicyShape(RequestAuthenticationMode mode,
             Optional<RequesterTrustPolicy> policy) {

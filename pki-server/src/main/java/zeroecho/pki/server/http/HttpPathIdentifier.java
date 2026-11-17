@@ -36,7 +36,9 @@ package zeroecho.pki.server.http;
 /**
  * Strict single decoding for finite ASCII public/admin object identifiers.
  */
-final class HttpPathIdentifier {
+/* default */ final class HttpPathIdentifier {
+    private static final char PERCENT_ESCAPE = '%';
+
     private HttpPathIdentifier() { }
     /**
      * Decodes exactly one bounded ASCII object identifier without permitting separators or double encoding.
@@ -46,21 +48,24 @@ final class HttpPathIdentifier {
      * @throws IllegalArgumentException if the input is null, empty, oversized or contains
      *         malformed escapes, separators, traversal syntax or unsupported characters
      */
-    static String decode(String raw) {
-        if(raw==null||raw.isEmpty()||raw.length()>768)throw new IllegalArgumentException("Invalid object identifier");
-        var decoded=new StringBuilder();
-        for(int index=0;index<raw.length();index++) {
+    /* default */ static String decode(String raw) {
+        if(raw==null||raw.isEmpty()||raw.length()>768){ throw new IllegalArgumentException("Invalid object identifier"); }
+        StringBuilder decoded=new StringBuilder(raw.length());
+        int index = 0;
+        while(index<raw.length()) {
             char value=raw.charAt(index);
-            if(value=='%') {
-                if(index+2>=raw.length())throw new IllegalArgumentException("Invalid object identifier");
-                int high=Character.digit(raw.charAt(index+1),16),low=Character.digit(raw.charAt(index+2),16);
-                if(high<0||low<0)throw new IllegalArgumentException("Invalid object identifier");
+            if(value==PERCENT_ESCAPE) {
+                if(index+2>=raw.length()){ throw new IllegalArgumentException("Invalid object identifier"); }
+                int high=Character.digit(raw.charAt(index+1),16);
+                int low=Character.digit(raw.charAt(index+2),16);
+                if(high<0||low<0){ throw new IllegalArgumentException("Invalid object identifier"); }
                 value=(char)((high<<4)|low);index+=2;
             }
             decoded.append(value);
+            index++;
         }
         String result=decoded.toString();
-        if(!result.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,255}"))throw new IllegalArgumentException("Invalid object identifier");
+        if(!result.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")){ throw new IllegalArgumentException("Invalid object identifier"); }
         return result;
     }
 }

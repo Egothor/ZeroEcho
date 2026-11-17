@@ -69,8 +69,9 @@ final class CredentialTrustAudit {
     // Best-effort audit callbacks are untrusted; broad catch and empty handling
     // preserve
     // the authoritative trust rejection without exposing listener diagnostics.
+    /* default */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.EmptyCatchBlock" })
-    /* default */ static void rejected(AuditSink sink, Instant time, Credential credential, CredentialUse use,
+    static void rejected(AuditSink sink, Instant time, Credential credential, CredentialUse use,
             String code, EffectiveCredentialStatus status) {
         Map<String, String> details = status == null ? Map.of("code", code, "operation", use.name())
                 : Map.of("code", code, "operation", use.name(), "effectiveStatus", status.name());

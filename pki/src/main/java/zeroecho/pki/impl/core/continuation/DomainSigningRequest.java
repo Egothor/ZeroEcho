@@ -33,17 +33,18 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.spi.store.SignWorkflowStore;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Exact bounded inputs for one signing operation with durable domain ownership.
@@ -75,13 +76,12 @@ public record DomainSigningRequest(PkiId operationId, AccessContext accessContex
     /**
      * Requires all components and checks proof-identity namespaces and distinctness.
      *
-     * <p>This constructor does not resolve managed keys, open content, validate the
-     * requested lifetime or submit an operation. Those checks remain at the consuming
-     * signing boundary.
+     * <p>This constructor does not resolve managed keys, open content, validate the requested
+     * lifetime or submit an operation. Those checks remain at the consuming signing boundary.
      *
      * @throws NullPointerException if a required component or optional container is null
      * @throws IllegalArgumentException if a proof identity equals the parent or uses another
-     *         namespace, an alternative step has no primary step, or both roles reuse the same child
+     *     namespace, an alternative step has no primary step, or both roles reuse the same child
      * @param operationId internal durable parent operation identifier; must not be null
      * @param accessContext trusted invocation context; must not be null
      * @param keyRef managed signing-key reference, not private key material; must not be null
@@ -91,7 +91,8 @@ public record DomainSigningRequest(PkiId operationId, AccessContext accessContex
      * @param ttl requested positive operation lifetime, checked by acceptance; must not be null
      * @param domainTemplate immutable outer-operation template; must not be null
      * @param proofStep parent-owned primary proof step, or an empty optional; must not be null
-     * @param alternativeProofStep distinct parent-owned alternative proof step, or an empty optional; the optional must not be null
+     * @param alternativeProofStep distinct parent-owned alternative proof step, or an empty
+     *     optional; the optional must not be null
      */
     public DomainSigningRequest {
         Objects.requireNonNull(operationId, "operationId");
@@ -108,7 +109,8 @@ public record DomainSigningRequest(PkiId operationId, AccessContext accessContex
         alternativeProofStep.ifPresent(step -> step.requireParent(operationId));
         if (alternativeProofStep.isPresent() && (proofStep.isEmpty()
                 || alternativeProofStep.orElseThrow().operationId().equals(proofStep.orElseThrow().operationId()))) {
-            throw new IllegalArgumentException("Alternative proof requires a distinct primary proof step");
+            throw new IllegalArgumentException(
+                    "Alternative proof requires a distinct primary proof step");
         }
     }
     /**
@@ -145,7 +147,7 @@ public record DomainSigningRequest(PkiId operationId, AccessContext accessContex
      * @return the final candidate and required proof challenges in role order
      */
     public List<DurableContentReference> candidates() {
-        ArrayList<DurableContentReference> candidates = new ArrayList<DurableContentReference>();
+        List<DurableContentReference> candidates = new ArrayList<>();
         candidates.add(content);
         proofStep.ifPresent(step -> candidates.add(step.challenge()));
         alternativeProofStep.ifPresent(step -> candidates.add(step.challenge()));

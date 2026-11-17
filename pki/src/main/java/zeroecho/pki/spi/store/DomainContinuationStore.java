@@ -136,8 +136,11 @@ public interface DomainContinuationStore {
          * @param signingContent exact durable to-be-signed content while publication is live
          * @param result optional exact bounded domain result or publication identity
          * @param detailCode optional safe terminal detail
-         * @throws NullPointerException if operationId, kind, correlationId, state, createdAt, deadline, command, signingContent, result, detailCode is null
-         * @throws IllegalArgumentException if correlation identity, version, revision, deadline, command commitment, bounded binary payloads or terminal result/detail fields violate the continuation invariants
+         * @throws NullPointerException if operationId, kind, correlationId, state, createdAt, deadline,
+         * command, signingContent, result, detailCode is null
+         * @throws IllegalArgumentException if correlation identity, version, revision, deadline,
+         * command commitment, bounded binary payloads or terminal result/detail fields violate the
+         * continuation invariants
          */
         public Record {
             Objects.requireNonNull(operationId, "operationId");
@@ -220,7 +223,8 @@ public interface DomainContinuationStore {
      * @param detailCode optional stable non-sensitive detail code
      * @return committed replacement, or empty when the CAS lost
      * @throws NullPointerException if operationId, target, result, detailCode is null
-     * @throws UnsupportedOperationException always in this default implementation, which does not support domain continuations
+     * @throws UnsupportedOperationException always in this default implementation, which does not support
+     * domain continuations
      */
     default Optional<Record> transitionDomainContinuation(PkiId operationId, long expectedRevision,
             State target, Optional<EncodedObject> result, Optional<String> detailCode) {

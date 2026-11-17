@@ -86,7 +86,8 @@ final class SigningCheckpointCodec {
     }
 
     /**
-     * Starts a checkpoint writer on the borrowed channel using the declared header. The caller owns channel forcing and closure.
+     * Starts a checkpoint writer on the borrowed channel using the declared header. The caller owns
+     * channel forcing and closure.
      *
      * @param channel borrowed channel, which remains open
      * @param header validated checkpoint header and declared entry count
@@ -166,12 +167,14 @@ final class SigningCheckpointCodec {
         }
 
         /**
-         * Appends the next strictly ordered index entry during the index phase, validating its descriptor and contiguous data offset.
+         * Appends the next strictly ordered index entry during the index phase, validating its
+         * descriptor and contiguous data offset.
          *
          * @param entry ordered index entry describing the frame
          * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
          * @throws NullPointerException if entry is null
-         * @throws IllegalStateException if the writer is finished, data writing has begun or the declared index count is exhausted
+         * @throws IllegalStateException if the writer is finished, data writing has begun or the
+         * declared index count is exhausted
          */
         /* default */ void writeIndex(EntryDescriptor entry) throws IOException {
             Objects.requireNonNull(entry, "entry");
@@ -223,7 +226,8 @@ final class SigningCheckpointCodec {
         }
 
         /**
-         * Appends a frame already authenticated by the caller, checking the descriptor, length and expected data position without repeating frame decoding.
+         * Appends a frame already authenticated by the caller, checking the descriptor, length and
+         * expected data position without repeating frame decoding.
          *
          * @param entry ordered index entry describing the frame
          * @param encodedFrame complete encoded frame bytes
@@ -250,7 +254,8 @@ final class SigningCheckpointCodec {
         }
 
         /**
-         * Verifies that all declared entries and frames were written, appends the authenticated footer and completes the writer. The borrowed channel is neither forced nor closed.
+         * Verifies that all declared entries and frames were written, appends the authenticated
+         * footer and completes the writer. The borrowed channel is neither forced nor closed.
          *
          * @return independent 32-byte whole-file commitment
          * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
@@ -395,7 +400,8 @@ final class SigningCheckpointCodec {
         }
 
         /**
-         * Reads and authenticates the next declared frame and advances the reader's data digest. Frames must be read in descriptor order.
+         * Reads and authenticates the next declared frame and advances the reader's data digest.
+         * Frames must be read in descriptor order.
          *
          * @param entry ordered index entry describing the frame
          * @return authenticated decoded frame
@@ -414,7 +420,8 @@ final class SigningCheckpointCodec {
         }
 
         /**
-         * Verifies that all declared entries and frames were consumed and authenticates the footer and exact file length. Repeated calls after successful verification have no effect.
+         * Verifies that all declared entries and frames were consumed and authenticates the footer
+         * and exact file length. Repeated calls after successful verification have no effect.
          *
          * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
          */

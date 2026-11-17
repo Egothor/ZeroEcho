@@ -95,7 +95,9 @@ final class MetadataFrameCodec {
      * an apparently incomplete tail selected by unauthenticated input.
      */
     /**
-     * Reads and authenticates the frame at the specified offset using bounded transfer storage. End of input, an incomplete tail and corrupt framing are represented by the returned result; the borrowed channel remains open.
+     * Reads and authenticates the frame at the specified offset using bounded transfer storage. End of
+     * input, an incomplete tail and corrupt framing are represented by the returned result; the borrowed
+     * channel remains open.
      *
      * @param channel borrowed channel, which remains open
      * @param frameOffset nonnegative byte offset of the frame header
@@ -223,7 +225,9 @@ final class MetadataFrameCodec {
      * Payload processing uses one fixed buffer, so auxiliary memory is O(1).
      */
     /**
-     * Writes one authenticated frame at the current channel position, streaming and closing the opened content stream. The channel remains open; a failed write can leave a partial suffix for the owning log writer to roll back.
+     * Writes one authenticated frame at the current channel position, streaming and closing the opened
+     * content stream. The channel remains open; a failed write can leave a partial suffix for the owning
+     * log writer to roll back.
      *
      * @param channel borrowed channel, which remains open
      * @param frameType encoded frame discriminator
@@ -235,7 +239,8 @@ final class MetadataFrameCodec {
      * @return coordinates and commitment of the written frame
      * @throws IOException if payload length differs, cancellation fails, or content/channel I/O cannot complete
      * @throws NullPointerException if channel, frameType, transactionToken, content or cancellation is null
-     * @throws IllegalArgumentException if the token is not 32 lowercase hexadecimal characters, the sequence is negative or the declared payload violates its configured bound
+     * @throws IllegalArgumentException if the token is not 32 lowercase hexadecimal characters, the
+     * sequence is negative or the declared payload violates its configured bound
      */
     /* default */ FrameMetadata write(
             SeekableByteChannel channel,
@@ -494,7 +499,8 @@ final class MetadataFrameCodec {
             long frameEndOffset) {
 
         /**
-         * Creates the bounded framing coordinates for one decoded metadata-log frame; payload bytes remain in the source file.
+         * Creates the bounded framing coordinates for one decoded metadata-log frame; payload bytes
+         * remain in the source file.
          *
          * @param frameType closed metadata frame discriminator
          * @param transactionToken exact transaction token encoded by the frame
@@ -526,7 +532,8 @@ final class MetadataFrameCodec {
          * @param classification closed structural classification of the read attempt
          * @param metadata decoded framing metadata when a complete frame was available
          * @throws NullPointerException if {@code classification} is null
-         * @throws IllegalArgumentException if {@code ((classification == ReadClassification.COMPLETE_FRAME) != (metadata != null))}
+         * @throws IllegalArgumentException if {@code ((classification ==
+         * ReadClassification.COMPLETE_FRAME) != (metadata != null))}
          */
         ReadResult {
             Objects.requireNonNull(classification, "classification");

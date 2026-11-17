@@ -133,7 +133,7 @@ final class AuditEvidenceProjector {
      * @throws IOException if the evidence feed cannot be read safely
      * @throws NullPointerException if {@code cancellation} is null
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink and the mapper declare RuntimeException.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink and the mapper declare RuntimeException.
     /* default */ PassResult project(int maxExamined, int maxSinkCalls, CancellationSignal cancellation)
             throws IOException {
         requireBound(maxExamined, "maxExamined");
@@ -227,7 +227,7 @@ final class AuditEvidenceProjector {
          * @throws IllegalArgumentException if counts are negative or emitted exceeds examined
          * @throws NullPointerException if the retry container is null
          */
-        PassResult {
+        /* default */ PassResult {
             if (examined < 0 || emitted < 0 || emitted > examined) {
                 throw new IllegalArgumentException("Audit evidence projection result is invalid");
             }

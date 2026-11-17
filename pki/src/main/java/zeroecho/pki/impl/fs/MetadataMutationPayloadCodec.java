@@ -71,7 +71,8 @@ final class MetadataMutationPayloadCodec {
     }
 
     /**
-     * Builds a create-mutation payload from a bounded key prefix and borrowed repeatable value. Construction requires a known nonnegative value length and does not consume or close the value.
+     * Builds a create-mutation payload from a bounded key prefix and borrowed repeatable value.
+     * Construction requires a known nonnegative value length and does not consume or close the value.
      *
      * @param key metadata key to encode
      * @param value value to encode
@@ -87,7 +88,8 @@ final class MetadataMutationPayloadCodec {
     }
 
     /**
-     * Builds a conditional replacement payload retaining the borrowed repeatable value. Construction requires a known nonnegative value length; the expected revision must be nonnegative.
+     * Builds a conditional replacement payload retaining the borrowed repeatable value. Construction
+     * requires a known nonnegative value length; the expected revision must be nonnegative.
      *
      * @param key metadata key to encode
      * @param expectedRevision nonnegative revision required for the conditional mutation
@@ -124,7 +126,8 @@ final class MetadataMutationPayloadCodec {
      * the already validated frame region and no channel authority escapes.
      */
     /**
-     * Reads the bounded mutation descriptor prefix of an already authenticated frame. The value bytes remain in the channel and are described by offsets rather than copied.
+     * Reads the bounded mutation descriptor prefix of an already authenticated frame. The value bytes
+     * remain in the channel and are described by offsets rather than copied.
      *
      * @param channel borrowed channel, which remains open
      * @param frame frame or frame descriptor to process
@@ -503,7 +506,9 @@ final class MetadataMutationPayloadCodec {
          * @param expectedRevision revision expected by the mutation before its update
          * @param valueOffset zero-based byte offset of the stored value, absent for a deletion
          * @param valueLength encoded value length in bytes, absent for a deletion
-         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if {@code expectedRevision} is null; or if {@code valueOffset} is null; or if {@code valueLength} is null
+         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if
+         * {@code expectedRevision} is null; or if {@code valueOffset} is null; or if {@code
+         * valueLength} is null
          */
         Descriptor {
             Objects.requireNonNull(kind, "kind");

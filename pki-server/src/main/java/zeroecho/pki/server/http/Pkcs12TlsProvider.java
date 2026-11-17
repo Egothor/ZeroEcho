@@ -41,11 +41,9 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
-
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
-
 import zeroecho.pki.server.spi.PkiServerTlsProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -69,6 +67,7 @@ public final class Pkcs12TlsProvider implements PkiServerTlsProvider {
      * Creates the stateless PKCS#12 TLS provider.
      */
     public Pkcs12TlsProvider() {
+        // Provider instances hold no mutable session state.
     }
 
     /**
@@ -108,7 +107,7 @@ public final class Pkcs12TlsProvider implements PkiServerTlsProvider {
         }
     }
 
-    private static KeyStore load(Path path, char[] password) throws Exception {
+    private static KeyStore load(Path path, char... password) throws java.security.GeneralSecurityException, java.io.IOException {
         KeyStore store = KeyStore.getInstance("PKCS12");
         try (InputStream input = Files.newInputStream(path)) {
             store.load(input, password);

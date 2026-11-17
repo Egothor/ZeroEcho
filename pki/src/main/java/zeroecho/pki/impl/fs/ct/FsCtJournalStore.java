@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs.ct;
 
+import java.nio.file.Files;
+
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -134,7 +136,7 @@ public final class FsCtJournalStore implements CtJournalStore {
     /* default */ FsCtJournalStore(final Path journalDir) throws CtJournalException {
         Objects.requireNonNull(journalDir, "journalDir");
         try {
-            java.nio.file.Files.createDirectories(journalDir);
+            Files.createDirectories(journalDir);
             Path entriesFile = journalDir.resolve("entries.bin");
             this.channel = FileChannel.open(entriesFile,
                     StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE);

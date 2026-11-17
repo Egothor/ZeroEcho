@@ -34,6 +34,11 @@
 
 package zeroecho.pki.application;
 
+import zeroecho.pki.api.issuance.IssuanceIntent;
+import zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest;
+import zeroecho.pki.api.issuance.RetainedIssuanceBinding;
+
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -122,10 +127,10 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
     @Override public PkiSigningOperation normalizeCreation(PkiSigningOperation operation) {
         requireOpen.run(); Objects.requireNonNull(operation, "operation");
         if (operation instanceof PkiSigningOperation.IssueOcspResponderCertificate value) {
-            var selected = value.request(); var binding = service.managedOcspResponderBinding(selected);
-            var intent = new zeroecho.pki.api.issuance.IssuanceIntent(binding.issuanceId(), binding.effectiveCommitment(),
+            ManagedOcspResponderIssuanceRequest selected = value.request(); RetainedIssuanceBinding binding = service.managedOcspResponderBinding(selected);
+            IssuanceIntent intent = new IssuanceIntent(binding.issuanceId(), binding.effectiveCommitment(),
                     binding.expectedProfile(), binding.expectedIssuerId(), binding.expectedChainPathId(), binding.expectedChainPathCommitment());
-            return new PkiSigningOperation.IssueOcspResponderCertificate(new zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest(
+            return new PkiSigningOperation.IssueOcspResponderCertificate(new ManagedOcspResponderIssuanceRequest(
                     selected.authorityId(), selected.primaryKeyRef(), selected.alternativeKeyRef(), selected.subject(), selected.validity(),
                     intent, selected.expectedPredecessorCredentialId()));
         }
@@ -160,7 +165,7 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
                     ? new CaKeyRotationCommand.Root(value.caId(), value.selection(), value.expectedHead(), EMPTY_ATTRIBUTES)
                     : new CaKeyRotationCommand.Intermediate(value.caId(), value.selection(), value.issuerCaId().orElseThrow(),
                             value.expectedHead(), EMPTY_ATTRIBUTES);
-            var normalized = service.normalizeCaKeyRotation(input);
+            CaKeyRotationCommand normalized = service.normalizeCaKeyRotation(input);
             return new PkiSigningOperation.RotateCaKey(value.caId(), normalized.selection(), value.issuerCaId(), normalized.expectedHead());
         }
         return operation;
@@ -178,7 +183,7 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
     /**
      * {@inheritDoc}
      */
-    @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
+    @Override public PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation.IssueCredential operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
@@ -225,7 +230,7 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
     /**
      * {@inheritDoc}
      */
-    @Override public zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
+    @Override public PreparedSemanticSigningRequest prepareSdk(PkiSigningOperation operation,
             AccessContext access, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request,
             zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
@@ -243,7 +248,7 @@ final class DefaultPkiSigningCommands implements PkiSigningCommands {
 
     private static EndEntityReplacementRequest sdkReplacement(PkiSigningOperation.ReplaceCredential operation,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest request) {
-        if (!operation.requestId().equals(request.primary().requestId())) throw new IllegalArgumentException("SDK request selection differs");
+        if (!operation.requestId().equals(request.primary().requestId())) { throw new IllegalArgumentException("SDK request selection differs"); }
         return new EndEntityReplacementRequest(operation.existingCredentialId(),
                 zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(request.primary()), operation.profileId());
     }

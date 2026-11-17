@@ -46,7 +46,7 @@ import zeroecho.pki.server.PkiServerConfiguration;
 /**
  * Bounded restart-local ACME rate and finalization admission authority.
  */
-@SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel", "PMD.ControlStatementBraces" })
+@SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel" })
 public final class AcmeRateAdmission {
     private final Duration window;
     private final int accountLimit;
@@ -125,10 +125,10 @@ public final class AcmeRateAdmission {
         Instant now = clock.instant(); expire(now);
         Counter current = counters.get(key);
         if (current == null) {
-            if (counters.size() >= maximumKeys) return false;
+            if (counters.size() >= maximumKeys) { return false; }
             counters.put(key, new Counter(1, now.plus(window))); return true;
         }
-        if (current.count() >= limit) return false;
+        if (current.count() >= limit) { return false; }
         counters.put(key, new Counter(current.count() + 1, current.expiresAt())); return true;
     }
 

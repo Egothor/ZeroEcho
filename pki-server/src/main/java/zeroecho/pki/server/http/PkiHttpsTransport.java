@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
@@ -40,14 +43,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
-
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
-
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
@@ -82,6 +79,10 @@ public final class PkiHttpsTransport implements AutoCloseable {
      *         {@code ready} is null
      * @throws IllegalStateException if TLS or HTTPS listener initialization fails
      */
+    // This transport boundary must preserve cleanup and finite masking of provider/runtime failures. Untrusted
+    // transport/parser failures retain the existing finite safe HTTP diagnostics.
+
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace"})
     public static PkiHttpsTransport start(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, Clock clock, SecureRandom random, ClassLoader loader,
             BooleanSupplier ready) {
@@ -138,6 +139,10 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * @throws NullPointerException if any of {@code configuration}, {@code tls} is null
      * @throws IllegalStateException if TLS or HTTPS listener initialization fails
      */
+    // This transport boundary must preserve cleanup and finite masking of provider/runtime failures. Untrusted
+    // transport/parser failures retain the existing finite safe HTTP diagnostics.
+
+    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace"})
     public static PkiHttpsTransport startResolved(PkiServerConfiguration configuration,
             ServerRealmContext realm, PkiServerAuthenticator authenticator, Clock clock, SecureRandom random,
             SSLContext tls, BooleanSupplier ready) {
@@ -206,6 +211,9 @@ public final class PkiHttpsTransport implements AutoCloseable {
      * @return unstarted JVM shutdown hook
      * @throws NullPointerException if {@code task} is null
      */
+    // The standalone transport owns bounded task executors and preserves cancellation/thread lifetime.
+
+    @SuppressWarnings({"PMD.DoNotUseThreads"})
     public Thread shutdownHook(Runnable task) {
         return ServerRuntime.shutdownHook(Objects.requireNonNull(task, "task"));
     }
@@ -244,7 +252,7 @@ public final class PkiHttpsTransport implements AutoCloseable {
     }
 
     private static void closePartial(HttpsServer listener, ServerRuntime runtime) {
-        if (listener != null) listener.stop(0);
-        if (runtime != null) runtime.close();
+        if (listener != null) { listener.stop(0); }
+        if (runtime != null) { runtime.close(); }
     }
 }

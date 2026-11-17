@@ -550,7 +550,7 @@ class FullCrlEntrySourceTest {
             prepared = new FullCrlPreparation.Prepared(liveAuthority, generation, credential.credentialId(), PROFILE,
                     credential.content(), CrlScope.of(new X500Name("CN=Issuer").getEncoded(), key.getPublic().getEncoded()),
                     binding, runtime.planSigning(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), SigningProvider.class).selection().binding(),
-                    NOW, NOW.minusNanos(750_000_000), NOW.plusSeconds(3600).minusNanos(750_000_000), firstDer, Optional.empty());
+                    NOW, NOW.minusNanos(750_000_000), NOW.plusSeconds(3600).minusNanos(750_000_000), firstDer, Optional.empty(), Optional.empty());
         }
 
         private PkiId issuer(String name, String dn, int serial, byte[] der, PkiId authority) throws Exception {
@@ -631,7 +631,7 @@ class FullCrlEntrySourceTest {
             FullCrlPreparation.Prepared exact = new FullCrlPreparation.Prepared(prepared.authority(), prepared.generation(),
                     prepared.credentialId(), prepared.profile(), prepared.issuerContent(), prepared.scope(),
                     prepared.signatureBinding(), prepared.signatureIdentifier(), prepared.evaluationTime(), prepared.thisUpdate(),
-                    prepared.nextUpdate(), prepared.issuerDer(), deltaBase);
+                    prepared.nextUpdate(), prepared.issuerDer(), deltaBase, Optional.empty());
             return new FullCrlEntrySource(store, exact, cancellation);
         }
     }

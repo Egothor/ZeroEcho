@@ -61,27 +61,27 @@ public final class OcspProvisioningProjection {
      * @throws IllegalArgumentException if the argument shape, identities or values are invalid
      */
     public static ManagedOcspResponderIssuanceRequest decode(Map<String,PkiOperationValue> fields) {
-        var required = Set.of("authorityId", "primaryKeyRef", "alternativeKeyRef", "subject", "profileId", "profileVersion", "profileSha256",
+        Set<String> required = Set.of("authorityId", "primaryKeyRef", "alternativeKeyRef", "subject", "profileId", "profileVersion", "profileSha256",
                 "issuerId", "chainPathId", "chainPathCommitment", "notBefore", "notAfter");
-        var allowed = new java.util.HashSet<>(required); allowed.add("expectedPredecessorCredentialId");
-        if (!fields.keySet().containsAll(required) || !allowed.containsAll(fields.keySet())) throw invalid();
+        Set<String> allowed= new java.util.HashSet<>(required); allowed.add("expectedPredecessorCredentialId");
+        if (!fields.keySet().containsAll(required) || !allowed.containsAll(fields.keySet())) { throw invalid(); }
         if (!(fields.get("subject") instanceof PkiOperationValue.ObjectValue subjectObject)
                 || !subjectObject.fields().keySet().equals(Set.of("rdns"))
-                || !(subjectObject.fields().get("rdns") instanceof PkiOperationValue.ListValue values)) throw invalid();
+                || !(subjectObject.fields().get("rdns") instanceof PkiOperationValue.ListValue values)) { throw invalid(); }
         List<SubjectRdn> subject = values.values().stream().map(value -> {
-            if (!(value instanceof PkiOperationValue.ObjectValue object) || !object.fields().keySet().equals(Set.of("type","value"))) throw invalid();
+            if (!(value instanceof PkiOperationValue.ObjectValue object) || !object.fields().keySet().equals(Set.of("type","value"))) { throw invalid(); }
             return new SubjectRdn(SubjectRdnType.valueOf(text(object.fields(),"type")), text(object.fields(),"value"));
         }).toList();
-        if (!(fields.get("profileVersion") instanceof PkiOperationValue.IntegerValue version)) throw invalid();
+        if (!(fields.get("profileVersion") instanceof PkiOperationValue.IntegerValue version)) { throw invalid(); }
         String profileHash = text(fields,"profileSha256");
-        if (!profileHash.matches("[0-9a-f]{64}")) throw invalid();
-        var profile = new CertificateProfileRef(text(fields,"profileId"), version.value(), java.util.HexFormat.of().parseHex(profileHash));
-        var intent = new IssuanceIntent("ocsp-provision-input", "0".repeat(64), profile, new PkiId(text(fields,"issuerId")),
+        if (!profileHash.matches("[0-9a-f]{64}")) { throw invalid(); }
+        CertificateProfileRef profile = new CertificateProfileRef(text(fields,"profileId"), version.value(), java.util.HexFormat.of().parseHex(profileHash));
+        IssuanceIntent intent = new IssuanceIntent("ocsp-provision-input", "0".repeat(64), profile, new PkiId(text(fields,"issuerId")),
                 new PkiId(text(fields,"chainPathId")), text(fields,"chainPathCommitment"));
         return new ManagedOcspResponderIssuanceRequest(new PkiId(text(fields,"authorityId")),new KeyRef(text(fields,"primaryKeyRef")),
                 new KeyRef(text(fields,"alternativeKeyRef")),subject,new Validity(Instant.parse(text(fields,"notBefore")),Instant.parse(text(fields,"notAfter"))),
                 intent,Optional.ofNullable(fields.get("expectedPredecessorCredentialId")).map(value -> {
-                    if (!(value instanceof PkiOperationValue.Text predecessor)) throw invalid(); return new PkiId(predecessor.value());
+                    if (!(value instanceof PkiOperationValue.Text predecessor)) { throw invalid(); } return new PkiId(predecessor.value());
                 }));
     }
     /**
@@ -90,7 +90,7 @@ public final class OcspProvisioningProjection {
      * @return deterministic public operation arguments
      */
     public static PkiOperationValue.ObjectValue encode(ManagedOcspResponderIssuanceRequest value) {
-        var fields = new LinkedHashMap<String,PkiOperationValue>();
+        Map<String,PkiOperationValue> fields= new LinkedHashMap<>();
         fields.put("authorityId", text(value.authorityId().value())); fields.put("primaryKeyRef",text(value.primaryKeyRef().value()));
         fields.put("alternativeKeyRef",text(value.alternativeKeyRef().value()));
         fields.put("subject",new PkiOperationValue.ObjectValue(Map.of("rdns",new PkiOperationValue.ListValue(value.subject().stream().map(r -> (PkiOperationValue)new PkiOperationValue.ObjectValue(
@@ -104,7 +104,7 @@ public final class OcspProvisioningProjection {
         return new PkiOperationValue.ObjectValue(fields);
     }
     private static String text(Map<String,PkiOperationValue> fields,String key) {
-        if (!(fields.get(key) instanceof PkiOperationValue.Text value)) throw invalid(); return value.value();
+        if (!(fields.get(key) instanceof PkiOperationValue.Text value)) { throw invalid(); } return value.value();
     }
     private static PkiOperationValue.Text text(String value) { return new PkiOperationValue.Text(value); }
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("Managed OCSP provisioning arguments invalid"); }

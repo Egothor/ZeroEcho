@@ -60,8 +60,7 @@ import zeroecho.pki.server.acme.AcmeState;
 /**
  * Sole closed dispatcher for transport-neutral server-control operations.
  */
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
-        "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
+@SuppressWarnings({"PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.TooManyMethods"})
 public final class ServerControlOperationExecutor {
     private static final String FIELD_STATE = "state";
     private static final String FIELD_EXPIRES_AT = "expiresAt";
@@ -155,13 +154,13 @@ public final class ServerControlOperationExecutor {
      * @throws NullPointerException if service is null
      * @throws IllegalStateException if a managed-key service is already installed
      */
-    void installManagedKeys(ManagedKeyGenerationService service) {
-        if (managedKeys != null) throw new IllegalStateException("Managed key service already installed");
+    /* default */ void installManagedKeys(ManagedKeyGenerationService service) {
+        if (managedKeys != null) { throw new IllegalStateException("Managed key service already installed"); }
         managedKeys = Objects.requireNonNull(service, "service");
     }
 
     private ManagedKeyGenerationService managedKeys() {
-        if (managedKeys == null) throw new IllegalStateException("Managed key generation is unavailable");
+        if (managedKeys == null) { throw new IllegalStateException("Managed key generation is unavailable"); }
         return managedKeys;
     }
 
@@ -243,7 +242,7 @@ public final class ServerControlOperationExecutor {
         Objects.requireNonNull(operation, "operation");
         Objects.requireNonNull(actor, "actor");
         actor.credentialEvidence().ifPresent(evidence -> {
-            if (!realmId.equals(evidence.realmId())) throw new IllegalArgumentException("Decision evidence realm differs");
+            if (!realmId.equals(evidence.realmId())) { throw new IllegalArgumentException("Decision evidence realm differs"); }
         });
         Objects.requireNonNull(authorizedResource, "authorizedResource");
         Optional<OperationSecurityDescriptors.ApprovalCategory> exactTargetCategory = Objects.requireNonNull(
@@ -351,10 +350,10 @@ public final class ServerControlOperationExecutor {
         if (ServerControlOperation.GenerateManagedKey.NAME.equals(operationId)) {
             return managedKeys != null && managedKeys.available();
         }
-        if (operationId.startsWith("acme.")) return acme.get() != null;
-        if (operationId.startsWith("enrollment.request.")) return enrollment.get() != null;
-        if (operationId.startsWith("est.")) return est.get() != null;
-        if (operationId.startsWith("scep.")) return scep.get() != null;
+        if (operationId.startsWith("acme.")) { return acme.get() != null; }
+        if (operationId.startsWith("enrollment.request.")) { return enrollment.get() != null; }
+        if (operationId.startsWith("est.")) { return est.get() != null; }
+        if (operationId.startsWith("scep.")) { return scep.get() != null; }
         return !operationId.startsWith("cmp.") || cmp.get() != null;
     }
 
@@ -378,7 +377,7 @@ public final class ServerControlOperationExecutor {
      * @throws IllegalStateException if an enrollment coordinator is already installed
      */
     public void installEnrollmentCoordinator(zeroecho.pki.server.enrollment.EnrollmentCoordinator service) {
-        if (!enrollment.compareAndSet(null, Objects.requireNonNull(service, "service"))) throw new IllegalStateException("Enrollment coordinator already installed");
+        if (!enrollment.compareAndSet(null, Objects.requireNonNull(service, "service"))) { throw new IllegalStateException("Enrollment coordinator already installed"); }
     }
 
     /**
@@ -468,7 +467,7 @@ public final class ServerControlOperationExecutor {
 
     private BackupTransferService transfers() {
         BackupTransferService service = transfers.get();
-        if (service == null) throw new IllegalStateException("Backup transfer is disabled");
+        if (service == null) { throw new IllegalStateException("Backup transfer is disabled"); }
         return service;
     }
 
@@ -503,7 +502,7 @@ public final class ServerControlOperationExecutor {
             return new Permission.Scope(realmId, Optional.of(registration.registration().authorityId()),
                     Optional.empty(), Optional.of(registration.registration().profileId()));
         }
-        if (directory == null) return new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+        if (directory == null) { return new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty()); }
         return new Permission.Scope(realmId, Optional.of(directory.authorityId()), Optional.empty(),
                 Optional.of(directory.profile().profileId()));
     }
@@ -528,7 +527,7 @@ public final class ServerControlOperationExecutor {
      * @param operation stable catalog operation identity
      * @return whether pure administrative preflight is implemented for the operation
      */
-    static boolean administrativeValidationAvailable(String operation) {
+    /* default */ static boolean administrativeValidationAvailable(String operation) {
         return Set.of(ServerControlOperation.GenerateManagedKey.NAME, ServerControlOperation.SetPrincipalEnabled.DISABLE,
                 ServerControlOperation.CreateRoleAssignment.NAME,ServerControlOperation.CreateGrant.NAME,
                 ServerControlOperation.CreateBreakGlass.CREATE,ServerControlOperation.ActivateBreakGlass.ACTIVATE,
@@ -552,32 +551,32 @@ public final class ServerControlOperationExecutor {
      * @throws UnsupportedOperationException if the operation has no supported side-effect-free control
      *         validator
      */
-    void validateAdministrative(ServerControlOperation operation,String actor) {
+    /* default */ void validateAdministrative(ServerControlOperation operation,String actor) {
         switch(operation) {
             case ServerControlOperation.GenerateManagedKey ignored -> managedKeys().requireAdministrator(actor);
             case ServerControlOperation.SetPrincipalEnabled value -> store.requirePrincipal(value.principalId());
             case ServerControlOperation.CreateRoleAssignment value -> {
-                var assignment=value.assignment();
-                if(!assignment.scope().realmId().equals(realmId))throw new SecurityException("Assignment realm differs");
+                RoleTemplateCatalog.Assignment assignment=value.assignment();
+                if(!assignment.scope().realmId().equals(realmId)){ throw new SecurityException("Assignment realm differs"); }
                 roles.instantiate(assignment);store.requirePrincipal(assignment.principalId());
                 requireFuture(assignment.expiresAt());requireAbsent(() -> store.requireAssignment(assignment.assignmentId()));
             }
             case ServerControlOperation.CreateGrant value -> {
-                var grant=value.grant();
-                if(!grant.scope().realmId().equals(realmId))throw new SecurityException("Grant realm differs");
+                Permission.Grant grant=value.grant();
+                if(!grant.scope().realmId().equals(realmId)){ throw new SecurityException("Grant realm differs"); }
                 store.requirePrincipal(grant.principalId());requireFuture(grant.expiresAt());
                 requireAbsent(() -> store.requireGrant(grant.grantId()));
             }
             case ServerControlOperation.CreateBreakGlass value -> {
                 store.requirePrincipal(value.principalId());store.requirePrincipal(actor);
-                if(!value.grant().scope().realmId().equals(realmId))throw new SecurityException("Grant realm differs");
+                if(!value.grant().scope().realmId().equals(realmId)){ throw new SecurityException("Grant realm differs"); }
                 new BreakGlassService.Record(value.breakGlassId(),value.principalId(),value.grant(),value.reason(),actor,
                         Optional.empty(),approvals.validationTime(),Optional.empty(),value.expiresAt(),BreakGlassService.State.PENDING,"0".repeat(64));
                 requireAbsent(() -> store.requireBreakGlass(value.breakGlassId()));
             }
             case ServerControlOperation.ActivateBreakGlass value -> {
-                var current=store.requireBreakGlass(value.breakGlassId());
-                if(current.state()!=BreakGlassService.State.PENDING||!current.expiresAt().isAfter(approvals.validationTime()))throw new IllegalStateException("Emergency grant is not pending");
+                BreakGlassService.Record current=store.requireBreakGlass(value.breakGlassId());
+                if(current.state()!=BreakGlassService.State.PENDING||!current.expiresAt().isAfter(approvals.validationTime())){ throw new IllegalStateException("Emergency grant is not pending"); }
             }
             case ServerControlOperation.SetDisclosure value -> store.requireDisclosure(value.objectId());
             case ServerControlOperation.RegisterOcspResponder value -> ocsp().validateRegistration(value.registration());
@@ -585,7 +584,7 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.SetRepositoryAlias value -> aliases().validateSet(value.authorityId(),value.type(),value.targetObjectId(),value.issuerId(),value.expectedCurrentCommitment());
             case ServerControlOperation.RemoveRepositoryAlias value -> aliases().validateRemove(value.authorityId(),value.type(),value.expectedCurrentCommitment());
             case ServerControlOperation.RegisterAcmeDirectory value -> acme().validateDirectoryRegistration(value.registration(),value.profilePrecondition().orElseThrow());
-            case ServerControlOperation.SetAcmeDirectoryActive value -> {if(value.active())acme().validateDirectoryActivation(value.directoryId());else acme().directory(value.directoryId());}
+            case ServerControlOperation.SetAcmeDirectoryActive value -> {if(value.active()){ acme().validateDirectoryActivation(value.directoryId()); }else { acme().directory(value.directoryId()); }}
             case ServerControlOperation.RegisterEstEndpoint value -> est().validateRegistration(value.endpoint());
             case ServerControlOperation.RegisterScepEndpoint value -> scep().validateRegistration(value.endpoint());
             case ServerControlOperation.RegisterCmpEndpoint value -> cmp().validateRegistration(value.endpoint());
@@ -597,12 +596,12 @@ public final class ServerControlOperationExecutor {
         }
     }
     private void requireFuture(Optional<java.time.Instant> expiry) {
-        if(expiry.filter(value -> !value.isAfter(approvals.validationTime())).isPresent())throw new IllegalArgumentException("Grant expiry is not in the future");
+        if(expiry.filter(value -> !value.isAfter(approvals.validationTime())).isPresent()){ throw new IllegalArgumentException("Grant expiry is not in the future"); }
     }
     private static void requireAbsent(java.util.function.Supplier<?> lookup) {
         boolean exists;
         try { lookup.get();exists=true; } catch(IllegalArgumentException missing) { exists=false; }
-        if(exists)throw new IllegalStateException("Control identity already exists");
+        if(exists){ throw new IllegalStateException("Control identity already exists"); }
     }
 
     private ServerControlOperationOutcome dispatch(ServerControlOperation operation, AdministrativeDecisionActor decisionActor,
@@ -610,14 +609,14 @@ public final class ServerControlOperationExecutor {
             Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory, CancellationSignal cancellation,
             BackupTransferChannel channel) throws java.io.IOException {
         String actor = decisionActor.principalId();
-        if(administrativeValidationAvailable(operation.name()))validateAdministrative(operation,actor);
+        if(administrativeValidationAvailable(operation.name())){ validateAdministrative(operation,actor); }
         return switch (operation) {
             case ServerControlOperation.ConfigurationChoices value -> ordinary(operation, configurationChoices(value, cancellation));
             case ServerControlOperation.GenerateManagedKey value -> {
-                var generated = managedKeys().generate(value.generationId(), value.parameters(), actor);
+                zeroecho.pki.spi.crypto.ManagedKeyGeneration.Result generated = managedKeys().generate(value.generationId(), value.parameters(), actor);
                 yield ordinary(operation, object("generationId", text(value.generationId()),
                         "keyRef", text(generated.keyRef().value()), "parameters", text(generated.parameters().name()),
-                        "subjectPublicKeyInfo", text(java.util.Base64.getEncoder().encodeToString(generated.subjectPublicKeyInfo().bytes()))));
+                        "subjectPublicKeyInfo", text(Base64.getEncoder().encodeToString(generated.subjectPublicKeyInfo().bytes()))));
             }
             case ServerControlOperation.ListCapabilities value -> ordinary(operation, capabilities(value, cancellation));
             case ServerControlOperation.RegisterPrincipal value -> ordinary(operation, register(value));
@@ -854,8 +853,8 @@ public final class ServerControlOperationExecutor {
                         .<PkiOperationValue>map(id -> object("providerId", text(id), DISPLAY_NAME, text(id))).toList();
         return object("formats", new PkiOperationValue.ListValue(choices.formats().stream()
                         .<PkiOperationValue>map(format -> {
-                            var metadata = choices.formatMetadata().get(format);
-                            var input = metadata.subjectInput();
+                            zeroecho.pki.application.PkiConfigurationChoicesSource.FormatMetadata metadata = choices.formatMetadata().get(format);
+                            zeroecho.pki.spi.framework.CredentialFramework.SubjectInput input = metadata.subjectInput();
                             Map<String, PkiOperationValue> guidance = new LinkedHashMap<>();
                             guidance.put("label", text(input.label()));
                             guidance.put("help", text(input.help()));
@@ -992,7 +991,7 @@ public final class ServerControlOperationExecutor {
     private PkiOperationValue register(ServerControlOperation.RegisterPrincipal operation) {
         try { store.createPrincipal(operation.principal()); }
         catch (IllegalStateException existing) {
-            if (!store.requirePrincipal(operation.principal().principalId()).equals(operation.principal())) throw existing;
+            if (!store.requirePrincipal(operation.principal().principalId()).equals(operation.principal())) { throw existing; }
         }
         return principal(operation.principal());
     }
@@ -1006,7 +1005,7 @@ public final class ServerControlOperationExecutor {
     }
 
     private RoleTemplateCatalog.Assignment createAssignment(RoleTemplateCatalog.Assignment value) {
-        if (!value.scope().realmId().equals(realmId)) throw new SecurityException("Assignment realm differs");
+        if (!value.scope().realmId().equals(realmId)) { throw new SecurityException("Assignment realm differs"); }
         roles.instantiate(value); store.requirePrincipal(value.principalId()); store.createAssignment(value); return value;
     }
 
@@ -1019,7 +1018,7 @@ public final class ServerControlOperationExecutor {
     }
 
     private Permission.Grant createGrant(Permission.Grant value) {
-        if (!value.scope().realmId().equals(realmId)) throw new SecurityException("Grant realm differs");
+        if (!value.scope().realmId().equals(realmId)) { throw new SecurityException("Grant realm differs"); }
         store.requirePrincipal(value.principalId()); store.createGrant(value); return value;
     }
 
@@ -1051,7 +1050,7 @@ public final class ServerControlOperationExecutor {
             throw new IllegalStateException("Target operation does not require approval");
         }
         ApprovalService.Policy policy = approvalPolicies.get(approvalCategory);
-        if (policy == null) throw new IllegalStateException("Approval policy is unavailable");
+        if (policy == null) { throw new IllegalStateException("Approval policy is unavailable"); }
         String commitment = descriptors.commitment(realmId, value.targetOperation(), value.targetResource());
         return approvals.request(value.approvalId(), value.targetOperation().name(), commitment,
                 value.targetResource().scope(), actor, policy);
@@ -1129,12 +1128,12 @@ public final class ServerControlOperationExecutor {
                 yield text("ACKNOWLEDGED");
             }
             case UPLOAD -> {
-                if (channel == null) throw new IllegalStateException("Binary backup transfer route required");
+                if (channel == null) { throw new IllegalStateException("Binary backup transfer route required"); }
                 service.upload(actor, descriptor, channel.input());
                 yield artifactValue(service.bind(actor, descriptor.handle()));
             }
             case DOWNLOAD -> {
-                if (channel == null) throw new IllegalStateException("Binary backup transfer route required");
+                if (channel == null) { throw new IllegalStateException("Binary backup transfer route required"); }
                 service.download(actor, descriptor, channel::output);
                 yield text("DOWNLOADED");
             }
@@ -1285,7 +1284,7 @@ public final class ServerControlOperationExecutor {
                 .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
         List<PkiOperationValue> requiredSans = value.requiredSanDomains().stream()
                 .<PkiOperationValue>map(ServerControlOperationExecutor::text).toList();
-        var ordinary = object("id", text(value.id()),
+        PkiOperationValue.ObjectValue ordinary = object("id", text(value.id()),
                 "displayName", text(value.displayName()),
                 FIELD_STATE, text(value.state().name()),
                 "certificateProfileId", text(value.certificateProfileId()),
@@ -1294,14 +1293,14 @@ public final class ServerControlOperationExecutor {
                         .orElse(text("")),
                 "requiredSanDomains", new PkiOperationValue.ListValue(requiredSans),
                 "requireApproval", bool(value.requireApproval()));
-        if (value.sdkProfile().isEmpty()) return ordinary;
-        var fields = new java.util.LinkedHashMap<String, PkiOperationValue>(ordinary.fields());
+        if (value.sdkProfile().isEmpty()) { return ordinary; }
+        Map<String,PkiOperationValue> fields= new LinkedHashMap<>(ordinary.fields());
         fields.put("sdkProfile", text(value.sdkProfile().orElseThrow()));
         return new PkiOperationValue.ObjectValue(fields);
     }
 
     private static PkiOperationValue responder(OcspResponderService.Responder value) {
-        var nativeValue = object("responderId", text(value.responderId()), "alias", text(value.alias()),
+        PkiOperationValue.ObjectValue nativeValue = object("responderId", text(value.responderId()), "alias", text(value.alias()),
                 TEXT_AUTHORITY_ID, text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
                 "signingMode", text(value.signingMode().name()), "responderCredentialId",
                 text(value.responderCredentialId().value()), FIELD_STATE, text(value.state().name()),
@@ -1309,8 +1308,8 @@ public final class ServerControlOperationExecutor {
                 "requesterRevocationPolicy", text(value.requesterTrustPolicy()
                         .map(policy -> policy.revocationPolicy().name()).orElse("NOT_APPLICABLE")),
                 "configurationCommitment", text(value.configurationCommitment()));
-        if(value.hybridSdk().isEmpty())return nativeValue;
-        var fields=new java.util.LinkedHashMap<>(nativeValue.fields());
+        if(value.hybridSdk().isEmpty()){ return nativeValue; }
+        Map<String,PkiOperationValue> fields=new LinkedHashMap<>(nativeValue.fields());
         fields.put("sdkProfile",text(value.hybridSdk().orElseThrow().profile()));
         fields.put("alternativeSignatureAlgorithm",text(value.hybridSdk().orElseThrow().alternativeSignatureAlgorithm()));
         return new PkiOperationValue.ObjectValue(fields);
@@ -1335,18 +1334,11 @@ public final class ServerControlOperationExecutor {
                 "enabled", bool(value.enabled()));
     }
     private PkiOperationValue approval(ApprovalService.Request value) {
-        var base = object("approvalId", text(value.approvalId()), "operation", text(value.operationId()),
+        PkiOperationValue.ObjectValue base = object("approvalId", text(value.approvalId()), "operation", text(value.operationId()),
                 "requesterId", text(value.requesterPrincipalId()), FIELD_STATE, text(value.state().name()),
                 FIELD_EXPIRES_AT, text(value.expiresAt().toString()));
         if(value.approvalId().startsWith("admin-request.")) {
-            String id=value.approvalId().substring("admin-request.".length());
-            var linked=store.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,id);
-            if(linked.isPresent()) {
-                var request=AdministrativeRequestCodec.decode(linked.orElseThrow());
-                if(request.approvalId().filter(value.approvalId()::equals).isPresent() && request.actor().principalId().equals(value.requesterPrincipalId())) {
-                    var fields=new LinkedHashMap<>(base.fields());fields.put("administrativeRequestId",text(id));return new PkiOperationValue.ObjectValue(fields);
-                }
-            }
+            return administrativeApproval(value, base);
         }
         return base;
     }
@@ -1402,4 +1394,17 @@ public final class ServerControlOperationExecutor {
     private static PkiOperationValue.Text text(String value) { return new PkiOperationValue.Text(value); }
     private static PkiOperationValue.BooleanValue bool(boolean value) { return new PkiOperationValue.BooleanValue(value); }
     private static PkiOperationValue.IntegerValue integer(long value) { return new PkiOperationValue.IntegerValue(value); }
+
+    private PkiOperationValue administrativeApproval(ApprovalService.Request value, PkiOperationValue.ObjectValue base) {
+
+            String id=value.approvalId().substring("admin-request.".length());
+            Optional<ServerControlStore.ProtocolRecord> linked=store.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST,id);
+            if(linked.isPresent()) {
+                AdministrativeRequest request=AdministrativeRequestCodec.decode(linked.orElseThrow());
+                if(request.approvalId().filter(value.approvalId()::equals).isPresent() && request.actor().principalId().equals(value.requesterPrincipalId())) {
+                    Map<String,PkiOperationValue> fields=new LinkedHashMap<>(base.fields());fields.put("administrativeRequestId",text(id));return new PkiOperationValue.ObjectValue(fields);
+                }
+            }
+                return base;
+    }
 }

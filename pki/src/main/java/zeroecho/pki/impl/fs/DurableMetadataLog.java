@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
+
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -81,7 +85,7 @@ final class DurableMetadataLog implements AutoCloseable {
     private static final long FRAME_DIGEST_BYTES = 32L;
     private static final Set<String> LOCAL_FILE_SYSTEMS =
             Set.of("apfs", "btrfs", "ext2", "ext3", "ext4", "tmpfs", "ufs", "xfs", "zfs");
-    private static final Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
+    private static final Set<PosixFilePermission> OWNER_ONLY =
             PosixFilePermissions.fromString("rw-------");
     private static final long STORE_HEADER_SEQUENCE = 0L;
     private static final long ISSUANCE_SEQUENCE = 0L;
@@ -320,8 +324,10 @@ final class DurableMetadataLog implements AutoCloseable {
      * @return exact written frame location; durability is established by its terminal record
      * @throws NullPointerException if a required input is null
      * @throws IllegalStateException if this log is closed
-     * @throws IllegalArgumentException if the transaction is foreign or inactive, frame kind is invalid or another transaction owns the active batch
-     * @throws IOException if writer authority, payload framing, cancellation or append fails; append failure requires recovery
+     * @throws IllegalArgumentException if the transaction is foreign or inactive, frame kind is invalid
+     * or another transaction owns the active batch
+     * @throws IOException if writer authority, payload framing, cancellation or append fails; append
+     * failure requires recovery
      */
     /* default */ MetadataFrameCodec.FrameMetadata appendMutation(
             MetadataTransactionId transactionId,
@@ -377,7 +383,7 @@ final class DurableMetadataLog implements AutoCloseable {
                     transactionId, revision, transaction.chainState);
             DurableMetadataLogScanner.Terminal result = new DurableMetadataLogScanner.Terminal(
                     DurableMetadataLogScanner.TerminalKind.COMMITTED,
-                    java.util.OptionalLong.of(revision), java.util.OptionalInt.empty());
+                    OptionalLong.of(revision), OptionalInt.empty());
             return appendTerminal(transactionId, transaction, MetadataFrameCodec.FrameType.TERMINAL_COMMITTED,
                     payload, result);
         } finally {
@@ -410,7 +416,7 @@ final class DurableMetadataLog implements AutoCloseable {
                     transactionId, failureCode, transaction.chainState);
             DurableMetadataLogScanner.Terminal result = new DurableMetadataLogScanner.Terminal(
                     DurableMetadataLogScanner.TerminalKind.NOT_COMMITTED,
-                    java.util.OptionalLong.empty(), java.util.OptionalInt.of(failureCode));
+                    OptionalLong.empty(), OptionalInt.of(failureCode));
             return appendTerminal(transactionId, transaction,
                     MetadataFrameCodec.FrameType.TERMINAL_NOT_COMMITTED, payload, result);
         } finally {

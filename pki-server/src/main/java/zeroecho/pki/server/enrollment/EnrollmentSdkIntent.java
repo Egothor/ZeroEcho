@@ -121,7 +121,7 @@ public record EnrollmentSdkIntent(String id, int version, RealmId realmId, Enrol
      *     correspondence or consumed proof/receipt shape is invalid
      */
     public EnrollmentSdkIntent {
-        if (id == null || !id.matches("[0-9a-f]{64}") || version != 1 || revision < 0) throw EnrollmentTransaction.invalid();
+        if (id == null || !id.matches("[0-9a-f]{64}") || version != 1 || revision < 0) { throw EnrollmentTransaction.invalid(); }
         Objects.requireNonNull(realmId, "realmId"); Objects.requireNonNull(admission, "admission");
         Objects.requireNonNull(originalPayload, "originalPayload");
         nativeWire = copy(nativeWire); primaryProof = copy(primaryProof); alternativeProof = copy(alternativeProof);
@@ -141,21 +141,21 @@ public record EnrollmentSdkIntent(String id, int version, RealmId realmId, Enrol
                 || !Arrays.equals(primaryFrame.field(17), HybridSdkFrame.hash(targetFrame.encode()))
                 || java.nio.ByteBuffer.wrap(primaryFrame.field(7)).getLong() != issuedAt.getEpochSecond()
                 || java.nio.ByteBuffer.wrap(primaryFrame.field(8)).getLong() != expiresAt.getEpochSecond()
-                || !issuedAt.plusSeconds(300).equals(expiresAt)) throw EnrollmentTransaction.invalid();
+                || !issuedAt.plusSeconds(300).equals(expiresAt)) { throw EnrollmentTransaction.invalid(); }
         boolean protectedWire = admission.admission().protocol() == EnrollmentTransaction.Protocol.SCEP
                 || admission.admission().protocol() == EnrollmentTransaction.Protocol.CMP;
         if (protectedWire != nativeWire.isPresent() || admission.nativeWire().isPresent() != nativeWire.isPresent()
                 || nativeWire.isPresent() && !Arrays.equals(nativeWire.orElseThrow(), admission.nativeWire().orElseThrow())
-                || nativeWire.filter(bytes -> bytes.length == 0 || bytes.length > 524_288).isPresent()) throw EnrollmentTransaction.invalid();
+                || nativeWire.filter(bytes -> bytes.length == 0 || bytes.length > 524_288).isPresent()) { throw EnrollmentTransaction.invalid(); }
         boolean consumed = state == State.CONSUMED;
         if (sdkRequestId.isPresent() != consumed || primaryProof.isPresent() != consumed
                 || alternativeProof.isPresent() != consumed || proofCommitment.isPresent() != consumed
-                || acceptedAt.isPresent() != consumed || enrollmentId.isPresent() != consumed) throw EnrollmentTransaction.invalid();
+                || acceptedAt.isPresent() != consumed || enrollmentId.isPresent() != consumed) { throw EnrollmentTransaction.invalid(); }
         sdkRequestId.ifPresent(EnrollmentTransaction::id); enrollmentId.ifPresent(EnrollmentTransaction::id);
         if (primaryProof.filter(bytes -> bytes.length == 0 || bytes.length > 104).isPresent()
                 || alternativeProof.filter(bytes -> bytes.length != 4627).isPresent()
                 || proofCommitment.filter(value -> !value.matches("sha512:[0-9a-f]{128}")).isPresent()
-                || acceptedAt.filter(value -> value.isBefore(issuedAt) || !value.isBefore(expiresAt)).isPresent()) throw EnrollmentTransaction.invalid();
+                || acceptedAt.filter(value -> value.isBefore(issuedAt) || !value.isBefore(expiresAt)).isPresent()) { throw EnrollmentTransaction.invalid(); }
     }
     private static Optional<byte[]> copy(Optional<byte[]> value) {
         return Objects.requireNonNull(value, "bytes").map(bytes -> Objects.requireNonNull(bytes, "bytes").clone());

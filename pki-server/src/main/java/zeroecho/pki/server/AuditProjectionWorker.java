@@ -46,7 +46,7 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * Single-threaded, self-rescheduling audit-projection owner for one realm.
  */
-@SuppressWarnings({ "PMD.DoNotUseThreads", "PMD.AvoidUsingVolatile", "PMD.CommentDefaultAccessModifier" })
+@SuppressWarnings({"PMD.DoNotUseThreads", "PMD.AvoidUsingVolatile"})
 final class AuditProjectionWorker implements AutoCloseable {
     private final AuditTransport audit;
     private final AuditProjection auditProjection;
@@ -142,7 +142,7 @@ final class AuditProjectionWorker implements AutoCloseable {
      *
      * @throws IllegalStateException if already started or shutdown has been requested
      */
-    @SuppressWarnings({ "PMD.CloseResource", "PMD.AvoidCatchingGenericException" })
+    /* default */ @SuppressWarnings({ "PMD.CloseResource", "PMD.AvoidCatchingGenericException" })
     /* default */ void start() {
         if (cancelled.get() || !started.compareAndSet(false, true)) {
             throw new IllegalStateException("Audit projection worker cannot start");
@@ -258,7 +258,7 @@ final class AuditProjectionWorker implements AutoCloseable {
      * @param coalescedWake whether a wake arrived during the pass
      * @return nonnegative delay no greater than the configured idle interval
      */
-    @SuppressWarnings("PMD.AvoidCatchingGenericException") // A faulty clock degrades scheduling to the idle interval.
+    /* default */ @SuppressWarnings("PMD.AvoidCatchingGenericException") // A faulty clock degrades scheduling to the idle interval.
     /* default */ Duration nextDelay(PassHints hints, boolean coalescedWake) {
         if (hints.immediate() || coalescedWake) {
             return Duration.ZERO;
@@ -359,7 +359,7 @@ final class AuditProjectionWorker implements AutoCloseable {
     /**
      * Safe aggregate projection audit boundary.
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     /* default */
     interface AuditTransport {
         /**
@@ -375,7 +375,7 @@ final class AuditProjectionWorker implements AutoCloseable {
     /**
      * Synchronous thread-confined authoritative-revocation audit projection boundary.
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     /* default */
     interface AuditProjection {
         /**
@@ -394,7 +394,7 @@ final class AuditProjectionWorker implements AutoCloseable {
     /**
      * Synchronous thread-confined boundary for the generic per-family success-evidence projections.
      */
-    @FunctionalInterface
+    /* default */ @FunctionalInterface
     /* default */
     interface EvidenceProjection {
         /**
@@ -443,7 +443,7 @@ final class AuditProjectionWorker implements AutoCloseable {
          * @param nextEligible earliest retry instant, or empty
          * @throws NullPointerException if the optional container is null
          */
-        PassHints {
+        /* default */ PassHints {
             nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         }
         private static PassHints idle() { return new PassHints(false, Optional.empty()); }

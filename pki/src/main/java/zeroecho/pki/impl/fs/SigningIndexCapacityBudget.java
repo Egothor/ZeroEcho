@@ -52,13 +52,14 @@ final class SigningIndexCapacityBudget {
     private long highWaterReservedBytes;
     private long releaseEpoch;
     private Runnable releaseSignal;
-    private final ThreadLocal<Loan> preparationLoan = new ThreadLocal<>();
+    private final ThreadLocal<PreparationLoan> preparationLoan = new ThreadLocal<>();
 
     /**
      * Creates a conservative byte budget with explicit total and ordinary-admission ceilings.
      *
      * @param maximumBytes positive inclusive total reservation limit in bytes
-     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside zero through the total
+     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside
+     * zero through the total
      */
     /* default */ SigningIndexCapacityBudget(long maximumBytes) {
         this(maximumBytes, 0L);
@@ -68,8 +69,10 @@ final class SigningIndexCapacityBudget {
      * Creates a conservative byte budget with explicit total and ordinary-admission ceilings.
      *
      * @param maximumBytes positive inclusive total reservation limit in bytes
-     * @param protectedProgressBytes nonnegative byte floor excluded from ordinary admission, no greater than the total limit
-     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside zero through the total
+     * @param protectedProgressBytes nonnegative byte floor excluded from ordinary admission, no greater
+     * than the total limit
+     * @throws IllegalArgumentException if the total is not positive or the protected floor falls outside
+     * zero through the total
      */
     /* default */ SigningIndexCapacityBudget(long maximumBytes,
             long protectedProgressBytes) {
@@ -115,8 +118,7 @@ final class SigningIndexCapacityBudget {
         Objects.requireNonNull(admissionClass, "admissionClass");
         lock.lock();
         try {
-            Loan loan = preparationLoan.get();
-            if (loan != null) return loan.borrow(bytes, admissionClass);
+            if (preparationLoan.get() != null) { return preparationLoan.get().borrow(bytes, admissionClass); }
             long ceiling = admissionClass
                     == SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY
                             ? ordinaryMaximumBytes : maximumBytes;
@@ -421,7 +423,7 @@ final class SigningIndexCapacityBudget {
         private final long bytes;
         private final SigningTransitionWorkspaceSizing.AdmissionClass admissionClass;
         private final AtomicBoolean active = new AtomicBoolean(true);
-        private Loan loan;
+        private PreparationLoan loan;
 
         private Reservation(SigningIndexCapacityBudget owner, long bytes,
                 SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -454,8 +456,8 @@ final class SigningIndexCapacityBudget {
         @Override
         public void close() {
             if (active.compareAndSet(true, false)) {
-                if (loan == null || loan.committed) owner.release(bytes, admissionClass);
-                else loan.refund(bytes, admissionClass);
+                if (loan == null || loan.committed) { owner.release(bytes, admissionClass); }
+                else { loan.refund(bytes, admissionClass); }
             }
         }
     }
@@ -466,9 +468,10 @@ final class SigningIndexCapacityBudget {
      * escrow. The scope must leave the preparing thread before publication.
      * @param bytes nonnegative ordinary committed bytes owned by this operation
      * @return owned thread-local preparation loan; detach before publication and close to roll back unused ownership
-     * @throws IllegalStateException if another preparation loan is active, the count is negative or ordinary ownership is insufficient
+     * @throws IllegalStateException if another preparation loan is active, the count is negative or
+     * ordinary ownership is insufficient
      */
-    /* default */ Loan borrowCommitted(long bytes) {
+    /* default */ PreparationLoan borrowCommitted(long bytes) {
         if (bytes < 0L || preparationLoan.get() != null) {
             throw new IllegalStateException("signing future-capacity loan scope is invalid");
         }
@@ -477,7 +480,7 @@ final class SigningIndexCapacityBudget {
             if (bytes > ordinaryReservedBytes) {
                 throw new IllegalStateException("signing future-capacity ownership is invalid");
             }
-            Loan loan = new Loan(bytes);
+            PreparationLoan loan = new PreparationLoan(bytes);
             preparationLoan.set(loan);
             return loan;
         } finally {
@@ -488,15 +491,14 @@ final class SigningIndexCapacityBudget {
     /**
      * Parent-owned byte conversion with rollback before authoritative publication.
      */
-    /* default */ final class Loan implements AutoCloseable {
-        private final Thread preparingThread = Thread.currentThread();
+    /* default */ final class PreparationLoan implements AutoCloseable {
         private final long initial;
         private long remaining;
         private boolean detached;
         private boolean committed;
         private boolean closed;
 
-        private Loan(long bytes) { initial = bytes; remaining = bytes; }
+        private PreparationLoan(long bytes) { initial = bytes; remaining = bytes; }
 
         private Reservation borrow(long bytes,
                 SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
@@ -519,7 +521,7 @@ final class SigningIndexCapacityBudget {
                 SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
             lock.lock();
             try {
-                if (closed) throw new IllegalStateException("closed signing capacity loan");
+                if (closed) { throw new IllegalStateException("closed signing capacity loan"); }
                 remaining = Math.addExact(remaining, bytes);
                 if (admissionClass != SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY) {
                     protectedReservedBytes -= bytes;
@@ -534,7 +536,7 @@ final class SigningIndexCapacityBudget {
          * @throws IllegalStateException if called outside the preparing thread or after ambient loan ownership changed
          */
         /* default */ void detach() {
-            if (Thread.currentThread() != preparingThread || preparationLoan.get() != this) {
+            if (!equals(preparationLoan.get())) {
                 throw new IllegalStateException("signing capacity loan thread differs");
             }
             preparationLoan.remove();
@@ -589,8 +591,8 @@ final class SigningIndexCapacityBudget {
         @Override public void close() {
             lock.lock();
             try {
-                if (closed) return;
-                if (!detached) detach();
+                if (closed) { return; }
+                if (!detached) { detach(); }
                 if (remaining != initial) {
                     throw new IllegalStateException("signing future-capacity rollback has outstanding allocations");
                 }

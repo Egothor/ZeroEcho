@@ -156,7 +156,7 @@ public record IssuerCryptographicBinding(int version, PkiId issuerId, PkiId auth
      * @param field trusted field label included in the validation failure
      * @throws IllegalArgumentException if the value is null or is not exactly 64 lowercase hexadecimal characters
      */
-    static void requireDigest(String value, String field) {
+    /* default */ static void requireDigest(String value, String field) {
         if (value == null || !value.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException(field + " must be lowercase SHA-256 hexadecimal");
         }

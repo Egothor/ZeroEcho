@@ -97,7 +97,7 @@ public sealed interface HybridCertificateMode
             if (altSignatureAlgorithmId == null || altSignatureAlgorithmId.isBlank()
                     || subjectKeySource == null || managedKeyRef == null
                     || managedKeyRef.filter(String::isBlank).isPresent()
-                    || (subjectKeySource == AlternativeSubjectKeySource.MANAGED) != managedKeyRef.isPresent()) {
+                    || subjectKeySource == AlternativeSubjectKeySource.MANAGED != managedKeyRef.isPresent()) {
                 throw new IllegalArgumentException("Invalid alternative subject key source");
             }
         }

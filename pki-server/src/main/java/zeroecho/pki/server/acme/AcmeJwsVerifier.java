@@ -66,6 +66,10 @@ import zeroecho.pki.server.http.StrictJson;
  * Strict narrow ACME flattened-JWS verifier supporting only ES256.
  */
 public final class AcmeJwsVerifier {
+    private static final Base64.Decoder URL_DECODER = Base64.getUrlDecoder();
+    private static final int DIGEST_HEX_LENGTH = 64;
+    private static final String ALG_FIELD = "alg";
+    private static final String URL_FIELD = "url";
     /**
      * Creates a stateless strict ACME JWS verifier.
      */
@@ -157,7 +161,6 @@ public final class AcmeJwsVerifier {
         @Override public byte[] payload() { return payload.clone(); }
     }
 
-    private static final Base64.Decoder URL_DECODER = Base64.getUrlDecoder();
 
     /**
      * Extracts a strictly framed KID only as a routing hint before full JWS verification.
@@ -172,14 +175,14 @@ public final class AcmeJwsVerifier {
      */
     public String kidRoutingHint(byte[] document, int maximumDocumentBytes, URI expectedUrl) {
         Objects.requireNonNull(expectedUrl, "expectedUrl");
-        Flattened flattened = parseFlattened(document, maximumDocumentBytes);
+        Flattened flattened = FlattenedReader.parseFlattened(document, maximumDocumentBytes);
         byte[] protectedBytes = decodeCanonical(flattened.protectedValue(), 16_384);
         try {
             PkiOperationValue.ObjectValue header = object(StrictJson.parse(protectedBytes, 16_384));
             Map<String, PkiOperationValue> fields = header.fields();
             if (!fields.keySet().equals(SetHolder.KID_PROTECTED)
-                    || !"ES256".equals(text(fields, "alg"))
-                    || !expectedUrl.toASCIIString().equals(text(fields, "url"))) {
+                    || !"ES256".equals(text(fields, ALG_FIELD))
+                    || !expectedUrl.toASCIIString().equals(text(fields, URL_FIELD))) {
                 throw malformed("ACME protected header is invalid");
             }
             return text(fields, "kid");
@@ -211,27 +214,27 @@ public final class AcmeJwsVerifier {
         Objects.requireNonNull(expectedUrl, "expectedUrl"); requireId(nonceScope);
         Objects.requireNonNull(keyMode, "keyMode"); Objects.requireNonNull(nonces, "nonces");
         Objects.requireNonNull(accounts, "accounts");
-        Flattened flattened = parseFlattened(document, maximumDocumentBytes);
+        Flattened flattened = FlattenedReader.parseFlattened(document, maximumDocumentBytes);
         byte[] protectedBytes = decodeCanonical(flattened.protectedValue(), 16_384);
         PkiOperationValue.ObjectValue header = object(StrictJson.parse(protectedBytes, 16_384));
         Map<String, PkiOperationValue> fields = header.fields();
         if (!fields.keySet().stream().allMatch(SetHolder.PROTECTED::contains)
-                || !"ES256".equals(text(fields, "alg"))
-                || !expectedUrl.toASCIIString().equals(text(fields, "url"))) {
+                || !"ES256".equals(text(fields, ALG_FIELD))
+                || !expectedUrl.toASCIIString().equals(text(fields, URL_FIELD))) {
             throw malformed("ACME protected header is invalid");
         }
         String nonce = text(fields, "nonce");
-        if (!nonces.consume(nonce, nonceScope)) throw new AcmeProblem("badNonce");
+        if (!nonces.consume(nonce, nonceScope)) { throw new AcmeProblem("badNonce"); }
 
         Optional<AccountKey> account = Optional.empty();
         PublicKey key;
         String thumbprint;
         if (keyMode == KeyMode.JWK) {
-            if (!fields.keySet().equals(SetHolder.JWK_PROTECTED)) throw malformed("ACME JWK header is invalid");
+            if (!fields.keySet().equals(SetHolder.JWK_PROTECTED)) { throw malformed("ACME JWK header is invalid"); }
             Jwk jwk = jwk(object(fields.get("jwk")));
             key = jwk.key(); thumbprint = jwk.thumbprint();
         } else {
-            if (!fields.keySet().equals(SetHolder.KID_PROTECTED)) throw malformed("ACME KID header is invalid");
+            if (!fields.keySet().equals(SetHolder.KID_PROTECTED)) { throw malformed("ACME KID header is invalid"); }
             AccountKey resolved = accounts.resolve(text(fields, "kid"));
             account = Optional.of(resolved); key = resolved.publicKey(); thumbprint = resolved.keyThumbprint();
         }
@@ -257,12 +260,12 @@ public final class AcmeJwsVerifier {
             String expectedAccountKid, String oldKeyThumbprint) {
         Objects.requireNonNull(expectedUrl, "expectedUrl");
         Objects.requireNonNull(expectedAccountKid, "expectedAccountKid"); digest(oldKeyThumbprint);
-        Flattened flattened = parseFlattened(document, maximumDocumentBytes);
+        Flattened flattened = FlattenedReader.parseFlattened(document, maximumDocumentBytes);
         PkiOperationValue.ObjectValue header = object(StrictJson.parse(
                 decodeCanonical(flattened.protectedValue(), 16_384), 16_384));
         if (!header.fields().keySet().equals(SetHolder.INNER_PROTECTED)
-                || !"ES256".equals(text(header.fields(), "alg"))
-                || !expectedUrl.toASCIIString().equals(text(header.fields(), "url"))) {
+                || !"ES256".equals(text(header.fields(), ALG_FIELD))
+                || !expectedUrl.toASCIIString().equals(text(header.fields(), URL_FIELD))) {
             throw malformed("ACME key-change header is invalid");
         }
         Jwk replacement = jwk(object(header.fields().get("jwk")));
@@ -278,15 +281,17 @@ public final class AcmeJwsVerifier {
         return new Verified(payload, replacement.thumbprint(), Optional.empty(), replacement.key());
     }
 
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static void verifySignature(Flattened flattened, PublicKey key) {
         byte[] signature = decodeCanonical(flattened.signature(), 64);
-        if (signature.length != 64) throw new AcmeProblem("malformed");
+        if (signature.length != DIGEST_HEX_LENGTH) { throw new AcmeProblem("malformed"); }
         byte[] signingInput = (flattened.protectedValue() + "." + flattened.payload())
                 .getBytes(StandardCharsets.US_ASCII);
         try {
             Signature verifier = Signature.getInstance("SHA256withECDSAinP1363Format");
             verifier.initVerify(key); verifier.update(signingInput);
-            if (!verifier.verify(signature)) throw new AcmeProblem("unauthorized");
+            if (!verifier.verify(signature)) { throw new AcmeProblem("unauthorized"); }
         } catch (AcmeProblem failure) {
             throw failure;
         } catch (Exception failure) {
@@ -319,49 +324,9 @@ public final class AcmeJwsVerifier {
         public String type() { return type; }
     }
 
-    private static Flattened parseFlattened(byte[] document, int maximum) {
-        if (document == null || document.length == 0 || maximum < 1
-                || maximum > StrictJson.MAXIMUM_DOCUMENT_BYTES || document.length > maximum) {
-            throw malformed("ACME JWS framing is invalid");
-        }
-        JsonFactory factory = factory(maximum);
-        try (JsonParser parser = factory.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) throw malformed("ACME JWS framing is invalid");
-            String protectedValue = null; String payload = null; String signature = null;
-            int count = 0;
-            while (parser.nextToken() != JsonToken.END_OBJECT) {
-                if (parser.currentToken() != JsonToken.PROPERTY_NAME || ++count > 3) throw malformed("ACME JWS framing is invalid");
-                String name = parser.currentName();
-                if (parser.nextToken() != JsonToken.VALUE_STRING) throw malformed("ACME JWS field type is invalid");
-                String value = parser.getString();
-                switch (name) {
-                    case "protected" -> protectedValue = once(protectedValue, value);
-                    case "payload" -> payload = once(payload, value);
-                    case "signature" -> signature = once(signature, value);
-                    default -> throw malformed("Unknown ACME JWS field");
-                }
-            }
-            if (parser.nextToken() != null || protectedValue == null || payload == null || signature == null) {
-                throw malformed("ACME JWS is incomplete");
-            }
-            return new Flattened(protectedValue, payload, signature);
-        } catch (AcmeProblem failure) {
-            throw failure;
-        } catch (RuntimeException failure) {
-            throw malformed("ACME JWS cannot be decoded");
-        }
-    }
 
-    private static JsonFactory factory(int maximum) {
-        StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(2)
-                .maxDocumentLength(maximum).maxTokenCount(16).maxNumberLength(4)
-                .maxStringLength(maximum).maxNameLength(16).build();
-        JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
-                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
-        for (JsonReadFeature feature : JsonReadFeature.values()) builder.disable(feature);
-        return builder.build();
-    }
-
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static Jwk jwk(PkiOperationValue.ObjectValue value) {
         Map<String, PkiOperationValue> fields = value.fields();
         if (!fields.keySet().equals(SetHolder.JWK_FIELDS)
@@ -370,7 +335,7 @@ public final class AcmeJwsVerifier {
         }
         byte[] x = decodeCanonical(text(fields, "x"), 32);
         byte[] y = decodeCanonical(text(fields, "y"), 32);
-        if (x.length != 32 || y.length != 32) throw malformed("ACME account JWK coordinate is invalid");
+        if (x.length != 32 || y.length != 32) { throw malformed("ACME account JWK coordinate is invalid"); }
         try {
             AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
             parameters.init(new ECGenParameterSpec("secp256r1"));
@@ -387,40 +352,37 @@ public final class AcmeJwsVerifier {
         }
     }
 
+    // Protocol diagnostics intentionally exclude untrusted/internal causes while retaining the established safe error contract.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static byte[] decodeCanonical(String value, int maximumDecoded) {
         if (value == null || value.indexOf('=') >= 0 || !value.matches("[A-Za-z0-9_-]*")) {
             throw malformed("ACME Base64url value is invalid");
         }
         try {
             byte[] decoded = URL_DECODER.decode(value);
-            if (decoded.length > maximumDecoded
-                    || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value)) {
-                throw malformed("ACME Base64url value is not canonical");
-            }
+            requireCanonical(decoded, value, maximumDecoded);
+
             return decoded;
         } catch (IllegalArgumentException failure) {
-            if (failure instanceof AcmeProblem problem) throw problem;
+            if (failure instanceof AcmeProblem problem) { throw problem; }
             throw malformed("ACME Base64url value is invalid");
         }
     }
 
     private static PkiOperationValue.ObjectValue object(PkiOperationValue value) {
-        if (value instanceof PkiOperationValue.ObjectValue object) return object;
+        if (value instanceof PkiOperationValue.ObjectValue object) { return object; }
         throw malformed("ACME JSON object is required");
     }
     private static String text(Map<String, PkiOperationValue> fields, String name) {
-        if (fields.get(name) instanceof PkiOperationValue.Text text) return text.value();
+        if (fields.get(name) instanceof PkiOperationValue.Text text) { return text.value(); }
         throw malformed("ACME protected field is missing");
     }
-    private static String once(String previous, String value) {
-        if (previous != null) throw malformed("Duplicate ACME JWS field");
-        return value;
-    }
+
     private static void requireId(String value) {
-        if (value == null || !value.matches("[a-z0-9][a-z0-9._:-]{0,127}")) throw malformed("ACME identity is invalid");
+        if (value == null || !value.matches("[a-z0-9][a-z0-9._:-]{0,127}")) { throw malformed("ACME identity is invalid"); }
     }
     private static void digest(String value) {
-        if (value == null || !value.matches("[0-9a-f]{64}")) throw malformed("ACME commitment is invalid");
+        if (value == null || !value.matches("[0-9a-f]{64}")) { throw malformed("ACME commitment is invalid"); }
     }
     private static String sha256(byte[] value) {
         try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
@@ -430,13 +392,89 @@ public final class AcmeJwsVerifier {
 
     private record Flattened(String protectedValue, String payload, String signature) { }
     private record Jwk(PublicKey key, String thumbprint) { }
+    /** Exact protected-header shapes accepted for each closed authentication mode. */
     private static final class SetHolder {
-        private static final java.util.Set<String> PROTECTED = java.util.Set.of("alg", "nonce", "url", "jwk", "kid");
-        private static final java.util.Set<String> JWK_PROTECTED = java.util.Set.of("alg", "nonce", "url", "jwk");
-        private static final java.util.Set<String> KID_PROTECTED = java.util.Set.of("alg", "nonce", "url", "kid");
-        private static final java.util.Set<String> INNER_PROTECTED = java.util.Set.of("alg", "url", "jwk");
+        private static final java.util.Set<String> PROTECTED = java.util.Set.of(ALG_FIELD, "nonce", URL_FIELD, "jwk", "kid");
+        private static final java.util.Set<String> JWK_PROTECTED = java.util.Set.of(ALG_FIELD, "nonce", URL_FIELD, "jwk");
+        private static final java.util.Set<String> KID_PROTECTED = java.util.Set.of(ALG_FIELD, "nonce", URL_FIELD, "kid");
+        private static final java.util.Set<String> INNER_PROTECTED = java.util.Set.of(ALG_FIELD, URL_FIELD, "jwk");
         private static final java.util.Set<String> INNER_PAYLOAD = java.util.Set.of("account", "oldKey");
         private static final java.util.Set<String> JWK_FIELDS = java.util.Set.of("kty", "crv", "x", "y");
-        private SetHolder() { }
     }
+
+    private static void requireCanonical(byte[] decoded, String value, int maximumDecoded) {
+            if (decoded.length > maximumDecoded
+                    || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value)) {
+                throw malformed("ACME Base64url value is not canonical");
+            }    }
+
+
+    /** Tracks unique fields while consuming one flattened JWS object. */
+    private static final class FlattenedFields {
+        private String protectedValue;
+        private String payload;
+        private String signature;
+        private int count;
+        private void read(JsonParser parser) {
+                if (parser.currentToken() != JsonToken.PROPERTY_NAME || ++count > 3) { throw malformed("ACME JWS framing is invalid"); }
+                String name = parser.currentName();
+                if (parser.nextToken() != JsonToken.VALUE_STRING) { throw malformed("ACME JWS field type is invalid"); }
+                String value = parser.getString();
+                switch (name) {
+                    case "protected" -> protectedValue = FlattenedReader.once(protectedValue, value);
+                    case "payload" -> payload = FlattenedReader.once(payload, value);
+                    case "signature" -> signature = FlattenedReader.once(signature, value);
+                    default -> throw malformed("Unknown ACME JWS field");
+                }
+        }
+    }
+
+
+    /** Groups one bounded protocol validation responsibility. */
+    private static final class FlattenedReader {
+        // Retains safe JWS parser diagnostics without exposing untrusted decoding causes.
+        @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+        private static Flattened parseFlattened(byte[] document, int maximum) {
+            if (document == null || document.length == 0 || maximum < 1
+                    || maximum > StrictJson.MAXIMUM_DOCUMENT_BYTES || document.length > maximum) {
+                throw malformed("ACME JWS framing is invalid");
+            }
+            JsonFactory factory = factory(maximum);
+            try (JsonParser parser = factory.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
+                return readFlattened(parser);
+            } catch (AcmeProblem failure) {
+                throw failure;
+            } catch (RuntimeException failure) {
+                throw malformed("ACME JWS cannot be decoded");
+            }
+        }
+
+        private static JsonFactory factory(int maximum) {
+            StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(2)
+                    .maxDocumentLength(maximum).maxTokenCount(16).maxNumberLength(4)
+                    .maxStringLength(maximum).maxNameLength(16).build();
+            JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
+                    .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+            for (JsonReadFeature feature : JsonReadFeature.values()) { builder.disable(feature); }
+            return builder.build();
+        }
+
+        private static String once(String previous, String value) {
+            if (previous != null) { throw malformed("Duplicate ACME JWS field"); }
+            return value;
+        }
+
+        private static Flattened readFlattened(JsonParser parser) {
+                if (parser.nextToken() != JsonToken.START_OBJECT) { throw malformed("ACME JWS framing is invalid"); }
+                FlattenedFields fields = new FlattenedFields();
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    fields.read(parser);
+                }
+                if (parser.nextToken() != null || fields.protectedValue == null || fields.payload == null || fields.signature == null) {
+                    throw malformed("ACME JWS is incomplete");
+                }
+                return new Flattened(fields.protectedValue, fields.payload, fields.signature);
+        }
+    }
+
 }

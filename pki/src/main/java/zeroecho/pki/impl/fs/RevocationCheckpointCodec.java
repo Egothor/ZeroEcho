@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.security.DigestOutputStream;
@@ -105,7 +107,8 @@ final class RevocationCheckpointCodec {
     private static final HexFormat HEX = HexFormat.of();
 
     /**
-     * Starts a checkpoint encoder by positioning and truncating the borrowed channel and writing its header. The caller retains responsibility for forcing and closing the channel.
+     * Starts a checkpoint encoder by positioning and truncating the borrowed channel and writing its
+     * header. The caller retains responsibility for forcing and closing the channel.
      *
      * @param channel borrowed channel, which remains open
      * @param header validated checkpoint header and declared entry count
@@ -119,7 +122,8 @@ final class RevocationCheckpointCodec {
     }
 
     /**
-     * Authenticates checkpoint framing, records and trailer and returns the validated file identity. The borrowed channel remains open.
+     * Authenticates checkpoint framing, records and trailer and returns the validated file identity. The
+     * borrowed channel remains open.
      *
      * @param channel borrowed channel, which remains open
      * @return authenticated header, generation identity and trailer boundary
@@ -198,7 +202,7 @@ final class RevocationCheckpointCodec {
             if (buffer.getInt() != HEADER_MAGIC) {
                 throw corrupt("Revocation checkpoint header magic is invalid");
             }
-            byte[] suppliedDigest = java.util.Arrays.copyOfRange(
+            byte[] suppliedDigest = Arrays.copyOfRange(
                     bytes, HEADER_FIELDS_BYTES, HEADER_BYTES);
             MessageDigest digest = sha256();
             digest.update(bytes, 0, HEADER_FIELDS_BYTES);
@@ -313,7 +317,8 @@ final class RevocationCheckpointCodec {
         private final ByteBuffer input = ByteBuffer.allocate(TRANSFER_BYTES);
 
         /**
-         * Decodes and authenticates one record within the supplied trailer boundary using this decoder's reusable scratch storage.
+         * Decodes and authenticates one record within the supplied trailer boundary using this
+         * decoder's reusable scratch storage.
          *
          * @param channel borrowed channel, which remains open
          * @param recordOffset byte offset of the next record
@@ -528,7 +533,8 @@ final class RevocationCheckpointCodec {
         }
 
         /**
-         * Appends one authenticated current-state record and advances the encoded entry count. The caller must supply entries in the intended checkpoint order.
+         * Appends one authenticated current-state record and advances the encoded entry count. The
+         * caller must supply entries in the intended checkpoint order.
          *
          * @param entry next current-state or index entry
          * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
@@ -561,7 +567,8 @@ final class RevocationCheckpointCodec {
         }
 
         /**
-         * Writes the trailer after checking the declared entry count and completes this encoder. The channel is neither forced nor closed.
+         * Writes the trailer after checking the declared entry count and completes this encoder. The
+         * channel is neither forced nor closed.
          *
          * @return lowercase SHA-256 generation identity
          * @throws IOException if framing or integrity validation fails, or the required I/O cannot complete
@@ -615,7 +622,8 @@ final class RevocationCheckpointCodec {
          * @param coveredBoundary exclusive byte boundary of the covered authoritative log prefix
          * @param globalCommitment global revocation commitment at the captured boundary
          * @param entryCount number of encoded checkpoint entries
-         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is null; or if {@code globalCommitment} is null
+         * @throws NullPointerException if {@code storeId} is null; or if {@code finalRecordStart} is
+         * null; or if {@code globalCommitment} is null
          */
         HeaderData {
             Objects.requireNonNull(storeId, "storeId");
@@ -652,8 +660,11 @@ final class RevocationCheckpointCodec {
          * @param transition immutable revocation transition retained for the credential
          * @param frameStart inclusive byte offset of the authoritative frame
          * @param frameEnd exclusive byte offset immediately after the authoritative frame
-         * @throws NullPointerException if {@code credentialId} is null; or if {@code transitionCommitment} is null; or if {@code transition} is null
-         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || credentialRevision <= 0L || transition.revision() != credentialRevision || frameStart < RevocationTransitionFrameCodec.PREAMBLE_BYTES || frameEnd <= frameStart)}
+         * @throws NullPointerException if {@code credentialId} is null; or if {@code
+         * transitionCommitment} is null; or if {@code transition} is null
+         * @throws IllegalArgumentException if {@code (globalRevision <= 0L || credentialRevision <=
+         * 0L || transition.revision() != credentialRevision || frameStart <
+         * RevocationTransitionFrameCodec.PREAMBLE_BYTES || frameEnd <= frameStart)}
          */
         CurrentStateEntry {
             Objects.requireNonNull(credentialId, "credentialId");

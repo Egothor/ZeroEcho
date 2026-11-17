@@ -70,7 +70,8 @@ final class SigningFilePublisher {
     /**
      * Publishes one previously absent immutable signing artifact with strict file and directory durability.
      *
-     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the publisher closes their channels.</p>
+     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the
+     * publisher closes their channels.</p>
      *
      * @param target file path in an existing secured nonsymlink parent directory
      * @param writer synchronous complete-image writer borrowing the temporary file channel
@@ -86,7 +87,8 @@ final class SigningFilePublisher {
     /**
      * Atomically replaces the authoritative signing manifest after its complete image is forced.
      *
-     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the publisher closes their channels.</p>
+     * <p>Failed publications may leave owned temporary entries for coordinated maintenance; the
+     * publisher closes their channels.</p>
      *
      * @param target file path in an existing secured nonsymlink parent directory
      * @param writer synchronous complete-image writer borrowing the temporary file channel
@@ -109,7 +111,8 @@ final class SigningFilePublisher {
      * @param operations borrowed filesystem and deterministic fault-injection seam
      * @throws NullPointerException if a required input is null
      * @throws IllegalArgumentException if parent or target file type is invalid
-     * @throws PublicationException if a persistence stage fails; its stage and uncertainty flag describe the publication boundary
+     * @throws PublicationException if a persistence stage fails; its stage and uncertainty flag describe
+     * the publication boundary
      * @throws IOException if artifact publication cannot be durably completed
      */
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
@@ -178,7 +181,7 @@ final class SigningFilePublisher {
     /**
      * Package-local fault seam; callers must not share mutable implementations.
      */
-    @SuppressWarnings({ "PMD.CommentRequired", "PMD.CommentDefaultAccessModifier" })
+    @SuppressWarnings({ "PMD.CommentDefaultAccessModifier" })
     /* default */ interface PublicationOperations {
         /**
          * Creates a uniquely named owned temporary file with captured filesystem identity.

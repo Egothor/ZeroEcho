@@ -305,9 +305,9 @@ class PkiHttpsServerTest {
         AtomicReference<PkiHttpsServer.State> state = new AtomicReference<>(PkiHttpsServer.State.READY);
         StatusScheduleWorker noopSchedule = new StatusScheduleWorker(
                 cancellation -> StatusScheduleWorker.PassHints.idle(), Duration.ofSeconds(1), Clock.systemUTC(), code -> { });
-        PkiHttpsServer server = new PkiHttpsServer(configuration, realm, authenticator, transport,
+        PkiHttpsServer server = new PkiHttpsServer(configuration, new PkiHttpsServer.Resources(realm, authenticator, transport,
                 Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), noopSchedule, state);
+                Optional.empty(), Optional.empty(), noopSchedule), state);
 
         IllegalStateException timeout = assertThrows(IllegalStateException.class, server::close);
         assertTrue(timeout.getMessage().contains("SERVER_EXECUTION_SHUTDOWN_TIMEOUT"));
@@ -1178,9 +1178,9 @@ class PkiHttpsServerTest {
             PkiServerAuthenticator authenticator, PkiHttpsTransport transport) {
         StatusScheduleWorker noopSchedule = new StatusScheduleWorker(
                 cancellation -> StatusScheduleWorker.PassHints.idle(), Duration.ofSeconds(1), Clock.systemUTC(), code -> { });
-        return new PkiHttpsServer(configuration, realm, authenticator, transport, Optional.empty(), Optional.empty(),
+        return new PkiHttpsServer(configuration, new PkiHttpsServer.Resources(realm, authenticator, transport, Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-                noopSchedule, new AtomicReference<>(PkiHttpsServer.State.READY));
+                noopSchedule), new AtomicReference<>(PkiHttpsServer.State.READY));
     }
 
     private static Future<?> submitClose(ExecutorService callers, PkiHttpsServer server,

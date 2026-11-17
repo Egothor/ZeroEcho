@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.BufferUnderflowException;
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -50,7 +53,6 @@ import zeroecho.pki.spi.store.MetadataKey;
  * Strict version-one payload for one atomic metadata-ledger transaction frame.
  */
 @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.AvoidLiteralsInIfCondition",
-        "PMD.CommentRequired", "PMD.ControlStatementBraces",
         "PMD.CyclomaticComplexity", "PMD.MethodReturnsInternalArray", "PMD.PreserveStackTrace",
         "PMD.ReturnEmptyCollectionRatherThanNull" })
 final class SigningTransactionPayloadCodec {
@@ -83,7 +85,8 @@ final class SigningTransactionPayloadCodec {
      * @param mutations one to 31 exact-key mutations with distinct keys
      * @return newly allocated bounded versioned commit payload
      * @throws NullPointerException if the mutation list or an entry is null
-     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total payload size is invalid
+     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total
+     * payload size is invalid
      * @throws ArithmeticException if encoded size arithmetic overflows
      */
     /* default */ static byte[] commit(List<Mutation> mutations) {
@@ -97,7 +100,8 @@ final class SigningTransactionPayloadCodec {
      * @param watermark nonnegative epoch-millisecond signing watermark, or -1 when absent
      * @return newly allocated bounded versioned commit payload
      * @throws NullPointerException if the mutation list or an entry is null
-     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total payload size is invalid
+     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total
+     * payload size is invalid
      * @throws ArithmeticException if encoded size arithmetic overflows
      */
     /* default */ static byte[] commit(List<Mutation> mutations, long watermark) {
@@ -125,7 +129,8 @@ final class SigningTransactionPayloadCodec {
      * @param watermark nonnegative epoch-millisecond signing watermark, or -1 when absent
      * @return newly allocated bounded versioned commit payload
      * @throws NullPointerException if the mutation list or an entry is null
-     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total payload size is invalid
+     * @throws IllegalArgumentException if mutation count, duplicate identities, watermark or total
+     * payload size is invalid
      * @throws ArithmeticException if encoded size arithmetic overflows
      */
     /* default */ static byte[] directCommit(List<Mutation> mutations, long watermark) {
@@ -141,7 +146,7 @@ final class SigningTransactionPayloadCodec {
             byte[] content = mutation.contentInternal();
             output.put(mutation.kind().code).putLong(mutation.expectedRevision())
                     .putInt(key.length).put(key).putInt(content == null ? -1 : content.length);
-            if (content != null) output.put(content);
+            if (content != null) { output.put(content); }
         }
         output.putLong(watermark);
         return output.array();
@@ -414,7 +419,7 @@ final class SigningTransactionPayloadCodec {
                 throw invalid();
             }
             return new Payload(kind, mutations, failure, watermark);
-        } catch (IllegalArgumentException | java.nio.BufferUnderflowException failure) {
+        } catch (IllegalArgumentException | BufferUnderflowException failure) {
             throw invalid();
         }
     }
@@ -427,7 +432,7 @@ final class SigningTransactionPayloadCodec {
         byte[] bytes = new byte[length];
         input.get(bytes);
         String value = new String(bytes, StandardCharsets.US_ASCII);
-        if (!java.util.Arrays.equals(bytes, value.getBytes(StandardCharsets.US_ASCII))) {
+        if (!Arrays.equals(bytes, value.getBytes(StandardCharsets.US_ASCII))) {
             throw invalid();
         }
         return value;
@@ -438,8 +443,8 @@ final class SigningTransactionPayloadCodec {
         if (kind == MutationKind.DELETE ? length != -1 : length < 0) {
             throw invalid();
         }
-        if (length < 0) return null;
-        if (length > input.remaining()) throw invalid();
+        if (length < 0) { return null; }
+        if (length > input.remaining()) { throw invalid(); }
         byte[] content = new byte[length];
         input.get(content);
         CONTENT_COPIES.incrementAndGet();
@@ -528,7 +533,7 @@ final class SigningTransactionPayloadCodec {
         Kind(int code) { this.code = (byte) code; }
         private static Kind fromCode(byte code) {
             for (Kind value : values()) {
-                if (value.code == code) return value;
+                if (value.code == code) { return value; }
             }
             return null;
         }
@@ -559,7 +564,7 @@ final class SigningTransactionPayloadCodec {
         MutationKind(int code) { this.code = (byte) code; }
         private static MutationKind fromCode(byte code) throws IOException {
             for (MutationKind value : values()) {
-                if (value.code == code) return value;
+                if (value.code == code) { return value; }
             }
             throw invalid();
         }
@@ -583,7 +588,9 @@ final class SigningTransactionPayloadCodec {
          * @param expectedRevision revision expected by the mutation before its update
          * @param content exact encoded metadata content bytes
          * @throws NullPointerException if {@code kind} is null; or if {@code key} is null
-         * @throws IllegalArgumentException if {@code (kind == MutationKind.CREATE && expectedRevision != -1L || kind != MutationKind.CREATE && expectedRevision < 0L || kind == MutationKind.DELETE && content != null || kind != MutationKind.DELETE && content == null)}
+         * @throws IllegalArgumentException if {@code (kind == MutationKind.CREATE &&
+         * expectedRevision != -1L || kind != MutationKind.CREATE && expectedRevision < 0L || kind ==
+         * MutationKind.DELETE && content != null || kind != MutationKind.DELETE && content == null)}
          */
         Mutation {
             Objects.requireNonNull(kind, "kind");
@@ -599,10 +606,11 @@ final class SigningTransactionPayloadCodec {
         /**
          * Returns an independent copy of the retained mutation content bytes.
          *
-         * @return newly allocated array containing the exact encoded metadata content bytes, or null when no value is retained
+         * @return newly allocated array containing the exact encoded metadata content bytes, or null
+         * when no value is retained
          */
         @Override public byte[] content() {
-            if (content == null) return null;
+            if (content == null) { return null; }
             CONTENT_COPIES.incrementAndGet();
             return content.clone();
         }
@@ -633,7 +641,9 @@ final class SigningTransactionPayloadCodec {
          * @param failure closed terminal failure category when the payload represents failure
          * @param watermark authoritative signing-time watermark
          * @throws NullPointerException if {@code kind} is null
-         * @throws IllegalArgumentException if {@code (kind == Kind.DIRECT_COMMIT && mutations.isEmpty())}; or if {@code (kind == Kind.COMMIT || kind == Kind.DIRECT_COMMIT) && (!distinct.add(mutation.key()))}
+         * @throws IllegalArgumentException if {@code (kind == Kind.DIRECT_COMMIT &&
+         * mutations.isEmpty())}; or if {@code (kind == Kind.COMMIT || kind == Kind.DIRECT_COMMIT) &&
+         * (!distinct.add(mutation.key()))}
          */
         Payload {
             Objects.requireNonNull(kind, "kind");

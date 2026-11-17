@@ -34,6 +34,10 @@
 
 package zeroecho.pki.impl.fs;
 
+import java.security.NoSuchAlgorithmException;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
@@ -85,7 +89,8 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
     /**
      * Derives exact structural CRL ownership and serial reservation coordinates from a frozen certificate acceptance.
      *
-     * <p>Derivation neither reserves a serial nor mutates scope ownership; the enclosing acceptance transaction performs those changes.</p>
+     * <p>Derivation neither reserves a serial nor mutates scope ownership; the enclosing acceptance
+     * transaction performs those changes.</p>
      *
      * @param store borrowed authoritative store used to resolve exact issuer and generation evidence
      * @param accepted frozen certificate acceptance envelope with its canonical outer command
@@ -105,7 +110,7 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
         boolean issuance = outer.kind() == DomainContinuationStore.Kind.ISSUANCE;
         if (!issuance && !"x509".equals(command.field(0))) { return Optional.empty(); }
         X509Certificate candidate = candidate(accepted, content);
-        if (issuance && command.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)) {
+        if (issuance && OcspResponderCertificateCommand.OPERATION.equals(command.operation())) {
             return managedOcspScope(store, accepted, command, candidate);
         }
         boolean root = !issuance && (CREATE_ROOT.equals(command.operation())
@@ -144,13 +149,13 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
     private static Optional<SignAcceptanceCrlScope> managedOcspScope(FilesystemPkiStore store,
             SignWorkflowStore.AcceptanceCommand accepted, DomainCommandEncoding.Decoded decoded,
             X509Certificate candidate) throws IOException {
-        var command = new zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand(decoded.fields());
-        var authority = new PkiId(decoded.field(1));
-        var generation = store.getIssuerGeneration(new PkiId(decoded.field(2))).orElseThrow(SignAcceptanceCrlScope::invalid);
-        var path = store.getIssuerChainPath(new PkiId(decoded.field(4))).orElseThrow(SignAcceptanceCrlScope::invalid);
-        var binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow(SignAcceptanceCrlScope::invalid);
-        var issuer = store.getCredential(generation.credentialId()).orElseThrow(SignAcceptanceCrlScope::invalid);
-        var issuerCertificate = store.certificateHolder(issuer);
+        OcspResponderCertificateCommand command = new OcspResponderCertificateCommand(decoded.fields());
+        PkiId authority = new PkiId(decoded.field(1));
+        IssuerGeneration generation = store.getIssuerGeneration(new PkiId(decoded.field(2))).orElseThrow(SignAcceptanceCrlScope::invalid);
+        IssuerChainPath path = store.getIssuerChainPath(new PkiId(decoded.field(4))).orElseThrow(SignAcceptanceCrlScope::invalid);
+        IssuerCryptographicBinding binding = store.getIssuerCryptographicBinding(generation.issuerId()).orElseThrow(SignAcceptanceCrlScope::invalid);
+        Credential issuer = store.getCredential(generation.credentialId()).orElseThrow(SignAcceptanceCrlScope::invalid);
+        X509Certificate issuerCertificate = store.certificateHolder(issuer);
         require(accepted.fairnessAuthorityId().equals(authority) && generation.authorityId().equals(authority)
                 && path.authorityId().equals(authority) && path.issuerId().equals(generation.issuerId())
                 && path.orderedCredentialIds().getFirst().equals(generation.credentialId())
@@ -257,7 +262,7 @@ record SignAcceptanceCrlScope(List<CrlScopeOwner> owners, ScopeSerialReservation
     private static String sha256(byte[] value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
-        } catch (java.security.NoSuchAlgorithmException unavailable) {
+        } catch (NoSuchAlgorithmException unavailable) {
             throw new IllegalStateException("SHA-256 unavailable", unavailable);
         }
     }

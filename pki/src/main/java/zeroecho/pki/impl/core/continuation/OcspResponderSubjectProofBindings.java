@@ -34,16 +34,18 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.InputStream;
-import java.security.cert.X509Certificate;
-import java.util.Objects;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.IssuerKeyBinding;
 import zeroecho.pki.api.signing.ManagedKeyProofRequest;
 import zeroecho.pki.api.signing.ManagedOcspResponderProofTarget;
+import zeroecho.pki.impl.core.X509ExtensionOids;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole;
+
+import java.io.InputStream;
+import java.security.cert.X509Certificate;
+import java.util.Objects;
 
 /**
  * Checks the exact parent and subject-role bindings of managed responder possession proofs.
@@ -54,60 +56,68 @@ import zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole;
  * grants key-use permission or replaces cryptographic proof/signature verification.
  */
 public final class OcspResponderSubjectProofBindings {
+    private static final int MAX_CHALLENGE_BYTES = 1_048_576;
+
     private OcspResponderSubjectProofBindings() {
     }
+
     /**
      * Identifies the dedicated issuance discriminator in an envelope's outer command.
      *
-     * <p>This is a dispatch predicate, not complete envelope or proof validation.
-     * An absent outer command or another domain operation returns false.
+     * <p>This is a dispatch predicate, not complete envelope or proof validation. An absent outer
+     * command or another domain operation returns false.
      *
      * @param envelope immutable signing envelope; must not be null
      * @return whether the exact managed responder certificate operation is selected
      * @throws NullPointerException if the envelope is null
      * @throws IllegalArgumentException if the encoded discriminator cannot be read
      */
-    public static boolean supports(zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceEnvelope envelope) {
-        return envelope.outer().filter(outer -> outer.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.ISSUANCE
-                && DomainCommandEncoding.operation(outer.command()).equals(OcspResponderCertificateCommand.OPERATION)).isPresent();
+    public static boolean supports(SignWorkflowStore.AcceptanceEnvelope envelope) {
+        return envelope.outer()
+                .filter(
+                        outer ->
+                                outer.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.ISSUANCE
+                                        && OcspResponderCertificateCommand.OPERATION.equals(
+                                                DomainCommandEncoding.operation(outer.command())))
+                .isPresent();
     }
+
     /**
      * Validates captured subject proof metadata without resolving live keys or content.
      *
-     * <p>Both proof steps must be present. The selected step, canonical outer
-     * correlation, provider namespace/configuration, subject-key role, candidate
-     * digest and retained proof command must agree. No challenge bytes or current
-     * managed public keys are read, and no cryptographic signature is verified here.
+     * <p>Both proof steps must be present. The selected step, canonical outer correlation, provider
+     * namespace/configuration, subject-key role, candidate digest and retained proof command must
+     * agree. No challenge bytes or current managed public keys are read, and no cryptographic
+     * signature is verified here.
      *
      * @param envelope dedicated accepted parent envelope
      * @param role explicit primary or alternative subject-proof role
      * @return exact retained nested proof-command metadata for that role
      * @throws NullPointerException if the envelope or role is null
-     * @throws IllegalArgumentException if the operation, canonical correlation, role,
-     *         provider, key or candidate metadata differs
+     * @throws IllegalArgumentException if the operation, canonical correlation, role, provider, key
+     *     or candidate metadata differs
      */
-    public static DomainCommandEncoding.Decoded requireEnvelope(zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceEnvelope envelope,
-            SubjectKeyRole role) {
+    public static DomainCommandEncoding.Decoded requireEnvelope(
+            SignWorkflowStore.AcceptanceEnvelope envelope, SubjectKeyRole role) {
         if (!supports(envelope) || envelope.proofStep().isEmpty() || envelope.alternativeProofStep().isEmpty()) {
             throw invalid();
         }
         SignWorkflowStore.OuterCommand outer = envelope.outer().orElseThrow();
         OcspResponderCertificateCommand command = OcspResponderCertificateCommand.decode(outer.command());
-        if (!outer.commandCommitment().equals(DomainContinuationTemplate.commitment(outer.command()))
-                || !outer.correlationId().equals(zeroecho.pki.impl.core.CorrelatedIssuanceIdentity.correlationId(
-                        new PkiId(command.fields().get(1)), command.fields().get(17)))
+        if (!outer.commandCommitment()
+                        .equals(DomainContinuationTemplate.commitment(outer.command()))
+                || !outer.correlationId()
+                        .equals(
+                                zeroecho.pki.impl.core.CorrelatedIssuanceIdentity.correlationId(
+                                        new PkiId(command.fields().get(1)),
+                                        command.fields().get(17)))
                 || !envelope.fairnessAuthorityId().value().equals(command.fields().get(1))) {
             throw invalid();
         }
         SignWorkflowStore.CaSubjectProofStep step = (role == SubjectKeyRole.PRIMARY
                 ? envelope.proofStep() : envelope.alternativeProofStep()).orElseThrow();
         DomainCommandEncoding.Decoded proof = requireCommand(command, envelope.operationId(), role);
-        if (step.role() != role || !step.operationId().value().equals(command.fields().get(role == SubjectKeyRole.PRIMARY ? 20 : 22))
-                || !step.subjectKeyRef().value().equals(proof.field(5)) || !step.algorithmId().equals(proof.field(8))
-                || !proof.field(6).equals(envelope.providerNamespace())
-                || !proof.field(7).equals(java.util.HexFormat.of().formatHex(envelope.providerConfigurationCommitment().bytes()))) {
-            throw invalid();
-        }
+        requireRoleMetadata(envelope, role, command, step, proof);
         ManagedKeyProofBindings.requireCandidate(proof, step.challenge());
         if (envelope.candidate().encoding() != zeroecho.pki.api.Encoding.DER
                 || !envelope.candidate().sha256().equals(command.fields().get(16))) {
@@ -115,42 +125,46 @@ public final class OcspResponderSubjectProofBindings {
         }
         return proof;
     }
+
     /**
      * Checks both bounded live proof challenges and their final certificate TBS role bindings.
      *
-     * <p>The final TBS is limited to one MiB and must match its retained digest and
-     * serial. Both decoded version-four challenges must match the parent, role,
-     * frozen target and actual subject SPKI. A temporary certificate wrapper is
-     * used only to inspect structure; no dummy signature is trusted. Content
-     * handles and streams opened here are closed before return or failure.
-     * This check neither invokes a signing provider nor verifies proof signatures.
+     * <p>The final TBS is limited to one MiB and must match its retained digest and serial. Both
+     * decoded version-four challenges must match the parent, role, frozen target and actual subject
+     * SPKI. A temporary certificate wrapper is used only to inspect structure; no dummy signature
+     * is trusted. Content handles and streams opened here are closed before return or failure. This
+     * check neither invokes a signing provider nor verifies proof signatures.
      *
      * @param store owning staged-content store
      * @param envelope exact prospective or retained dedicated acceptance envelope
      * @throws java.io.IOException for unavailable or corrupt public staged content
      * @throws NullPointerException if the store or envelope is null
      * @throws java.util.NoSuchElementException if the required outer command is absent
-     * @throws IllegalArgumentException if a digest, serial, proof challenge or subject-key binding differs
+     * @throws IllegalArgumentException if a digest, serial, proof challenge or subject-key binding
+     *     differs
      */
-    public static void requireLiveCandidates(zeroecho.pki.spi.store.StagedContentStore store,
-            zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceEnvelope envelope) throws java.io.IOException {
+    public static void requireLiveCandidates(
+            zeroecho.pki.spi.store.StagedContentStore store, SignWorkflowStore.AcceptanceEnvelope envelope)
+            throws java.io.IOException {
         OcspResponderCertificateCommand command = OcspResponderCertificateCommand.decode(
                 envelope.outer().orElseThrow().command());
         byte[] tbs;
         try (RepeatableContent content = store.openContent(envelope.candidate()); InputStream input = content.openStream()) {
-            if (envelope.candidate().length() > 1_048_576) {
+            if (envelope.candidate().length() > MAX_CHALLENGE_BYTES) {
                 throw invalid();
             }
             tbs = input.readNBytes(Math.toIntExact(envelope.candidate().length()));
-            if (tbs.length != envelope.candidate().length() || input.read() != -1
-                    || !zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(tbs).sha256()
+            if (tbs.length != envelope.candidate().length()
+                    || input.read() != -1
+                    || !zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(tbs)
+                            .sha256()
                             .equals(command.fields().get(16))) {
                 throw invalid();
             }
         }
-        new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectUnsignedCertificateTbs(tbs, 1_048_576);
-        X509Certificate certificate = zeroecho.pkix.Pkix.parseCertificate(
-                zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, new byte[] {0}, false));
+        new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectUnsignedCertificateTbs(tbs, MAX_CHALLENGE_BYTES);
+        X509Certificate certificate =
+                zeroecho.pkix.Pkix.parseCertificate(zeroecho.pkix.Pkix.assembleCertificateOrCrl(tbs, new byte[] {0}, false));
         if (!certificate.getSerialNumber().toString().equals(command.fields().get(24))) {
             throw invalid();
         }
@@ -158,12 +172,21 @@ public final class OcspResponderSubjectProofBindings {
             DomainCommandEncoding.Decoded proof = requireEnvelope(envelope, role);
             SignWorkflowStore.CaSubjectProofStep step = (role == SubjectKeyRole.PRIMARY
                     ? envelope.proofStep() : envelope.alternativeProofStep()).orElseThrow();
-            byte[] challenge = ManagedKeyProofBindings.readChallenge(store, step.operationId(), envelope.deadline(),
-                    java.util.Optional.empty(), proof, step.challenge());
+            byte[] challenge =
+                    ManagedKeyProofBindings.readChallenge(
+                            store,
+                            step.operationId(),
+                            envelope.deadline(),
+                            java.util.Optional.empty(),
+                            proof,
+                            step.challenge());
             ManagedKeyProofChallenge.Decoded decoded = ManagedKeyProofChallenge.decode(challenge);
             requireChallenge(command, envelope.operationId(), role, decoded);
-            byte[] actual = role == SubjectKeyRole.PRIMARY ? zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate)
-                    : zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72");
+            byte[] actual =
+                    role == SubjectKeyRole.PRIMARY
+                            ? zeroecho.pkix.Pkix.subjectPublicKeyInfo(certificate)
+                            : zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(
+                                    certificate, X509ExtensionOids.subjectAltPublicKeyInfo());
             if (!java.util.Arrays.equals(actual, decoded.spki())) {
                 throw invalid();
             }
@@ -193,12 +216,18 @@ public final class OcspResponderSubjectProofBindings {
         }
         ManagedOcspResponderProofTarget target = candidate.target();
         IssuerKeyBinding subject = command.subjectBinding(role);
-        if (!candidate.authorityId().value().equals(command.fields().get(1)) || !candidate.profileRef().equals(command.profile())
-                || !candidate.keyRef().equals(subject.keyRef()) || !target.parentOperationId().equals(parentOperationId)
-                || target.role() != role || !target.parentIntentCommitment().equals(command.intentCommitment())
+        if (!candidate.authorityId().value().equals(command.fields().get(1))
+                || !candidate.profileRef().equals(command.profile())
+                || !candidate.keyRef().equals(subject.keyRef())
+                || !target.parentOperationId().equals(parentOperationId)
+                || target.role() != role
+                || !target.parentIntentCommitment().equals(command.intentCommitment())
                 || !target.frozenTargetCommitment().equals(command.frozenTargetCommitment())
                 || !proof.field(8).equals(subject.signatureAlgorithm().canonicalForm())
-                || !proof.field(9).equals(java.util.HexFormat.of().formatHex(subject.signatureAlgorithmIdentifier().bytes()))
+                || !proof.field(9)
+                        .equals(
+                                java.util.HexFormat.of()
+                                        .formatHex(subject.signatureAlgorithmIdentifier().bytes()))
                 || !proof.field(11).equals(subject.subjectSpkiSha256())) {
             throw invalid();
         }
@@ -230,5 +259,28 @@ public final class OcspResponderSubjectProofBindings {
     }
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("Responder subject proof binding invalid");
+    }
+
+    private static void requireRoleMetadata(
+            SignWorkflowStore.AcceptanceEnvelope envelope,
+            SubjectKeyRole role,
+            OcspResponderCertificateCommand command,
+            SignWorkflowStore.CaSubjectProofStep step,
+            DomainCommandEncoding.Decoded proof) {
+        if (step.role() != role
+                || !step.operationId()
+                        .value()
+                        .equals(command.fields().get(role == SubjectKeyRole.PRIMARY ? 20 : 22))
+                || !step.subjectKeyRef().value().equals(proof.field(5))
+                || !step.algorithmId().equals(proof.field(8))
+                || !proof.field(6).equals(envelope.providerNamespace())
+                || !proof.field(7)
+                        .equals(
+                                java.util.HexFormat.of()
+                                        .formatHex(
+                                                envelope.providerConfigurationCommitment()
+                                                        .bytes()))) {
+            throw invalid();
+        }
     }
 }

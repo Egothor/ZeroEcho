@@ -34,6 +34,33 @@
 
 package zeroecho.pki.impl.core;
 
+import java.security.GeneralSecurityException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Supplier;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.api.ca.IssuerKeyBinding;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
+import zeroecho.pki.api.hybrid.HybridCertificateMode;
+import zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest;
+import zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity;
+import zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest;
+import zeroecho.pki.impl.core.continuation.DomainCommandEncoding;
+import zeroecho.pki.impl.core.continuation.DomainContinuationTemplate;
+import zeroecho.pki.impl.core.continuation.DomainContinuationValidation;
+import zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand;
+import zeroecho.pki.impl.hybrid.AltSignatureExtensions;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.store.DomainContinuationStore;
+import zeroecho.pki.spi.store.SignWorkflowStore;
+
 import zeroecho.pki.api.EncodedObject;
 
 import zeroecho.pki.api.request.X509EnrollmentPayload;
@@ -58,7 +85,6 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.ca.IssuerGeneration;
-import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
@@ -75,12 +101,8 @@ import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader;
-import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
-import zeroecho.pki.impl.framework.x509.X509SuiteCompatibility;
-import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.impl.framework.x509.bc.BcX509ProofOfPossessionVerifier;
@@ -97,15 +119,16 @@ import zeroecho.pkix.Pkix;
  * plus cryptographic verification and a bounded number of authoritative lookups.
  */
 final class EndEntityIssuancePreparation {
+    private static final String OCSP_PREDECESSOR_INVALID = "OCSP_PREDECESSOR_PROVENANCE_INVALID";
     private final PkiStore store;
     private final EffectiveCredentialStatusResolver status;
     private final X509AuthoritySnapshot authority;
-    private final Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> managedKeys;
+    private final Optional<PublicKeyInfoSource> managedKeys;
     private final X509AuthoritySnapshot signingAuthority;
     private final BcX509ProofOfPossessionVerifier proofVerifier;
     private final X509ProfileBindingMatcher bindingMatcher;
     private final AlgorithmIdentity signature;
-    private final java.util.function.Supplier<BigInteger> serialSource;
+    private final Supplier<BigInteger> serialSource;
 
     /**
      * Creates a preparer borrowing authoritative store and validation collaborators.
@@ -146,7 +169,7 @@ final class EndEntityIssuancePreparation {
      */
     /* default */ EndEntityIssuancePreparation(PkiStore store, Clock clock, X509AuthoritySnapshot authority,
             BcX509VerificationExecutor verifier, X509AlgorithmBindingRegistry bindings, String signatureAlgorithm,
-            X509AuthoritySnapshot signingAuthority, Optional<zeroecho.pki.spi.crypto.PublicKeyInfoSource> managedKeys) {
+            X509AuthoritySnapshot signingAuthority, Optional<PublicKeyInfoSource> managedKeys) {
         this.signingAuthority = Objects.requireNonNull(signingAuthority, "signingAuthority");
         this.managedKeys = Objects.requireNonNull(managedKeys, "managedKeys");
         this.serialSource = CertificateSerialAllocator::allocate;
@@ -239,8 +262,8 @@ final class EndEntityIssuancePreparation {
      * @throws IOException if parsing, proof verification, or cancellation fails
      * @throws PkiException if proof of possession is not verified
      */
-    /* default */ VerifiedIssuanceCandidate verifyCsr(zeroecho.pki.api.PkiId issuerCaId, byte[] csrDer, String profileId,
-            Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
+    /* default */ VerifiedIssuanceCandidate verifyCsr(PkiId issuerCaId, byte[] csrDer, String profileId,
+            Optional<Validity> validityOverride, CancellationSignal cancellation) throws IOException {
         return verifyRequest(issuerCaId, new X509EnrollmentPayload(
                 X509EnrollmentPayload.Kind.PKCS10, csrDer), profileId, validityOverride, cancellation);
     }
@@ -257,9 +280,9 @@ final class EndEntityIssuancePreparation {
      * @throws IOException if parsing, proof verification, or cancellation fails
      * @throws PkiException if proof of possession is not verified
      */
-    /* default */ VerifiedIssuanceCandidate verifyRequest(zeroecho.pki.api.PkiId issuerCaId,
+    /* default */ VerifiedIssuanceCandidate verifyRequest(PkiId issuerCaId,
             X509EnrollmentPayload payload, String profileId,
-            Optional<zeroecho.pki.api.Validity> validityOverride, CancellationSignal cancellation) throws IOException {
+            Optional<Validity> validityOverride, CancellationSignal cancellation) throws IOException {
         ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parseX509(payload);
         ProofOfPossessionResult proof = proofVerifier.verify(parsed, new VerificationPolicy(true, Optional.empty()));
         if (proof.status() != ProofOfPossessionStatus.VERIFIED) {
@@ -303,7 +326,6 @@ final class EndEntityIssuancePreparation {
      * @throws IOException if authoritative content access or cancellation fails
      * @throws PkiException if issuer, profile, key, validity, or intent selection is invalid
      */
-    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
             Optional<IssuanceIntent> intent, CancellationSignal cancellation) throws IOException {
@@ -327,7 +349,7 @@ final class EndEntityIssuancePreparation {
      */
     /* default */ Prepared prepareCandidate(AccessContext access, VerifiedIssuanceCandidate candidate,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<X509EnrollmentPayload> csrDer,
-            Optional<IssuanceIntent> intent, Optional<zeroecho.pki.api.Validity> frozenValidity, boolean sdk,
+            Optional<IssuanceIntent> intent, Optional<Validity> frozenValidity, boolean sdk,
             CancellationSignal cancellation) throws IOException {
         CaRecord ca = store.getCa(candidate.issuerCaId()).orElseThrow(
                 () -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
@@ -335,32 +357,32 @@ final class EndEntityIssuancePreparation {
             throw new PkiException("Issuer CA is not active", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
         }
         IssuerGeneration generation = IssuerAuthorities.current(store, ca);
-        zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding = store.getIssuerCryptographicBinding(generation.issuerId())
+        IssuerCryptographicBinding issuerBinding = store.getIssuerCryptographicBinding(generation.issuerId())
                 .orElseThrow(() -> new PkiException("Issuer binding unavailable: code=ISSUER_BINDING_MISSING"));
         AlgorithmIdentity signature = issuerBinding.primary().signatureAlgorithm();
         X509SecurityFloor.requirePermitted(signature);
         IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
         if (intent.isPresent()) {
-            requireSelectedIssuance(intent.orElseThrow(), generation, path);
+            EndEntityIssuerBinding.requireSelectedIssuance(intent.orElseThrow(), generation, path);
         }
         Credential issuer = store.getCredential(generation.credentialId()).orElseThrow(
                 () -> new PkiException("Issuer credential not found", PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
-        requireConsistentIssuer(ca, generation, path, issuer);
+        EndEntityIssuerBinding.requireConsistentIssuer(ca, generation, path, issuer);
         evaluation.requireUsable(issuer, CredentialUse.END_ENTITY_ISSUER);
         ActiveCertificateProfile profile = selectProfile(candidate.profileId(), intent);
         if (!profile.reference().profileId().equals(candidate.profileId())
                 || profile.definition().certificateType() != CertificateProfileKind.END_ENTITY
-                || !profile.definition().formatId().equals(BcX509CredentialFramework.FORMAT_ID)) {
+                || !BcX509CredentialFramework.FORMAT_ID.equals(profile.definition().formatId())) {
             throw new PkiException("End-entity preparation rejected: code=PROFILE_KIND_MISMATCH");
         }
-        boolean requestAlternative = profile.definition().hybridMode() instanceof zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature;
-        if (requestAlternative != sdk) throw new PkiException("SDK dual proof required: code=SDK_PROFILE_REQUIRED");
+        boolean requestAlternative = profile.definition().hybridMode() instanceof HybridCertificateMode.AltSignature;
+        if (requestAlternative != sdk) { throw new PkiException("SDK dual proof required: code=SDK_PROFILE_REQUIRED"); }
         if (sdk) {
-            var mode = (zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature) profile.definition().hybridMode();
-            if (mode.subjectKeySource() != zeroecho.pki.api.hybrid.HybridCertificateMode.AlternativeSubjectKeySource.REQUEST) {
+            HybridCertificateMode.AltSignature mode = (HybridCertificateMode.AltSignature) profile.definition().hybridMode();
+            if (mode.subjectKeySource() != HybridCertificateMode.AlternativeSubjectKeySource.REQUEST) {
                 throw new PkiException("SDK_REQUEST_OWNED_PROFILE_REQUIRED");
             }
-            var alternative = issuerBinding.alternative().orElseThrow(() -> new PkiException("SDK_ISSUER_NOT_HYBRID"));
+            IssuerKeyBinding alternative = issuerBinding.alternative().orElseThrow(() -> new PkiException("SDK_ISSUER_NOT_HYBRID"));
             if (!alternative.signatureAlgorithm().equals(authority.resolveIdentity(mode.altSignatureAlgorithmId()))) {
                 throw new PkiException("SDK_ALTERNATIVE_ISSUER_ALGORITHM_DIFFERS");
             }
@@ -373,35 +395,8 @@ final class EndEntityIssuancePreparation {
         ValidatedCertificateRequest approved = validated.withFrozenIssuance(
                 generation.issuerId(), path.pathId(), path.pathCommitment(), intent);
         byte[] issuerDer = CredentialContent.materializeForBc(store, issuer.content());
-        AlgorithmIdentifier signingBinding;
-        try {
-            new StreamingDerReader().validate(issuerDer, CredentialContent.MAXIMUM_CERTIFICATE_BYTES);
-            X509Certificate certificate = Pkix.parseCertificate(issuerDer);
-            requireIssuerCertificate(certificate, issuer, evaluation.evaluationTime());
-            BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
-            AlgorithmIdentity issuerKey = adapter.decode(Pkix.subjectPublicKeyAlgorithm(
-                    Pkix.subjectPublicKeyInfo(certificate)), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-            X509SuiteCompatibility.requireCompatible(signature, issuerKey);
-            if (managedKeys.isPresent()) IssuerBindingResolver.resolve(store, generation, managedKeys.orElseThrow(), authority);
-            X509AlgorithmBindingPolicy policy = approved.algorithmBindingPolicy();
-            signingBinding = selectBinding(signature, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
-                    policy.certificateSignature());
-            if (!signingBinding.equals(Pkix.parseAlgorithmIdentifier(issuerBinding.primary().signatureAlgorithmIdentifier().bytes()))) {
-                throw new IllegalArgumentException("Frozen issuer signature binding differs");
-            }
-            if (csrDer.isPresent()) {
-                X509EnrollmentPayload payload = csrDer.orElseThrow();
-                AlgorithmIdentifier proofAlgorithm = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
-                        ? Pkix.parseCertificationRequest(payload.der()).signatureAlgorithm()
-                        : zeroecho.pkix.cmp.CrmfRequest.parse(payload.der()).signatureAlgorithm();
-                requireRequestBinding(proofAlgorithm, X509AlgorithmBinding.Role.CSR_SIGNATURE,
-                        policy.csrSignature());
-            }
-            requireRequestBinding(Pkix.subjectPublicKeyAlgorithm(candidate.exactPublicKey().bytes()),
-                    X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY, policy.subjectPublicKey());
-        } catch (IllegalArgumentException | IOException invalid) {
-            throw new PkiException("End-entity preparation rejected: code=ISSUANCE_BINDING_INVALID");
-        }
+        AlgorithmIdentifier signingBinding = new EndEntityIssuerBinding(store, managedKeys, authority, bindingMatcher)
+                .select(issuerDer, issuer, evaluation.evaluationTime(), signature, generation, issuerBinding, approved, csrDer, candidate);
         cancellation.throwIfCancelled();
         return new Prepared(access, approved, generation.signingKeyRef(), signature, signingBinding,
                 serialSource.get(), evaluation.evaluationTime(), issuerDer, issuer.content(), issuerBinding, profile);
@@ -424,8 +419,8 @@ final class EndEntityIssuancePreparation {
      * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
      */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
-            Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
+            ParsedHybridSdkRequest supplied,
+            Optional<Validity> frozenValidity, boolean preview,
             CancellationSignal cancellation) throws IOException {
         return prepareSdk(access, input, supplied, frozenValidity, preview, status.beginEvaluation(), cancellation);
     }
@@ -448,8 +443,8 @@ final class EndEntityIssuancePreparation {
      * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
      */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
-            Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
+            ParsedHybridSdkRequest supplied,
+            Optional<Validity> frozenValidity, boolean preview,
             EffectiveCredentialStatusResolver.Evaluation evaluation, CancellationSignal cancellation) throws IOException {
         return prepareSdk(access, input, supplied, frozenValidity, preview, evaluation, Optional.empty(), cancellation);
     }
@@ -473,21 +468,21 @@ final class EndEntityIssuancePreparation {
      * @throws PkiException if managed keys are unavailable or the request, profile, or policy differs
      */
     /* default */ Prepared prepareSdk(AccessContext access, EndEntityIssuanceRequest input,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest supplied,
-            Optional<zeroecho.pki.api.Validity> frozenValidity, boolean preview,
+            ParsedHybridSdkRequest supplied,
+            Optional<Validity> frozenValidity, boolean preview,
             EffectiveCredentialStatusResolver.Evaluation evaluation, Optional<IssuanceIntent> intent,
             CancellationSignal cancellation) throws IOException {
-        if (managedKeys.isEmpty()) throw new PkiException("SDK_MANAGED_PUBLIC_KEY_SOURCE_REQUIRED");
+        if (managedKeys.isEmpty()) { throw new PkiException("SDK_MANAGED_PUBLIC_KEY_SOURCE_REQUIRED"); }
         if (input.payload().kind() != supplied.originalPayload().kind()
-                || !java.util.Arrays.equals(input.payload().der(), supplied.originalPayload().der())) {
+                || !Arrays.equals(input.payload().der(), supplied.originalPayload().der())) {
             throw new PkiException("SDK_REQUEST_MISMATCH");
         }
-        var parsed = new BcX509CertificationRequestParser().parseHybridSdk(input.payload());
-        if (!java.util.Arrays.equals(parsed.primary().publicKeyInfo().bytes(), supplied.primary().publicKeyInfo().bytes())
-                || !java.util.Arrays.equals(parsed.alternativeSubjectPublicKeyInfo().bytes(), supplied.alternativeSubjectPublicKeyInfo().bytes())) {
+        ParsedHybridSdkRequest parsed = new BcX509CertificationRequestParser().parseHybridSdk(input.payload());
+        if (!Arrays.equals(parsed.primary().publicKeyInfo().bytes(), supplied.primary().publicKeyInfo().bytes())
+                || !Arrays.equals(parsed.alternativeSubjectPublicKeyInfo().bytes(), supplied.alternativeSubjectPublicKeyInfo().bytes())) {
             throw new PkiException("SDK_REQUEST_MISMATCH");
         }
-        var candidate = new VerifiedIssuanceCandidate(parsed.primary(), parsed.primary().requestId(),
+        VerifiedIssuanceCandidate candidate = new VerifiedIssuanceCandidate(parsed.primary(), parsed.primary().requestId(),
                 parsed.primary().publicKeyInfo(), ProofOfPossessionStatus.VERIFIED,
                 new IssueEndEntityCommand(input.issuerCaId(), parsed.primary(), input.profileId(), input.validityOverride()));
         EndEntityIssuancePreparation selected = preview ? withoutSerialAllocation() : this;
@@ -504,76 +499,9 @@ final class EndEntityIssuancePreparation {
      * @throws IOException if managed public-key export or cancellation fails
      * @throws PkiException if the key suite, profile, or frozen target does not match
      */
-    /* default */ ManagedOcspSelection managedOcspSelection(zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request,
+    /* default */ ManagedOcspSelection managedOcspSelection(ManagedOcspResponderIssuanceRequest request,
             CancellationSignal cancellation) throws IOException {
-        cancellation.throwIfCancelled();
-        var keys = managedKeys.orElseThrow(() -> new PkiException("MANAGED_PUBLIC_KEY_SOURCE_REQUIRED"));
-        var primarySpki = keys.resolvePublicKeyInfo(request.primaryKeyRef());
-        var alternativeSpki = keys.resolvePublicKeyInfo(request.alternativeKeyRef());
-        var primary = IssuerBindingResolver.createKey(request.primaryKeyRef(), zeroecho.core.alg.BootstrapAlgorithmIdentities.ECDSA_SHA384,
-                primarySpki.bytes(), keys, signingAuthority);
-        var alternative = IssuerBindingResolver.createKey(request.alternativeKeyRef(), zeroecho.core.alg.BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE,
-                alternativeSpki.bytes(), keys, signingAuthority);
-        var primaryAlgorithm = zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(primarySpki.bytes());
-        if (!primaryAlgorithm.oid().equals("1.2.840.10045.2.1")
-                || !java.util.Arrays.equals(primaryAlgorithm.parameters(), java.util.HexFormat.of().parseHex("06052b81040022"))
-                || !alternative.publicKeyAlgorithm().equals(zeroecho.core.alg.BootstrapAlgorithmIdentities.ML_DSA_87_PUBLIC_KEY)) {
-            throw new PkiException("OCSP_RESPONDER_SUBJECT_SUITE_INVALID");
-        }
-        if (primary.subjectSpkiSha256().equals(alternative.subjectSpkiSha256())) throw new PkiException("OCSP_RESPONDER_KEYS_DIFFER");
-        var imported = store.getProfileVersion(request.intent().expectedProfile().profileId(), request.intent().expectedProfile().profileVersion())
-                .orElseThrow(() -> new PkiException("FROZEN_PROFILE_UNAVAILABLE"));
-        if (!imported.reference().equals(request.intent().expectedProfile()) || !imported.definition().isManagedOcspResponderProfile()) {
-            throw new PkiException("MANAGED_OCSP_PROFILE_REQUIRED");
-        }
-        var mode = (zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature) imported.definition().hybridMode();
-        var profileAlternative = keys.resolvePublicKeyInfo(new zeroecho.pki.api.KeyRef(mode.altKeyRef()));
-        if (!java.util.Arrays.equals(profileAlternative.bytes(), alternativeSpki.bytes())
-                || !signingAuthority.resolveIdentity(mode.altSignatureAlgorithmId()).equals(alternative.signatureAlgorithm())) {
-            throw new PkiException("OCSP_PROFILE_SUBJECT_BINDING_DIFFERS");
-        }
-        var generation = store.getIssuerGeneration(request.intent().expectedIssuerId()).orElseThrow();
-        var path = store.getIssuerChainPath(request.intent().expectedChainPathId()).orElseThrow();
-        if (!generation.authorityId().equals(request.authorityId()) || !path.authorityId().equals(request.authorityId())
-                || !path.issuerId().equals(generation.issuerId()) || !path.pathCommitment().equals(request.intent().expectedChainPathCommitment())) {
-            throw new PkiException("OCSP_ISSUER_SELECTION_DIFFERS");
-        }
-        for (var ca : store.listCas()) for (var issuer : store.listIssuerGenerations(ca.caId())) {
-            var binding = store.getIssuerCryptographicBinding(issuer.issuerId()).orElseThrow();
-            var roles = new java.util.ArrayList<zeroecho.pki.api.ca.IssuerKeyBinding>(); roles.add(binding.primary()); binding.alternative().ifPresent(roles::add);
-            for (var role : roles) if (java.util.Set.of(primary.subjectSpkiSha256(), alternative.subjectSpkiSha256()).contains(role.subjectSpkiSha256())
-                    || role.keyRef().equals(request.primaryKeyRef()) || role.keyRef().equals(request.alternativeKeyRef())) {
-                throw new PkiException("OCSP_CA_KEY_REUSE_FORBIDDEN");
-            }
-        }
-        String slot = zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity.coreSlotId(request.authorityId(), generation.issuerId(), primarySpki, alternativeSpki);
-        long revision = 1;
-        if (request.expectedPredecessorCredentialId().isPresent()) {
-            var predecessor = store.getCredential(request.expectedPredecessorCredentialId().orElseThrow()).orElseThrow();
-            String priorSlot = managedAttribute(predecessor, "urn:zeroecho:pki:ocsp-provision-core-slot:v1");
-            String priorRevision = managedAttribute(predecessor, "urn:zeroecho:pki:ocsp-provision-revision:v1");
-            if (!slot.equals(priorSlot) || !priorRevision.matches("[1-9][0-9]{0,18}")) throw new PkiException("OCSP_PREDECESSOR_SLOT_DIFFERS");
-            long previous = Long.parseLong(priorRevision);
-            requireManagedOcspPredecessor(predecessor, request.authorityId(), generation, slot, previous,
-                    primary.subjectSpkiSha256(), alternative.subjectSpkiSha256());
-            revision = Math.addExact(previous, 1);
-        }
-        var fields = new java.util.ArrayList<String>(java.util.List.of(request.authorityId().value(), generation.issuerId().value(), path.pathId().value(),
-                path.pathCommitment(), imported.reference().profileId(), Long.toString(imported.reference().profileVersion()),
-                java.util.HexFormat.of().formatHex(imported.reference().canonicalSha256()),
-                zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.encodeSubject(request.subject()),
-                request.validity().notBefore().toString(), request.validity().notAfter().toString(),
-                primary.publicKeyAlgorithm().canonicalForm(), primary.signatureAlgorithm().canonicalForm(), primary.subjectSpkiSha256(),
-                java.util.HexFormat.of().formatHex(primary.signatureAlgorithmIdentifier().bytes()),
-                alternative.publicKeyAlgorithm().canonicalForm(), alternative.signatureAlgorithm().canonicalForm(), alternative.subjectSpkiSha256(),
-                java.util.HexFormat.of().formatHex(alternative.signatureAlgorithmIdentifier().bytes()),
-                request.expectedPredecessorCredentialId().map(zeroecho.pki.api.PkiId::value).orElse("")));
-        String target = zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(
-                zeroecho.pki.impl.core.continuation.DomainCommandEncoding.template(zeroecho.pki.spi.store.DomainContinuationStore.Kind.ISSUANCE,
-                        "MANAGED_OCSP_PROVISION_TARGET_V1", fields.toArray(String[]::new)).command().bytes()).sha256();
-        String issuance = zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity.coreIssuanceId(slot, revision);
-        var intent = new IssuanceIntent(issuance, target, imported.reference(), generation.issuerId(), path.pathId(), path.pathCommitment());
-        return new ManagedOcspSelection(primarySpki, alternativeSpki, primary, alternative, slot, revision, intent);
+        return new ManagedOcspPreparation().managedOcspSelection(request, cancellation);
     }
 
     /**
@@ -588,100 +516,13 @@ final class EndEntityIssuancePreparation {
      * @throws PkiException if the frozen selection or responder policy is invalid
      */
     /* default */ Prepared prepareManagedOcsp(AccessContext access,
-            zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request, ManagedOcspSelection selected,
+            ManagedOcspResponderIssuanceRequest request, ManagedOcspSelection selected,
             CancellationSignal cancellation) throws IOException {
-        cancellation.throwIfCancelled();
-        var evaluation = status.beginEvaluation();
-        var ca = store.getCa(request.authorityId()).orElseThrow();
-        if (ca.state() != CaState.ACTIVE) throw new PkiException("ISSUER_CA_NOT_ACTIVE");
-        var generation = IssuerAuthorities.current(store, ca);
-        var path = IssuerAuthorities.issuancePath(store, ca);
-        requireSelectedIssuance(selected.intent(), generation, path);
-        var binding = IssuerBindingResolver.resolve(store, generation, managedKeys.orElseThrow(), signingAuthority);
-        if (binding.alternative().isEmpty()) throw new PkiException("OCSP_HYBRID_ISSUER_REQUIRED");
-        var issuer = store.getCredential(generation.credentialId()).orElseThrow();
-        requireConsistentIssuer(ca, generation, path, issuer);
-        evaluation.requireUsable(issuer, CredentialUse.END_ENTITY_ISSUER);
-        var profile = selectProfile(selected.intent().expectedProfile().profileId(), Optional.of(selected.intent()));
-        if (!profile.definition().isManagedOcspResponderProfile()) throw new PkiException("MANAGED_OCSP_PROFILE_REQUIRED");
-        var approved = CertificateProfileValidator.validateManagedOcsp(request, selected.primarySpki(), profile.profile(),
-                profile.reference(), issuer, evaluation.evaluationTime(), authority)
-                .withFrozenIssuance(generation.issuerId(), path.pathId(), path.pathCommitment(), Optional.of(selected.intent()));
-        var mode = (zeroecho.pki.api.hybrid.HybridCertificateMode.AltSignature) profile.definition().hybridMode();
-        if (!binding.alternative().orElseThrow().signatureAlgorithm().equals(authority.resolveIdentity(mode.altSignatureAlgorithmId()))) {
-            throw new PkiException("OCSP_ALTERNATIVE_ISSUER_ALGORITHM_DIFFERS");
-        }
-        byte[] issuerDer = CredentialContent.materializeForBc(store, issuer.content());
-        var certificate = Pkix.parseCertificate(issuerDer);
-        requireIssuerCertificate(certificate, issuer, evaluation.evaluationTime());
-        var signature = binding.primary().signatureAlgorithm();
-        X509SecurityFloor.requirePermitted(signature);
-        var algorithm = selectBinding(signature, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
-                approved.algorithmBindingPolicy().certificateSignature());
-        if (!java.util.Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm), binding.primary().signatureAlgorithmIdentifier().bytes())) {
-            throw new PkiException("OCSP_ISSUER_BINDING_DIFFERS");
-        }
-        requireRequestBinding(Pkix.subjectPublicKeyAlgorithm(selected.primarySpki().bytes()), X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY,
-                approved.algorithmBindingPolicy().subjectPublicKey());
-        cancellation.throwIfCancelled();
-        return new Prepared(access, approved, generation.signingKeyRef(), signature, algorithm, serialSource.get(),
-                evaluation.evaluationTime(), issuerDer, issuer.content(), binding, profile);
+        return new ManagedOcspPreparation().prepareManagedOcsp(access, request, selected, cancellation);
     }
 
     // Mutable inventory attributes alone cannot authorize another issuance revision.
-    private void requireManagedOcspPredecessor(zeroecho.pki.api.credential.Credential predecessor,
-            PkiId authorityId, IssuerGeneration issuer, String slot, long revision,
-            String primarySpki, String alternativeSpki) throws IOException {
-        String issuance = zeroecho.pki.api.issuance.ManagedOcspProvisioningIdentity.coreIssuanceId(slot, revision);
-        String correlation = CorrelatedIssuanceIdentity.correlationId(authorityId, issuance);
-        var retained = store.getDomainContinuation(zeroecho.pki.spi.store.DomainContinuationStore.Kind.ISSUANCE, correlation)
-                .orElseThrow(() -> new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID"));
-        var decoded = zeroecho.pki.impl.core.continuation.DomainContinuationValidation.validate(
-                new zeroecho.pki.impl.core.continuation.DomainContinuationTemplate(retained.kind(), retained.correlationId(),
-                        retained.command(), retained.commandCommitment()));
-        var command = zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.decode(retained.command());
-        byte[] der = CredentialContent.materializeForBc(store, predecessor.content());
-        var certificate = Pkix.parseCertificate(der);
-        var path = store.getIssuerChainPath(new PkiId(command.fields().get(4)))
-                .orElseThrow(() -> new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID"));
-        if (retained.state() != zeroecho.pki.spi.store.DomainContinuationStore.State.COMPLETED
-                || retained.correlationId().filter(correlation::equals).isEmpty()
-                || !decoded.operation().equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION)
-                || !command.fields().get(1).equals(authorityId.value()) || !command.fields().get(2).equals(issuer.issuerId().value())
-                || !command.fields().get(3).equals(issuer.credentialId().value()) || !command.fields().get(17).equals(issuance)
-                || !path.authorityId().equals(authorityId) || !path.issuerId().equals(issuer.issuerId())
-                || !path.pathCommitment().equals(command.fields().get(5))
-                || !predecessor.issuerRef().equals(new zeroecho.pki.api.IssuerRef(authorityId, issuer.issuerId(), path.pathId()))
-                || !(predecessor.profileBinding() instanceof zeroecho.pki.api.credential.EndEntityProfileBinding profile)
-                || !profile.reference().equals(command.profile())
-                || !command.subjectBinding(zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256().equals(primarySpki)
-                || !command.subjectBinding(zeroecho.pki.spi.store.SignWorkflowStore.SubjectKeyRole.ALTERNATIVE).subjectSpkiSha256().equals(alternativeSpki)
-                || !predecessor.credentialId().value().equals("x509:" + zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(der).sha256())
-                || !java.util.Arrays.equals(retained.result().orElseThrow().bytes(), der)
-                || !zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(Pkix.subjectPublicKeyInfo(certificate)).sha256().equals(primarySpki)
-                || !zeroecho.pki.spi.crypto.SigningProvider.ContentCommitment.sha256(
-                        zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72")).sha256().equals(alternativeSpki)) {
-            throw new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID");
-        }
-        var issuerCredential = store.getCredential(issuer.credentialId()).orElseThrow();
-        var issuerCertificate = Pkix.parseCertificate(CredentialContent.materializeForBc(store, issuerCredential.content()));
-        try {
-            certificate.verify(issuerCertificate.getPublicKey());
-            if (!Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(
-                    zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(issuerCertificate, "2.5.29.72")))) {
-                throw new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID");
-            }
-        } catch (java.security.GeneralSecurityException invalid) {
-            throw new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID", invalid);
-        }
-    }
-    private static String managedAttribute(zeroecho.pki.api.credential.Credential credential, String name) {
-        var values = credential.attributes().getAll(new zeroecho.pki.api.attr.AttributeId(name));
-        if (values.size() != 1 || !(values.getFirst() instanceof zeroecho.pki.api.attr.AttributeValue.StringValue value)) {
-            throw new PkiException("OCSP_PREDECESSOR_PROVENANCE_INVALID");
-        }
-        return value.value();
-    }
+
     /**
      * Frozen managed responder keys and exact authoritative issuance selection.
      *
@@ -694,7 +535,7 @@ final class EndEntityIssuancePreparation {
      * @param intent frozen effective issuance intent
      */
     /* default */ record ManagedOcspSelection(EncodedObject primarySpki, EncodedObject alternativeSpki,
-            zeroecho.pki.api.ca.IssuerKeyBinding primary, zeroecho.pki.api.ca.IssuerKeyBinding alternative,
+            IssuerKeyBinding primary, IssuerKeyBinding alternative,
             String coreSlotId, long revision, IssuanceIntent intent) { }
 
     /**
@@ -711,14 +552,6 @@ final class EndEntityIssuancePreparation {
      */
     /* default */ X509AuthoritySnapshot authority() { return signingAuthority; }
 
-    private static void requireSelectedIssuance(IssuanceIntent expected, IssuerGeneration generation, IssuerChainPath path) {
-        if (!expected.expectedIssuerId().equals(generation.issuerId())
-                || !expected.expectedChainPathId().equals(path.pathId())
-                || !expected.expectedChainPathCommitment().equals(path.pathCommitment())) {
-            throw new PkiException("Correlated issuance rejected: code=ISSUANCE_SELECTION_STALE");
-        }
-    }
-
     private ActiveCertificateProfile selectProfile(String profileId, Optional<IssuanceIntent> intent) {
         if (intent.isEmpty()) {
             return store.requireActiveProfile(profileId);
@@ -734,32 +567,6 @@ final class EndEntityIssuancePreparation {
             return new ActiveCertificateProfile(imported.reference(), imported.definition());
         } catch (IllegalArgumentException invalid) {
             throw new PkiException("Correlated issuance rejected: code=FROZEN_PROFILE_MISMATCH", invalid);
-        }
-    }
-
-    private static void requireConsistentIssuer(CaRecord ca, IssuerGeneration generation, IssuerChainPath path,
-            Credential credential) {
-        if (!generation.issuerId().equals(ca.currentIssuanceIssuerId())
-                || !path.pathId().equals(ca.issuanceChainPathId())
-                || !credential.credentialId().equals(generation.credentialId())
-                || !path.orderedCredentialIds().getFirst().equals(credential.credentialId())
-                || !ca.issuerKeyRef().equals(generation.signingKeyRef())
-                || !credential.subjectRef().equals(ca.subjectRef())
-                || !credential.formatId().equals(BcX509CredentialFramework.FORMAT_ID)
-                || !(credential.profileBinding() instanceof CaProfileBinding profile)
-                || !generation.profilePolicyCommitment().equals(java.util.HexFormat.of().formatHex(
-                        profile.reference().canonicalSha256()))) {
-            throw new PkiException("End-entity preparation rejected: code=ISSUER_BINDING_INCONSISTENT");
-        }
-    }
-
-    private static void requireIssuerCertificate(X509Certificate certificate, Credential issuer, Instant now) {
-        boolean[] usages = certificate.getKeyUsage();
-        if (certificate.getBasicConstraints() < 0 || usages == null || usages.length <= 5 || !usages[5]
-                || !certificate.getNotBefore().toInstant().equals(issuer.validity().notBefore())
-                || !certificate.getNotAfter().toInstant().equals(issuer.validity().notAfter())
-                || now.isBefore(certificate.getNotBefore().toInstant()) || !now.isBefore(certificate.getNotAfter().toInstant())) {
-            throw new PkiException("End-entity preparation rejected: code=ISSUER_CERTIFICATE_UNUSABLE");
         }
     }
 
@@ -790,7 +597,7 @@ final class EndEntityIssuancePreparation {
     /* default */ record Prepared(AccessContext access, ValidatedCertificateRequest request, KeyRef keyRef,
             AlgorithmIdentity signature, AlgorithmIdentifier signatureBinding, BigInteger serial,
             Instant evaluationTime, byte[] issuerDer, DurableContentReference issuerContent,
-            zeroecho.pki.api.ca.IssuerCryptographicBinding issuerBinding, ActiveCertificateProfile profile) {
+            IssuerCryptographicBinding issuerBinding, ActiveCertificateProfile profile) {
         /**
          * Retains frozen issuance inputs and takes a defensive copy of issuer certificate DER.
          *
@@ -818,5 +625,201 @@ final class EndEntityIssuancePreparation {
          * {@inheritDoc}
          */
         @Override public String toString() { return "PreparedEndEntityIssuance[redacted]"; }
+    }
+
+    /** Validates the frozen managed-responder selection and predecessor evidence. */
+    private final class ManagedOcspPreparation {
+        private ManagedOcspSelection managedOcspSelection(ManagedOcspResponderIssuanceRequest request,
+                CancellationSignal cancellation) throws IOException {
+            cancellation.throwIfCancelled();
+            PublicKeyInfoSource keys = managedKeys.orElseThrow(() -> new PkiException("MANAGED_PUBLIC_KEY_SOURCE_REQUIRED"));
+            EncodedObject primarySpki = keys.resolvePublicKeyInfo(request.primaryKeyRef());
+            EncodedObject alternativeSpki = keys.resolvePublicKeyInfo(request.alternativeKeyRef());
+            IssuerKeyBinding primary = IssuerBindingResolver.createKey(request.primaryKeyRef(), BootstrapAlgorithmIdentities.ECDSA_SHA384,
+                    primarySpki.bytes(), keys, signingAuthority);
+            IssuerKeyBinding alternative = IssuerBindingResolver.createKey(request.alternativeKeyRef(), BootstrapAlgorithmIdentities.ML_DSA_87_SIGNATURE,
+                    alternativeSpki.bytes(), keys, signingAuthority);
+            AlgorithmIdentifier primaryAlgorithm = Pkix.subjectPublicKeyAlgorithm(primarySpki.bytes());
+            if (!"1.2.840.10045.2.1".equals(primaryAlgorithm.oid())
+                    || !Arrays.equals(primaryAlgorithm.parameters(), HexFormat.of().parseHex("06052b81040022"))
+                    || !BootstrapAlgorithmIdentities.ML_DSA_87_PUBLIC_KEY.equals(alternative.publicKeyAlgorithm())) {
+                throw new PkiException("OCSP_RESPONDER_SUBJECT_SUITE_INVALID");
+            }
+            if (primary.subjectSpkiSha256().equals(alternative.subjectSpkiSha256())) { throw new PkiException("OCSP_RESPONDER_KEYS_DIFFER"); }
+            ImportedCertificateProfileVersion imported = store.getProfileVersion(request.intent().expectedProfile().profileId(), request.intent().expectedProfile().profileVersion())
+                    .orElseThrow(() -> new PkiException("FROZEN_PROFILE_UNAVAILABLE"));
+            if (!imported.reference().equals(request.intent().expectedProfile()) || !imported.definition().isManagedOcspResponderProfile()) {
+                throw new PkiException("MANAGED_OCSP_PROFILE_REQUIRED");
+            }
+            HybridCertificateMode.AltSignature mode = (HybridCertificateMode.AltSignature) imported.definition().hybridMode();
+            EncodedObject profileAlternative = keys.resolvePublicKeyInfo(new KeyRef(mode.altKeyRef()));
+            if (!Arrays.equals(profileAlternative.bytes(), alternativeSpki.bytes())
+                    || !signingAuthority.resolveIdentity(mode.altSignatureAlgorithmId()).equals(alternative.signatureAlgorithm())) {
+                throw new PkiException("OCSP_PROFILE_SUBJECT_BINDING_DIFFERS");
+            }
+            IssuerGeneration generation = store.getIssuerGeneration(request.intent().expectedIssuerId()).orElseThrow();
+            IssuerChainPath path = store.getIssuerChainPath(request.intent().expectedChainPathId()).orElseThrow();
+            requireSelectedIssuer(request, generation, path);
+            requireUnusedCaKeys(request, primary, alternative);
+        String slot = ManagedOcspProvisioningIdentity.coreSlotId(request.authorityId(), generation.issuerId(), primarySpki, alternativeSpki);
+            long revision = 1;
+            if (request.expectedPredecessorCredentialId().isPresent()) {
+                Credential predecessor = store.getCredential(request.expectedPredecessorCredentialId().orElseThrow()).orElseThrow();
+                String priorSlot = EndEntityIssuerBinding.managedAttribute(predecessor, "urn:zeroecho:pki:ocsp-provision-core-slot:v1");
+                String priorRevision = EndEntityIssuerBinding.managedAttribute(predecessor, "urn:zeroecho:pki:ocsp-provision-revision:v1");
+                if (!slot.equals(priorSlot) || !priorRevision.matches("[1-9][0-9]{0,18}")) { throw new PkiException("OCSP_PREDECESSOR_SLOT_DIFFERS"); }
+                long previous = Long.parseLong(priorRevision);
+                requireManagedOcspPredecessor(predecessor, request.authorityId(), generation, slot, previous,
+                        primary.subjectSpkiSha256(), alternative.subjectSpkiSha256());
+                revision = Math.addExact(previous, 1);
+            }
+            List<String> fields = new ArrayList<>(List.of(request.authorityId().value(), generation.issuerId().value(), path.pathId().value(),
+                    path.pathCommitment(), imported.reference().profileId(), Long.toString(imported.reference().profileVersion()),
+                    HexFormat.of().formatHex(imported.reference().canonicalSha256()),
+                    OcspResponderCertificateCommand.encodeSubject(request.subject()),
+                    request.validity().notBefore().toString(), request.validity().notAfter().toString(),
+                    primary.publicKeyAlgorithm().canonicalForm(), primary.signatureAlgorithm().canonicalForm(), primary.subjectSpkiSha256(),
+                    HexFormat.of().formatHex(primary.signatureAlgorithmIdentifier().bytes()),
+                    alternative.publicKeyAlgorithm().canonicalForm(), alternative.signatureAlgorithm().canonicalForm(), alternative.subjectSpkiSha256(),
+                    HexFormat.of().formatHex(alternative.signatureAlgorithmIdentifier().bytes()),
+                    request.expectedPredecessorCredentialId().map(PkiId::value).orElse("")));
+            String target = SigningProvider.ContentCommitment.sha256(
+                    DomainCommandEncoding.template(DomainContinuationStore.Kind.ISSUANCE,
+                            "MANAGED_OCSP_PROVISION_TARGET_V1", fields.toArray(String[]::new)).command().bytes()).sha256();
+            String issuance = ManagedOcspProvisioningIdentity.coreIssuanceId(slot, revision);
+            IssuanceIntent intent = new IssuanceIntent(issuance, target, imported.reference(), generation.issuerId(), path.pathId(), path.pathCommitment());
+            return new ManagedOcspSelection(primarySpki, alternativeSpki, primary, alternative, slot, revision, intent);
+        }
+
+        private Prepared prepareManagedOcsp(AccessContext access,
+                ManagedOcspResponderIssuanceRequest request, ManagedOcspSelection selected,
+                CancellationSignal cancellation) throws IOException {
+            cancellation.throwIfCancelled();
+            EffectiveCredentialStatusResolver.Evaluation evaluation = status.beginEvaluation();
+            CaRecord ca = store.getCa(request.authorityId()).orElseThrow();
+            if (ca.state() != CaState.ACTIVE) { throw new PkiException("ISSUER_CA_NOT_ACTIVE"); }
+            IssuerGeneration generation = IssuerAuthorities.current(store, ca);
+            IssuerChainPath path = IssuerAuthorities.issuancePath(store, ca);
+            EndEntityIssuerBinding.requireSelectedIssuance(selected.intent(), generation, path);
+            IssuerCryptographicBinding binding = IssuerBindingResolver.resolve(store, generation, managedKeys.orElseThrow(), signingAuthority);
+            if (binding.alternative().isEmpty()) { throw new PkiException("OCSP_HYBRID_ISSUER_REQUIRED"); }
+            Credential issuer = store.getCredential(generation.credentialId()).orElseThrow();
+            EndEntityIssuerBinding.requireConsistentIssuer(ca, generation, path, issuer);
+            evaluation.requireUsable(issuer, CredentialUse.END_ENTITY_ISSUER);
+            ActiveCertificateProfile profile = selectProfile(selected.intent().expectedProfile().profileId(), Optional.of(selected.intent()));
+            if (!profile.definition().isManagedOcspResponderProfile()) { throw new PkiException("MANAGED_OCSP_PROFILE_REQUIRED"); }
+            ValidatedCertificateRequest approved = CertificateProfileValidator.validateManagedOcsp(request, selected.primarySpki(), profile.profile(),
+                    profile.reference(), issuer, evaluation.evaluationTime(), authority)
+                    .withFrozenIssuance(generation.issuerId(), path.pathId(), path.pathCommitment(), Optional.of(selected.intent()));
+            HybridCertificateMode.AltSignature mode = (HybridCertificateMode.AltSignature) profile.definition().hybridMode();
+            if (!binding.alternative().orElseThrow().signatureAlgorithm().equals(authority.resolveIdentity(mode.altSignatureAlgorithmId()))) {
+                throw new PkiException("OCSP_ALTERNATIVE_ISSUER_ALGORITHM_DIFFERS");
+            }
+            byte[] issuerDer = CredentialContent.materializeForBc(store, issuer.content());
+            X509Certificate certificate = Pkix.parseCertificate(issuerDer);
+            EndEntityIssuerBinding.requireIssuerCertificate(certificate, issuer, evaluation.evaluationTime());
+            AlgorithmIdentity signature = binding.primary().signatureAlgorithm();
+            X509SecurityFloor.requirePermitted(signature);
+            AlgorithmIdentifier algorithm = selectBinding(signature, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
+                    approved.algorithmBindingPolicy().certificateSignature());
+            if (!Arrays.equals(Pkix.encodeAlgorithmIdentifier(algorithm), binding.primary().signatureAlgorithmIdentifier().bytes())) {
+                throw new PkiException("OCSP_ISSUER_BINDING_DIFFERS");
+            }
+            requireRequestBinding(Pkix.subjectPublicKeyAlgorithm(selected.primarySpki().bytes()), X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY,
+                    approved.algorithmBindingPolicy().subjectPublicKey());
+            cancellation.throwIfCancelled();
+            return new Prepared(access, approved, generation.signingKeyRef(), signature, algorithm, serialSource.get(),
+                    evaluation.evaluationTime(), issuerDer, issuer.content(), binding, profile);
+        }
+
+        private void requireManagedOcspPredecessor(Credential predecessor,
+                PkiId authorityId, IssuerGeneration issuer, String slot, long revision,
+                String primarySpki, String alternativeSpki) throws IOException {
+            String issuance = ManagedOcspProvisioningIdentity.coreIssuanceId(slot, revision);
+            String correlation = CorrelatedIssuanceIdentity.correlationId(authorityId, issuance);
+            DomainContinuationStore.Record retained = store.getDomainContinuation(DomainContinuationStore.Kind.ISSUANCE, correlation)
+                    .orElseThrow(() -> new PkiException(OCSP_PREDECESSOR_INVALID));
+            DomainCommandEncoding.Decoded decoded = DomainContinuationValidation.validate(
+                    new DomainContinuationTemplate(retained.kind(), retained.correlationId(),
+                            retained.command(), retained.commandCommitment()));
+            OcspResponderCertificateCommand command = OcspResponderCertificateCommand.decode(retained.command());
+            byte[] der = CredentialContent.materializeForBc(store, predecessor.content());
+            X509Certificate certificate = Pkix.parseCertificate(der);
+            IssuerChainPath path = store.getIssuerChainPath(new PkiId(command.fields().get(4)))
+                    .orElseThrow(() -> new PkiException(OCSP_PREDECESSOR_INVALID));
+            requirePredecessorCommand(retained, correlation, decoded, command, authorityId, issuer, issuance, path, predecessor);
+        requirePredecessorCertificate(predecessor, command, primarySpki, alternativeSpki, der, retained, certificate);
+            Credential issuerCredential = store.getCredential(issuer.credentialId()).orElseThrow();
+            X509Certificate issuerCertificate = Pkix.parseCertificate(CredentialContent.materializeForBc(store, issuerCredential.content()));
+            try {
+                certificate.verify(issuerCertificate.getPublicKey());
+                if (!Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(
+                        AltSignatureExtensions.requiredValue(issuerCertificate, X509ExtensionOids.subjectAltPublicKeyInfo())))) {
+                    throw new PkiException(OCSP_PREDECESSOR_INVALID);
+                }
+            } catch (GeneralSecurityException invalid) {
+                throw new PkiException(OCSP_PREDECESSOR_INVALID, invalid);
+            }
+        }
+
+
+        private void requireUnusedCaKeys(ManagedOcspResponderIssuanceRequest request,
+                IssuerKeyBinding primary, IssuerKeyBinding alternative) {
+            for (CaRecord ca : store.listCas()) {
+                for (IssuerGeneration issuer : store.listIssuerGenerations(ca.caId())) {
+                    IssuerCryptographicBinding binding = store.getIssuerCryptographicBinding(issuer.issuerId()).orElseThrow();
+                    requireDistinctRole(request, primary, alternative, binding.primary());
+                    binding.alternative().ifPresent(role -> requireDistinctRole(request, primary, alternative, role));
+                }
+            }
+        }
+
+        private static void requireDistinctRole(ManagedOcspResponderIssuanceRequest request,
+                IssuerKeyBinding primary, IssuerKeyBinding alternative, IssuerKeyBinding role) {
+            if (Set.of(primary.subjectSpkiSha256(), alternative.subjectSpkiSha256()).contains(role.subjectSpkiSha256())
+                    || role.keyRef().equals(request.primaryKeyRef()) || role.keyRef().equals(request.alternativeKeyRef())) {
+                throw new PkiException("OCSP_CA_KEY_REUSE_FORBIDDEN");
+            }
+        }
+
+        private static void requireSelectedIssuer(ManagedOcspResponderIssuanceRequest request,
+                IssuerGeneration generation, IssuerChainPath path) {
+        if (!generation.authorityId().equals(request.authorityId()) || !path.authorityId().equals(request.authorityId())
+                    || !path.issuerId().equals(generation.issuerId()) || !path.pathCommitment().equals(request.intent().expectedChainPathCommitment())) {
+                throw new PkiException("OCSP_ISSUER_SELECTION_DIFFERS");
+            }
+        }
+
+        private static void requirePredecessorCommand(DomainContinuationStore.Record retained, String correlation,
+                DomainCommandEncoding.Decoded decoded, OcspResponderCertificateCommand command, PkiId authorityId,
+                IssuerGeneration issuer, String issuance, IssuerChainPath path, Credential predecessor) {
+            if (retained.state() != DomainContinuationStore.State.COMPLETED
+                    || retained.correlationId().filter(correlation::equals).isEmpty()
+                    || !OcspResponderCertificateCommand.OPERATION.equals(decoded.operation())
+                    || !command.fields().get(1).equals(authorityId.value()) || !command.fields().get(2).equals(issuer.issuerId().value())
+                    || !command.fields().get(3).equals(issuer.credentialId().value()) || !command.fields().get(17).equals(issuance)
+                    || !path.authorityId().equals(authorityId) || !path.issuerId().equals(issuer.issuerId())
+                    || !path.pathCommitment().equals(command.fields().get(5))
+                    || !predecessor.issuerRef().equals(new IssuerRef(authorityId, issuer.issuerId(), path.pathId()))) {
+                throw new PkiException(OCSP_PREDECESSOR_INVALID);
+            }
+        }
+
+        private static void requirePredecessorCertificate(Credential predecessor, OcspResponderCertificateCommand command,
+                String primarySpki, String alternativeSpki, byte[] der, DomainContinuationStore.Record retained,
+                X509Certificate certificate) throws IOException {
+            if (!(predecessor.profileBinding() instanceof EndEntityProfileBinding profile)
+                    || !profile.reference().equals(command.profile())
+                    || !command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256().equals(primarySpki)
+                    || !command.subjectBinding(SignWorkflowStore.SubjectKeyRole.ALTERNATIVE).subjectSpkiSha256().equals(alternativeSpki)
+                    || !predecessor.credentialId().value().equals("x509:" + SigningProvider.ContentCommitment.sha256(der).sha256())
+                    || !Arrays.equals(retained.result().orElseThrow().bytes(), der)
+                    || !SigningProvider.ContentCommitment.sha256(Pkix.subjectPublicKeyInfo(certificate)).sha256().equals(primarySpki)
+                    || !SigningProvider.ContentCommitment.sha256(
+                            AltSignatureExtensions.requiredValue(certificate, X509ExtensionOids.subjectAltPublicKeyInfo())).sha256().equals(alternativeSpki)) {
+                throw new PkiException(OCSP_PREDECESSOR_INVALID);
+            }
+        }
+
     }
 }

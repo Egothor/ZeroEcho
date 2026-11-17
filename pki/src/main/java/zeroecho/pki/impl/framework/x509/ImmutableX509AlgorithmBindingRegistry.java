@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -44,10 +48,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
-import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 
 /**
  * Package-owned immutable registry implementation used by session bootstrap.
@@ -103,9 +103,11 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
      * @param bindings complete explicitly selected binding set
      * @return immutable registry
      * @throws NullPointerException if {@code bindings} or a binding entry is null
-     * @throws IllegalArgumentException if a ZeroEcho-private binding is outside its frozen branch or a standard binding uses the Egothor PEN
+     * @throws IllegalArgumentException if a ZeroEcho-private binding is outside its frozen branch
+     *     or a standard binding uses the Egothor PEN
      */
-    public static ImmutableX509AlgorithmBindingRegistry create(List<X509AlgorithmBinding> bindings) {
+    public static ImmutableX509AlgorithmBindingRegistry create(
+            List<X509AlgorithmBinding> bindings) {
         Objects.requireNonNull(bindings, "bindings");
         List<X509AlgorithmBinding> ordered = new ArrayList<>(bindings);
         ordered.sort(Comparator.comparing(X509AlgorithmBinding::bindingId));
@@ -113,11 +115,13 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
             Objects.requireNonNull(binding, "binding");
             if (binding.origin() == X509AlgorithmBinding.Origin.ZEROECHO_PRIVATE
                     && !isWithin(binding.oid(), ZEROECHO_ASSIGNMENT_ROOT)) {
-                throw new IllegalArgumentException("ZeroEcho binding is outside the frozen assignment branch");
+                throw new IllegalArgumentException(
+                        "ZeroEcho binding is outside the frozen assignment branch");
             }
             if (binding.origin() == X509AlgorithmBinding.Origin.STANDARD
                     && isWithin(binding.oid(), EGOTHOR_PEN)) {
-                throw new IllegalArgumentException("Standard binding cannot use the Egothor private namespace");
+                throw new IllegalArgumentException(
+                        "Standard binding cannot use the Egothor private namespace");
             }
         }
         return new ImmutableX509AlgorithmBindingRegistry(List.copyOf(ordered));
@@ -177,7 +181,8 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
     public X509AlgorithmBinding require(String bindingId, String expectedCommitment) {
         X509AlgorithmBinding binding = find(bindingId)
                 .orElseThrow(() -> new IllegalArgumentException("X.509 binding is not active"));
-        if (!binding.semanticCommitment().equals(Objects.requireNonNull(expectedCommitment, "expectedCommitment"))) {
+        if (!binding.semanticCommitment()
+                .equals(Objects.requireNonNull(expectedCommitment, "expectedCommitment"))) {
             throw new IllegalArgumentException("X.509 binding contract has changed");
         }
         return binding;
@@ -190,12 +195,29 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
     private static String digest(List<X509AlgorithmBinding> bindings) {
         StringBuilder semantic = new StringBuilder();
         for (X509AlgorithmBinding binding : bindings) {
-            semantic.append(binding.bindingId()).append('|').append(binding.algorithmIdentity().canonicalForm())
-                    .append('|').append(binding.role()).append('|').append(binding.oid()).append('|')
-                    .append(binding.origin()).append('|').append(binding.encodingVersion()).append('|')
-                    .append(binding.parameterRule()).append('|').append(binding.publicKeyEncoding()).append('|')
-                    .append(binding.signatureEncoding()).append('|').append(binding.interoperability()).append('|')
-                    .append(binding.providerId().orElse("")).append('|').append(binding.semanticCommitment())
+            semantic.append(binding.bindingId())
+                    .append('|')
+                    .append(binding.algorithmIdentity().canonicalForm())
+                    .append('|')
+                    .append(binding.role())
+                    .append('|')
+                    .append(binding.oid())
+                    .append('|')
+                    .append(binding.origin())
+                    .append('|')
+                    .append(binding.encodingVersion())
+                    .append('|')
+                    .append(binding.parameterRule())
+                    .append('|')
+                    .append(binding.publicKeyEncoding())
+                    .append('|')
+                    .append(binding.signatureEncoding())
+                    .append('|')
+                    .append(binding.interoperability())
+                    .append('|')
+                    .append(binding.providerId().orElse(""))
+                    .append('|')
+                    .append(binding.semanticCommitment())
                     .append('\n');
         }
         try {

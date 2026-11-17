@@ -33,6 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.security.NoSuchAlgorithmException;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.request.ProofOfPossessionStatus;
+import zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.cmp.CrmfRequest;
+
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
@@ -147,7 +157,7 @@ public final class DefaultCertificationRequestService implements CertificationRe
                 throw new IllegalArgumentException("Renewal predecessor is invalid");
             }
             requireSameRenewalIdentity(expected, original);
-        } catch (java.security.NoSuchAlgorithmException failure) {
+        } catch (NoSuchAlgorithmException failure) {
             throw new PkiException("Renewal predecessor cannot be validated"); // NOPMD PreserveStackTrace - This trust boundary exposes a fixed failure without provider, key, request or persisted-payload diagnostics.
         }
     }
@@ -191,7 +201,7 @@ public final class DefaultCertificationRequestService implements CertificationRe
      * @throws NullPointerException if store, framework is null
      */
     public DefaultCertificationRequestService(PkiStore store, BcX509CredentialFramework framework,
-            zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry bindings) {
+            X509AlgorithmBindingRegistry bindings) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.bindingMatcher = Optional.of(new X509ProfileBindingMatcher(framework.authority(), bindings));
@@ -200,10 +210,10 @@ public final class DefaultCertificationRequestService implements CertificationRe
     /**
      * {@inheritDoc}
      */
-    @Override public void requireProfileProof(ParsedCertificationRequest parsed, zeroecho.pki.api.profile.CertificateProfileRef profile) {
+    @Override public void requireProfileProof(ParsedCertificationRequest parsed, CertificateProfileRef profile) {
         Objects.requireNonNull(profile, "profile");
         X509ProfileBindingMatcher matcher = bindingMatcher.orElseThrow(() -> new IllegalStateException("Profile proof validation is not configured"));
-        zeroecho.pki.api.profile.ImportedCertificateProfileVersion imported = store.getProfileVersion(profile.profileId(), profile.profileVersion())
+        ImportedCertificateProfileVersion imported = store.getProfileVersion(profile.profileId(), profile.profileVersion())
                 .orElseThrow(() -> new IllegalArgumentException("Frozen request profile is unavailable"));
         if (!profile.equals(imported.reference()) || !imported.definition().formatId().equals(BcX509CredentialFramework.FORMAT_ID)) {
             throw new IllegalArgumentException("Frozen request profile is inconsistent");
@@ -211,14 +221,14 @@ public final class DefaultCertificationRequestService implements CertificationRe
         X509EnrollmentPayload payload = encodedX509Request(parsed);
         ParsedCertificationRequest original = parseX509(payload);
         if (verifyProofOfPossession(original, new VerificationPolicy(true, Optional.empty())).status()
-                != zeroecho.pki.api.request.ProofOfPossessionStatus.VERIFIED) {
+                != ProofOfPossessionStatus.VERIFIED) {
             throw new IllegalArgumentException("Request proof is invalid");
         }
         try {
-            zeroecho.pkix.AlgorithmIdentifier signature = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
+            AlgorithmIdentifier signature = payload.kind() == X509EnrollmentPayload.Kind.PKCS10
                     ? Pkix.parseCertificationRequest(payload.der()).signatureAlgorithm()
-                    : zeroecho.pkix.cmp.CrmfRequest.parse(payload.der()).signatureAlgorithm();
-            matcher.require(signature, zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.CSR_SIGNATURE,
+                    : CrmfRequest.parse(payload.der()).signatureAlgorithm();
+            matcher.require(signature, X509AlgorithmBinding.Role.CSR_SIGNATURE,
                     imported.definition().algorithmBindingPolicy().csrSignature());
         } catch (IllegalArgumentException failure) {
             throw new IllegalArgumentException("Request proof binding differs from frozen profile"); // NOPMD PreserveStackTrace, AvoidThrowingNewInstanceOfSameException - Expose the policy rejection without retaining request or provider diagnostics.
@@ -298,7 +308,7 @@ public final class DefaultCertificationRequestService implements CertificationRe
      */
     @Override
     public X509EnrollmentPayload encodedX509Request(ParsedCertificationRequest parsed) {
-        return zeroecho.pki.impl.framework.x509.bc.BcX509RequestPayloads.extract(parsed);
+        return BcX509RequestPayloads.extract(parsed);
     }
 
     /**

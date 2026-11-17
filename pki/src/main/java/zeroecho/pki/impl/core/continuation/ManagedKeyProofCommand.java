@@ -34,11 +34,6 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.IOException;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -54,6 +49,12 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pkix.Pkix;
+
+import java.io.IOException;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Frozen managed-key proof authorization prefix. Fields 0 through 5 are purpose,
@@ -102,15 +103,30 @@ public final class ManagedKeyProofCommand {
      */
     public static List<String> prefix(ManagedKeyProofRequest request) {
         return switch (Objects.requireNonNull(request, "request")) {
-            case ManagedKeyProofRequest.CaSubject ca -> List.of(ManagedKeyProofPurpose.CA_SUBJECT_KEY.name(),
-                    ca.issuerAuthorityId().value(), ca.subjectAuthorityId().map(PkiId::value).orElse(""),
-                    ca.profileId(), "", ca.keyRef().value());
-            case ManagedKeyProofRequest.OcspResponderCandidate candidate -> List.of(ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY.name(),
-                    candidate.authorityId().value(), OcspResponderProofTargetCodec.encode(candidate.target()),
-                    OcspResponderProofTargetCodec.profile(candidate.profileRef()), "", candidate.keyRef().value());
-            case ManagedKeyProofRequest.OcspResponder responder -> List.of(ManagedKeyProofPurpose.OCSP_RESPONDER_KEY.name(),
-                    responder.authorityId().value(), "", "", responder.responderCredentialId().value(),
-                    responder.keyRef().value());
+            case ManagedKeyProofRequest.CaSubject ca ->
+                    List.of(
+                            ManagedKeyProofPurpose.CA_SUBJECT_KEY.name(),
+                            ca.issuerAuthorityId().value(),
+                            ca.subjectAuthorityId().map(PkiId::value).orElse(""),
+                            ca.profileId(),
+                            "",
+                            ca.keyRef().value());
+            case ManagedKeyProofRequest.OcspResponderCandidate candidate ->
+                    List.of(
+                            ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY.name(),
+                            candidate.authorityId().value(),
+                            OcspResponderProofTargetCodec.encode(candidate.target()),
+                            OcspResponderProofTargetCodec.profile(candidate.profileRef()),
+                            "",
+                            candidate.keyRef().value());
+            case ManagedKeyProofRequest.OcspResponder responder ->
+                    List.of(
+                            ManagedKeyProofPurpose.OCSP_RESPONDER_KEY.name(),
+                            responder.authorityId().value(),
+                            "",
+                            "",
+                            responder.responderCredentialId().value(),
+                            responder.keyRef().value());
         };
     }
 
@@ -141,7 +157,9 @@ public final class ManagedKeyProofCommand {
                     new PkiId(command.field(4)), new KeyRef(command.field(5)));
         }
         if (ManagedKeyProofPurpose.OCSP_RESPONDER_CANDIDATE_KEY.name().equals(purpose)) {
-            if (!command.field(4).isEmpty()) throw invalid();
+            if (!command.field(4).isEmpty()) {
+                throw invalid();
+            }
             return new ManagedKeyProofRequest.OcspResponderCandidate(new PkiId(command.field(1)),
                     OcspResponderProofTargetCodec.profile(command.field(3)), new KeyRef(command.field(5)),
                     OcspResponderProofTargetCodec.decode(command.field(2)));
@@ -240,7 +258,8 @@ public final class ManagedKeyProofCommand {
                 throw invalid();
             }
         } catch (IOException malformed) {
-            throw new IllegalArgumentException("Managed key proof algorithm encoding is invalid", malformed);
+            throw new IllegalArgumentException(
+                    "Managed key proof algorithm encoding is invalid", malformed);
         }
     }
 
@@ -258,7 +277,8 @@ public final class ManagedKeyProofCommand {
             X509AuthoritySnapshot authority) {
         validateMetadata(command);
         String canonical = command.field(8);
-        AlgorithmIdentity identity = Objects.requireNonNull(authority, "authority").resolveIdentity(canonical);
+        AlgorithmIdentity identity =
+                Objects.requireNonNull(authority, "authority").resolveIdentity(canonical);
         if (!identity.canonicalForm().equals(canonical) || identity.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
             throw invalid();
         }

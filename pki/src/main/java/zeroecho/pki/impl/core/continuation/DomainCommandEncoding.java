@@ -33,20 +33,20 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
-import java.io.DataInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Optional;
-
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.spi.store.DomainContinuationStore;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Strict length-framed encoding for frozen outer-operation command fields.
@@ -59,8 +59,9 @@ public final class DomainCommandEncoding {
     private DomainCommandEncoding() { }
 
     /**
-     * Derives the immutable authority identity for an internal root creation.
-     * The identity is frozen before acceptance and does not depend on a signature.
+     * Derives the immutable authority identity for an internal root creation. The identity is
+     * frozen before acceptance and does not depend on a signature.
+     *
      * @param operationId exact signing submission identifier
      * @return domain-separated deterministic root authority identity
      * @throws IllegalStateException if the runtime does not provide SHA-256
@@ -70,8 +71,14 @@ public final class DomainCommandEncoding {
         try {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             digest.update("zeroecho:pki:root-authority:v1\0".getBytes(StandardCharsets.US_ASCII));
-            return new zeroecho.pki.api.PkiId("ca:" + java.util.HexFormat.of().formatHex(
-                    digest.digest(operationId.value().getBytes(StandardCharsets.UTF_8))));
+            return new zeroecho.pki.api.PkiId(
+                    "ca:"
+                            + java.util.HexFormat.of()
+                                    .formatHex(
+                                            digest.digest(
+                                                    operationId
+                                                            .value()
+                                                            .getBytes(StandardCharsets.UTF_8))));
         } catch (java.security.NoSuchAlgorithmException unavailable) {
             throw new IllegalStateException("SHA-256 unavailable", unavailable);
         }

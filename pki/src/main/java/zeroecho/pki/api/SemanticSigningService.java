@@ -77,7 +77,13 @@ import zeroecho.pki.application.IssuanceExecutionEvidence;
  * intentionally exposes no generic candidate or encoded-command preparation.
  * Implementations retain no per-operation runtime handle.</p>
  */
+// The established public operation contract must retain its complete callable surface.
+@SuppressWarnings({"PMD.TooManyMethods", "PMD.ExcessivePublicCount"})
 public interface SemanticSigningService {
+    private static String pureInputValidationUnavailable() {
+        return "Pure input validation unavailable";
+    }
+
     /**
      * Returns the configured canonical signature default used for CA creation.
      *
@@ -134,7 +140,7 @@ public interface SemanticSigningService {
      */
     default void validateIntermediateIssuance(AccessContext access, zeroecho.pki.api.ca.IntermediateCertIssueCommand command,
             CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -152,7 +158,7 @@ public interface SemanticSigningService {
      */
     default void validateCaRollover(AccessContext access, zeroecho.pki.api.ca.CaRolloverCommand command,
             CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -170,7 +176,7 @@ public interface SemanticSigningService {
      */
     default void validateCaKeyRotation(AccessContext access, zeroecho.pki.api.ca.CaKeyRotationCommand command,
             CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -188,9 +194,9 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
      */
-    default void validateEndEntity(AccessContext access, zeroecho.pki.api.issuance.EndEntityIssuanceRequest command,
+    default void validateEndEntity(AccessContext access, EndEntityIssuanceRequest command,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -208,9 +214,9 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
      */
-    default void validateRenewal(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest command,
+    default void validateRenewal(AccessContext access, EndEntityRenewalRequest command,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -228,9 +234,9 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
      */
-    default void validateReplacement(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest command,
+    default void validateReplacement(AccessContext access, EndEntityReplacementRequest command,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -248,9 +254,9 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if pure validation is unavailable
      * @throws RuntimeException if input or authoritative state is invalid
      */
-    default void validateReissue(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest command,
+    default void validateReissue(AccessContext access, EndEntityReissueRequest command,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
-        throw new UnsupportedOperationException("Pure input validation unavailable");
+        throw new UnsupportedOperationException(pureInputValidationUnavailable());
     }
 
     /**
@@ -524,7 +530,7 @@ public interface SemanticSigningService {
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
             EndEntityIssuanceRequest request, zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
-            Optional<zeroecho.pki.api.Validity> frozenValidity, CancellationSignal cancellation) {
+            Optional<Validity> frozenValidity, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK preview unavailable");
     }
 
@@ -571,8 +577,8 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
-    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, EndEntityRenewalRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
     }
@@ -595,7 +601,7 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
-    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityRenewalRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
@@ -617,8 +623,8 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
-    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, EndEntityReissueRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
     }
@@ -640,7 +646,7 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
-    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityReissueRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
@@ -662,8 +668,8 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if predecessor, subject keys, policy or frozen selection is invalid
      */
-    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
-            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<zeroecho.pki.api.Validity> frozenValidity,
+    default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access, EndEntityReplacementRequest request,
+            zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, Optional<Validity> frozenValidity,
             CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preview unavailable");
     }
@@ -686,7 +692,7 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if SDK lifecycle is unavailable
      * @throws PkiException if proof, predecessor, target, policy, staging or cancellation validation fails
      */
-    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+    default PreparedSemanticSigningRequest prepareSdk(AccessContext access, EndEntityReplacementRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed, zeroecho.pki.api.hybrid.sdk.SdkIssuanceApproval approval,
             Optional<IssuanceExecutionEvidence> evidence, CancellationSignal cancellation) {
         throw new UnsupportedOperationException("SDK lifecycle preparation unavailable");
@@ -737,7 +743,8 @@ public interface SemanticSigningService {
      * acceptance or correlation reservation occurs. Concurrent preparations can
      * independently observe absence; acceptance remains authoritative.</p>
      *
-     * <p>Replay has the local hashing and point-read costs of {@link #findIssuance(CorrelatedEndEntityIssuanceRequest)}.
+     * <p>Replay has the local hashing and point-read costs of {@link
+     * #findIssuance(CorrelatedEndEntityIssuanceRequest)}.
      * New preparation additionally has the bounded payload, verification and
      * authoritative lookup costs of {@link #prepareEndEntity}, plus decoding and
      * validation of the bounded imported profile document.</p>
@@ -1054,9 +1061,9 @@ public interface SemanticSigningService {
      * @throws PkiException if the native target, issuer, profile or request does not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
-            zeroecho.pki.api.issuance.EndEntityIssuanceRequest request,
+            EndEntityIssuanceRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
-            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<Validity> frozenValidity,
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
@@ -1087,9 +1094,9 @@ public interface SemanticSigningService {
      * @throws PkiException if lifecycle policy, keys or native target do not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
-            zeroecho.pki.api.issuance.EndEntityRenewalRequest request,
+            EndEntityRenewalRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
-            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<Validity> frozenValidity,
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
@@ -1120,9 +1127,9 @@ public interface SemanticSigningService {
      * @throws PkiException if the native operation mapping, target or lifecycle policy is invalid
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
-            zeroecho.pki.api.issuance.EndEntityReissueRequest request,
+            EndEntityReissueRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
-            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<Validity> frozenValidity,
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
@@ -1153,9 +1160,9 @@ public interface SemanticSigningService {
      * @throws PkiException if lifecycle policy, keys or native target do not match
      */
     default zeroecho.pki.api.hybrid.sdk.SdkIssuancePreview previewSdk(AccessContext access,
-            zeroecho.pki.api.issuance.EndEntityReplacementRequest request,
+            EndEntityReplacementRequest request,
             zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest parsed,
-            Optional<zeroecho.pki.api.Validity> frozenValidity,
+            Optional<Validity> frozenValidity,
             Optional<zeroecho.pki.api.hybrid.sdk.SdkEnrollmentTarget> enrollmentTarget,
             CancellationSignal cancellation) {
         java.util.Objects.requireNonNull(enrollmentTarget, "enrollmentTarget");
@@ -1314,7 +1321,7 @@ public interface SemanticSigningService {
      * @throws UnsupportedOperationException if managed responder provisioning is unavailable
      * @throws PkiException if target validation fails or retained workflow evidence is inconsistent
      */
-    default Optional<zeroecho.pki.api.signing.SigningAcceptanceReceipt> findManagedOcspResponderReceipt(
+    default Optional<SigningAcceptanceReceipt> findManagedOcspResponderReceipt(
             zeroecho.pki.api.issuance.ManagedOcspResponderIssuanceRequest request) {
         throw new UnsupportedOperationException("Managed OCSP responder receipt lookup unavailable");
     }

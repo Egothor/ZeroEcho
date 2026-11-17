@@ -33,6 +33,19 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.sign.ContentVerifier;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -43,19 +56,6 @@ import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.List;
 import java.util.Set;
-
-import zeroecho.core.alg.BootstrapAlgorithmIdentities;
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.core.io.RepeatableContent;
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.core.spec.AlgorithmSuite;
-import zeroecho.core.spi.AlgorithmExecutionCapability;
-import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
-import zeroecho.pkix.Pkix;
-import zeroecho.pkix.sign.ContentVerifier;
-import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
-import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
-import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 
 /**
  * Stateless verification executor at the X.509 adapter edge.
@@ -96,13 +96,19 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
             BootstrapAlgorithmIdentities.SLH_DSA_SHAKE_256F_SIGNATURE);
     private static final Set<AlgorithmIdentity> SIGNATURES;
     static {
-        Set<AlgorithmIdentity> all = new java.util.HashSet<>(Set.of(
-                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
-                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
-                BootstrapAlgorithmIdentities.ECDSA_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA384,
-                BootstrapAlgorithmIdentities.ECDSA_SHA512, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
-                BootstrapAlgorithmIdentities.ED448_SIGNATURE,
-                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE));
+        Set<AlgorithmIdentity> all =
+                new java.util.HashSet<>(
+                        Set.of(
+                                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
+                                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512,
+                                BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
+                                BootstrapAlgorithmIdentities.ECDSA_SHA256,
+                                BootstrapAlgorithmIdentities.ECDSA_SHA384,
+                                BootstrapAlgorithmIdentities.ECDSA_SHA512,
+                                BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
+                                BootstrapAlgorithmIdentities.ED448_SIGNATURE,
+                                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE));
         all.addAll(ML_DSA_SIGNATURES);
         all.addAll(SLH_DSA_SIGNATURES);
         SIGNATURES = Set.copyOf(all);
@@ -149,27 +155,33 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
      * @param signedContent exact repeatable signed content
      * @param signature signature bytes
      * @return whether the signature is valid
-     * @throws IllegalArgumentException if the supplied signature or public-key
-     *                                  algorithm does not exactly match the
-     *                                  authorized plan
+     * @throws IllegalArgumentException if the supplied signature or public-key algorithm does not
+     *     exactly match the authorized plan
      * @throws GeneralSecurityException if key or provider processing fails
      * @throws IOException if the signed bytes cannot be supplied
      */
-    public boolean verify(X509AuthoritySnapshot authority, X509ExecutionPlan<BcX509VerificationExecutor> plan,
-            byte[] publicKeyInfoDer, zeroecho.pkix.AlgorithmIdentifier algorithmIdentifier,
-            RepeatableContent signedContent, byte[] signature) throws GeneralSecurityException, IOException {
+    public boolean verify(
+            X509AuthoritySnapshot authority,
+            X509ExecutionPlan<BcX509VerificationExecutor> plan,
+            byte[] publicKeyInfoDer,
+            zeroecho.pkix.AlgorithmIdentifier algorithmIdentifier,
+            RepeatableContent signedContent,
+            byte[] signature)
+            throws GeneralSecurityException, IOException {
         authority.authorize(plan, this, AlgorithmExecutionCapability.Direction.VERIFY);
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
         AlgorithmIdentity signatureIdentity = adapter.decode(algorithmIdentifier,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM);
         if (!plan.selection().requested().equals(signatureIdentity)
                 || !plan.selection().binding().equals(BcX509AlgorithmAdapter.fromLib(algorithmIdentifier))) {
-            throw new IllegalArgumentException("Signature AlgorithmIdentifier does not match execution plan");
+            throw new IllegalArgumentException(
+                    "Signature AlgorithmIdentifier does not match execution plan");
         }
         AlgorithmIdentity publicKeyIdentity = adapter.decode(Pkix.subjectPublicKeyAlgorithm(publicKeyInfoDer),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
         if (!plan.selection().suite().publicKey().equals(publicKeyIdentity)) {
-            throw new IllegalArgumentException("SubjectPublicKeyInfo does not match execution plan");
+            throw new IllegalArgumentException(
+                    "SubjectPublicKeyInfo does not match execution plan");
         }
         byte[] nativePublicKey = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(publicKeyInfoDer);
         if (BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE.equals(signatureIdentity)) {
@@ -200,7 +212,8 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
         } else if (BootstrapAlgorithmIdentities.ED448_SIGNATURE.equals(identity)) {
             algorithm = "Ed448";
         } else {
-            throw new GeneralSecurityException("Custom classic binding lacks an exact JCA verification contract");
+            throw new GeneralSecurityException(
+                    "Custom classic binding lacks an exact JCA verification contract");
         }
         return verifyNamed(publicKeyInfoDer, algorithm, signedContent, signatureBytes);
     }

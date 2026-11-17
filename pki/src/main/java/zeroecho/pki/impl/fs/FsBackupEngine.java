@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -57,7 +59,8 @@ final class FsBackupEngine {
     /**
      * Ingests, extracts and independently recovers a bounded backup before returning an owned restore candidate.
      *
-     * <p>Failure cleanup attempts to remove the owned verification workspace. Successful preparation retains only the verified candidate and its identity evidence.</p>
+     * <p>Failure cleanup attempts to remove the owned verification workspace. Successful preparation
+     * retains only the verified candidate and its identity evidence.</p>
      *
      * @param work existing directory in which a private verification workspace is created
      * @param source borrowed backup source; its stream is consumed and the source remains caller-owned
@@ -66,7 +69,8 @@ final class FsBackupEngine {
      * @param clock authoritative clock supplied to candidate recovery
      * @return owned verified preparation; caller closes it or transfers it through the restore lifecycle
      * @throws NullPointerException if a required input is null
-     * @throws IOException if source ingestion, archive integrity, inventory, recovery or durable candidate preparation fails
+     * @throws IOException if source ingestion, archive integrity, inventory, recovery or durable
+     * candidate preparation fails
      */
     /* default */ static BackupPreparation prepare(Path work, BackupSource source, BackupLimits limits,
             FsPkiStoreOptions options, Clock clock) throws IOException {
@@ -128,7 +132,7 @@ final class FsBackupEngine {
      * Owns verified temporary files until their preparation handle is closed.
      */
     private static final class Prepared implements BackupPreparation {
-        private final java.util.concurrent.locks.ReentrantLock lifecycle = new java.util.concurrent.locks.ReentrantLock();
+        private final ReentrantLock lifecycle = new ReentrantLock();
         private final Path owned;
         private final Path candidate;
         private final PkiId id;

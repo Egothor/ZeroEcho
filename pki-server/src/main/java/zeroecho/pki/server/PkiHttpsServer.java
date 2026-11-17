@@ -33,6 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.server.http.AcmeTransport;
+import zeroecho.pki.server.http.AdministrativeAuthenticator;
+import zeroecho.pki.server.http.CmpTransport;
+import zeroecho.pki.server.http.EstTransport;
+import zeroecho.pki.server.http.PkiHttpsTransport;
+import zeroecho.pki.server.http.PublicRepositoryTransport;
+import zeroecho.pki.server.http.ScepTransport;
+import zeroecho.pki.server.spi.PkiServerAuthenticator;
+
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -44,16 +54,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.SSLContext;
 
-import zeroecho.pki.application.PkiSessionRuntimeDependencies;
-import zeroecho.pki.server.http.AdministrativeAuthenticator;
-import zeroecho.pki.server.http.AcmeTransport;
-import zeroecho.pki.server.http.CmpTransport;
-import zeroecho.pki.server.http.EstTransport;
-import zeroecho.pki.server.http.PkiHttpsTransport;
-import zeroecho.pki.server.http.PublicRepositoryTransport;
-import zeroecho.pki.server.http.ScepTransport;
-import zeroecho.pki.server.spi.PkiServerAuthenticator;
-
 /**
  * Lifecycle owner for one bounded administrative mutual-TLS HTTPS server.
  *
@@ -63,6 +63,8 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
  * outside {@link ServerOperationGateway}.</p>
  */
 public final class PkiHttpsServer implements AutoCloseable {
+    private static final String TERMINATED_MESSAGE = "HTTPS server is terminated";
+
     /**
      * Closed process lifecycle.
      */
@@ -107,25 +109,11 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final AtomicBoolean authenticatorClosed = new AtomicBoolean();
     private final AtomicBoolean publicAuthenticatorClosed = new AtomicBoolean();
 
-    /**
-     * Adopts the successfully composed listener, worker and realm lifecycle owners.
-     *
-     * @param configuration immutable validated server configuration
-     * @param realm recovered realm context adopted by this owner
-     * @param authenticator administrative transport authenticator
-     * @param transport administrative HTTPS transport
-     * @param publicAuthenticator optional public-listener transport authenticator
-     * @param publicTransport optional public-repository HTTPS transport
-     * @param acmeTransport optional ACME HTTPS transport
-     * @param estTransport optional EST HTTPS transport
-     * @param scepTransport optional SCEP HTTPS transport
-     * @param cmpTransport optional CMP HTTPS transport
-     * @param auditProjection optional audit-projection daemon owner
-     * @param statusSchedule status-schedule daemon owner
-     * @param state shared startup/readiness lifecycle state
-     */
-    PkiHttpsServer(PkiServerConfiguration configuration, ServerRealmContext realm,
-            PkiServerAuthenticator authenticator, PkiHttpsTransport transport,
+    /** Captured server resources adopted together after successful composition. */
+    /* default */ record Resources(
+            ServerRealmContext realm,
+            PkiServerAuthenticator authenticator,
+            PkiHttpsTransport transport,
             Optional<PkiServerAuthenticator> publicAuthenticator,
             Optional<PublicRepositoryTransport> publicTransport,
             Optional<AcmeTransport> acmeTransport,
@@ -133,20 +121,31 @@ public final class PkiHttpsServer implements AutoCloseable {
             Optional<ScepTransport> scepTransport,
             Optional<CmpTransport> cmpTransport,
             Optional<AuditProjectionWorker> auditProjection,
-            StatusScheduleWorker statusSchedule,
+            StatusScheduleWorker statusSchedule) {}
+
+    /**
+     * Adopts the successfully composed listener, worker and realm lifecycle owners.
+     *
+     * @param configuration immutable validated server configuration
+     * @param resources resources adopted by this owner, without additional validation
+     * @param state shared startup/readiness lifecycle state
+     */
+    /* default */ PkiHttpsServer(
+            PkiServerConfiguration configuration,
+            Resources resources,
             AtomicReference<State> state) {
         this.configuration = configuration;
-        this.realm = realm;
-        this.authenticator = authenticator;
-        this.transport = transport;
-        this.publicAuthenticator = publicAuthenticator;
-        this.publicTransport = publicTransport;
-        this.acmeTransport = acmeTransport;
-        this.estTransport = estTransport;
-        this.scepTransport = scepTransport;
-        this.cmpTransport = cmpTransport;
-        this.auditProjection = auditProjection;
-        this.statusSchedule = statusSchedule;
+        this.realm = resources.realm();
+        this.authenticator = resources.authenticator();
+        this.transport = resources.transport();
+        this.publicAuthenticator = resources.publicAuthenticator();
+        this.publicTransport = resources.publicTransport();
+        this.acmeTransport = resources.acmeTransport();
+        this.estTransport = resources.estTransport();
+        this.scepTransport = resources.scepTransport();
+        this.cmpTransport = resources.cmpTransport();
+        this.auditProjection = resources.auditProjection();
+        this.statusSchedule = resources.statusSchedule();
         this.state = state;
     }
 
@@ -164,7 +163,8 @@ public final class PkiHttpsServer implements AutoCloseable {
     }
 
     /**
-     * Starts the configured server with explicit runtime sources and no backup/enrollment companion.
+     * Starts the configured server with explicit runtime sources and no backup/enrollment
+     * companion.
      *
      * @param configuration validated immutable server configuration
      * @param runtimeDependencies process-local unlock and provider capabilities
@@ -173,12 +173,15 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @param loader provider-discovery class loader
      * @return ready server owning all successfully opened resources
      * @throws NullPointerException if a required collaborator is null
-     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
-     *         invalid
+     * @throws IllegalArgumentException if configuration, companion topology or listener
+     *     prerequisites are invalid
      * @throws IllegalStateException if recovery, provider initialization or listener startup fails
      */
-    static PkiHttpsServer start(PkiServerConfiguration configuration,
-            PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
+    /* default */ static PkiHttpsServer start(
+            PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies,
+            Clock clock,
+            SecureRandom random,
             ClassLoader loader) {
         return start(configuration, runtimeDependencies, clock, random, loader, Optional.empty());
     }
@@ -208,13 +211,17 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @param loader provider-discovery class loader
      * @return ready server owning all successfully opened resources
      * @throws NullPointerException if a required collaborator is null
-     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
-     *         invalid
+     * @throws IllegalArgumentException if configuration, companion topology or listener
+     *     prerequisites are invalid
      * @throws IllegalStateException if recovery, provider initialization or listener startup fails
      */
-    static PkiHttpsServer start(PkiServerConfiguration configuration,
-            PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
-            ClassLoader loader, Optional<BackupTransferConfiguration> transfer) {
+    /* default */ static PkiHttpsServer start(
+            PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies,
+            Clock clock,
+            SecureRandom random,
+            ClassLoader loader,
+            Optional<BackupTransferConfiguration> transfer) {
         return start(configuration, runtimeDependencies, clock, random, loader, transfer, Optional.empty());
     }
 
@@ -234,9 +241,10 @@ public final class PkiHttpsServer implements AutoCloseable {
     }
 
     /**
-     * Recovers the realm and starts all configured listeners/workers under one retryable lifecycle owner.
+     * Recovers the realm and starts all configured listeners/workers under one retryable lifecycle
+     * owner.
      *
-     * <p>Startup failure closes resources already acquired before propagating the failure.</p>
+     * <p>Startup failure closes resources already acquired before propagating the failure.
      *
      * @param transfer optional independently budgeted durable backup-transfer companion
      * @param enrollment enrollment custody companion required by enabled enrollment listeners
@@ -247,146 +255,25 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @param loader provider-discovery class loader
      * @return ready server owning all successfully opened resources
      * @throws NullPointerException if a required collaborator is null
-     * @throws IllegalArgumentException if configuration, companion topology or listener prerequisites are
-     *         invalid
+     * @throws IllegalArgumentException if configuration, companion topology or listener
+     *     prerequisites are invalid
      * @throws IllegalStateException if recovery, provider initialization or listener startup fails
      */
-    static PkiHttpsServer start(PkiServerConfiguration configuration,
-            PkiSessionRuntimeDependencies runtimeDependencies, Clock clock, SecureRandom random,
-            ClassLoader loader, Optional<BackupTransferConfiguration> transfer,
+    /* default */ static PkiHttpsServer start(
+            PkiServerConfiguration configuration,
+            PkiSessionRuntimeDependencies runtimeDependencies,
+            Clock clock,
+            SecureRandom random,
+            ClassLoader loader,
+            Optional<BackupTransferConfiguration> transfer,
             Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration> enrollment) {
         PkiServerConfiguration exact = Objects.requireNonNull(configuration, "configuration");
         zeroecho.pki.server.enrollment.EnrollmentRuntime.validateConfiguration(exact, enrollment, transfer);
         Objects.requireNonNull(runtimeDependencies, "runtimeDependencies");
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(random, "random");
-        AtomicReference<State> state = new AtomicReference<>(State.NEW);
-        state.set(State.STARTING);
-        ServerRealmContext realm = null;
-        PkiServerAuthenticator authenticator = null;
-        PkiHttpsTransport transport = null;
-        PkiServerAuthenticator publicAuthenticator = null;
-        PublicRepositoryTransport publicTransport = null;
-        AcmeTransport acmeTransport = null;
-        EstTransport estTransport = null;
-        ScepTransport scepTransport = null;
-        CmpTransport cmpTransport = null;
-        AuditProjectionWorker auditProjection = null;
-        StatusScheduleWorker statusSchedule = null;
-        AtomicReference<ServerRealmContext> metricsRealm = new AtomicReference<>();
-        AtomicReference<StatusScheduleWorker> metricsWorker = new AtomicReference<>();
-        AtomicBoolean schedulingConfigured = new AtomicBoolean();
-        try {
-            SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
-            zeroecho.pki.application.DashboardLiveSource liveSource = new zeroecho.pki.application.DashboardLiveSource() {
-                @Override public long approvalPendingTotal() { return metricsRealm.get().pendingApprovalCount(clock.instant()); }
-                @Override public long auditProjectionFailureTotal() { return metricsRealm.get().auditProjectionFailureTotal(); }
-                @Override public long jvmHeapUsedBytes() {
-                    return java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
-                }
-                @Override public long adminRequestsTotal() { return metricsRealm.get().adminRequestsTotal(); }
-                @Override public Map<String, Metric> snapshot() {
-                    Map<String, Metric> result = new java.util.LinkedHashMap<>(zeroecho.pki.application.DashboardLiveSource.super.snapshot());
-                    if (schedulingConfigured.get()) {
-                        result.put("statusScheduleFailureTotal", zeroecho.pki.application.DashboardLiveSource.collect(
-                                () -> metricsRealm.get().scheduleFailureTotal()));
-                        result.put("statusScheduleWorkerRunning", zeroecho.pki.application.DashboardLiveSource.collect(
-                                () -> metricsWorker.get().isRunning() ? 1L : 0L));
-                    }
-                    return Map.copyOf(result);
-                }
-            };
-            PkiSessionRuntimeDependencies resolvedDependencies = runtimeDependencies.withDashboardLiveSource(liveSource);
-            realm = ServerRealmContext.open(exact.realm(), resolvedDependencies, clock, random,
-                    exact.listener().hybridSdk().map(PkiServerConfiguration.HybridSdkListener::canonicalOrigin));
-            if (transfer.isPresent()) {
-                try { realm.installBackupTransfer(transfer.orElseThrow(), clock, random); }
-                catch (java.io.IOException failure) { throw new IllegalStateException("Backup transfer startup failed", failure); }
-            }
-            if (enrollment.isPresent()) {
-                realm.installEnrollmentRuntime(enrollment.orElseThrow(), resolvedDependencies, clock);
-                realm.installEnrollmentCoordinator(exact.authentication(), clock);
-            }
-            realm.administrativeRequests().start(exact.authentication());
-            metricsRealm.set(realm);
-            schedulingConfigured.set(realm.session().statusSchedules().isPresent());
-            realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));
-            if (exact.authentication().mode() == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
-                for (String principalId : exact.authentication().trustedProxyPrincipalIds()) {
-                    SecurityPrincipal principal = realm.principal(principalId);
-                    if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
-                        throw new IllegalArgumentException("Trusted proxy principal is unavailable");
-                    }
-                    realm.gateway().validateForwardingPrincipal(principalId);
-                }
-            }
-            authenticator = AdministrativeAuthenticator.create(exact.authentication(), realm::principal,
-                    realm.gateway()::authorizeForwardedIdentity, clock, loader);
-            ServerRealmContext sharedRealm = realm;
-            transport = PkiHttpsTransport.startResolved(exact, sharedRealm, authenticator, clock, random, tls,
-                    () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
-            if (exact.publicListener().isPresent()) {
-                PkiServerConfiguration.PublicListener publicConfiguration = exact.publicListener().orElseThrow();
-                validateTrustedProxies(publicConfiguration.authentication(), realm);
-                AdministrativeAuthenticator resolvedPublicAuthenticator = AdministrativeAuthenticator.create(
-                        publicConfiguration.authentication(), realm::principal,
-                        realm.gateway()::authorizeForwardedIdentity, clock, loader);
-                publicAuthenticator = resolvedPublicAuthenticator;
-                publicTransport = PublicRepositoryTransport.start(publicConfiguration, sharedRealm,
-                        resolvedPublicAuthenticator, clock, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
-            }
-            if (exact.acmeListener().isPresent()) {
-                PkiServerConfiguration.AcmeListener acmeConfiguration = exact.acmeListener().orElseThrow();
-                if (acmeConfiguration.transportMode()
-                        == PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY) {
-                    for (String principalId : acmeConfiguration.trustedProxyPrincipalIds()) {
-                        SecurityPrincipal principal = realm.principal(principalId);
-                        if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
-                            throw new IllegalArgumentException("ACME trusted proxy principal is unavailable");
-                        }
-                        realm.gateway().validateForwardingPrincipal(principalId);
-                    }
-                }
-                acmeTransport = AcmeTransport.start(acmeConfiguration, sharedRealm, clock, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN,
-                        sharedRealm::signalReconciliation);
-            }
-            if (exact.estListener().isPresent()) {
-                estTransport = EstTransport.start(exact.estListener().orElseThrow(), sharedRealm, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
-            }
-            if (exact.scepListener().isPresent()) {
-                scepTransport = ScepTransport.start(exact.scepListener().orElseThrow(), sharedRealm, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
-            }
-            if (exact.cmpListener().isPresent()) {
-                cmpTransport = CmpTransport.start(exact.cmpListener().orElseThrow(), sharedRealm, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
-            }
-            auditProjection = new AuditProjectionWorker(realm, exact.auditProjection(),
-                    exact.execution().forcedShutdown(), clock);
-            statusSchedule = new StatusScheduleWorker(
-                    new StatusScheduleExecutor(realm.session().statusSchedules(), clock, realm::recordScheduleFailure),
-                    exact.execution().forcedShutdown(), clock, realm::recordScheduleFailure);
-            metricsWorker.set(statusSchedule);
-            realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
-            PkiHttpsServer server = new PkiHttpsServer(exact, realm, authenticator, transport,
-                    Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport),
-                    Optional.ofNullable(acmeTransport), Optional.ofNullable(estTransport),
-                    Optional.ofNullable(scepTransport), Optional.ofNullable(cmpTransport),
-                    Optional.ofNullable(auditProjection), statusSchedule, state);
-            if (auditProjection != null) {
-                auditProjection.start();
-            }
-            statusSchedule.start();
-            state.set(State.READY);
-            return server;
-        } catch (RuntimeException | Error primary) {
-            closePartial(auditProjection, statusSchedule, cmpTransport, scepTransport, estTransport, acmeTransport,
-                    publicTransport, publicAuthenticator, transport, realm, authenticator, state, primary);
-            throw primary;
-        }
+        return new StartupResources()
+                .start(exact, runtimeDependencies, clock, random, loader, transfer, enrollment);
     }
 
     /**
@@ -405,7 +292,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public InetSocketAddress address() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return transport.address();
     }
 
@@ -416,7 +305,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public Optional<InetSocketAddress> publicAddress() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return publicTransport.map(PublicRepositoryTransport::address);
     }
 
@@ -427,7 +318,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public Optional<InetSocketAddress> acmeAddress() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return acmeTransport.map(AcmeTransport::address);
     }
 
@@ -438,7 +331,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public Optional<InetSocketAddress> estAddress() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return estTransport.map(EstTransport::address);
     }
 
@@ -449,7 +344,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public Optional<InetSocketAddress> scepAddress() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return scepTransport.map(ScepTransport::address);
     }
 
@@ -460,7 +357,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException if the server is terminated
      */
     public Optional<InetSocketAddress> cmpAddress() {
-        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        if (state.get() == State.TERMINATED) {
+            throw new IllegalStateException(TERMINATED_MESSAGE);
+        }
         return cmpTransport.map(CmpTransport::address);
     }
 
@@ -471,7 +370,9 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @throws IllegalStateException unless the server is ready
      */
     public ServerRealmContext realm() {
-        if (state.get() != State.READY) throw new IllegalStateException("HTTPS server is not ready");
+        if (state.get() != State.READY) {
+            throw new IllegalStateException("HTTPS server is not ready");
+        }
         return realm;
     }
 
@@ -509,7 +410,7 @@ public final class PkiHttpsServer implements AutoCloseable {
      * @param workerThread whether closure originates on an owned server worker
      * @throws java.io.IOException if checked shutdown or resource closure fails
      */
-    void closeFromServerWorker(boolean workerThread) throws java.io.IOException {
+    /* default */ void closeFromServerWorker(boolean workerThread) throws java.io.IOException {
         closeGate.close(workerThread, this::quiesceForClose, this::closeAttempt);
     }
 
@@ -526,6 +427,8 @@ public final class PkiHttpsServer implements AutoCloseable {
         cmpTransport.ifPresent(CmpTransport::quiesce);
     }
 
+    // Preserve failures across ordered cleanup attempts, including Errors.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private Throwable closeAttempt() {
         quiesceForClose();
         Throwable primary = null;
@@ -536,51 +439,7 @@ public final class PkiHttpsServer implements AutoCloseable {
                 primary = failure;
             }
         }
-        try {
-            if (acmeTransport.isPresent()) {
-                acmeTransport.orElseThrow().shutdown(configuration.acmeListener().orElseThrow()
-                        .execution().gracefulShutdown());
-            }
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
-        try {
-            if (estTransport.isPresent()) {
-                estTransport.orElseThrow().shutdown(configuration.estListener().orElseThrow()
-                        .execution().gracefulShutdown());
-            }
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
-        try {
-            if (scepTransport.isPresent()) {
-                scepTransport.orElseThrow().shutdown(configuration.scepListener().orElseThrow()
-                        .execution().gracefulShutdown());
-            }
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
-        try {
-            if (cmpTransport.isPresent()) {
-                cmpTransport.orElseThrow().shutdown(configuration.cmpListener().orElseThrow()
-                        .execution().gracefulShutdown());
-            }
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
-        try {
-            if (publicTransport.isPresent()) {
-                publicTransport.orElseThrow().shutdown(configuration.publicListener().orElseThrow()
-                        .execution().gracefulShutdown());
-            }
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
-        try {
-            transport.shutdown(configuration.execution().gracefulShutdown());
-        } catch (Throwable failure) {
-            primary = suppress(primary, failure);
-        }
+        primary = shutdownTransports(primary);
         try {
             if (auditProjection.isPresent()) {
                 auditProjection.orElseThrow().awaitStopped();
@@ -610,56 +469,14 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
-    private static void closePartial(AuditProjectionWorker auditProjection, StatusScheduleWorker statusSchedule,
-            CmpTransport cmpTransport, ScepTransport scepTransport, EstTransport estTransport,
-            AcmeTransport acmeTransport, PublicRepositoryTransport publicTransport,
-            PkiServerAuthenticator publicAuthenticator, PkiHttpsTransport transport, ServerRealmContext realm,
-            PkiServerAuthenticator authenticator, AtomicReference<State> state, Throwable primary) {
-        if (auditProjection != null) {
-            try {
-                auditProjection.close();
-            } catch (Throwable failure) {
-                if (primary != failure) primary.addSuppressed(failure);
-                close(statusSchedule, primary);
-                close(cmpTransport, primary);
-                close(scepTransport, primary);
-                close(estTransport, primary);
-                close(acmeTransport, primary);
-                close(publicTransport, primary);
-                close(transport, primary);
-                return;
-            }
-        }
-        if (statusSchedule != null) {
-            try {
-                statusSchedule.close();
-            } catch (Throwable failure) {
-                if (primary != failure) primary.addSuppressed(failure);
-                close(cmpTransport, primary);
-                close(scepTransport, primary);
-                close(estTransport, primary);
-                close(acmeTransport, primary);
-                close(publicTransport, primary);
-                close(transport, primary);
-                return;
-            }
-        }
-        primary = close(cmpTransport, primary);
-        primary = close(scepTransport, primary);
-        primary = close(estTransport, primary);
-        primary = close(acmeTransport, primary);
-        primary = close(publicTransport, primary);
-        primary = close(publicAuthenticator, primary);
-        primary = close(transport, primary);
-        primary = close(authenticator, primary);
-        close(realm, primary);
-        state.set(State.TERMINATED);
-    }
+
 
 
     private static void validateTrustedProxies(PkiServerConfiguration.Authentication authentication,
             ServerRealmContext realm) {
-        if (authentication.mode() != AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) return;
+        if (authentication.mode() != AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
+            return;
+        }
         for (String principalId : authentication.trustedProxyPrincipalIds()) {
             SecurityPrincipal principal = realm.principal(principalId);
             if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
@@ -669,8 +486,12 @@ public final class PkiHttpsServer implements AutoCloseable {
         }
     }
 
+    // Preserve failures across ordered cleanup attempts, including Errors.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private static Throwable close(AutoCloseable resource, Throwable primary) {
-        if (resource == null) return primary;
+        if (resource == null) {
+            return primary;
+        }
         try {
             resource.close();
         } catch (Throwable failure) {
@@ -679,8 +500,13 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
-    private static Throwable closeOnce(AutoCloseable resource, AtomicBoolean closed, Throwable primary) {
-        if (closed.get()) return primary;
+    // Preserve failures across ordered cleanup attempts, including Errors.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private static Throwable closeOnce(
+            AutoCloseable resource, AtomicBoolean closed, Throwable primary) {
+        if (closed.get()) {
+            return primary;
+        }
         try {
             resource.close();
             closed.set(true);
@@ -690,16 +516,431 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
+    // Throwable identity prevents self-suppression; equality is not the diagnostic contract.
+    @SuppressWarnings("PMD.CompareObjectsWithEquals")
     private static Throwable suppress(Throwable primary, Throwable failure) {
-        if (primary == null) return failure;
-        if (primary != failure) primary.addSuppressed(failure);
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
         return primary;
     }
 
+    // Throwable identity prevents self-suppression; equality is not the diagnostic contract.
+    @SuppressWarnings("PMD.CompareObjectsWithEquals")
     private static Throwable preferFailure(Throwable failure, Throwable prior) {
         if (prior != null && prior != failure) {
             failure.addSuppressed(prior);
         }
         return failure;
+    }
+
+    /**
+     * Owns partial startup resources until their successful adoption, preserving reverse cleanup
+     * order.
+     */
+    private static final class StartupResources {
+        private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
+        private ServerRealmContext realm;
+        private PkiServerAuthenticator authenticator;
+        private PkiHttpsTransport transport;
+        private AdministrativeAuthenticator publicAuthenticator;
+        private PublicRepositoryTransport publicTransport;
+        private AcmeTransport acmeTransport;
+        private EstTransport estTransport;
+        private ScepTransport scepTransport;
+        private CmpTransport cmpTransport;
+        private AuditProjectionWorker auditProjection;
+        private StatusScheduleWorker statusSchedule;
+
+        // Startup retains its exact primary failure and closes only already-created resources.
+        @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.ExceptionAsFlowControl"})
+        private PkiHttpsServer start(
+                PkiServerConfiguration exact,
+                PkiSessionRuntimeDependencies runtimeDependencies,
+                Clock clock,
+                SecureRandom random,
+                ClassLoader loader,
+                Optional<BackupTransferConfiguration> transfer,
+                Optional<zeroecho.pki.server.enrollment.EnrollmentRuntimeConfiguration>
+                        enrollment) {
+            state.set(State.STARTING);
+            AtomicReference<ServerRealmContext> metricsRealm = new AtomicReference<>();
+            AtomicReference<StatusScheduleWorker> metricsWorker = new AtomicReference<>();
+            AtomicBoolean schedulingConfigured = new AtomicBoolean();
+            try {
+                SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
+                zeroecho.pki.application.DashboardLiveSource liveSource =
+                        dashboard(clock, metricsRealm, metricsWorker, schedulingConfigured);
+                PkiSessionRuntimeDependencies resolvedDependencies =
+                        runtimeDependencies.withDashboardLiveSource(liveSource);
+                realm =
+                        ServerRealmContext.open(
+                                exact.realm(),
+                                resolvedDependencies,
+                                clock,
+                                random,
+                                exact.listener()
+                                        .hybridSdk()
+                                        .map(
+                                                PkiServerConfiguration.HybridSdkListener
+                                                        ::canonicalOrigin));
+                if (transfer.isPresent()) {
+                    try {
+                        realm.installBackupTransfer(transfer.orElseThrow(), clock, random);
+                    } catch (java.io.IOException failure) {
+                        throw new IllegalStateException("Backup transfer startup failed", failure);
+                    }
+                }
+                if (enrollment.isPresent()) {
+                    realm.installEnrollmentRuntime(
+                            enrollment.orElseThrow(), resolvedDependencies, clock);
+                    realm.installEnrollmentCoordinator(exact.authentication(), clock);
+                }
+                realm.administrativeRequests().start(exact.authentication());
+                metricsRealm.set(realm);
+                schedulingConfigured.set(realm.session().statusSchedules().isPresent());
+                realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));
+                validateTrustedProxies(exact.authentication(), realm);
+                authenticator =
+                        AdministrativeAuthenticator.create(
+                                exact.authentication(),
+                                realm::principal,
+                                realm.gateway()::authorizeForwardedIdentity,
+                                clock,
+                                loader);
+                transport =
+                        PkiHttpsTransport.startResolved(
+                                exact,
+                                realm,
+                                authenticator,
+                                clock,
+                                random,
+                                tls,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN);
+                startOptionalListeners(exact, clock, random, loader);
+                auditProjection =
+                        new AuditProjectionWorker(
+                                realm,
+                                exact.auditProjection(),
+                                exact.execution().forcedShutdown(),
+                                clock);
+                statusSchedule =
+                        new StatusScheduleWorker(
+                                new StatusScheduleExecutor(
+                                        realm.session().statusSchedules(),
+                                        clock,
+                                        realm::recordScheduleFailure),
+                                exact.execution().forcedShutdown(),
+                                clock,
+                                realm::recordScheduleFailure);
+                metricsWorker.set(statusSchedule);
+                realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
+                PkiHttpsServer server =
+                        new PkiHttpsServer(
+                                exact,
+                                new Resources(
+                                        realm,
+                                        authenticator,
+                                        transport,
+                                        Optional.ofNullable(publicAuthenticator),
+                                        Optional.ofNullable(publicTransport),
+                                        Optional.ofNullable(acmeTransport),
+                                        Optional.ofNullable(estTransport),
+                                        Optional.ofNullable(scepTransport),
+                                        Optional.ofNullable(cmpTransport),
+                                        Optional.ofNullable(auditProjection),
+                                        statusSchedule),
+                                state);
+                if (auditProjection != null) {
+                    auditProjection.start();
+                }
+                statusSchedule.start();
+                state.set(State.READY);
+                return server;
+            } catch (RuntimeException | Error primary) {
+                closePartial(primary);
+                throw primary;
+            }
+        }
+
+        private zeroecho.pki.application.DashboardLiveSource dashboard(
+                Clock clock,
+                AtomicReference<ServerRealmContext> metricsRealm,
+                AtomicReference<StatusScheduleWorker> metricsWorker,
+                AtomicBoolean schedulingConfigured) {
+            return new zeroecho.pki.application.DashboardLiveSource() {
+                @Override
+                public long approvalPendingTotal() {
+                    return metricsRealm.get().pendingApprovalCount(clock.instant());
+                }
+
+                @Override
+                public long auditProjectionFailureTotal() {
+                    return metricsRealm.get().auditProjectionFailureTotal();
+                }
+
+                @Override
+                public long jvmHeapUsedBytes() {
+                    return java.lang.management.ManagementFactory.getMemoryMXBean()
+                            .getHeapMemoryUsage()
+                            .getUsed();
+                }
+
+                @Override
+                public long adminRequestsTotal() {
+                    return metricsRealm.get().adminRequestsTotal();
+                }
+
+                @Override
+                public Map<String, Metric> snapshot() {
+                    Map<String, Metric> result =
+                            new java.util.LinkedHashMap<>(
+                                    zeroecho.pki.application.DashboardLiveSource.super.snapshot());
+                    if (schedulingConfigured.get()) {
+                        result.put(
+                                "statusScheduleFailureTotal",
+                                zeroecho.pki.application.DashboardLiveSource.collect(
+                                        () -> metricsRealm.get().scheduleFailureTotal()));
+                        result.put(
+                                "statusScheduleWorkerRunning",
+                                zeroecho.pki.application.DashboardLiveSource.collect(
+                                        () -> metricsWorker.get().isRunning() ? 1L : 0L));
+                    }
+                    return Map.copyOf(result);
+                }
+            };
+        }
+
+        private void startOptionalListeners(
+                PkiServerConfiguration exact,
+                Clock clock,
+                SecureRandom random,
+                ClassLoader loader) {
+            if (exact.publicListener().isPresent()) {
+                PkiServerConfiguration.PublicListener publicConfiguration =
+                        exact.publicListener().orElseThrow();
+                validateTrustedProxies(publicConfiguration.authentication(), realm);
+                publicAuthenticator =
+                        AdministrativeAuthenticator.create(
+                                publicConfiguration.authentication(),
+                                realm::principal,
+                                realm.gateway()::authorizeForwardedIdentity,
+                                clock,
+                                loader);
+                publicTransport =
+                        PublicRepositoryTransport.start(
+                                publicConfiguration,
+                                realm,
+                                publicAuthenticator,
+                                clock,
+                                random,
+                                loader,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN);
+            }
+            if (exact.acmeListener().isPresent()) {
+                PkiServerConfiguration.AcmeListener acmeConfiguration =
+                        exact.acmeListener().orElseThrow();
+                validateAcmeTrustedProxies(acmeConfiguration, realm);
+                acmeTransport =
+                        AcmeTransport.start(
+                                acmeConfiguration,
+                                realm,
+                                clock,
+                                random,
+                                loader,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN,
+                                realm::signalReconciliation);
+            }
+            if (exact.estListener().isPresent()) {
+                estTransport =
+                        EstTransport.start(
+                                exact.estListener().orElseThrow(),
+                                realm,
+                                random,
+                                loader,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN);
+            }
+            if (exact.scepListener().isPresent()) {
+                scepTransport =
+                        ScepTransport.start(
+                                exact.scepListener().orElseThrow(),
+                                realm,
+                                random,
+                                loader,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN);
+            }
+            if (exact.cmpListener().isPresent()) {
+                cmpTransport =
+                        CmpTransport.start(
+                                exact.cmpListener().orElseThrow(),
+                                realm,
+                                random,
+                                loader,
+                                () ->
+                                        state.get() == State.READY
+                                                && realm.state() == ServerRealmContext.State.OPEN);
+            }
+        }
+
+        // Worker stop failures retain live-realm custody exactly as the original partial-close
+        // path.
+        @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.CompareObjectsWithEquals"})
+        private void closePartial(Throwable primary) {
+
+            if (auditProjection != null) {
+                try {
+                    auditProjection.close();
+                } catch (Throwable failure) {
+                    if (primary != failure) {
+                        primary.addSuppressed(failure);
+                    }
+                    close(statusSchedule, primary);
+                    close(cmpTransport, primary);
+                    close(scepTransport, primary);
+                    close(estTransport, primary);
+                    close(acmeTransport, primary);
+                    close(publicTransport, primary);
+                    close(transport, primary);
+                    return;
+                }
+            }
+            if (statusSchedule != null) {
+                try {
+                    statusSchedule.close();
+                } catch (Throwable failure) {
+                    if (primary != failure) {
+                        primary.addSuppressed(failure);
+                    }
+                    close(cmpTransport, primary);
+                    close(scepTransport, primary);
+                    close(estTransport, primary);
+                    close(acmeTransport, primary);
+                    close(publicTransport, primary);
+                    close(transport, primary);
+                    return;
+                }
+            }
+            Throwable accumulated = close(cmpTransport, primary);
+            accumulated = close(scepTransport, accumulated);
+            accumulated = close(estTransport, accumulated);
+            accumulated = close(acmeTransport, accumulated);
+            accumulated = close(publicTransport, accumulated);
+            accumulated = close(publicAuthenticator, accumulated);
+            accumulated = close(transport, accumulated);
+            accumulated = close(authenticator, accumulated);
+            close(realm, accumulated);
+            state.set(State.TERMINATED);
+        }
+    }
+
+    private static void validateAcmeTrustedProxies(
+            PkiServerConfiguration.AcmeListener acmeConfiguration, ServerRealmContext realm) {
+        if (acmeConfiguration.transportMode()
+                != PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY) {
+            return;
+        }
+        for (String principalId : acmeConfiguration.trustedProxyPrincipalIds()) {
+            SecurityPrincipal principal = realm.principal(principalId);
+            if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
+                throw new IllegalArgumentException("ACME trusted proxy principal is unavailable");
+            }
+            realm.gateway().validateForwardingPrincipal(principalId);
+        }
+    }
+
+    // All transports must be attempted; preserve the first failure and its ordered suppressed
+    // failures.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private Throwable shutdownTransports(Throwable primary) {
+        Throwable accumulated = primary;
+        try {
+            if (acmeTransport.isPresent()) {
+                acmeTransport
+                        .orElseThrow()
+                        .shutdown(
+                                configuration
+                                        .acmeListener()
+                                        .orElseThrow()
+                                        .execution()
+                                        .gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        try {
+            if (estTransport.isPresent()) {
+                estTransport
+                        .orElseThrow()
+                        .shutdown(
+                                configuration
+                                        .estListener()
+                                        .orElseThrow()
+                                        .execution()
+                                        .gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        try {
+            if (scepTransport.isPresent()) {
+                scepTransport
+                        .orElseThrow()
+                        .shutdown(
+                                configuration
+                                        .scepListener()
+                                        .orElseThrow()
+                                        .execution()
+                                        .gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        try {
+            if (cmpTransport.isPresent()) {
+                cmpTransport
+                        .orElseThrow()
+                        .shutdown(
+                                configuration
+                                        .cmpListener()
+                                        .orElseThrow()
+                                        .execution()
+                                        .gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        try {
+            if (publicTransport.isPresent()) {
+                publicTransport
+                        .orElseThrow()
+                        .shutdown(
+                                configuration
+                                        .publicListener()
+                                        .orElseThrow()
+                                        .execution()
+                                        .gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        try {
+            transport.shutdown(configuration.execution().gracefulShutdown());
+        } catch (Throwable failure) {
+            accumulated = suppress(accumulated, failure);
+        }
+        return accumulated;
     }
 }

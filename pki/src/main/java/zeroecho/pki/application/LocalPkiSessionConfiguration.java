@@ -67,8 +67,10 @@ public record LocalPkiSessionConfiguration(ProviderConfig store, ProviderConfig 
      * @param signing optional local signing configuration
      * @param publishers explicit synchronous publication destinations
      * @param bindingProviders explicit algorithm binding activations
-     * @throws NullPointerException if store, audit, signing, publishers, bindingProviders is null or a supplied collection contains a null member
-     * @throws IllegalArgumentException if operatorId exceeds its evidence bound or binding-provider identities are duplicated
+     * @throws NullPointerException if store, audit, signing, publishers, bindingProviders is null or a
+     * supplied collection contains a null member
+     * @throws IllegalArgumentException if operatorId exceeds its evidence bound or binding-provider
+     * identities are duplicated
      */
     public LocalPkiSessionConfiguration {
         Objects.requireNonNull(store, "store");

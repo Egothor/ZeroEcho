@@ -119,7 +119,7 @@ public interface PkiConfigurationChoicesSource {
         public FormatMetadata {
             Objects.requireNonNull(displayName, "displayName");
             Objects.requireNonNull(subjectInput, "subjectInput");
-            if (displayName.isBlank() || displayName.length() > 128) throw new IllegalArgumentException("Invalid format name");
+            if (displayName.isBlank() || displayName.length() > 128) { throw new IllegalArgumentException("Invalid format name"); }
         }
     }
 

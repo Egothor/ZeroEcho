@@ -66,8 +66,10 @@ public record PublicationAttempt(PkiId publicationId, PublicationSourceType sour
      * @param encoding payload encoding
      * @param length exact payload length
      * @param sha256 exact lowercase SHA-256 commitment
-     * @throws NullPointerException if publicationId, sourceType, sourceId, target, attemptToken, encoding, sha256 is null
-     * @throws IllegalArgumentException if attemptNumber is not positive, length is negative, or attemptToken or sha256 is not 64 lowercase hexadecimal characters
+     * @throws NullPointerException if publicationId, sourceType, sourceId, target, attemptToken, encoding,
+     * sha256 is null
+     * @throws IllegalArgumentException if attemptNumber is not positive, length is negative, or
+     * attemptToken or sha256 is not 64 lowercase hexadecimal characters
      */
     public PublicationAttempt {
         Objects.requireNonNull(publicationId, "publicationId");

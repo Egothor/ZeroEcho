@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.File;
+import java.nio.file.LinkOption;
+import java.util.Iterator;
+import java.util.stream.Stream;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -69,12 +74,14 @@ final class FsRestoreSafety {
     /* default */ record Projection(String namespace, long revision, long watermark, String logical, String files) { }
 
     /**
-     * Rejects a candidate that changes the baseline namespace or logical/file authority commitments, or moves the metadata revision or signing-time watermark backward.
+     * Rejects a candidate that changes the baseline namespace or logical/file authority commitments, or
+     * moves the metadata revision or signing-time watermark backward.
      *
      * @param baseline baseline store root whose authority must be retained
      * @param candidate candidate replacement store root
      * @param limits resource and path limits to enforce
-     * @throws IOException if either projection is invalid, I/O fails or the candidate violates the baseline safety boundary
+     * @throws IOException if either projection is invalid, I/O fails or the candidate violates the
+     * baseline safety boundary
      */
     /* default */ static void requireCompatible(Path baseline, Path candidate, BackupLimits limits) throws IOException {
         Projection previous = project(baseline, limits);
@@ -88,7 +95,8 @@ final class FsRestoreSafety {
 
     // Each call owns one recovery graph, capped by the existing checkpoint cardinality limit.
     /**
-     * Recovers and authenticates the store's bounded metadata and filesystem safety projection. Each call owns and closes its recovery graph; the input store files remain unchanged.
+     * Recovers and authenticates the store's bounded metadata and filesystem safety projection. Each
+     * call owns and closes its recovery graph; the input store files remain unchanged.
      *
      * @param root filesystem tree or store root
      * @param limits resource and path limits to enforce
@@ -153,14 +161,14 @@ final class FsRestoreSafety {
         addRequests(files, root, limits, budget);
         Path workflows = root.resolve("workflows");
         if (Files.exists(workflows)) {
-            try (java.util.stream.Stream<Path> entries = Files.walk(workflows, 5)) {
+            try (Stream<Path> entries = Files.walk(workflows, 5)) {
                 List<Path> ordered = new ArrayList<>();
-                java.util.Iterator<Path> iterator = entries.iterator();
+                Iterator<Path> iterator = entries.iterator();
                 int count = 0;
                 while (iterator.hasNext()) {
                     Path file = iterator.next();
                     if (++count > limits.entryCount()) { throw new IOException("RESTORE_WORKFLOW_LIMIT"); }
-                    String relative = root.relativize(file).toString().replace(java.io.File.separatorChar, '/');
+                    String relative = root.relativize(file).toString().replace(File.separatorChar, '/');
                     if (relative.getBytes(StandardCharsets.UTF_8).length > limits.pathBytes()) {
                         throw new IOException("RESTORE_WORKFLOW_LIMIT");
                     }
@@ -189,24 +197,24 @@ final class FsRestoreSafety {
             return;
         }
         List<Path> ordered = new ArrayList<>();
-        try (java.util.stream.Stream<Path> entries = Files.walk(requests, 2)) {
-            java.util.Iterator<Path> iterator = entries.iterator();
+        try (Stream<Path> entries = Files.walk(requests, 2)) {
+            Iterator<Path> iterator = entries.iterator();
             int count = 0;
             while (iterator.hasNext()) {
                 Path path = iterator.next();
                 if (++count > limits.entryCount()) {
                     throw new IOException("RESTORE_REQUEST_LIMIT");
                 }
-                if (Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
                     if (!path.equals(requests) && !path.equals(byId)) {
                         throw new IOException("RESTORE_REQUEST_INVALID");
                     }
                 } else {
                     if (!path.getParent().equals(byId)
-                            || !Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                            || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
                         throw new IOException("RESTORE_REQUEST_INVALID");
                     }
-                    String relative = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
+                    String relative = root.relativize(path).toString().replace(File.separatorChar, '/');
                     FsBackupFiles.validatePath(relative, limits);
                     ordered.add(path);
                 }
@@ -234,7 +242,7 @@ final class FsRestoreSafety {
     }
 
     private static void addFile(MessageDigest digest, Path root, Path file, FsBackupFiles.Budget budget) throws IOException {
-        add(digest, root.relativize(file).toString().replace(java.io.File.separatorChar, '/'));
+        add(digest, root.relativize(file).toString().replace(File.separatorChar, '/'));
         long length = Files.size(file);
         budget.add(length);
         add(digest, Long.toString(length));

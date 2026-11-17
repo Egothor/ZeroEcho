@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -40,8 +43,6 @@ import java.util.Base64;
 import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.core.io.RepeatableContent;
 
 /**
  * Repeatable bounded-memory PEM encoding which retains ownership of immutable DER content.
@@ -63,10 +64,20 @@ public final class StreamingPemContent implements RepeatableContent {
      * @throws ArithmeticException if the complete armored byte length cannot fit a signed long
      */
     public StreamingPemContent(RepeatableContent source,String label,CancellationSignal cancellation) {
-        this.source=Objects.requireNonNull(source,"source");this.cancellation=Objects.requireNonNull(cancellation,"cancellation");
-        if(label==null||!label.matches("[A-Z0-9 ]{1,48}"))throw new IllegalArgumentException("Invalid PEM label");
-        long bytes=source.length().orElseThrow(() -> new IllegalArgumentException("PEM source length is required"));
-        if(bytes<1)throw new IllegalArgumentException("Empty PEM source");
+        this.source = Objects.requireNonNull(source, "source");
+        this.cancellation = Objects.requireNonNull(cancellation, "cancellation");
+        if (label == null || !label.matches("[A-Z0-9 ]{1,48}")) {
+            throw new IllegalArgumentException("Invalid PEM label");
+        }
+        long bytes =
+                source.length()
+                        .orElseThrow(
+                                () ->
+                                        new IllegalArgumentException(
+                                                "PEM source length is required"));
+        if (bytes <= 0) {
+            throw new IllegalArgumentException("Empty PEM source");
+        }
         header=("-----BEGIN "+label+"-----\n").getBytes(StandardCharsets.US_ASCII);
         footer=("-----END "+label+"-----\n").getBytes(StandardCharsets.US_ASCII);
         long characters=Math.multiplyExact(Math.addExact(bytes,2)/3,4);
@@ -79,7 +90,10 @@ public final class StreamingPemContent implements RepeatableContent {
      * @throws IOException if this lease is closed, cancellation is requested or the source cannot be opened
      */
     @Override public InputStream openStream()throws IOException {
-        if(closed.get())throw new IOException("PEM content lease closed");cancellation.throwIfCancelled();
+        if (closed.get()) {
+            throw new IOException("PEM content lease closed");
+        }
+        cancellation.throwIfCancelled();
         return new PemStream(source.openStream());
     }
     /**
@@ -94,12 +108,20 @@ public final class StreamingPemContent implements RepeatableContent {
      * @return non-secret format/content identity
      */
     @Override public String contentId(){return "pem:"+source.contentId();}
+
     /**
      * Releases the owned source exactly once.
      *
      * @throws IOException if source release fails
      */
-    @Override public void close()throws IOException {if(closed.compareAndSet(false,true))source.close();}
+    @Override
+    public void close() throws IOException {
+        if (closed.compareAndSet(false, true)) {
+            source.close();
+        }
+    }
+
+    /** Bounded chunk encoder with an independent source position. */
     private final class PemStream extends InputStream {
         private final InputStream input;
         private final byte[] raw=new byte[48*1024];
@@ -109,18 +131,38 @@ public final class StreamingPemContent implements RepeatableContent {
         private boolean ended;
         private boolean footerWritten;
         private boolean readerClosed;
-        PemStream(InputStream input){this.input=input;}
+
+        /* default */ PemStream(InputStream input) {
+            super();
+            this.input = input;
+        }
+
         private boolean advance()throws IOException {
-            if(readerClosed)throw new IOException("PEM reader closed");
-            cancellation.throwIfCancelled();if(closed.get())throw new IOException("PEM content lease closed");
-            if(offset<segment.length)return true;
-            if(footerWritten)return false;
+            if (readerClosed) {
+                throw new IOException("PEM reader closed");
+            }
+            cancellation.throwIfCancelled();
+            if (closed.get()) {
+                throw new IOException("PEM content lease closed");
+            }
+            if (offset < segment.length) {
+                return true;
+            }
+            if (footerWritten) {
+                return false;
+            }
             offset=0;
             if(newline){newline=false;segment=new byte[]{'\n'};return true;}
             if(!ended) {
                 int count=0;
                 while(count<raw.length) {cancellation.throwIfCancelled();int read=input.read(raw,count,raw.length-count);if(read==-1){ended=true;break;}count+=read;}
-                if(count>0) {segment=Base64.getMimeEncoder(64,new byte[]{'\n'}).encode(count==raw.length?raw:java.util.Arrays.copyOf(raw,count));newline=true;return true;}
+                if (count > 0) {
+                    segment =
+                            Base64.getMimeEncoder(64, new byte[] {'\n'})
+                                    .encode(count == raw.length ? raw : java.util.Arrays.copyOf(raw, count));
+                    newline = true;
+                    return true;
+                }
             }
             if(!footerWritten){footerWritten=true;segment=footer;return true;}
             return false;
@@ -133,7 +175,11 @@ public final class StreamingPemContent implements RepeatableContent {
          * {@inheritDoc}
          */
         @Override public int read(byte[] buffer,int start,int size)throws IOException {
-            Objects.checkFromIndexSize(start,size,buffer.length);if(size==0)return 0;int copied=0;
+            Objects.checkFromIndexSize(start, size, buffer.length);
+            if (size == 0) {
+                return 0;
+            }
+            int copied = 0;
             while(copied<size&&advance()){int count=Math.min(size-copied,segment.length-offset);System.arraycopy(segment,offset,buffer,start+copied,count);offset+=count;copied+=count;}
             return copied==0?-1:copied;
         }

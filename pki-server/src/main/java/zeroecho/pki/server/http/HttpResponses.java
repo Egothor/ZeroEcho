@@ -36,20 +36,20 @@ package zeroecho.pki.server.http;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Objects;
-
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.json.JsonFactory;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationValue;
-import zeroecho.pki.server.ServerOperationGateway;
 import zeroecho.pki.server.ServerControlOperationOutcome;
+import zeroecho.pki.server.ServerOperationGateway;
 
 /**
  * Deterministic versioned transport response and status mapping.
  */
-final class HttpResponses {
+/* default */ final class HttpResponses {
+    private static final JsonFactory JSON = JsonFactory.builder().build();
     /**
      * Buffered HTTP response with explicit one-time-body and transport metadata ownership.
      *
@@ -61,7 +61,7 @@ final class HttpResponses {
      * @param contentType validated media type, optionally with the supported UTF-8 charset suffix
      * @param attachmentFileName validated attachment name, if any
      */
-    record Response(int statusCode, byte[] body, boolean oneTimeSensitive,
+    /* default */ record Response(int statusCode, byte[] body, boolean oneTimeSensitive,
             java.util.Optional<String> capabilityId, java.util.Optional<String> statusLocation,
             String contentType,java.util.Optional<String> attachmentFileName) {
         /**
@@ -77,12 +77,12 @@ final class HttpResponses {
          * @throws NullPointerException if a required reference or optional container is null
          * @throws IllegalArgumentException if media type or attachment filename syntax is invalid
          */
-        Response { body = Objects.requireNonNull(body, "body").clone();
+        /* default */ Response { body = Objects.requireNonNull(body, "body").clone();
             capabilityId = Objects.requireNonNull(capabilityId, "capabilityId");
             statusLocation = Objects.requireNonNull(statusLocation, "statusLocation");
             contentType=Objects.requireNonNull(contentType,"contentType");attachmentFileName=Objects.requireNonNull(attachmentFileName,"attachmentFileName");
             if(!contentType.matches("[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+(?:; charset=utf-8)?")
-                    ||attachmentFileName.filter(value -> !value.matches("[a-zA-Z0-9._-]{1,96}")).isPresent())throw new IllegalArgumentException("Invalid response metadata"); }
+                    ||attachmentFileName.filter(value -> !value.matches("[a-zA-Z0-9._-]{1,96}")).isPresent()){ throw new IllegalArgumentException("Invalid response metadata"); } }
         /**
          * Creates a JSON response with optional disclosure and polling metadata.
          *
@@ -93,7 +93,7 @@ final class HttpResponses {
          * @param location optional relative polling location
          * @throws NullPointerException if the body or an optional container is null
          */
-        Response(int statusCode,byte[] body,boolean sensitive,java.util.Optional<String> capabilityId,java.util.Optional<String> location) {
+        /* default */ Response(int statusCode,byte[] body,boolean sensitive,java.util.Optional<String> capabilityId,java.util.Optional<String> location) {
             this(statusCode,body,sensitive,capabilityId,location,"application/json; charset=utf-8",java.util.Optional.empty());
         }
         /**
@@ -103,7 +103,7 @@ final class HttpResponses {
          * @param body response entity bytes; copied
          * @throws NullPointerException if the body is null
          */
-        Response(int statusCode, byte[] body) { this(statusCode, body, false,
+        /* default */ Response(int statusCode, byte[] body) { this(statusCode, body, false,
                 java.util.Optional.empty(), java.util.Optional.empty()); }
         /**
          * Copies the current response entity for transport delivery.
@@ -116,7 +116,7 @@ final class HttpResponses {
          *
          * <p>Previously returned copies remain the caller's responsibility.</p>
          */
-        void clearSensitiveBody() { if (oneTimeSensitive) java.util.Arrays.fill(body, (byte) 0); }
+        /* default */ void clearSensitiveBody() { if (oneTimeSensitive) { java.util.Arrays.fill(body, (byte) 0); } }
     }
 
     /**
@@ -129,11 +129,10 @@ final class HttpResponses {
      * @throws NullPointerException if any argument is null
      * @throws IllegalArgumentException if media type or filename syntax is invalid
      */
-    static Response attachment(byte[] content,String mediaType,String fileName) {
+    /* default */ static Response attachment(byte[] content,String mediaType,String fileName) {
         return new Response(200,content,false,java.util.Optional.empty(),java.util.Optional.empty(),mediaType,java.util.Optional.of(fileName));
     }
 
-    private static final JsonFactory JSON = JsonFactory.builder().build();
 
     private HttpResponses() {
     }
@@ -149,7 +148,7 @@ final class HttpResponses {
      * @param outcome gateway result, denial or approval requirement
      * @return response with the status, result and polling metadata appropriate to the outcome
      */
-    static Response gateway(String requestId, String operation, ServerOperationGateway.Outcome outcome) {
+    /* default */ static Response gateway(String requestId, String operation, ServerOperationGateway.Outcome outcome) {
         return switch (outcome) {
             case ServerOperationGateway.Outcome.Executed executed -> backend(requestId, operation,
                     executed.outcome());
@@ -197,7 +196,7 @@ final class HttpResponses {
      * @param reconciliationRequired whether the external outcome must be reconciled
      * @return versioned failed-result JSON response
      */
-    static Response failure(int status, String requestId, String operation, String classification,
+    /* default */ static Response failure(int status, String requestId, String operation, String classification,
             String code, String messageKey, boolean recoveryRequired, boolean reconciliationRequired) {
         return encode(status, requestId, operation, "FAILED", null,
                 new Failure(classification, code, messageKey, recoveryRequired, reconciliationRequired));
@@ -212,7 +211,7 @@ final class HttpResponses {
      * @param state state label exposed in the result
      * @return versioned success response
      */
-    static Response minimal(int status, String requestId, String operation, String state) {
+    /* default */ static Response minimal(int status, String requestId, String operation, String state) {
         return encode(status, requestId, operation, "SUCCEEDED",
                 new PkiOperationValue.ObjectValue(java.util.Map.of("state", new PkiOperationValue.Text(state))),
                 null);
@@ -225,7 +224,7 @@ final class HttpResponses {
      * @param result safe retained-request projection
      * @return HTTP 202 pending response
      */
-    static Response administrativeAccepted(String trace, PkiOperationValue.ObjectValue result) {
+    /* default */ static Response administrativeAccepted(String trace, PkiOperationValue.ObjectValue result) {
         return encode(202,trace,"administrative.request.submit","PENDING",result,null);
     }
 
@@ -237,8 +236,8 @@ final class HttpResponses {
      * @param canonicalRequestId canonical administrative request identity
      * @return HTTP 202 pending response carrying a relative polling location
      */
-    static Response administrativeProvisioningAccepted(String trace,PkiOperationValue.ObjectValue result,String canonicalRequestId) {
-        var response=administrativeAccepted(trace,result);
+    /* default */ static Response administrativeProvisioningAccepted(String trace,PkiOperationValue.ObjectValue result,String canonicalRequestId) {
+        Response response=administrativeAccepted(trace,result);
         return new Response(response.statusCode(),response.body(),false,java.util.Optional.empty(),
                 java.util.Optional.of("/admin/v1/requests/"+canonicalRequestId));
     }
@@ -249,8 +248,8 @@ final class HttpResponses {
      * @param canonicalRequestId identity of the canonical conflicting request
      * @return HTTP 409 response with the canonical request identity and polling location
      */
-    static Response administrativeProvisioningConflict(String trace,String canonicalRequestId) {
-        var response=encode(409,trace,"administrative.request.submit","FAILED",new PkiOperationValue.ObjectValue(java.util.Map.of(
+    /* default */ static Response administrativeProvisioningConflict(String trace,String canonicalRequestId) {
+        Response response=encode(409,trace,"administrative.request.submit","FAILED",new PkiOperationValue.ObjectValue(java.util.Map.of(
                 "canonicalRequestId",new PkiOperationValue.Text(canonicalRequestId))),
                 new Failure("CONFLICT","OCSP_PROVISIONING_TARGET_CONFLICT","OCSP_PROVISIONING_TARGET_CONFLICT",false,false));
         return new Response(response.statusCode(),response.body(),false,java.util.Optional.empty(),
@@ -265,7 +264,7 @@ final class HttpResponses {
      * @param result safe structured operation result
      * @return HTTP 200 versioned success response
      */
-    static Response success(String requestId, String operation, PkiOperationValue.ObjectValue result) {
+    /* default */ static Response success(String requestId, String operation, PkiOperationValue.ObjectValue result) {
         return encode(200, requestId, operation, "SUCCEEDED", result, null);
     }
 
@@ -297,7 +296,7 @@ final class HttpResponses {
      * @param outcome current authoritative signing-operation outcome
      * @return mapped response retaining any pending-operation polling location
      */
-    static Response signingOperation(String requestId, PkiOperationOutcome outcome) {
+    /* default */ static Response signingOperation(String requestId, PkiOperationOutcome outcome) {
         Response encoded = backend(requestId, "signing.operation", outcome);
         return new Response(encoded.statusCode(), encoded.body(), true,
                 java.util.Optional.empty(), encoded.statusLocation());
@@ -309,7 +308,7 @@ final class HttpResponses {
      * @param requestId transport correlation identity
      * @return HTTP 404 response marked for body erasure after delivery
      */
-    static Response signingNotFound(String requestId) {
+    /* default */ static Response signingNotFound(String requestId) {
         Response encoded = failure(404, requestId, "operation", "NOT_FOUND", "OPERATION_NOT_FOUND",
                 "OPERATION_NOT_FOUND", false, false);
         return new Response(encoded.statusCode(), encoded.body(), true,
@@ -338,6 +337,9 @@ final class HttpResponses {
         };
     }
 
+    // Untrusted transport/parser failures retain the existing finite safe HTTP diagnostics.
+
+    @SuppressWarnings({"PMD.PreserveStackTrace"})
     private static Response encode(int status, String requestId, String operation, String outcome,
             PkiOperationValue result, Failure failure) {
         try {
@@ -349,9 +351,9 @@ final class HttpResponses {
                 generator.writeStringProperty("operation", operation);
                 generator.writeStringProperty("status", outcome);
                 generator.writeName("result");
-                if (result == null) generator.writeNull(); else StrictJson.write(generator, result);
+                if (result == null) { generator.writeNull(); } else { StrictJson.write(generator, result); }
                 generator.writeName("failure");
-                if (failure == null) generator.writeNull(); else writeFailure(generator, failure);
+                if (failure == null) { generator.writeNull(); } else { writeFailure(generator, failure); }
                 generator.writeEndObject();
             }
             return new Response(status, output.toByteArray());
@@ -373,6 +375,7 @@ final class HttpResponses {
     private record Failure(String classification, String code, String messageKey,
             boolean recoveryRequired, boolean reconciliationRequired) { }
 
+    /** Accumulates response fields in their existing insertion order before the envelope is encoded. */
     private static final class MapBuilder {
         private final java.util.Map<String, PkiOperationValue> values = new java.util.LinkedHashMap<>();
         private MapBuilder(java.util.Map<String, PkiOperationValue> initial) { values.putAll(initial); }

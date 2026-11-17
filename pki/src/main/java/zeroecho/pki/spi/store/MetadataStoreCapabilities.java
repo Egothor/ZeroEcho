@@ -111,7 +111,8 @@ public record MetadataStoreCapabilities(WriterModel writerModel,
      * @param outcomeRetention authoritative outcome-retention model
      * @param optionalFeatures optional adapter facilities
      * @param maximumIndividualRecordBytes optional positive technical record limit
-     * @throws NullPointerException if writerModel, contentLengthModel, outcomeRetention, optionalFeatures, maximumIndividualRecordBytes is null
+     * @throws NullPointerException if writerModel, contentLengthModel, outcomeRetention, optionalFeatures,
+     * maximumIndividualRecordBytes is null
      * @throws IllegalArgumentException if a present maximumIndividualRecordBytes value is not positive
      */
     public MetadataStoreCapabilities {

@@ -66,7 +66,11 @@ record CommittedPrefixDescriptor(long generationId,
      * @param inclusiveForcedEndSequence last sequence covered by the forced upper boundary
      * @param inclusiveForcedEndRevision committed revision covered by the forced upper boundary
      * @param inclusiveForcedEndCommitment rolling commitment at the forced upper boundary
-     * @throws IllegalArgumentException if {@code (generationId < 0L || exclusiveStartOffset < SigningWalContainerCodec.HEADER_BYTES || inclusiveForcedEndOffset < exclusiveStartOffset || exclusiveStartSequence < -1L || inclusiveForcedEndSequence < exclusiveStartSequence || exclusiveStartRevision < 0L || inclusiveForcedEndRevision < exclusiveStartRevision)}; or if {@code (empty != endpointEqual)}
+     * @throws IllegalArgumentException if {@code (generationId < 0L || exclusiveStartOffset <
+     * SigningWalContainerCodec.HEADER_BYTES || inclusiveForcedEndOffset < exclusiveStartOffset ||
+     * exclusiveStartSequence < -1L || inclusiveForcedEndSequence < exclusiveStartSequence ||
+     * exclusiveStartRevision < 0L || inclusiveForcedEndRevision < exclusiveStartRevision)}; or if {@code
+     * (empty != endpointEqual)}
      */
     CommittedPrefixDescriptor {
         requireCommitment(exclusiveStartCommitment);

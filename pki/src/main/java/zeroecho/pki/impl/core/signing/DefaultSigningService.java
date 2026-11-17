@@ -34,6 +34,17 @@
 
 package zeroecho.pki.impl.core.signing;
 
+import java.util.List;
+import zeroecho.pki.api.schedule.StatusScheduleState;
+import zeroecho.pki.impl.core.continuation.CaSubjectProofBindings;
+import zeroecho.pki.impl.core.continuation.DomainCommandEncoding;
+import zeroecho.pki.impl.core.continuation.IntermediateSigningCommand;
+import zeroecho.pki.impl.core.continuation.ManagedKeyProofBindings;
+import zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand;
+import zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.spi.store.DomainContinuationStore;
+
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.time.DateTimeException;
@@ -74,7 +85,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
     private final PkiStore store;
     private final SigningProvider provider;
     private final AlgorithmIdentity defaultSignatureAlgorithm;
-    private final Optional<zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot> domainAuthority;
+    private final Optional<X509AuthoritySnapshot> domainAuthority;
     private final Duration signingTtl;
     private final SecureRandom random;
     private final Runnable requireOpen;
@@ -120,12 +131,15 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
      * @param observationWait existing bounded observation wait
      * @param domainAuthority exact configured algorithm authority, absent for compatibility construction
      * @throws IllegalArgumentException if default/provider/lifetime policy is invalid
-     * @throws NullPointerException if domainAuthority, store, provider, defaultSignatureAlgorithm, random, requireOpen, acceptance, wakeReactor, observationWait is null
+     * @throws NullPointerException if domainAuthority, store, provider, defaultSignatureAlgorithm, random, requireOpen,
+     * acceptance, wakeReactor, observationWait is null
      */
+    // Retain the established public service-construction signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public DefaultSigningService(PkiStore store, SigningProvider provider,
             AlgorithmIdentity defaultSignatureAlgorithm, Duration signingTtl, SecureRandom random,
             Runnable requireOpen, AcceptanceOperation acceptance, Runnable wakeReactor,
-            ObservationWait observationWait, Optional<zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot> domainAuthority) {
+            ObservationWait observationWait, Optional<X509AuthoritySnapshot> domainAuthority) {
         this.domainAuthority = Objects.requireNonNull(domainAuthority, "domainAuthority");
         this.store = Objects.requireNonNull(store, "store");
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -248,7 +262,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
         AlgorithmIdentity selected = domainAuthority.map(value -> value.resolveIdentity(request.algorithmId()))
                 .orElseGet(() -> defaultSignatureAlgorithm.canonicalForm().equals(request.algorithmId())
-                        ? defaultSignatureAlgorithm : AlgorithmIdentity.parse(request.algorithmId(), java.util.List.of()));
+                        ? defaultSignatureAlgorithm : AlgorithmIdentity.parse(request.algorithmId(), List.of()));
         if (selected.kind() != AlgorithmIdentity.Kind.SIGNATURE || !selected.canonicalForm().equals(request.algorithmId())
                 || !provider.supportedAlgorithms().contains(selected.canonicalForm())) {
             throw new IllegalArgumentException("Frozen domain signing algorithm is unavailable");
@@ -265,10 +279,9 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         }
         Optional<SignWorkflowStore.CaSubjectProofStep> proofStep = restoreProof(request.proofStep());
         Optional<SignWorkflowStore.CaSubjectProofStep> alternativeProof = restoreProof(request.alternativeProofStep());
-        boolean intermediate = zeroecho.pki.impl.core.continuation.IntermediateSigningCommand.supports(
-                zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command()))
-                || zeroecho.pki.impl.core.continuation.DomainCommandEncoding.operation(outer.command())
-                    .equals(zeroecho.pki.impl.core.continuation.OcspResponderCertificateCommand.OPERATION);
+        boolean intermediate = IntermediateSigningCommand.supports(
+                DomainCommandEncoding.operation(outer.command()))
+                || OcspResponderCertificateCommand.OPERATION.equals(DomainCommandEncoding.operation(outer.command()));
         if (intermediate != proofStep.isPresent()) {
             throw new IllegalArgumentException("Intermediate signing requires its internal proof candidate");
         }
@@ -278,19 +291,19 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         Optional<SignWorkflowStore.OuterCommand> paired = Optional.of(outer);
         SignWorkflowStore.AcceptanceCommand command = command(metadata, candidate,
                 deadline(submission.createdAt()), paired, SignWorkflowStore.Mode.NORMAL, proofStep, alternativeProof);
-        if (outer.kind() == zeroecho.pki.spi.store.DomainContinuationStore.Kind.KEY_PROOF) {
-            zeroecho.pki.impl.core.continuation.ManagedKeyProofBindings.requireEnvelope(
+        if (outer.kind() == DomainContinuationStore.Kind.KEY_PROOF) {
+            ManagedKeyProofBindings.requireEnvelope(
                     SignWorkflowStore.AcceptanceEnvelope.from(command));
         }
         if (intermediate) {
             SignWorkflowStore.AcceptanceEnvelope envelope = SignWorkflowStore.AcceptanceEnvelope.from(command);
-            boolean responder = zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.supports(envelope);
-            if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireEnvelope(envelope,
-                    SignWorkflowStore.SubjectKeyRole.PRIMARY);
-            else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireEnvelope(envelope);
+            boolean responder = OcspResponderSubjectProofBindings.supports(envelope);
+            if (responder) { OcspResponderSubjectProofBindings.requireEnvelope(envelope,
+                    SignWorkflowStore.SubjectKeyRole.PRIMARY); }
+            else { CaSubjectProofBindings.requireEnvelope(envelope); }
             try {
-                if (responder) zeroecho.pki.impl.core.continuation.OcspResponderSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope);
-                else zeroecho.pki.impl.core.continuation.CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope);
+                if (responder) { OcspResponderSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope); }
+                else { CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), envelope); }
             }
             catch (IOException failure) { throw new PkiException("CA proof candidate validation failed", failure); }
         }
@@ -343,12 +356,12 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
      * @throws NullPointerException if claim is null
      */
     public SigningAcceptanceResult acceptScheduled(PreparedSigningRequest prepared,
-            zeroecho.pki.api.schedule.StatusScheduleState.Execution claim) {
+            StatusScheduleState.Execution claim) {
         return accept(prepared, Optional.of(Objects.requireNonNull(claim, "claim")));
     }
 
     private SigningAcceptanceResult accept(PreparedSigningRequest prepared,
-            Optional<zeroecho.pki.api.schedule.StatusScheduleState.Execution> claim) {
+            Optional<StatusScheduleState.Execution> claim) {
         requireOpen.run();
         DefaultPreparedSigningRequest exact = requirePrepared(prepared);
         exact.requireUnused();
@@ -461,7 +474,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
         try {
             if (prepared.needsDiscardValidation()) { validatePrepared(prepared); }
             Throwable primary = null;
-            java.util.List<DurableContentReference> candidates = prepared.candidates();
+            List<DurableContentReference> candidates = prepared.candidates();
             for (int index = 0; index < candidates.size(); index++) {
                 if (prepared.discarded(index)) { continue; }
                 prepared.startDestructiveDiscard();
@@ -698,7 +711,7 @@ public final class DefaultSigningService implements SigningService { // NOPMD - 
          * @throws UnsupportedOperationException if this adapter does not support scheduling
          */
         default SignWorkflowStore.AcceptanceResult acceptScheduled(SignWorkflowStore.AcceptanceCommand command,
-                zeroecho.pki.api.schedule.StatusScheduleState.Execution claim, Runnable transferCustody) {
+                StatusScheduleState.Execution claim, Runnable transferCustody) {
             throw new UnsupportedOperationException("Scheduled acceptance unavailable");
         }
     }

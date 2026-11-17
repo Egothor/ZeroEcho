@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
+
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -114,7 +116,8 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
      * @param secureRandom session-local cryptographically secure nonce source
      * @param auditSink optional session-owned best-effort audit sink
      * @param clock authoritative session clock used for proof liveness and audit timestamps
-     * @throws NullPointerException if store, lifecycleGuard, proofProviders, proofPolicy, secureRandom, clock is null or a supplied collection contains a null member
+     * @throws NullPointerException if store, lifecycleGuard, proofProviders, proofPolicy, secureRandom, clock is null
+     * or a supplied collection contains a null member
      */
     public DefaultCredentialConfirmationService(PkiStore store, Runnable lifecycleGuard,
             Map<String, KeyPossessionProofProvider> proofProviders,
@@ -453,7 +456,7 @@ public final class DefaultCredentialConfirmationService implements CredentialCon
         }
     }
 
-    private record ChallengeSettings(zeroecho.pki.api.confirmation.ConfirmationRealmBinding realm,
+    private record ChallengeSettings(ConfirmationRealmBinding realm,
             String serverAudience, ConfirmationProofSuiteBinding proofSuiteBinding,
             Duration timeToLive) {
         private ChallengeSettings {

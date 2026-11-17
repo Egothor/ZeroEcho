@@ -43,7 +43,7 @@ import zeroecho.pki.application.PkiOperationResult;
 /**
  * Closed server-control result with explicit one-time-sensitive handling.
  */
-@SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.ControlStatementBraces" })
+@SuppressWarnings({"PMD.AvoidLiteralsInIfCondition"})
 public sealed interface ServerControlOperationOutcome permits ServerControlOperationOutcome.Ordinary,
         ServerControlOperationOutcome.OneTimeSensitive {
     /**
@@ -103,7 +103,7 @@ public sealed interface ServerControlOperationOutcome permits ServerControlOpera
         public OneTimeSensitive(PkiOperationResult safeResult, byte[] token) {
             this.safeResult = Objects.requireNonNull(safeResult, "safeResult");
             this.token = Objects.requireNonNull(token, "token").clone();
-            if (token.length != 32) throw new IllegalArgumentException("Capability token length is invalid");
+            if (token.length != 32) { throw new IllegalArgumentException("Capability token length is invalid"); }
         }
         /**
          * {@inheritDoc}
@@ -122,7 +122,7 @@ public sealed interface ServerControlOperationOutcome permits ServerControlOpera
          * @throws IllegalStateException if the token was already consumed
          */
         public byte[] consumeToken() {
-            if (!consumed.compareAndSet(false, true)) throw new IllegalStateException("Capability token consumed");
+            if (!consumed.compareAndSet(false, true)) { throw new IllegalStateException("Capability token consumed"); }
             byte[] result = token.clone();
             Arrays.fill(token, (byte) 0);
             return result;

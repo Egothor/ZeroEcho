@@ -216,8 +216,10 @@ public record RevocationExecutionEvidence(ActorType actorType, String actorId, S
      * @param operationCommitment administrative operation or exact CMP request commitment
      * @param justificationCommitment optional administrative justification commitment
      * @param outcome atomically committed revocation outcome
-     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath, operationCommitment, justificationCommitment, outcome is null
-     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment classifications do not form a supported revocation-evidence combination
+     * @throws NullPointerException if actorType, authentication, authorization, authorizationPath,
+     * operationCommitment, justificationCommitment, outcome is null
+     * @throws IllegalArgumentException if actor, authentication, authorization and operation-commitment
+     * classifications do not form a supported revocation-evidence combination
      */
     public RevocationExecutionEvidence {
         Objects.requireNonNull(actorType, "actorType");

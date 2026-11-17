@@ -53,7 +53,7 @@ final class OcspResponderProvisioningService {
      * @param control realm-owned server-control authority
      * @param signing supplier of the authoritative semantic signing service
      */
-    OcspResponderProvisioningService(RealmId realm, ServerControlStore control,
+    /* default */ OcspResponderProvisioningService(RealmId realm, ServerControlStore control,
             java.util.function.Supplier<SemanticSigningService> signing) {
         this.realm = realm; this.control = control; this.signing = signing;
     }
@@ -71,7 +71,7 @@ final class OcspResponderProvisioningService {
      * @param alternativeSpkiSha256 alternative responder public-key SHA-256
      * @param predecessor expected prior responder credential, if renewing
      */
-    record Selection(String coreSlotId, String serverSlotId, long revision, String requestId,
+    /* default */ record Selection(String coreSlotId, String serverSlotId, long revision, String requestId,
             String targetCommitment, PkiId authorityId, PkiId issuerId, String primarySpkiSha256,
             String alternativeSpkiSha256, Optional<PkiId> predecessor) { }
 
@@ -82,12 +82,12 @@ final class OcspResponderProvisioningService {
      * @return exact slot revision, deterministic request identity and target commitment
      * @throws IllegalStateException if the domain service returns a noncanonical provisioning identity
      */
-    Selection select(ManagedOcspResponderIssuanceRequest request) {
-        var selected = signing.get().managedOcspResponderProvisioningBinding(request);
-        var retained = selected.retainedBinding();
-        var id = java.util.regex.Pattern.compile("ocsp-prov:([0-9a-f]{64}):r([1-9][0-9]{0,18})").matcher(retained.issuanceId());
-        if (!id.matches()) throw new IllegalStateException("OCSP provisioning core identity invalid");
-        String core = id.group(1), server = ManagedOcspProvisioningIdentity.serverSlotId(realm.value(), core);
+    /* default */ Selection select(ManagedOcspResponderIssuanceRequest request) {
+        zeroecho.pki.api.issuance.ManagedOcspResponderProvisioningBinding selected = signing.get().managedOcspResponderProvisioningBinding(request);
+        zeroecho.pki.api.issuance.RetainedIssuanceBinding retained = selected.retainedBinding();
+        java.util.regex.Matcher id = java.util.regex.Pattern.compile("ocsp-prov:([0-9a-f]{64}):r([1-9][0-9]{0,18})").matcher(retained.issuanceId());
+        if (!id.matches()) { throw new IllegalStateException("OCSP provisioning core identity invalid"); }
+        String core = id.group(1); String server = ManagedOcspProvisioningIdentity.serverSlotId(realm.value(), core);
         long revision = Long.parseLong(id.group(2));
         return new Selection(core, server, revision, ManagedOcspProvisioningIdentity.serverRequestId(server, revision),
                 retained.effectiveCommitment(), retained.authorityId(), retained.expectedIssuerId(),
@@ -100,7 +100,7 @@ final class OcspResponderProvisioningService {
      * @param selection server-normalized provisioning coordinates
      * @return retained claim record, or empty if no claim exists
      */
-    Optional<ServerControlStore.ProtocolRecord> record(Selection selection) {
+    /* default */ Optional<ServerControlStore.ProtocolRecord> record(Selection selection) {
         return control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, selection.serverSlotId());
     }
 
@@ -113,13 +113,13 @@ final class OcspResponderProvisioningService {
      *         predecessor
      * @throws IllegalStateException if retained claim/request observations are unavailable or inconsistent
      */
-    Optional<AdministrativeRequest> existing(Selection selection) {
-        var record = record(selection);
-        if (record.isEmpty()) return Optional.empty();
-        var slot = OcspProvisioningSlotCodec.decode(record.orElseThrow());
-        var request = requireRequest(slot);
+    /* default */ Optional<AdministrativeRequest> existing(Selection selection) {
+        Optional<ServerControlStore.ProtocolRecord> record = record(selection);
+        if (record.isEmpty()) { return Optional.empty(); }
+        OcspProvisioningSlot slot = OcspProvisioningSlotCodec.decode(record.orElseThrow());
+        AdministrativeRequest request = requireRequest(slot);
         if (slot.revision() == selection.revision()) {
-            if (!slot.targetCommitment().equals(selection.targetCommitment())) throw new TargetConflict(slot.canonicalRequestId());
+            if (!slot.targetCommitment().equals(selection.targetCommitment())) { throw new TargetConflict(slot.canonicalRequestId()); }
             return Optional.of(request);
         }
         if (slot.state() != OcspProvisioningSlot.State.COMPLETED || slot.revision() == Long.MAX_VALUE
@@ -137,9 +137,9 @@ final class OcspResponderProvisioningService {
      * @return mutation guarded by the previous slot commitment, if present
      * @throws IllegalArgumentException if the request does not match the selected claim
      */
-    ServerControlStore.ProtocolMutation claim(Selection selected, AdministrativeRequest request) {
-        var previous = record(selected);
-        var slot = new OcspProvisioningSlot(realm, selected.serverSlotId(), selected.coreSlotId(), selected.authorityId(),
+    /* default */ ServerControlStore.ProtocolMutation claim(Selection selected, AdministrativeRequest request) {
+        Optional<ServerControlStore.ProtocolRecord> previous = record(selected);
+        OcspProvisioningSlot slot = new OcspProvisioningSlot(realm, selected.serverSlotId(), selected.coreSlotId(), selected.authorityId(),
                 selected.issuerId(), selected.primarySpkiSha256(), selected.alternativeSpkiSha256(), selected.revision(),
                 OcspProvisioningSlot.State.CLAIMED, selected.requestId(), selected.targetCommitment(), Optional.empty(),
                 Optional.empty(), Optional.empty(), selected.predecessor());
@@ -157,15 +157,15 @@ final class OcspResponderProvisioningService {
      *         credential identity
      * @throws IllegalArgumentException if either request is inconsistent with its slot
      */
-    ServerControlStore.ProtocolMutation transition(AdministrativeRequest old, AdministrativeRequest next) {
-        var row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(old.requestId()))
+    /* default */ ServerControlStore.ProtocolMutation transition(AdministrativeRequest old, AdministrativeRequest next) {
+        ServerControlStore.ProtocolRecord row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(old.requestId()))
                 .orElseThrow(() -> new IllegalStateException("OCSP provisioning claim unavailable"));
-        var slot = OcspProvisioningSlotCodec.decode(row); slot.requireRequest(old);
+        OcspProvisioningSlot slot = OcspProvisioningSlotCodec.decode(row); slot.requireRequest(old);
         OcspProvisioningSlot.State state;
         Optional<PkiId> credential = Optional.empty(); Optional<String> digest = Optional.empty();
         switch (next.state()) {
             case SUCCEEDED -> {
-                var value = next.result().orElseThrow().fields().get("credentialId");
+                zeroecho.pki.application.PkiOperationValue value = next.result().orElseThrow().fields().get("credentialId");
                 if (!(value instanceof zeroecho.pki.application.PkiOperationValue.Text id) || !id.value().matches("x509:[0-9a-f]{64}")) {
                     throw new IllegalStateException("OCSP provisioning credential result invalid");
                 }
@@ -175,7 +175,7 @@ final class OcspResponderProvisioningService {
             case FAILED, REJECTED, EXPIRED -> state = OcspProvisioningSlot.State.FAILED;
             default -> state = next.receipt().isPresent() ? OcspProvisioningSlot.State.ACCEPTED : OcspProvisioningSlot.State.CLAIMED;
         }
-        var changed = new OcspProvisioningSlot(slot.realmId(), slot.serverSlotId(), slot.coreSlotId(), slot.authorityId(), slot.issuerId(),
+        OcspProvisioningSlot changed = new OcspProvisioningSlot(slot.realmId(), slot.serverSlotId(), slot.coreSlotId(), slot.authorityId(), slot.issuerId(),
                 slot.primarySpkiSha256(), slot.alternativeSpkiSha256(), slot.revision(), state, slot.canonicalRequestId(),
                 slot.targetCommitment(), next.receipt(), credential, digest, slot.predecessorCredentialId());
         changed.requireRequest(next);
@@ -192,11 +192,11 @@ final class OcspResponderProvisioningService {
      * @throws IllegalStateException if receipt observations do not establish a definite attachment
      * @throws IllegalArgumentException if the retained claim does not match the request
      */
-    Attachment attachment(AdministrativeRequest request, ManagedOcspResponderIssuanceRequest selected,
+    /* default */ Attachment attachment(AdministrativeRequest request, ManagedOcspResponderIssuanceRequest selected,
             zeroecho.pki.api.signing.SigningAcceptanceReceipt winner) {
         requireClaim(request);
-        var previous = request.receipt().orElseThrow();
-        var service = signing.get();
+        zeroecho.pki.api.signing.SigningAcceptanceReceipt previous = request.receipt().orElseThrow();
+        SemanticSigningService service = signing.get();
         if (previous.equals(winner)
                 || service.resolve(previous) != zeroecho.pki.api.signing.SigningAcceptanceResolution.NOT_ACCEPTED
                 || !service.findManagedOcspResponderReceipt(selected).equals(Optional.of(winner))
@@ -209,7 +209,7 @@ final class OcspResponderProvisioningService {
     /**
      * Unforgeable package-local token constructed only after authoritative receipt observations.
      */
-    static final class Attachment {
+    /* default */ static final class Attachment {
         private final String requestId;
         private final String target;
         private final zeroecho.pki.api.signing.SigningAcceptanceReceipt previous;
@@ -226,8 +226,8 @@ final class OcspResponderProvisioningService {
          * @throws IllegalStateException if request, target, state or receipt pair differs from the proof
          * @throws java.util.NoSuchElementException if the old slot is absent
          */
-        void require(Optional<OcspProvisioningSlot> old, OcspProvisioningSlot next) {
-            var prior=old.orElseThrow();
+        /* default */ void require(Optional<OcspProvisioningSlot> old, OcspProvisioningSlot next) {
+            OcspProvisioningSlot prior=old.orElseThrow();
             if (!requestId.equals(prior.canonicalRequestId()) || !requestId.equals(next.canonicalRequestId())
                     || !target.equals(prior.targetCommitment()) || !target.equals(next.targetCommitment())
                     || prior.state()!=OcspProvisioningSlot.State.ACCEPTED || next.state()!=OcspProvisioningSlot.State.ACCEPTED
@@ -244,24 +244,24 @@ final class OcspResponderProvisioningService {
      * @throws IllegalStateException if request identity or retained claim is unavailable
      * @throws IllegalArgumentException if request/claim coordinates or state differ
      */
-    void requireClaim(AdministrativeRequest request) {
-        var row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(request.requestId()))
+    /* default */ void requireClaim(AdministrativeRequest request) {
+        ServerControlStore.ProtocolRecord row = control.protocolRecord(ServerControlStore.OCSP_PROVISIONING, slotId(request.requestId()))
                 .orElseThrow(() -> new IllegalStateException("OCSP provisioning claim unavailable"));
         OcspProvisioningSlotCodec.decode(row).requireRequest(request);
     }
     private AdministrativeRequest requireRequest(OcspProvisioningSlot slot) {
-        var request = control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST, slot.canonicalRequestId())
+        AdministrativeRequest request = control.protocolRecord(ServerControlStore.ADMINISTRATIVE_REQUEST, slot.canonicalRequestId())
                 .map(AdministrativeRequestCodec::decode).orElseThrow(() -> new IllegalStateException("OCSP provisioning request unavailable"));
         slot.requireRequest(request); return request;
     }
     private static String slotId(String requestId) {
-        if (!requestId.matches("ocsp-prov:[0-9a-f]{64}:r[1-9][0-9]{0,18}")) throw new IllegalStateException("OCSP provisioning request identity invalid");
+        if (!requestId.matches("ocsp-prov:[0-9a-f]{64}:r[1-9][0-9]{0,18}")) { throw new IllegalStateException("OCSP provisioning request identity invalid"); }
         return requestId.substring(10, 74);
     }
     /**
      * Signals an incompatible retained provisioning target while exposing only its canonical request identity.
      */
-    static final class TargetConflict extends IllegalArgumentException {
+    /* default */ static final class TargetConflict extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
         private final String canonicalRequestId;
         /**
@@ -269,12 +269,12 @@ final class OcspResponderProvisioningService {
          *
          * @param canonicalRequestId identity of the retained conflicting request
          */
-        TargetConflict(String canonicalRequestId) { super("OCSP_PROVISIONING_TARGET_CONFLICT"); this.canonicalRequestId = canonicalRequestId; }
+        /* default */ TargetConflict(String canonicalRequestId) { super("OCSP_PROVISIONING_TARGET_CONFLICT"); this.canonicalRequestId = canonicalRequestId; }
         /**
          * Returns the canonical retained request that conflicts with the proposed target.
          *
          * @return retained request identity for safe observation
          */
-        String canonicalRequestId() { return canonicalRequestId; }
+        /* default */ String canonicalRequestId() { return canonicalRequestId; }
     }
 }

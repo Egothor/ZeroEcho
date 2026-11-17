@@ -77,8 +77,10 @@ public record SignedCertificateTimestamp( // NOPMD DataClass - Immutable RFC car
      * @param extensions raw TLS-encoded extensions bytes (empty for most logs)
      * @param signatureAlgorithm JCA signature algorithm name (e.g. {@code "SHA256withECDSA"})
      * @param signature raw signature bytes from the {@code DigitallySigned} structure
-     * @throws NullPointerException if any of {@code logId}, {@code timestamp}, {@code extensions}, {@code signatureAlgorithm}, {@code signature} is null
-     * @throws IllegalArgumentException if the log ID is not 32 bytes, the signature algorithm is blank, or the signature is empty
+     * @throws NullPointerException if any of {@code logId}, {@code timestamp}, {@code extensions}, {@code
+     * signatureAlgorithm}, {@code signature} is null
+     * @throws IllegalArgumentException if the log ID is not 32 bytes, the signature algorithm is blank, or
+     * the signature is empty
      */
     public SignedCertificateTimestamp {
         Objects.requireNonNull(logId, "logId");

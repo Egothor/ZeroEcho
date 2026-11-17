@@ -97,7 +97,8 @@ public interface DashboardLiveSource {
          * @param value nonnegative value, present exactly when available
          * @param reason stable safe reason code, empty when available
          * @throws NullPointerException if state, value, reason is null
-         * @throws IllegalArgumentException if availability disagrees with value/reason presence, the value is negative or reason is not a bounded safe code
+         * @throws IllegalArgumentException if availability disagrees with value/reason presence, the
+         * value is negative or reason is not a bounded safe code
          */
         public Metric {
             Objects.requireNonNull(state, "state"); Objects.requireNonNull(value, "value"); Objects.requireNonNull(reason, "reason");
@@ -139,9 +140,10 @@ public interface DashboardLiveSource {
      * Safely collects one nonnegative metric while preserving cancellation.
      * @param supplier configured source
      * @return measured value or a safe collection-failed state
-     * @throws CancellationException if the supplier reports cancellation or collection fails while this thread is interrupted
+     * @throws CancellationException if the supplier reports cancellation or collection fails while this
+     * thread is interrupted
      */
-    static Metric collect(LongSupplier supplier) {
+    /* default */ static Metric collect(LongSupplier supplier) {
         try { return Metric.available(supplier.getAsLong()); }
         catch (CancellationException cancelled) { throw cancelled; }
         catch (RuntimeException failure) { // NOPMD AvoidCatchingGenericException - Isolate an external/decoding failure at the existing recovery boundary while preserving cleanup and causes.

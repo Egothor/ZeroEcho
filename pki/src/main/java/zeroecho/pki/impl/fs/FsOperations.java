@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.util.Arrays;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -198,7 +200,7 @@ final class FsOperations {
             published = true;
             forceDirectoryBestEffort(parent);
         } finally {
-            java.util.Arrays.fill(buffer, (byte) 0);
+            Arrays.fill(buffer, (byte) 0);
             if (!published) {
                 Files.deleteIfExists(temporary);
             }

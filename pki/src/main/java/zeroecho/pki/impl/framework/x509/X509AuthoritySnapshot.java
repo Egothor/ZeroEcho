@@ -33,6 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmIdentityCatalog;
+import zeroecho.core.spec.AlgorithmIdentityCodec;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapabilities;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
+import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.spi.crypto.SigningProvider;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -48,17 +59,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
-
-import zeroecho.core.alg.BootstrapAlgorithmIdentities;
-import zeroecho.core.spec.AlgorithmIdentity;
-import zeroecho.core.spec.AlgorithmIdentityCatalog;
-import zeroecho.core.spec.AlgorithmIdentityCodec;
-import zeroecho.core.spec.AlgorithmSuite;
-import zeroecho.core.spi.AlgorithmExecutionCapabilities;
-import zeroecho.core.spi.AlgorithmExecutionCapability;
-import zeroecho.pki.api.status.StatusObject;
-import zeroecho.pki.spi.crypto.SigningProvider;
-import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
 
 /**
  * One immutable internally consistent runtime authority snapshot.
@@ -158,11 +158,14 @@ public final class X509AuthoritySnapshot {
      * @param executorBindings actual process-local executors
      * @param policy restrictive policy
      * @return immutable authority snapshot
-     * @throws NullPointerException if a provider collection, provider entry, or required provider result collection is null
+     * @throws NullPointerException if a provider collection, provider entry, or required provider
+     *     result collection is null
      */
-    public static X509AuthoritySnapshot compose(List<X509BindingRuleProvider> bindingProviders,
+    public static X509AuthoritySnapshot compose(
+            List<X509BindingRuleProvider> bindingProviders,
             List<AlgorithmExecutionCapabilityProvider> capabilityProviders,
-            List<ExecutorBinding> executorBindings, X509AlgorithmResolver.Policy policy) {
+            List<ExecutorBinding> executorBindings,
+            X509AlgorithmResolver.Policy policy) {
         Objects.requireNonNull(bindingProviders, "bindingProviders");
         Objects.requireNonNull(capabilityProviders, "capabilityProviders");
         List<X509BindingRuleProvider> ordered = bindingProviders.stream()
@@ -218,8 +221,10 @@ public final class X509AuthoritySnapshot {
             AlgorithmIdentity parsed = AlgorithmIdentity.parse(value, codecs);
             canonical = identities.resolve(parsed.canonicalForm());
         }
-        return canonical.or(() -> Optional.ofNullable(aliases.get(value)))
-                .orElseThrow(() -> new UnknownAlgorithmIdentityException("Unknown algorithm identity"));
+        return canonical
+                .or(() -> Optional.ofNullable(aliases.get(value)))
+                .orElseThrow(
+                        () -> new UnknownAlgorithmIdentityException("Unknown algorithm identity"));
     }
 
     /**
@@ -283,10 +288,15 @@ public final class X509AuthoritySnapshot {
      * @param executorType required runtime executor type
      * @param <E> executor type
      * @return unforgeable process-local plan
-     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection fails or no executor of the required type is registered
+     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection
+     *     fails or no executor of the required type is registered
      */
-    public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
-            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
+    public <E> X509ExecutionPlan<E> plan(
+            AlgorithmIdentity signature,
+            AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction,
+            Optional<String> implementation,
+            String provenance,
             Class<E> executorType) {
         X509AlgorithmResolver.Selection selection = resolve(signature, key, direction, implementation, provenance);
         ExecutorKey executorKey = new ExecutorKey(selection.implementation().implementationId(), direction);
@@ -309,11 +319,17 @@ public final class X509AuthoritySnapshot {
      * @param bindingId stable role-specific binding identifier
      * @param executorType required runtime executor type
      * @return unforgeable process-local execution plan
-     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection fails or no executor of the required type is registered
+     * @throws X509AlgorithmResolver.ResolutionException if binding/policy/capability selection
+     *     fails or no executor of the required type is registered
      */
-    public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
-            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
-            String bindingId, Class<E> executorType) {
+    public <E> X509ExecutionPlan<E> plan(
+            AlgorithmIdentity signature,
+            AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction,
+            Optional<String> implementation,
+            String provenance,
+            String bindingId,
+            Class<E> executorType) {
         X509AlgorithmResolver.Selection selection = resolve(signature, key, direction, implementation, provenance,
                 bindingId);
         ExecutorKey executorKey = new ExecutorKey(selection.implementation().implementationId(), direction);
@@ -352,7 +368,12 @@ public final class X509AuthoritySnapshot {
     public <E> X509ExecutionPlan<E> planSigning(String value, Class<E> executorType) {
         AlgorithmIdentity signature = resolveIdentity(value);
         AlgorithmIdentity key = bootstrapKeyFor(signature);
-        return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
+        return plan(
+                signature,
+                key,
+                AlgorithmExecutionCapability.Direction.SIGN,
+                Optional.empty(),
+                "explicit",
                 executorType);
     }
 
@@ -368,8 +389,14 @@ public final class X509AuthoritySnapshot {
     public <E> X509ExecutionPlan<E> planSigningWithBinding(String value, String bindingId, Class<E> executorType) {
         AlgorithmIdentity signature = resolveIdentity(value);
         AlgorithmIdentity key = bootstrapKeyFor(signature);
-        return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
-                bindingId, executorType);
+        return plan(
+                signature,
+                key,
+                AlgorithmExecutionCapability.Direction.SIGN,
+                Optional.empty(),
+                "explicit",
+                bindingId,
+                executorType);
     }
 
     /**
@@ -466,16 +493,16 @@ public final class X509AuthoritySnapshot {
     }
 
     /**
-     * Validates a persisted signature identity against the complete runtime
-     * authority intersection.
+     * Validates a persisted signature identity against the complete runtime authority intersection.
      *
      * @param value canonical identity or approved compatibility alias
      * @param direction execution direction
      * @return exact canonical signature identity
-     * @throws IllegalArgumentException if the identity, binding, policy, or public-key capability intersection cannot execute the signature
+     * @throws IllegalArgumentException if the identity, binding, policy, or public-key capability
+     *     intersection cannot execute the signature
      */
-    public AlgorithmIdentity requireExecutableSignature(String value,
-            AlgorithmExecutionCapability.Direction direction) {
+    public AlgorithmIdentity requireExecutableSignature(
+            String value, AlgorithmExecutionCapability.Direction direction) {
         AlgorithmIdentity signature = resolveIdentity(value);
         X509SecurityFloor.requirePermitted(signature);
         bindings.resolve(signature, X509AlgorithmRole.SIGNATURE_ALGORITHM);
@@ -560,22 +587,40 @@ public final class X509AuthoritySnapshot {
 
     private String fingerprint() {
         StringBuilder semantic = new StringBuilder();
-        addFields(semantic, "identity", identities.identities().stream().map(AlgorithmIdentity::canonicalForm).toList());
+        addFields(
+                semantic,
+                "identity",
+                identities.identities().stream().map(AlgorithmIdentity::canonicalForm).toList());
         addFields(semantic, "codec", codecs.stream().map(AlgorithmIdentityCodec::id).toList());
         addFields(semantic, "component", List.of(components.semanticFingerprint()));
         addFields(semantic, "binding",
                 bindings.rules().stream().map(X509BindingRule::semanticFingerprint).sorted().toList());
-        addFields(semantic, "capability", capabilities.all().stream()
-                .map(capability -> capability.implementationId() + ":" + capability.domainFingerprint()).toList());
+        addFields(
+                semantic,
+                "capability",
+                capabilities.all().stream()
+                        .map(
+                                capability ->
+                                        capability.implementationId()
+                                                + ":"
+                                                + capability.domainFingerprint())
+                        .toList());
         addFields(semantic, "alias", aliases.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .map(entry -> entry.getKey() + ":" + entry.getValue().canonicalForm()).toList());
-        addFields(semantic, "default", defaults.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                .map(entry -> entry.getKey() + ":" + entry.getValue().canonicalForm()).toList());
+        addFields(
+                semantic,
+                "default",
+                defaults.entrySet().stream()
+                        .sorted(Map.Entry.comparingByKey())
+                        .map(entry -> entry.getKey() + ":" + entry.getValue().canonicalForm())
+                        .toList());
         addFields(semantic, "floor", List.of(X509SecurityFloor.semanticFingerprint()));
         addFields(semantic, "policy", List.of(policy.semanticFingerprint()));
         try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(semantic.toString().getBytes(StandardCharsets.UTF_8)));
+            return HexFormat.of()
+                    .formatHex(
+                            MessageDigest.getInstance("SHA-256")
+                                    .digest(semantic.toString().getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 unavailable", exception);
         }
@@ -620,8 +665,10 @@ public final class X509AuthoritySnapshot {
     private static Map<ExecutorKey, Object> immutableExecutors(Collection<ExecutorBinding> source,
             AlgorithmExecutionCapabilities capabilities) {
         Map<ExecutorKey, Object> copy = new LinkedHashMap<>();
-        Set<String> known = capabilities.all().stream().map(AlgorithmExecutionCapability::implementationId)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Set<String> known =
+                capabilities.all().stream()
+                        .map(AlgorithmExecutionCapability::implementationId)
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
         source.forEach(binding -> {
             if (!known.contains(binding.implementationId())) {
                 throw new IllegalArgumentException("Executor binding has no semantic capability");
@@ -675,11 +722,13 @@ public final class X509AuthoritySnapshot {
     }
 
     private static void mergeDefaults(Map<String, AlgorithmSuite> target, Map<String, AlgorithmSuite> addition) {
-        addition.forEach((identifier, suite) -> {
-            if (identifier.startsWith("zeroecho.") || target.putIfAbsent(identifier, suite) != null) {
-                throw new IllegalArgumentException("Default identifier collision");
-            }
-        });
+        addition.forEach(
+                (identifier, suite) -> {
+                    if (identifier.startsWith("zeroecho.")
+                            || target.putIfAbsent(identifier, suite) != null) {
+                        throw new IllegalArgumentException("Default identifier collision");
+                    }
+                });
     }
 
     private static void addFields(StringBuilder target, String category, List<String> values) {

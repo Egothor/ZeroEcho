@@ -34,6 +34,17 @@
 
 package zeroecho.pki.impl.fs;
 
+import java.util.Arrays;
+import java.util.HexFormat;
+import zeroecho.pki.api.ca.CaHeadSnapshot;
+import zeroecho.pki.api.ca.CaKind;
+import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
+import zeroecho.pki.api.ca.IssuerGenerationState;
+import zeroecho.pki.api.ca.IssuerKeyBinding;
+import zeroecho.pki.api.ca.RootTrustAnchorActivation;
+import zeroecho.pki.api.ca.RootTrustAnchorTransition;
+
 import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -82,6 +93,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
     /**
      * Resolves exact hybrid signer-tuple authority against one stable metadata snapshot.
      */
+    /* default */
     @FunctionalInterface
     interface LineageAuthority {
         /**
@@ -91,10 +103,11 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
          * @param generation exact issuer generation being qualified
          * @param binding validated immutable binding for that generation
          * @return canonical hybrid signer-tuple commitment
-         * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+         * @throws IOException if metadata cannot be read or its authority, generation, path or
+         * binding coordinates are inconsistent
          */
         String tuple(MetadataSnapshot snapshot, IssuerGeneration generation,
-                zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException;
+                IssuerCryptographicBinding binding) throws IOException;
     }
 
     /**
@@ -118,7 +131,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param outcome callback observing transaction outcomes without granting commit authority
      * @param lineageAuthority optional exact public hybrid-lineage qualification callback
      */
-    AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome, Optional<LineageAuthority> lineageAuthority) {
+    /* default */ AuthorityMetadataStore(TransactionalMetadataStore metadata, Consumer<MetadataCommitResult> outcome, Optional<LineageAuthority> lineageAuthority) {
         this.metadata = metadata;
         this.outcome = outcome;
         this.lineageAuthority = lineageAuthority;
@@ -131,7 +144,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param key exact authority metadata identity
      * @param decoder bounded key-aware decoder; must return a non-null value
      * @return matching decoded value, or an empty optional if absent
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws NullPointerException if a required input is null
      * @throws RuntimeException if the supplied decoder rejects a stored row
      */
@@ -147,7 +161,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param key exact authority metadata identity
      * @param decoder bounded key-aware decoder; must return a non-null value
      * @return matching decoded value, or an empty optional if absent
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws NullPointerException if a required input is null
      * @throws RuntimeException if the supplied decoder rejects a stored row
      */
@@ -164,7 +179,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param namespace exact metadata namespace to scan
      * @param decoder bounded key-aware decoder for each stored row
      * @return immutable decoded values in metadata traversal order
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws NullPointerException if a required input is null
      * @throws RuntimeException if the supplied decoder rejects a stored row
      */
@@ -180,7 +196,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param namespace exact metadata namespace to scan
      * @param decoder bounded key-aware decoder for each stored row
      * @return immutable decoded values in metadata traversal order
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws NullPointerException if a required input is null
      * @throws RuntimeException if the supplied decoder rejects a stored row
      */
@@ -257,7 +274,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @throws IllegalStateException if the transaction is definitely not committed
      */
     /* default */ void createGeneration(IssuerGeneration generation,
-            zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
+            IssuerCryptographicBinding binding) throws IOException {
         requireBinding(generation, binding);
         byte[] encoded = IssuerBindingStorageCodec.encode(binding, generation);
         try (MetadataTransaction transaction = metadata.beginTransaction()) {
@@ -273,37 +290,38 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param issuerId exact immutable issuer generation identity
      * @return validated public binding, or an empty optional if absent
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
-    /* default */ static Optional<zeroecho.pki.api.ca.IssuerCryptographicBinding> findBinding(MetadataSnapshot snapshot, PkiId issuerId) throws IOException {
-        try (var record = snapshot.get(AuthorityMetadataCodec.bindingKey(issuerId)).orElse(null)) {
+    /* default */ static Optional<IssuerCryptographicBinding> findBinding(MetadataSnapshot snapshot, PkiId issuerId) throws IOException {
+        try (MetadataSnapshot.Record record = snapshot.get(AuthorityMetadataCodec.bindingKey(issuerId)).orElse(null)) {
             return record == null ? Optional.empty() : Optional.of(decodeBinding(snapshot, record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
         }
     }
 
-    private static void visitBindings(MetadataSnapshot snapshot, Visitor<zeroecho.pki.api.ca.IssuerCryptographicBinding> visitor) throws IOException {
+    private static void visitBindings(MetadataSnapshot snapshot, Visitor<IssuerCryptographicBinding> visitor) throws IOException {
         try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.ISSUER_CRYPTO_BINDING), CancellationSignal.NONE)) {
             Optional<MetadataSnapshot.Record> next;
             while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                try (var record = next.orElseThrow()) {
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
                     visitor.accept(decodeBinding(snapshot, record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES)));
                 }
             }
         }
     }
 
-    private static zeroecho.pki.api.ca.IssuerCryptographicBinding decodeBinding(MetadataSnapshot snapshot, MetadataKey key, byte[] bytes) throws IOException {
+    private static IssuerCryptographicBinding decodeBinding(MetadataSnapshot snapshot, MetadataKey key, byte[] bytes) throws IOException {
         PkiId issuer = IssuerBindingStorageCodec.issuerId(bytes);
         IssuerGeneration generation = find(snapshot, AuthorityMetadataCodec.generationKey(issuer), AuthorityMetadataCodec::generation)
                 .orElseThrow(AuthorityMetadataStore::invalid);
-        var binding = AuthorityMetadataCodec.binding(key, bytes, generation);
+        IssuerCryptographicBinding binding = AuthorityMetadataCodec.binding(key, bytes, generation);
         return binding;
     }
 
-    private static void requireBinding(IssuerGeneration generation, zeroecho.pki.api.ca.IssuerCryptographicBinding binding) throws IOException {
+    private static void requireBinding(IssuerGeneration generation, IssuerCryptographicBinding binding) throws IOException {
         if (!generation.issuerId().equals(binding.issuerId()) || !generation.authorityId().equals(binding.authorityId())
                 || !generation.credentialId().equals(binding.credentialId()) || !generation.signingKeyRef().equals(binding.primary().keyRef())
-                || !generation.profilePolicyCommitment().equals(java.util.HexFormat.of().formatHex(binding.profile().canonicalSha256()))
+                || !generation.profilePolicyCommitment().equals(HexFormat.of().formatHex(binding.profile().canonicalSha256()))
                 || !generation.x509BindingCommitment().equals(binding.bindingSetCommitment())) {
             throw invalid();
         }
@@ -343,10 +361,12 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param expected exact current CA record required before replacement
      * @param replacement coherent replacement authority state and immutable membership
      * @param policy history retention and optional bounded cleanup policy
-     * @return true after a definite commit; false when the expected record differs or persistence reports a definite conflict
+     * @return true after a definite commit; false when the expected record differs or persistence
+     * reports a definite conflict
      * @throws NullPointerException if a required argument is null
      * @throws IOException if storage access fails or the transaction outcome is unknown
-     * @throws IllegalStateException if pre-commit authority validation fails or persistence rejects for a nonconflict reason
+     * @throws IllegalStateException if pre-commit authority validation fails or persistence rejects for
+     * a nonconflict reason
      */
     /* default */ boolean replaceCa(CaRecord expected, CaRecord replacement, FsHistoryPolicy policy) throws IOException {
         try (MetadataSnapshot snapshot = metadata.snapshot()) {
@@ -385,7 +405,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param ca complete authoritative CA snapshot whose generations and bindings were already restored
      * @param policy whether matching immutable history rows are created
      * @throws NullPointerException if a required argument is null
-     * @throws IOException if authority coordinates differ, base or head already exists, or a staged batch cannot be committed
+     * @throws IOException if authority coordinates differ, base or head already exists, or a staged
+     * batch cannot be committed
      * @throws IllegalStateException if a restore transaction is definitely rejected
      */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
@@ -498,16 +519,16 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @throws IOException if authority bindings, membership, expected head or staged storage are inconsistent
      */
     /* default */ static void stageCaFenced(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
-            boolean history, Instant timestamp, zeroecho.pki.api.ca.CaHeadSnapshot expected) throws IOException {
+            boolean history, Instant timestamp, CaHeadSnapshot expected) throws IOException {
         stageCa(snapshot, transaction, ca, history, timestamp, Optional.of(expected), Optional.empty(), Optional.empty());
     }
 
     private static void stageCa(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
-            boolean history, Instant timestamp, Optional<zeroecho.pki.api.ca.CaHeadSnapshot> expected,
-            Optional<zeroecho.pki.api.ca.RootTrustAnchorActivation> activation, Optional<LineageAuthority> lineageAuthority) throws IOException {
+            boolean history, Instant timestamp, Optional<CaHeadSnapshot> expected,
+            Optional<RootTrustAnchorActivation> activation, Optional<LineageAuthority> lineageAuthority) throws IOException {
         AuthorityMetadataCodec.Base base = AuthorityMetadataCodec.Base.of(ca);
-        Optional<AuthorityMetadataCodec.Base> previousBase = find(snapshot, AuthorityMetadataCodec.baseKey(ca.caId()), AuthorityMetadataCodec::base);
-        if (previousBase.isPresent() && !previousBase.orElseThrow().equals(base)) { throw invalid(); }
+        AuthorityMetadataCodec.Base previousBase = find(snapshot, AuthorityMetadataCodec.baseKey(ca.caId()), AuthorityMetadataCodec::base).orElse(null);
+        if (previousBase != null && !previousBase.equals(base)) { throw invalid(); }
         AuthorityMetadataCodec.Head head = AuthorityMetadataCodec.Head.of(ca);
         byte[] payload = FsCodec.encode(FsCodec.CA_HEAD, head);
         AuthorityMetadataCodec.requireValueSize(payload);
@@ -516,39 +537,18 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                 RepeatableContent bytes = new ImmutableByteContent(payload)) {
             AuthorityMetadataCodec.Head previous = current == null ? null
                     : AuthorityMetadataCodec.head(current.key(), CredentialMetadataAuthority.read(current, MAX_BYTES));
-            if (previous == null != previousBase.isEmpty() || previous != null
+            if ((previous == null) != (previousBase == null) || previous != null
                     && (!previous.caId().equals(ca.caId()) || previous.membershipCount() > head.membershipCount())) { throw invalid(); }
-            var selected = requireGeneration(snapshot, ca.caId(), head.generationId());
-            var binding = findBinding(snapshot, selected.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-            Optional<zeroecho.pki.api.ca.CaHeadSnapshot> original = CaLifecycleMetadataCodec.head(snapshot, ca.caId());
-            boolean changesHead = previous != null && (!previous.generationId().equals(head.generationId()) || !previous.pathId().equals(head.pathId()));
-            if (previous == null && original.isPresent() || previous != null && original.isEmpty()) { throw invalid(); }
-            if (expected.isPresent() && !original.filter(expected.orElseThrow()::equals).isPresent()) { throw invalid(); }
-            if (changesHead && expected.isEmpty()) { throw new IllegalArgumentException("Selected CA head changes require an admitted epoch fence"); }
-            if (changesHead && ca.kind() == zeroecho.pki.api.ca.CaKind.ROOT) {
-                var old = findBinding(snapshot, original.orElseThrow().issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-                if (!sameAnchor(old, binding) && activation.isEmpty()) { throw new IllegalArgumentException("Root anchor changes require an acknowledged candidate activation"); }
-            }
-            long epoch = previous == null ? 1 : changesHead ? Math.incrementExact(original.orElseThrow().epoch()) : original.orElseThrow().epoch();
-            var updated = new zeroecho.pki.api.ca.CaHeadSnapshot(1, ca.caId(), epoch, selected.issuerId(), head.pathId(), binding.commitment());
+            CaHeadSnapshot updated = selectedHead(snapshot, ca, head, previous, expected, activation);
             stageHead(snapshot, transaction, updated);
             stageCrlLineages(snapshot, transaction, ca, previous, lineageAuthority);
             stageCaMemberships(snapshot, transaction, ca, head, previous);
             requireSelection(snapshot, head, false);
-            if (previousBase.isEmpty()) { create(transaction, AuthorityMetadataCodec.baseKey(ca.caId()), FsCodec.encode(FsCodec.CA_BASE, base)); }
+            if (previousBase == null) { create(transaction, AuthorityMetadataCodec.baseKey(ca.caId()), FsCodec.encode(FsCodec.CA_BASE, base)); }
             if (current == null) { transaction.create(key, bytes, CancellationSignal.NONE); }
             else { transaction.replace(key, current.recordRevision(), bytes, CancellationSignal.NONE); }
         }
-        if (history) {
-            MetadataKey historyKey = AuthorityMetadataCodec.historyKey(ca.caId(), timestamp, transaction.id());
-            create(transaction, historyKey, payload);
-            var original = CaLifecycleMetadataCodec.head(snapshot, ca.caId());
-            boolean changes = original.isPresent() && (!original.orElseThrow().issuerId().equals(head.generationId()) || !original.orElseThrow().pathId().equals(head.pathId()));
-            long epoch = original.isEmpty() ? 1 : changes ? Math.incrementExact(original.orElseThrow().epoch()) : original.orElseThrow().epoch();
-            var binding = findBinding(snapshot, head.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
-            create(transaction, CaLifecycleMetadataCodec.historyKey(historyKey), CaLifecycleMetadataCodec.encode(
-                    new zeroecho.pki.api.ca.CaHeadSnapshot(1, ca.caId(), epoch, head.generationId(), head.pathId(), binding.commitment())));
-        }
+        if (history) { stageCaHistory(snapshot, transaction, ca, head, timestamp, payload); }
     }
 
     /**
@@ -577,7 +577,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param id exact logical CA identity
      * @return validated current CA record, or an empty optional if no head exists
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
     /* default */ static Optional<CaRecord> ca(MetadataSnapshot snapshot, PkiId id) throws IOException {
         Optional<AuthorityMetadataCodec.Head> head = find(snapshot, AuthorityMetadataCodec.caKey(id), AuthorityMetadataCodec::head);
@@ -594,7 +595,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param head validated current or historical authority head
      * @return complete CA record whose membership and selected path match retained authority
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
     /* default */ static CaRecord reconstruct(MetadataSnapshot snapshot, AuthorityMetadataCodec.Head head) throws IOException {
         AuthorityMetadataCodec.Base base = find(snapshot, AuthorityMetadataCodec.baseKey(head.caId()), AuthorityMetadataCodec::base)
@@ -618,7 +620,8 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param authority exact logical CA identity
      * @return immutable ordered generations, or an empty list when no authority head exists
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
     /* default */ static List<IssuerGeneration> generations(MetadataSnapshot snapshot, PkiId authority) throws IOException {
         Optional<AuthorityMetadataCodec.Head> current = find(snapshot, AuthorityMetadataCodec.caKey(authority), AuthorityMetadataCodec::head);
@@ -668,87 +671,23 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * Validates all current and historical CA selections, bindings, memberships and root transition receipts.
      *
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws IllegalStateException if a historical lifecycle head cannot be decoded
      */
     /* default */ static void validateAll(MetadataSnapshot snapshot) throws IOException {
         visit(snapshot, AuthorityMetadataCodec.ISSUER_GENERATION, AuthorityMetadataCodec::generation,
                 generation -> requireGeneration(snapshot, generation.authorityId(), generation.issuerId()));
         visitBindings(snapshot, binding -> requireGeneration(snapshot, binding.authorityId(), binding.issuerId()));
-        for (var head : list(snapshot, CaLifecycleMetadataCodec.HEAD, CaLifecycleMetadataCodec::headRow)) {
-            CaRecord ca = ca(snapshot, head.caId()).orElseThrow(AuthorityMetadataStore::invalid);
-            if (!head.equals(requireHead(snapshot, ca))) { throw invalid(); }
-        }
-        for (var transition : list(snapshot, CaLifecycleMetadataCodec.TRANSITION, CaLifecycleMetadataCodec::transitionRow)) {
-            validateTransition(snapshot, transition);
-            CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
-            if (ca.kind() != zeroecho.pki.api.ca.CaKind.ROOT || !ca.issuerIds().contains(transition.candidateIssuerId())
-                    || requireHead(snapshot, ca).epoch() < transition.expectedHead().epoch()
-                    || !find(snapshot, CaLifecycleMetadataCodec.candidateKey(transition.candidateIssuerId()), CaLifecycleMetadataCodec::transitionRow)
-                        .filter(transition::equals).isPresent()) { throw invalid(); }
-        }
-        for (var transition : list(snapshot, CaLifecycleMetadataCodec.CANDIDATE_INDEX, CaLifecycleMetadataCodec::transitionRow)) {
-            if (!CaLifecycleMetadataCodec.transition(snapshot, transition.transitionId()).filter(transition::equals).isPresent()) { throw invalid(); }
-        }
-        for (var activation : list(snapshot, CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec::activationRow)) {
-            var transition = CaLifecycleMetadataCodec.transition(snapshot, activation.transitionId()).orElseThrow(AuthorityMetadataStore::invalid);
-            CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
-            if (!activation.transitionCommitment().equals(transition.commitment()) || !activation.expectedHead().equals(transition.expectedHead())
-                    || !activation.candidateIssuerId().equals(transition.candidateIssuerId())
-                    || !activation.candidatePathId().equals(transition.candidatePathId())
-                    || activation.newEpoch() > requireHead(snapshot, ca).epoch()) { throw invalid(); }
-        }
-        // Validate each current prefix once. History only checks count and exact selection.
-        for (AuthorityMetadataCodec.Head head : list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
-            requireHead(snapshot, reconstruct(snapshot, head));
-        }
-        for (AuthorityMetadataCodec.Base base : list(snapshot, AuthorityMetadataCodec.CA_BASE, AuthorityMetadataCodec::base)) {
-            if (find(snapshot, AuthorityMetadataCodec.caKey(base.caId()), AuthorityMetadataCodec::head).isEmpty()) { throw invalid(); }
-        }
-        for (String namespace : List.of(AuthorityMetadataCodec.CA_GENERATION_ORDER, AuthorityMetadataCodec.CA_GENERATION_MEMBER)) {
-            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(namespace), CancellationSignal.NONE)) {
-                Optional<MetadataSnapshot.Record> next;
-                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
-                        AuthorityMetadataCodec.Membership member = AuthorityMetadataCodec.membership(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES));
-                        AuthorityMetadataCodec.Head head = find(snapshot, AuthorityMetadataCodec.caKey(member.caId()), AuthorityMetadataCodec::head)
-                                .orElseThrow(AuthorityMetadataStore::invalid);
-                        var memberBinding = findBinding(snapshot, member.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
-                        if (memberBinding.alternative().isPresent()) requireLineage(snapshot, member.generationId());
-                        if (member.ordinal() >= head.membershipCount() || !member.equals(requireMembership(snapshot, member.caId(), member.ordinal()))) { throw invalid(); }
-                    }
-                }
-            }
-        }
-        try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(CaLifecycleMetadataCodec.HEAD_HISTORY), CancellationSignal.NONE)) {
-            Optional<MetadataSnapshot.Record> next;
-            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                try (var row = next.orElseThrow(); var original = snapshot.get(new MetadataKey(AuthorityMetadataCodec.CA_HISTORY, row.key().key())).orElse(null)) {
-                    if (original == null) { throw invalid(); }
-                    CaLifecycleMetadataCodec.decodeHead(CredentialMetadataAuthority.read(row, MAX_BYTES));
-                }
-            }
-        }
-        try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_HISTORY), CancellationSignal.NONE)) {
-            Optional<MetadataSnapshot.Record> next;
-            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                try (MetadataSnapshot.Record record = next.orElseThrow()) {
-                    AuthorityMetadataCodec.Head head = AuthorityMetadataCodec.history(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES), record.commitRevision()).value();
-                    AuthorityMetadataCodec.Head current = find(snapshot, AuthorityMetadataCodec.caKey(head.caId()), AuthorityMetadataCodec::head)
-                            .orElseThrow(AuthorityMetadataStore::invalid);
-                    if (head.membershipCount() > current.membershipCount()) { throw invalid(); }
-                    requireSelection(snapshot, head, true);
-                    var historical = find(snapshot, CaLifecycleMetadataCodec.historyKey(record.key()), (key, bytes) -> {
-                        try { return CaLifecycleMetadataCodec.decodeHead(bytes); } catch (IOException failure) { throw new IllegalStateException(failure); }
-                    }).orElseThrow(AuthorityMetadataStore::invalid);
-                    var binding = findBinding(snapshot, head.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
-                    if (!historical.caId().equals(head.caId()) || !historical.issuerId().equals(head.generationId())
-                            || !historical.pathId().equals(head.pathId()) || !historical.bindingCommitment().equals(binding.commitment())
-                            || historical.epoch() > CaLifecycleMetadataCodec.head(snapshot, head.caId()).orElseThrow().epoch()) { throw invalid(); }
-
-                }
-            }
-        }
+        Integrity.currentHeads(snapshot);
+        Integrity.transitions(snapshot);
+        Integrity.candidates(snapshot);
+        Integrity.activations(snapshot);
+        Integrity.currentSelections(snapshot);
+        Integrity.bases(snapshot);
+        Integrity.memberships(snapshot);
+        Integrity.historyHeads(snapshot);
+        Integrity.historySelections(snapshot);
     }
 
     /**
@@ -757,18 +696,21 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param ca reconstructed authority whose current selection is being checked
      * @return validated exact lifecycle head including root activation evidence where applicable
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
-    /* default */ static zeroecho.pki.api.ca.CaHeadSnapshot requireHead(MetadataSnapshot snapshot, CaRecord ca) throws IOException {
-        var value = CaLifecycleMetadataCodec.head(snapshot, ca.caId()).orElseThrow(() -> new IOException("Required CA head epoch is missing"));
-        var binding = findBinding(snapshot, ca.currentIssuanceIssuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+    /* default */ static CaHeadSnapshot requireHead(MetadataSnapshot snapshot, CaRecord ca) throws IOException {
+        CaHeadSnapshot value = CaLifecycleMetadataCodec.head(snapshot, ca.caId()).orElseThrow(() -> new IOException("Required CA head epoch is missing"));
+        IssuerCryptographicBinding binding = findBinding(snapshot, ca.currentIssuanceIssuerId()).orElseThrow(AuthorityMetadataStore::invalid);
         if (!value.issuerId().equals(ca.currentIssuanceIssuerId()) || !value.pathId().equals(ca.issuanceChainPathId())
                 || !value.bindingCommitment().equals(binding.commitment())) { throw invalid(); }
-        if (ca.kind() == zeroecho.pki.api.ca.CaKind.ROOT) {
-            var candidate = find(snapshot, CaLifecycleMetadataCodec.candidateKey(value.issuerId()), CaLifecycleMetadataCodec::transitionRow);
-            if (candidate.isPresent()) {
-                var transition = candidate.orElseThrow();
-                var receipt = CaLifecycleMetadataCodec.activation(snapshot, transition.transitionId())
+        if (ca.kind() != CaKind.ROOT) { return value; }
+        {
+            Optional<RootTrustAnchorTransition> candidate = find(snapshot, CaLifecycleMetadataCodec.candidateKey(value.issuerId()), CaLifecycleMetadataCodec::transitionRow);
+            if (candidate.isEmpty()) { return value; }
+            {
+                RootTrustAnchorTransition transition = candidate.orElseThrow();
+                RootTrustAnchorActivation receipt = CaLifecycleMetadataCodec.activation(snapshot, transition.transitionId())
                         .orElseThrow(() -> new IOException("Selected root candidate is missing its activation receipt"));
                 if (!transition.caId().equals(ca.caId()) || !transition.candidatePathId().equals(value.pathId())
                         || !receipt.transitionCommitment().equals(transition.commitment())
@@ -781,9 +723,9 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
     }
 
     private static void stageHead(MetadataSnapshot snapshot, MetadataTransaction transaction,
-            zeroecho.pki.api.ca.CaHeadSnapshot head) throws IOException {
+            CaHeadSnapshot head) throws IOException {
         MetadataKey key = CaLifecycleMetadataCodec.headKey(head.caId());
-        try (var previous = snapshot.get(key).orElse(null); var bytes = new ImmutableByteContent(CaLifecycleMetadataCodec.encode(head))) {
+        try (MetadataSnapshot.Record previous = snapshot.get(key).orElse(null); RepeatableContent bytes = new ImmutableByteContent(CaLifecycleMetadataCodec.encode(head))) {
             if (previous == null) { transaction.create(key, bytes, CancellationSignal.NONE); }
             else { transaction.replace(key, previous.recordRevision(), bytes, CancellationSignal.NONE); }
         }
@@ -795,9 +737,10 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param snapshot borrowed stable metadata snapshot; this method does not close it
      * @param issuer exact issuer generation identity
      * @return decoded lineage evidence, or an empty optional if absent
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      */
-    static Optional<CrlSignerLineage> lineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
+    /* default */ static Optional<CrlSignerLineage> lineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
         return find(snapshot, CrlSignerLineageCodec.key(issuer), CrlSignerLineageCodec::decode);
     }
 
@@ -805,23 +748,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             AuthorityMetadataCodec.Head previous, Optional<LineageAuthority> authority) throws IOException {
         int first = previous == null ? 0 : previous.membershipCount();
         for (int ordinal = first; ordinal < ca.issuerIds().size(); ordinal++) {
-            var generation = requireGeneration(snapshot, ca.caId(), ca.issuerIds().get(ordinal));
-            var binding = findBinding(snapshot, generation.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-            if (binding.alternative().isEmpty()) continue;
-            if (lineage(snapshot, generation.issuerId()).isPresent()) throw invalid();
-            String tuple = authority.orElseThrow(() -> new UnsupportedOperationException("Configured hybrid CRL lineage authority unavailable"))
-                    .tuple(snapshot, generation, binding);
-            PkiId root = generation.issuerId();
-            Optional<PkiId> predecessor = previous == null ? Optional.empty() : Optional.of(previous.generationId());
-            if (predecessor.isPresent()) {
-                var priorBinding = findBinding(snapshot, predecessor.orElseThrow()).orElseThrow(AuthorityMetadataStore::invalid);
-                if (priorBinding.alternative().isPresent()) {
-                    var prior = requireLineage(snapshot, predecessor.orElseThrow());
-                    if (prior.signerTupleCommitment().equals(tuple)) root = prior.lineageId();
-                }
-            }
-            var value = new CrlSignerLineage(1, generation.issuerId(), predecessor, root, tuple, binding.commitment());
-            create(transaction, CrlSignerLineageCodec.key(generation.issuerId()), CrlSignerLineageCodec.encode(value));
+            stageCrlLineage(snapshot, transaction, ca, previous, authority, ordinal);
         }
     }
 
@@ -834,34 +761,34 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @throws IOException if required lineage or binding evidence is absent or inconsistent
      * @throws IllegalArgumentException if the issuer is native-only and has no qualified hybrid lineage
      */
-    static CrlSignerLineage requireLineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
-        var binding = findBinding(snapshot, issuer).orElseThrow(AuthorityMetadataStore::invalid);
-        if (binding.alternative().isEmpty()) throw new IllegalArgumentException("Native-only issuer has no qualified hybrid CRL lineage");
-        var value = lineage(snapshot, issuer).orElseThrow(() -> new IOException("Required hybrid CRL signer lineage is missing"));
-        if (!value.issuerBindingCommitment().equals(binding.commitment())) throw invalid();
+    /* default */ static CrlSignerLineage requireLineage(MetadataSnapshot snapshot, PkiId issuer) throws IOException {
+        IssuerCryptographicBinding binding = findBinding(snapshot, issuer).orElseThrow(AuthorityMetadataStore::invalid);
+        if (binding.alternative().isEmpty()) { throw new IllegalArgumentException("Native-only issuer has no qualified hybrid CRL lineage"); }
+        CrlSignerLineage value = lineage(snapshot, issuer).orElseThrow(() -> new IOException("Required hybrid CRL signer lineage is missing"));
+        if (!value.issuerBindingCommitment().equals(binding.commitment())) { throw invalid(); }
         if (value.predecessorSelectedIssuerId().isEmpty()) {
-            if (!value.lineageId().equals(issuer)) throw invalid();
+            if (!value.lineageId().equals(issuer)) { throw invalid(); }
         } else {
-            var predecessor = findBinding(snapshot, value.predecessorSelectedIssuerId().orElseThrow()).orElseThrow(AuthorityMetadataStore::invalid);
+            IssuerCryptographicBinding predecessor = findBinding(snapshot, value.predecessorSelectedIssuerId().orElseThrow()).orElseThrow(AuthorityMetadataStore::invalid);
             if (predecessor.alternative().isEmpty()) {
-                if (!value.lineageId().equals(issuer)) throw invalid();
+                if (!value.lineageId().equals(issuer)) { throw invalid(); }
             } else {
-                var prior = lineage(snapshot, predecessor.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+                CrlSignerLineage prior = lineage(snapshot, predecessor.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
                 PkiId expected = prior.signerTupleCommitment().equals(value.signerTupleCommitment()) ? prior.lineageId() : issuer;
-                if (!value.lineageId().equals(expected) || !prior.issuerBindingCommitment().equals(predecessor.commitment())) throw invalid();
+                if (!value.lineageId().equals(expected) || !prior.issuerBindingCommitment().equals(predecessor.commitment())) { throw invalid(); }
             }
         }
         return value;
     }
 
-    private static boolean sameAnchor(zeroecho.pki.api.ca.IssuerCryptographicBinding left, zeroecho.pki.api.ca.IssuerCryptographicBinding right) {
+    private static boolean sameAnchor(IssuerCryptographicBinding left, IssuerCryptographicBinding right) {
         return sameKey(left.primary(), right.primary()) && left.alternative().isPresent() == right.alternative().isPresent()
                 && (left.alternative().isEmpty() || sameKey(left.alternative().orElseThrow(), right.alternative().orElseThrow()));
     }
-    private static boolean sameKey(zeroecho.pki.api.ca.IssuerKeyBinding left, zeroecho.pki.api.ca.IssuerKeyBinding right) {
+    private static boolean sameKey(IssuerKeyBinding left, IssuerKeyBinding right) {
         return left.subjectSpkiSha256().equals(right.subjectSpkiSha256()) && left.publicKeyAlgorithm().equals(right.publicKeyAlgorithm())
                 && left.signatureAlgorithm().equals(right.signatureAlgorithm())
-                && java.util.Arrays.equals(left.signatureAlgorithmIdentifier().bytes(), right.signatureAlgorithmIdentifier().bytes());
+                && Arrays.equals(left.signatureAlgorithmIdentifier().bytes(), right.signatureAlgorithmIdentifier().bytes());
     }
 
     /**
@@ -876,12 +803,12 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @throws IOException if validation or storage fails or the transaction outcome is unknown
      * @throws IllegalStateException if persistence is definitely rejected for a nonconflict reason
      */
-    /* default */ boolean compareAndSetHead(zeroecho.pki.api.ca.CaHeadSnapshot expected, CaRecord replacement, FsHistoryPolicy history) throws IOException {
-        try (var snapshot = metadata.snapshot()) {
+    /* default */ boolean compareAndSetHead(CaHeadSnapshot expected, CaRecord replacement, FsHistoryPolicy history) throws IOException {
+        try (MetadataSnapshot snapshot = metadata.snapshot()) {
             if (!CaLifecycleMetadataCodec.head(snapshot, expected.caId()).filter(expected::equals).isPresent()) { return false; }
             if (ca(snapshot, expected.caId()).orElseThrow(AuthorityMetadataStore::invalid).state() != replacement.state()) { return false; }
             if (!replacement.caId().equals(expected.caId())) { throw new IllegalArgumentException("Replacement CA differs from expected head authority"); }
-            try (var transaction = metadata.beginTransaction()) {
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
                 stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(expected), Optional.empty(), lineageAuthority);
                 MetadataCommitResult result = transaction.commit();
                 outcome.accept(result);
@@ -904,36 +831,37 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param history history policy applied to the membership update
      * @return retained identical transition after successful registration or idempotent reuse
      * @throws NullPointerException if a required input is null
-     * @throws IllegalArgumentException if an existing or concurrent candidate differs or expected authority state changed
+     * @throws IllegalArgumentException if an existing or concurrent candidate differs or expected
+     * authority state changed
      * @throws IOException if retained authority evidence is inconsistent or persistence fails
      * @throws IllegalStateException if persistence is definitely rejected
      */
-    /* default */ zeroecho.pki.api.ca.RootTrustAnchorTransition registerCandidate(zeroecho.pki.api.ca.RootTrustAnchorTransition transition,
+    /* default */ RootTrustAnchorTransition registerCandidate(RootTrustAnchorTransition transition,
             FsHistoryPolicy history) throws IOException {
-        try (var snapshot = metadata.snapshot()) {
-            var existing = CaLifecycleMetadataCodec.transition(snapshot, transition.transitionId());
+        try (MetadataSnapshot snapshot = metadata.snapshot()) {
+            Optional<RootTrustAnchorTransition> existing = CaLifecycleMetadataCodec.transition(snapshot, transition.transitionId());
             if (existing.isPresent()) {
                 if (!existing.orElseThrow().equals(transition)) { throw new IllegalArgumentException("Root candidate transition ID already has different immutable content"); } return existing.orElseThrow();
             }
             CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
-            var head = requireHead(snapshot, ca);
-            if (ca.kind() != zeroecho.pki.api.ca.CaKind.ROOT || ca.state() != zeroecho.pki.api.ca.CaState.ACTIVE
+            CaHeadSnapshot head = requireHead(snapshot, ca);
+            if (ca.kind() != CaKind.ROOT || ca.state() != CaState.ACTIVE
                     || !head.equals(transition.expectedHead())) { throw new IllegalArgumentException("Root candidate expected head is stale or authority is inactive"); }
             validateTransition(snapshot, transition);
-            var current = findBinding(snapshot, head.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-            var candidate = findBinding(snapshot, transition.candidateIssuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+            IssuerCryptographicBinding current = findBinding(snapshot, head.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+            IssuerCryptographicBinding candidate = findBinding(snapshot, transition.candidateIssuerId()).orElseThrow(AuthorityMetadataStore::invalid);
             if (sameAnchor(current, candidate)) { throw new IllegalArgumentException("Same-anchor renewal must use guarded head publication"); }
-            var members = new ArrayList<>(ca.issuerIds());
+            List<PkiId> members = new ArrayList<>(ca.issuerIds());
             if (!members.contains(transition.candidateIssuerId())) { members.add(transition.candidateIssuerId()); }
             CaRecord replacement = new CaRecord(ca.caId(), ca.kind(), ca.state(), ca.issuerKeyRef(), ca.subjectRef(), members, ca.currentIssuanceIssuerId(), ca.issuanceChainPathId());
-            try (var transaction = metadata.beginTransaction()) {
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
                 stageCa(snapshot, transaction, replacement, history.enabled(), Instant.now().truncatedTo(ChronoUnit.MICROS), Optional.of(head), Optional.empty(), lineageAuthority);
                 create(transaction, CaLifecycleMetadataCodec.transitionKey(transition.transitionId()), CaLifecycleMetadataCodec.encode(transition));
                 create(transaction, CaLifecycleMetadataCodec.candidateKey(transition.candidateIssuerId()), CaLifecycleMetadataCodec.encode(transition));
                 MetadataCommitResult result = transaction.commit();
                 if (definiteConflict(result)) {
-                    try (var committedSnapshot = metadata.snapshot()) {
-                        var retained = CaLifecycleMetadataCodec.transition(committedSnapshot, transition.transitionId()).orElseThrow(() -> new IllegalArgumentException("Root candidate registration lost its expected head conflict"));
+                    try (MetadataSnapshot committedSnapshot = metadata.snapshot()) {
+                        RootTrustAnchorTransition retained = CaLifecycleMetadataCodec.transition(committedSnapshot, transition.transitionId()).orElseThrow(() -> new IllegalArgumentException("Root candidate registration lost its expected head conflict"));
                         if (!retained.equals(transition)) { throw new IllegalArgumentException("Concurrent root candidate has different immutable content"); } return retained;
                     }
                 }
@@ -955,33 +883,33 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @throws IOException if retained authority evidence is inconsistent or persistence fails
      * @throws IllegalStateException if persistence is definitely rejected
      */
-    /* default */ zeroecho.pki.api.ca.RootTrustAnchorActivation activateCandidate(PkiId transitionId,
-            zeroecho.pki.api.ca.CaHeadSnapshot expected, zeroecho.pki.api.ca.RootTrustAnchorActivation activation, FsHistoryPolicy history) throws IOException {
-        try (var snapshot = metadata.snapshot()) {
-            var existing = CaLifecycleMetadataCodec.activation(snapshot, transitionId);
+    /* default */ RootTrustAnchorActivation activateCandidate(PkiId transitionId,
+            CaHeadSnapshot expected, RootTrustAnchorActivation activation, FsHistoryPolicy history) throws IOException {
+        try (MetadataSnapshot snapshot = metadata.snapshot()) {
+            Optional<RootTrustAnchorActivation> existing = CaLifecycleMetadataCodec.activation(snapshot, transitionId);
             if (existing.isPresent()) {
                 if (!existing.orElseThrow().equals(activation)) { throw new IllegalArgumentException("Root activation already has a different immutable receipt"); } return existing.orElseThrow();
             }
-            var transition = CaLifecycleMetadataCodec.transition(snapshot, transitionId).orElseThrow(AuthorityMetadataStore::invalid);
+            RootTrustAnchorTransition transition = CaLifecycleMetadataCodec.transition(snapshot, transitionId).orElseThrow(AuthorityMetadataStore::invalid);
             CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
             if (!requireHead(snapshot, ca).equals(expected) || !expected.equals(transition.expectedHead())
                     || !activation.expectedHead().equals(expected) || !activation.transitionId().equals(transitionId)
                     || !activation.transitionCommitment().equals(transition.commitment())
                     || !activation.candidateIssuerId().equals(transition.candidateIssuerId())
                     || !activation.candidatePathId().equals(transition.candidatePathId())
-                    || !ca.issuerIds().contains(transition.candidateIssuerId()) || ca.state() != zeroecho.pki.api.ca.CaState.ACTIVE) {
+                    || !ca.issuerIds().contains(transition.candidateIssuerId()) || ca.state() != CaState.ACTIVE) {
                 throw new IllegalArgumentException("Root activation expected head or approved receipt differs from its candidate");
             }
             validateTransition(snapshot, transition);
-            var generation = requireGeneration(snapshot, ca.caId(), transition.candidateIssuerId());
+            IssuerGeneration generation = requireGeneration(snapshot, ca.caId(), transition.candidateIssuerId());
             CaRecord replacement = new CaRecord(ca.caId(), ca.kind(), ca.state(), generation.signingKeyRef(), ca.subjectRef(), ca.issuerIds(), generation.issuerId(), transition.candidatePathId());
-            try (var transaction = metadata.beginTransaction()) {
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
                 stageCa(snapshot, transaction, replacement, history.enabled(), activation.acceptedAt(), Optional.of(expected), Optional.of(activation), lineageAuthority);
                 create(transaction, CaLifecycleMetadataCodec.activationKey(transitionId), CaLifecycleMetadataCodec.encode(activation));
                 MetadataCommitResult result = transaction.commit();
                 if (definiteConflict(result)) {
-                    try (var current = metadata.snapshot()) {
-                        var retained = CaLifecycleMetadataCodec.activation(current, transitionId).orElseThrow(() -> new IllegalArgumentException("Root activation lost its expected head conflict"));
+                    try (MetadataSnapshot current = metadata.snapshot()) {
+                        RootTrustAnchorActivation retained = CaLifecycleMetadataCodec.activation(current, transitionId).orElseThrow(() -> new IllegalArgumentException("Root activation lost its expected head conflict"));
                         if (!retained.equals(activation)) { throw new IllegalArgumentException("Concurrent root activation has a different immutable receipt"); } return retained;
                     }
                 }
@@ -995,13 +923,13 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                 && result.failureCategory().filter(MetadataCommitResult.FailureCategory.CONFLICT::equals).isPresent();
     }
 
-    private static void validateTransition(MetadataSnapshot snapshot, zeroecho.pki.api.ca.RootTrustAnchorTransition value) throws IOException {
-        var old = requireGeneration(snapshot, value.caId(), value.expectedHead().issuerId());
-        var candidate = requireGeneration(snapshot, value.caId(), value.candidateIssuerId());
-        var oldBinding = findBinding(snapshot, old.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-        var candidateBinding = findBinding(snapshot, candidate.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
-        var path = find(snapshot, AuthorityMetadataCodec.pathKey(value.candidatePathId()), AuthorityMetadataCodec::path).orElseThrow(AuthorityMetadataStore::invalid);
-        if (candidate.state() != zeroecho.pki.api.ca.IssuerGenerationState.ACTIVE
+    private static void validateTransition(MetadataSnapshot snapshot, RootTrustAnchorTransition value) throws IOException {
+        IssuerGeneration old = requireGeneration(snapshot, value.caId(), value.expectedHead().issuerId());
+        IssuerGeneration candidate = requireGeneration(snapshot, value.caId(), value.candidateIssuerId());
+        IssuerCryptographicBinding oldBinding = findBinding(snapshot, old.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+        IssuerCryptographicBinding candidateBinding = findBinding(snapshot, candidate.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+        IssuerChainPath path = find(snapshot, AuthorityMetadataCodec.pathKey(value.candidatePathId()), AuthorityMetadataCodec::path).orElseThrow(AuthorityMetadataStore::invalid);
+        if (candidate.state() != IssuerGenerationState.ACTIVE
                 || !old.credentialId().equals(value.oldCredentialId()) || !oldBinding.certificateSha256().equals(value.oldCertificateSha256())
                 || !oldBinding.commitment().equals(value.oldBindingCommitment()) || !candidate.credentialId().equals(value.candidateCredentialId())
                 || !candidateBinding.certificateSha256().equals(value.candidateCertificateSha256()) || !candidateBinding.commitment().equals(value.candidateBindingCommitment())
@@ -1052,10 +980,11 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
      * @param at inclusive upper history timestamp
      * @param policy whether authority history is enabled
      * @return historical matching epoch, or the validated current head when no historical entry is selected
-     * @throws IOException if metadata cannot be read or its authority, generation, path or binding coordinates are inconsistent
+     * @throws IOException if metadata cannot be read or its authority, generation, path or binding
+     * coordinates are inconsistent
      * @throws IllegalStateException if a historical lifecycle head cannot be decoded
      */
-    /* default */ static zeroecho.pki.api.ca.CaHeadSnapshot headAt(MetadataSnapshot snapshot, CaRecord selected,
+    /* default */ static CaHeadSnapshot headAt(MetadataSnapshot snapshot, CaRecord selected,
             Instant at, FsHistoryPolicy policy) throws IOException {
         AuthorityMetadataCodec.HistoryEntry latest = null;
         if (policy.enabled()) {
@@ -1063,15 +992,15 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                     AuthorityMetadataCodec.historyPrefix(selected.caId())), CancellationSignal.NONE)) {
                 Optional<MetadataSnapshot.Record> next;
                 while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
-                    try (var record = next.orElseThrow()) {
-                        var entry = AuthorityMetadataCodec.history(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES), record.commitRevision());
+                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                        AuthorityMetadataCodec.HistoryEntry entry = AuthorityMetadataCodec.history(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES), record.commitRevision());
                         if (!entry.timestamp().isAfter(at) && (latest == null || AuthorityMetadataCodec.HISTORY_ORDER.compare(entry, latest) > 0)) { latest = entry; }
                     }
                 }
             }
         }
         if (latest == null) { return requireHead(snapshot, selected); }
-        var head = find(snapshot, CaLifecycleMetadataCodec.historyKey(latest.key()), (key, bytes) -> {
+        CaHeadSnapshot head = find(snapshot, CaLifecycleMetadataCodec.historyKey(latest.key()), (key, bytes) -> {
             try { return CaLifecycleMetadataCodec.decodeHead(bytes); } catch (IOException failure) { throw new IllegalStateException(failure); }
         }).orElseThrow(() -> new IOException("Snapshot historical CA epoch is missing"));
         if (!head.caId().equals(selected.caId()) || !head.issuerId().equals(selected.currentIssuanceIssuerId())
@@ -1105,7 +1034,7 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
                             CredentialMetadataAuthority.read(record, MAX_BYTES), record.commitRevision());
                     if (entry.timestamp().isBefore(cutoff)) {
                         transaction.delete(record.key(), record.recordRevision()); deletes++;
-                        try (var head = snapshot.get(CaLifecycleMetadataCodec.historyKey(record.key())).orElseThrow(AuthorityMetadataStore::invalid)) {
+                        try (MetadataSnapshot.Record head = snapshot.get(CaLifecycleMetadataCodec.historyKey(record.key())).orElseThrow(AuthorityMetadataStore::invalid)) {
                             transaction.delete(head.key(), head.recordRevision()); deletes++;
                         }
                     }
@@ -1165,4 +1094,170 @@ final class AuthorityMetadataStore { // NOPMD - CyclomaticComplexity totals cohe
             } else { stageMembership(snapshot, transaction, new AuthorityMetadataCodec.Membership(ca.caId(), generationId, ordinal)); }
         }
     }
+
+    /** Validates retained authority projections in separate ordered passes. */
+    private static final class Integrity {
+        private static void currentHeads(MetadataSnapshot snapshot) throws IOException {
+        for (CaHeadSnapshot head : list(snapshot, CaLifecycleMetadataCodec.HEAD, CaLifecycleMetadataCodec::headRow)) {
+            CaRecord ca = ca(snapshot, head.caId()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (!head.equals(requireHead(snapshot, ca))) { throw invalid(); }
+        }
+        }
+        private static void transitions(MetadataSnapshot snapshot) throws IOException {
+        for (RootTrustAnchorTransition transition : list(snapshot, CaLifecycleMetadataCodec.TRANSITION, CaLifecycleMetadataCodec::transitionRow)) {
+            validateTransition(snapshot, transition);
+            CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (ca.kind() != CaKind.ROOT || !ca.issuerIds().contains(transition.candidateIssuerId())
+                    || requireHead(snapshot, ca).epoch() < transition.expectedHead().epoch()
+                    || !find(snapshot, CaLifecycleMetadataCodec.candidateKey(transition.candidateIssuerId()), CaLifecycleMetadataCodec::transitionRow)
+                        .filter(transition::equals).isPresent()) { throw invalid(); }
+        }
+        }
+        private static void candidates(MetadataSnapshot snapshot) throws IOException {
+        for (RootTrustAnchorTransition transition : list(snapshot, CaLifecycleMetadataCodec.CANDIDATE_INDEX, CaLifecycleMetadataCodec::transitionRow)) {
+            if (!CaLifecycleMetadataCodec.transition(snapshot, transition.transitionId()).filter(transition::equals).isPresent()) { throw invalid(); }
+        }
+        }
+        private static void activations(MetadataSnapshot snapshot) throws IOException {
+        for (RootTrustAnchorActivation activation : list(snapshot, CaLifecycleMetadataCodec.ACTIVATION, CaLifecycleMetadataCodec::activationRow)) {
+            RootTrustAnchorTransition transition = CaLifecycleMetadataCodec.transition(snapshot, activation.transitionId()).orElseThrow(AuthorityMetadataStore::invalid);
+            CaRecord ca = ca(snapshot, transition.caId()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (!activation.transitionCommitment().equals(transition.commitment()) || !activation.expectedHead().equals(transition.expectedHead())
+                    || !activation.candidateIssuerId().equals(transition.candidateIssuerId())
+                    || !activation.candidatePathId().equals(transition.candidatePathId())
+                    || activation.newEpoch() > requireHead(snapshot, ca).epoch()) { throw invalid(); }
+        }
+        }
+        private static void currentSelections(MetadataSnapshot snapshot) throws IOException {
+        // Validate each current prefix once. History only checks count and exact selection.
+        for (AuthorityMetadataCodec.Head head : list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
+            requireHead(snapshot, reconstruct(snapshot, head));
+        }
+        }
+        private static void bases(MetadataSnapshot snapshot) throws IOException {
+        for (AuthorityMetadataCodec.Base base : list(snapshot, AuthorityMetadataCodec.CA_BASE, AuthorityMetadataCodec::base)) {
+            if (find(snapshot, AuthorityMetadataCodec.caKey(base.caId()), AuthorityMetadataCodec::head).isEmpty()) { throw invalid(); }
+        }
+        }
+        private static void memberships(MetadataSnapshot snapshot) throws IOException {
+        for (String namespace : List.of(AuthorityMetadataCodec.CA_GENERATION_ORDER, AuthorityMetadataCodec.CA_GENERATION_MEMBER)) {
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(namespace), CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                        AuthorityMetadataCodec.Membership member = AuthorityMetadataCodec.membership(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES));
+                        AuthorityMetadataCodec.Head head = find(snapshot, AuthorityMetadataCodec.caKey(member.caId()), AuthorityMetadataCodec::head)
+                                .orElseThrow(AuthorityMetadataStore::invalid);
+                        IssuerCryptographicBinding memberBinding = findBinding(snapshot, member.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
+                        if (memberBinding.alternative().isPresent()) { requireLineage(snapshot, member.generationId()); }
+                        if (member.ordinal() >= head.membershipCount() || !member.equals(requireMembership(snapshot, member.caId(), member.ordinal()))) { throw invalid(); }
+                    }
+                }
+            }
+        }
+        }
+        private static void historyHeads(MetadataSnapshot snapshot) throws IOException {
+        try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(CaLifecycleMetadataCodec.HEAD_HISTORY), CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                try (MetadataSnapshot.Record row = next.orElseThrow(); MetadataSnapshot.Record original = snapshot.get(historyAuthorityKey(row.key())).orElse(null)) {
+                    if (original == null) { throw invalid(); }
+                    CaLifecycleMetadataCodec.decodeHead(CredentialMetadataAuthority.read(row, MAX_BYTES));
+                }
+            }
+        }
+        }
+        private static void historySelections(MetadataSnapshot snapshot) throws IOException {
+        try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(AuthorityMetadataCodec.CA_HISTORY), CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    AuthorityMetadataCodec.Head head = AuthorityMetadataCodec.history(record.key(), CredentialMetadataAuthority.read(record, MAX_BYTES), record.commitRevision()).value();
+                    AuthorityMetadataCodec.Head current = find(snapshot, AuthorityMetadataCodec.caKey(head.caId()), AuthorityMetadataCodec::head)
+                            .orElseThrow(AuthorityMetadataStore::invalid);
+                    if (head.membershipCount() > current.membershipCount()) { throw invalid(); }
+                    requireSelection(snapshot, head, true);
+                    CaHeadSnapshot historical = find(snapshot, CaLifecycleMetadataCodec.historyKey(record.key()), (key, bytes) -> {
+                        try { return CaLifecycleMetadataCodec.decodeHead(bytes); } catch (IOException failure) { throw new IllegalStateException(failure); }
+                    }).orElseThrow(AuthorityMetadataStore::invalid);
+                    IssuerCryptographicBinding binding = findBinding(snapshot, head.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
+                    if (!historical.caId().equals(head.caId()) || !historical.issuerId().equals(head.generationId())
+                            || !historical.pathId().equals(head.pathId()) || !historical.bindingCommitment().equals(binding.commitment())
+                            || historical.epoch() > CaLifecycleMetadataCodec.head(snapshot, head.caId()).orElseThrow().epoch()) { throw invalid(); }
+
+                }
+            }
+        }
+            }
+    }
+
+
+    private static MetadataKey historyAuthorityKey(MetadataKey row) { return new MetadataKey(AuthorityMetadataCodec.CA_HISTORY, row.key()); }
+
+
+    private static void stageCrlLineage(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
+            AuthorityMetadataCodec.Head previous, Optional<LineageAuthority> authority, int ordinal) throws IOException {
+
+            IssuerGeneration generation = requireGeneration(snapshot, ca.caId(), ca.issuerIds().get(ordinal));
+            IssuerCryptographicBinding binding = findBinding(snapshot, generation.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+            if (binding.alternative().isEmpty()) { return; }
+            if (lineage(snapshot, generation.issuerId()).isPresent()) { throw invalid(); }
+            String tuple = authority.orElseThrow(() -> new UnsupportedOperationException("Configured hybrid CRL lineage authority unavailable"))
+                    .tuple(snapshot, generation, binding);
+            PkiId root = generation.issuerId();
+            PkiId predecessor = previous == null ? null : previous.generationId();
+            root = lineageRoot(snapshot, predecessor, tuple, root);
+            CrlSignerLineage value = new CrlSignerLineage(1, generation.issuerId(), Optional.ofNullable(predecessor), root, tuple, binding.commitment());
+            create(transaction, CrlSignerLineageCodec.key(generation.issuerId()), CrlSignerLineageCodec.encode(value));
+
+    }
+
+
+    private static PkiId lineageRoot(MetadataSnapshot snapshot, PkiId predecessor, String tuple, PkiId root) throws IOException {
+        if (predecessor == null) { return root; }
+        IssuerCryptographicBinding priorBinding = findBinding(snapshot, predecessor).orElseThrow(AuthorityMetadataStore::invalid);
+        if (priorBinding.alternative().isEmpty()) { return root; }
+        CrlSignerLineage prior = requireLineage(snapshot, predecessor);
+        return prior.signerTupleCommitment().equals(tuple) ? prior.lineageId() : root;
+    }
+
+
+    private static CaHeadSnapshot selectedHead(MetadataSnapshot snapshot, CaRecord ca, AuthorityMetadataCodec.Head head,
+            AuthorityMetadataCodec.Head previous, Optional<CaHeadSnapshot> expected,
+            Optional<RootTrustAnchorActivation> activation) throws IOException {
+            IssuerGeneration selected = requireGeneration(snapshot, ca.caId(), head.generationId());
+            IssuerCryptographicBinding binding = findBinding(snapshot, selected.issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+            Optional<CaHeadSnapshot> original = CaLifecycleMetadataCodec.head(snapshot, ca.caId());
+            boolean changesHead = previous != null && (!previous.generationId().equals(head.generationId()) || !previous.pathId().equals(head.pathId()));
+            if (previous == null && original.isPresent() || previous != null && original.isEmpty()) { throw invalid(); }
+            if (expected.isPresent() && !original.filter(expected.orElseThrow()::equals).isPresent()) { throw invalid(); }
+            if (changesHead && expected.isEmpty()) { throw new IllegalArgumentException("Selected CA head changes require an admitted epoch fence"); }
+            requireRootActivation(snapshot, ca, changesHead, original, binding, activation);
+
+            long epoch = previous == null ? 1 : changesHead ? Math.incrementExact(original.orElseThrow().epoch()) : original.orElseThrow().epoch();
+            CaHeadSnapshot updated = new CaHeadSnapshot(1, ca.caId(), epoch, selected.issuerId(), head.pathId(), binding.commitment());
+        return updated;
+    }
+    private static void stageCaHistory(MetadataSnapshot snapshot, MetadataTransaction transaction, CaRecord ca,
+            AuthorityMetadataCodec.Head head, Instant timestamp, byte[] payload) throws IOException {
+
+            MetadataKey historyKey = AuthorityMetadataCodec.historyKey(ca.caId(), timestamp, transaction.id());
+            create(transaction, historyKey, payload);
+            Optional<CaHeadSnapshot> original = CaLifecycleMetadataCodec.head(snapshot, ca.caId());
+            boolean changes = original.isPresent() && (!original.orElseThrow().issuerId().equals(head.generationId()) || !original.orElseThrow().pathId().equals(head.pathId()));
+            long epoch = original.isEmpty() ? 1 : changes ? Math.incrementExact(original.orElseThrow().epoch()) : original.orElseThrow().epoch();
+            IssuerCryptographicBinding binding = findBinding(snapshot, head.generationId()).orElseThrow(AuthorityMetadataStore::invalid);
+            create(transaction, CaLifecycleMetadataCodec.historyKey(historyKey), CaLifecycleMetadataCodec.encode(
+                    new CaHeadSnapshot(1, ca.caId(), epoch, head.generationId(), head.pathId(), binding.commitment())));
+
+    }
+
+
+    private static void requireRootActivation(MetadataSnapshot snapshot, CaRecord ca, boolean changesHead,
+            Optional<CaHeadSnapshot> original, IssuerCryptographicBinding binding, Optional<RootTrustAnchorActivation> activation) throws IOException {
+            if (changesHead && ca.kind() == CaKind.ROOT) {
+                IssuerCryptographicBinding old = findBinding(snapshot, original.orElseThrow().issuerId()).orElseThrow(AuthorityMetadataStore::invalid);
+                if (!sameAnchor(old, binding) && activation.isEmpty()) { throw new IllegalArgumentException("Root anchor changes require an acknowledged candidate activation"); }
+            }    }
+
 }

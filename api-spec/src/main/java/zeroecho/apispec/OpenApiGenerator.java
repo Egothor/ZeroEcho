@@ -72,6 +72,12 @@ import java.util.Map;
  * @since 1.0
  */
 public final class OpenApiGenerator {
+    private static final String NAME = "name";
+    private static final String SUMMARY = "summary";
+    private static final String STATUS = "status";
+    private static final String TRUE = "true";
+    private static final String JSON = "application/json";
+    private static final List<Boolean> CONTENT_MODES = List.of(false, true);
     private static final String STRING_TYPE = "string";
     private static final String CONTENT_FIELD = "content";
     private static final String SCHEMA_FIELD = "schema";
@@ -240,7 +246,9 @@ public final class OpenApiGenerator {
     // -- Step 5: Generate YAML
 
     @SuppressWarnings("unchecked")
-    private String generateYaml(String version, Map<String, OperationDescriptorCatalog.Entry> descriptors,
+    private String generateYaml(
+            String version,
+            Map<String, OperationDescriptorCatalog.Entry> descriptors,
             Map<String, Object> supplement) {
         YamlBuilder y = new YamlBuilder();
         Map<String, Object> ops = (Map<String, Object>) supplement.get("operations");
@@ -250,189 +258,474 @@ public final class OpenApiGenerator {
         y.blank();
 
         // Info
-        y.blockMapping("info", () -> {
-            y.mapping("title", "ZeroEcho PKI Administrative API");
-            y.mapping("version", version);
-            y.mapping(TEXT_DESCRIPTION,
-                    "ZeroEcho PKI administrative API and optional SDK listener contracts. Administrative paths require mutual TLS. "
-                    + "Protocol SDK paths override the server base and preserve their native authentication policies.");
-            y.blockMapping("license", () -> {
-                y.mapping("name", "BSD 4-Clause");
-                y.mapping("identifier", "BSD-4-Clause");
-            });
-        });
+        y.blockMapping(
+                "info",
+                () -> {
+                    y.mapping("title", "ZeroEcho PKI Administrative API");
+                    y.mapping("version", version);
+                    y.mapping(
+                            TEXT_DESCRIPTION,
+                            "ZeroEcho PKI administrative API and optional SDK listener contracts."
+                                + " Administrative paths require mutual TLS. Protocol SDK paths"
+                                + " override the server base and preserve their native"
+                                + " authentication policies.");
+                    y.blockMapping(
+                            "license",
+                            () -> {
+                                y.mapping(NAME, "BSD 4-Clause");
+                                y.mapping("identifier", "BSD-4-Clause");
+                            });
+                });
         y.blank();
 
         // Servers
-        y.blockMapping("servers", () -> {
-            y.sequenceItem(() -> {
-                y.mapping("url", "https://{host}:{port}/admin/v1");
-                y.mapping(TEXT_DESCRIPTION, "ZeroEcho PKI administrative listener");
-                y.blockMapping("variables", () -> {
-                    y.blockMapping("host", () -> {
-                        y.mapping("default", "localhost");
-                        y.mapping(TEXT_DESCRIPTION, "Server hostname or IP address");
-                    });
-                    y.blockMapping("port", () -> {
-                        y.mapping("default", "8443");
-                        y.mapping(TEXT_DESCRIPTION, "Administrative HTTPS listener port");
-                    });
+        y.blockMapping(
+                "servers",
+                () -> {
+                    y.sequenceItem(
+                            () -> {
+                                y.mapping("url", "https://{host}:{port}/admin/v1");
+                                y.mapping(TEXT_DESCRIPTION, "ZeroEcho PKI administrative listener");
+                                y.blockMapping(
+                                        "variables",
+                                        () -> {
+                                            y.blockMapping(
+                                                    "host",
+                                                    () -> {
+                                                        y.mapping("default", "localhost");
+                                                        y.mapping(
+                                                                TEXT_DESCRIPTION,
+                                                                "Server hostname or IP address");
+                                                    });
+                                            y.blockMapping(
+                                                    "port",
+                                                    () -> {
+                                                        y.mapping("default", "8443");
+                                                        y.mapping(
+                                                                TEXT_DESCRIPTION,
+                                                                "Administrative HTTPS listener"
+                                                                    + " port");
+                                                    });
+                                        });
+                            });
                 });
-            });
-        });
         y.blank();
 
         // Security
-        y.blockMapping("security", () -> {
-            y.sequenceItem(() -> y.mappingLiteral("mutualTLS", "[]"));
-        });
+        y.blockMapping(
+                "security",
+                () -> {
+                    y.sequenceItem(() -> y.mappingLiteral("mutualTLS", "[]"));
+                });
         y.blank();
 
         // Tags
-        y.blockMapping("tags", () -> {
-            for (Map.Entry<String, String> tag : TAG_MAP.entrySet()) {
-                y.sequenceItem(() -> {
-                    y.mapping("name", tag.getValue());
-                    y.mapping(TEXT_DESCRIPTION, "Operations in the " + tag.getValue() + " domain");
+        y.blockMapping(
+                "tags",
+                () -> {
+                    for (Map.Entry<String, String> tag : TAG_MAP.entrySet()) {
+                        y.sequenceItem(
+                                () -> {
+                                    y.mapping(NAME, tag.getValue());
+                                    y.mapping(
+                                            TEXT_DESCRIPTION,
+                                            "Operations in the " + tag.getValue() + " domain");
+                                });
+                    }
                 });
-            }
-        });
         y.blank();
 
-        // Paths
-        y.blockMapping("paths", () -> {
-            SdkOpenApi.paths(y);
-            // Discovery endpoint
-            y.blockMapping("/operations", () -> {
-                y.blockMapping("get", () -> {
-                    y.mapping("operationId", "operations.list");
-                    y.mapping("summary", "List available operations");
-                    y.mapping(TEXT_DESCRIPTION,
-                            "Returns the set of operation identifiers available to the authenticated principal.");
-                    emitStandardResponses(y);
-                });
-            });
-            y.blank();
-
-            // Raw artifact routes are intentionally outside the operation catalogue.
-            for (String kind : java.util.List.of("certificate", "status")) {
-                String permission = kind.equals("status") ? "CRL_DOWNLOAD / STATUS_OBJECT / CONTENT_FULL"
-                        : "CERTIFICATE_READ_CONTENT and CERTIFICATE_DOWNLOAD / CERTIFICATE / CONTENT_FULL";
-                for (boolean content : new boolean[]{false, true}) {
-                    String route = "/" + kind + "-artifacts/{id}" + (content ? "/content" : "");
-                    y.blockMapping("'" + route + "'", () -> y.blockMapping("get", () -> {
-                        y.mapping("summary", content ? "Download an authorized immutable " + kind + " artifact" : "Inspect authorized " + kind + " representations");
-                        y.mapping(TEXT_DESCRIPTION, "Authenticated private route. Exact canonical stored object scope is checked; anonymous publication is independent. "
-                                + (content ? "Requires " + permission + ". Provider-owned representation selected by query; returns a native attachment with exact Content-Length, Content-Digest, no-store and nosniff. Status exports stream with bounded memory and cancellation (256 MiB native, 368 MiB encoded maximum)."
-                                : "Metadata permission is required; representations is empty when full-content authorization is absent. Returns result.value with object identity and provider-owned id, label, mediaType, fileName and same-origin href. "
-                                  + (kind.equals("certificate") ? "Certificate metadata includes the exact immutable issuerId; use issuer.generation.inspect under its separate authorization to obtain stored cryptographicBinding and outgoing signing roles. Certificate access does not grant generation inspection." : "")));
-                        y.blockMapping("parameters", () -> {
-                            y.sequenceItem(() -> { y.mapping("name", "id"); y.mapping("in", "path"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
-                            if(content)y.sequenceItem(() -> { y.mapping("name", "representation"); y.mapping("in", "query"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); });
-                        });
-                        y.blockMapping("responses", () -> {
-                            y.blockMapping("'200'", () -> { y.mapping(TEXT_DESCRIPTION, content ? "Authorized attachment; body is binary and never JSON encoded" : "Authorized metadata envelope");
-                                y.blockMapping("content", () -> y.blockMapping(content ? "application/octet-stream" : "application/json", () -> y.blockMapping("schema", () -> { y.mapping("type", content ? "string" : "object"); if(content)y.mapping("format", "binary"); }))); });
-                            y.blockMapping("'404'", () -> y.mapping(TEXT_DESCRIPTION, "Unavailable object, representation or authorization"));
-                        });
-                    }));
-                }
-            }
-            y.blockMapping("'/authorities/{id}/certificate'", () -> y.blockMapping("get", () -> {
-                y.mapping("summary", "Resolve the current CA certificate and its authorized representations");
-                y.mapping(TEXT_DESCRIPTION, "Requires authority metadata access and canonical certificate metadata scope; download links require both certificate full-content permissions. Intermediate CA content scope remains its canonical parent issuance authority.");
-                y.blockMapping("parameters", () -> y.sequenceItem(() -> { y.mapping("name", "id"); y.mapping("in", "path"); y.mappingLiteral("required", "true"); y.blockMapping("schema", () -> y.mapping("type", "string")); }));
-                emitStandardResponses(y);
-            }));
-
-            // Per-operation endpoints
-            for (Map.Entry<String, OperationDescriptorCatalog.Entry> entry : descriptors.entrySet()) {
-                String opId = entry.getKey();
-                OperationDescriptorCatalog.Entry descriptor = entry.getValue();
-                Map<String, Object> opSupplement = ops.containsKey(opId) ?
-                        (Map<String, Object>) ops.get(opId) : Map.of();
-                boolean highRisk = isHighRisk(descriptor);
-                String tag = deriveTag(opId);
-
-                boolean upload = zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.UPLOAD.equals(opId);
-                boolean download = zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand.DOWNLOAD.equals(opId);
-                String path = upload ? "/backup/upload" : download ? "/backup/download" : "/operations/" + opId;
-                y.blockMapping("'" + path + "'", () -> {
-                    y.blockMapping("post", () -> {
-                        y.mapping("operationId", opId);
-                        y.mappingLiteral("x-zeroecho-available", Boolean.toString(descriptor.available()));
-                        y.mapping("x-zeroecho-permission-action", descriptor.security().action().name());
-                        y.mapping("x-zeroecho-resource-type", descriptor.security().resourceType().name());
-                        y.mapping("x-zeroecho-scope", descriptor.presentation().transport().scope());
-                        y.mapping("x-zeroecho-authority-from", descriptor.presentation().transport().authorityFrom());
-                        String summary = getStringOrDefault(opSupplement, "summary", "TODO: " + opId);
-                        y.mapping("summary", summary);
-                        String description = getStringOrDefault(opSupplement, TEXT_DESCRIPTION, "");
-                        if (!description.isEmpty()) {
-                            y.mapping(TEXT_DESCRIPTION, description);
-                        }
-                        y.blockMapping("tags", () -> y.sequenceItemString(tag));
-                        if (upload || download) {
-                            emitTransferRequest(y, upload);
-                        }
-                        else {
-                            emitRequestBody(y, opId);
-                        }
-                        emitResponses(y, highRisk || upload || download, download);
-                    });
-                });
-                y.blank();
-            }
-
-            // Cancellation endpoint
-            y.blockMapping("'/operations/{operationId}/{requestId}'", () -> {
-                y.blockMapping("delete", () -> {
-                    y.mapping("operationId", "operations.cancel");
-                    y.mapping("summary", "Cancel an in-flight operation");
-                    emitStandardResponses(y);
-                });
-            });
-        });
-        y.blank();
+        emitPaths(y, descriptors, ops);
 
         // Components
-        y.blockMapping("components", () -> {
-            // Security schemes
-            y.blockMapping("securitySchemes", () -> {
-                y.blockMapping("mutualTLS", () -> {
-                    y.mappingLiteral(TEXT_TYPE, "mutualTLS");
-                    y.mapping(TEXT_DESCRIPTION,
-                            "Every request must present a valid client certificate issued by the "
-                            + "server's configured client trust anchors. No sessions or tokens exist.");
+        y.blockMapping(
+                "components",
+                () -> {
+                    // Security schemes
+                    y.blockMapping(
+                            "securitySchemes",
+                            () -> {
+                                y.blockMapping(
+                                        "mutualTLS",
+                                        () -> {
+                                            y.mappingLiteral(TEXT_TYPE, "mutualTLS");
+                                            y.mapping(
+                                                    TEXT_DESCRIPTION,
+                                                    "Every request must present a valid client"
+                                                        + " certificate issued by the server's"
+                                                        + " configured client trust anchors. No"
+                                                        + " sessions or tokens exist.");
+                                        });
+                            });
+                    y.blank();
+
+                    // Common schemas
+                    y.blockMapping(
+                            "schemas",
+                            () -> {
+                                emitCommonSchemas(y);
+                                SdkOpenApi.schemas(y);
+                                y.blank();
+
+                                // Per-operation argument schemas
+                                for (Map.Entry<String, OperationDescriptorCatalog.Entry> entry :
+                                        descriptors.entrySet()) {
+                                    String opId = entry.getKey();
+                                    {
+                                        Map<String, Object> opSupplement =
+                                                ops.containsKey(opId)
+                                                        ? (Map<String, Object>) ops.get(opId)
+                                                        : Map.of();
+                                        emitArgumentSchema(y, opId, entry.getValue(), opSupplement);
+                                    }
+                                }
+                            });
+
+                    // Standard responses
+                    y.blank();
+                    y.blockMapping(
+                            "responses",
+                            () -> {
+                                emitStandardResponseComponents(y);
+                            });
                 });
-            });
-            y.blank();
-
-            // Common schemas
-            y.blockMapping("schemas", () -> {
-                emitCommonSchemas(y);
-                SdkOpenApi.schemas(y);
-                y.blank();
-
-                // Per-operation argument schemas
-                for (Map.Entry<String, OperationDescriptorCatalog.Entry> entry : descriptors.entrySet()) {
-                    String opId = entry.getKey();
-                    {
-                        Map<String, Object> opSupplement = ops.containsKey(opId) ?
-                                (Map<String, Object>) ops.get(opId) : Map.of();
-                        emitArgumentSchema(y, opId, entry.getValue(), opSupplement);
-                    }
-                }
-            });
-
-            // Standard responses
-            y.blank();
-            y.blockMapping("responses", () -> {
-                emitStandardResponseComponents(y);
-            });
-        });
 
         return y.build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void emitPaths(
+            YamlBuilder y,
+            Map<String, OperationDescriptorCatalog.Entry> descriptors,
+            Map<String, Object> ops) {
+        // Paths
+        y.blockMapping(
+                "paths",
+                () -> {
+                    SdkOpenApi.paths(y);
+                    // Discovery endpoint
+                    y.blockMapping(
+                            "/operations",
+                            () -> {
+                                y.blockMapping(
+                                        "get",
+                                        () -> {
+                                            y.mapping("operationId", "operations.list");
+                                            y.mapping(SUMMARY, "List available operations");
+                                            y.mapping(
+                                                    TEXT_DESCRIPTION,
+                                                    "Returns the set of operation identifiers"
+                                                        + " available to the authenticated"
+                                                        + " principal.");
+                                            emitStandardResponses(y);
+                                        });
+                            });
+                    y.blank();
+
+                    emitArtifactPaths(y);
+                    y.blockMapping(
+                            "'/authorities/{id}/certificate'",
+                            () ->
+                                    y.blockMapping(
+                                            "get",
+                                            () -> {
+                                                y.mapping(
+                                                        SUMMARY,
+                                                        "Resolve the current CA certificate and its"
+                                                            + " authorized representations");
+                                                y.mapping(
+                                                        TEXT_DESCRIPTION,
+                                                        "Requires authority metadata access and"
+                                                            + " canonical certificate metadata"
+                                                            + " scope; download links require both"
+                                                            + " certificate full-content"
+                                                            + " permissions. Intermediate CA"
+                                                            + " content scope remains its canonical"
+                                                            + " parent issuance authority.");
+                                                y.blockMapping(
+                                                        "parameters",
+                                                        () ->
+                                                                y.sequenceItem(
+                                                                        () -> {
+                                                                            y.mapping(NAME, "id");
+                                                                            y.mapping("in", "path");
+                                                                            y.mappingLiteral(
+                                                                                    "required",
+                                                                                    TRUE);
+                                                                            y.blockMapping(
+                                                                                    "schema",
+                                                                                    () ->
+                                                                                            y
+                                                                                                    .mapping(
+                                                                                                            "type",
+                                                                                                            "string"));
+                                                                        }));
+                                                emitStandardResponses(y);
+                                            }));
+
+                    // Per-operation endpoints
+                    for (Map.Entry<String, OperationDescriptorCatalog.Entry> entry :
+                            descriptors.entrySet()) {
+                        String opId = entry.getKey();
+                        OperationDescriptorCatalog.Entry descriptor = entry.getValue();
+                        Map<String, Object> opSupplement =
+                                ops.containsKey(opId)
+                                        ? (Map<String, Object>) ops.get(opId)
+                                        : Map.of();
+                        boolean highRisk = isHighRisk(descriptor);
+                        String tag = deriveTag(opId);
+
+                        boolean upload =
+                                zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand
+                                        .UPLOAD
+                                        .equals(opId);
+                        boolean download =
+                                zeroecho.pki.server.ServerControlOperation.BackupArtifactCommand
+                                        .DOWNLOAD
+                                        .equals(opId);
+                        String path =
+                                upload
+                                        ? "/backup/upload"
+                                        : download ? "/backup/download" : "/operations/" + opId;
+                        y.blockMapping(
+                                "'" + path + "'",
+                                () -> {
+                                    y.blockMapping(
+                                            "post",
+                                            () -> {
+                                                y.mapping("operationId", opId);
+                                                y.mappingLiteral(
+                                                        "x-zeroecho-available",
+                                                        Boolean.toString(descriptor.available()));
+                                                y.mapping(
+                                                        "x-zeroecho-permission-action",
+                                                        descriptor.security().action().name());
+                                                y.mapping(
+                                                        "x-zeroecho-resource-type",
+                                                        descriptor
+                                                                .security()
+                                                                .resourceType()
+                                                                .name());
+                                                y.mapping(
+                                                        "x-zeroecho-scope",
+                                                        descriptor
+                                                                .presentation()
+                                                                .transport()
+                                                                .scope());
+                                                y.mapping(
+                                                        "x-zeroecho-authority-from",
+                                                        descriptor
+                                                                .presentation()
+                                                                .transport()
+                                                                .authorityFrom());
+                                                String summary =
+                                                        getStringOrDefault(
+                                                                opSupplement,
+                                                                SUMMARY,
+                                                                "TODO: " + opId);
+                                                y.mapping(SUMMARY, summary);
+                                                String description =
+                                                        getStringOrDefault(
+                                                                opSupplement, TEXT_DESCRIPTION, "");
+                                                if (!description.isEmpty()) {
+                                                    y.mapping(TEXT_DESCRIPTION, description);
+                                                }
+                                                y.blockMapping(
+                                                        "tags", () -> y.sequenceItemString(tag));
+                                                if (upload || download) {
+                                                    emitTransferRequest(y, upload);
+                                                } else {
+                                                    emitRequestBody(y, opId);
+                                                }
+                                                emitResponses(
+                                                        y,
+                                                        highRisk || upload || download,
+                                                        download);
+                                            });
+                                });
+                        y.blank();
+                    }
+
+                    // Cancellation endpoint
+                    y.blockMapping(
+                            "'/operations/{operationId}/{requestId}'",
+                            () -> {
+                                y.blockMapping(
+                                        "delete",
+                                        () -> {
+                                            y.mapping("operationId", "operations.cancel");
+                                            y.mapping(SUMMARY, "Cancel an in-flight operation");
+                                            emitStandardResponses(y);
+                                        });
+                            });
+                });
+        y.blank();
+    }
+
+    private static void emitArtifactPaths(YamlBuilder y) {
+        // Raw artifact routes are intentionally outside the operation catalogue.
+        for (String kind : List.of("certificate", STATUS)) {
+            String permission =
+                    STATUS.equals(kind)
+                            ? "CRL_DOWNLOAD / STATUS_OBJECT / CONTENT_FULL"
+                            : "CERTIFICATE_READ_CONTENT and CERTIFICATE_DOWNLOAD / CERTIFICATE /"
+                                  + " CONTENT_FULL";
+            for (boolean content : CONTENT_MODES) {
+                emitArtifactPath(y, kind, permission, content);
+            }
+        }
+    }
+
+    private static void emitArtifactPath(
+            YamlBuilder y, String kind, String permission, boolean content) {
+        String route = "/" + kind + "-artifacts/{id}" + (content ? "/content" : "");
+        y.blockMapping(
+                "'" + route + "'",
+                () ->
+                        y.blockMapping(
+                                "get",
+                                () -> {
+                                    y.mapping(
+                                            SUMMARY,
+                                            content
+                                                    ? "Download an authorized immutable "
+                                                            + kind
+                                                            + " artifact"
+                                                    : "Inspect authorized "
+                                                            + kind
+                                                            + " representations");
+                                    y.mapping(
+                                            TEXT_DESCRIPTION,
+                                            "Authenticated private route. Exact canonical stored"
+                                                + " object scope is checked; anonymous publication"
+                                                + " is independent. "
+                                                    + (content
+                                                            ? "Requires "
+                                                                    + permission
+                                                                    + ". Provider-owned"
+                                                                    + " representation selected by"
+                                                                    + " query; returns a native"
+                                                                    + " attachment with exact"
+                                                                    + " Content-Length,"
+                                                                    + " Content-Digest, no-store"
+                                                                    + " and nosniff. Status exports"
+                                                                    + " stream with bounded memory"
+                                                                    + " and cancellation (256 MiB"
+                                                                    + " native, 368 MiB encoded"
+                                                                    + " maximum)."
+                                                            : "Metadata permission is required;"
+                                                                  + " representations is empty when"
+                                                                  + " full-content authorization is"
+                                                                  + " absent. Returns result.value"
+                                                                  + " with object identity and"
+                                                                  + " provider-owned id, label,"
+                                                                  + " mediaType, fileName and"
+                                                                  + " same-origin href. "
+                                                                    + ("certificate".equals(kind)
+                                                                            ? "Certificate metadata"
+                                                                                  + " includes the"
+                                                                                  + " exact"
+                                                                                  + " immutable"
+                                                                                  + " issuerId; use"
+                                                                                  + " issuer.generation.inspect"
+                                                                                  + " under its"
+                                                                                  + " separate"
+                                                                                  + " authorization"
+                                                                                  + " to obtain"
+                                                                                  + " stored"
+                                                                                  + " cryptographicBinding"
+                                                                                  + " and outgoing"
+                                                                                  + " signing"
+                                                                                  + " roles."
+                                                                                  + " Certificate"
+                                                                                  + " access does"
+                                                                                  + " not grant"
+                                                                                  + " generation"
+                                                                                  + " inspection."
+                                                                            : "")));
+                                    y.blockMapping(
+                                            "parameters",
+                                            () -> {
+                                                y.sequenceItem(
+                                                        () -> {
+                                                            y.mapping(NAME, "id");
+                                                            y.mapping("in", "path");
+                                                            y.mappingLiteral("required", TRUE);
+                                                            y.blockMapping(
+                                                                    "schema",
+                                                                    () ->
+                                                                            y.mapping(
+                                                                                    "type",
+                                                                                    "string"));
+                                                        });
+                                                if (content) {
+                                                    y.sequenceItem(
+                                                            () -> {
+                                                                y.mapping(NAME, "representation");
+                                                                y.mapping("in", "query");
+                                                                y.mappingLiteral("required", TRUE);
+                                                                y.blockMapping(
+                                                                        "schema",
+                                                                        () ->
+                                                                                y.mapping(
+                                                                                        "type",
+                                                                                        "string"));
+                                                            });
+                                                }
+                                            });
+                                    y.blockMapping(
+                                            "responses",
+                                            () -> {
+                                                y.blockMapping(
+                                                        "'200'",
+                                                        () -> {
+                                                            y.mapping(
+                                                                    TEXT_DESCRIPTION,
+                                                                    content
+                                                                            ? "Authorized"
+                                                                                  + " attachment;"
+                                                                                  + " body is"
+                                                                                  + " binary and"
+                                                                                  + " never JSON"
+                                                                                  + " encoded"
+                                                                            : "Authorized metadata"
+                                                                                  + " envelope");
+                                                            y.blockMapping(
+                                                                    "content",
+                                                                    () ->
+                                                                            y.blockMapping(
+                                                                                    content
+                                                                                            ? "application/octet-stream"
+                                                                                            : JSON,
+                                                                                    () ->
+                                                                                            y
+                                                                                                    .blockMapping(
+                                                                                                            "schema",
+                                                                                                            () -> {
+                                                                                                                y
+                                                                                                                        .mapping(
+                                                                                                                                "type",
+                                                                                                                                content
+                                                                                                                                        ? "string"
+                                                                                                                                        : "object");
+                                                                                                                if (content) {
+                                                                                                                    y
+                                                                                                                            .mapping(
+                                                                                                                                    "format",
+                                                                                                                                    "binary");
+                                                                                                                }
+                                                                                                            })));
+                                                        });
+                                                y.blockMapping(
+                                                        "'404'",
+                                                        () ->
+                                                                y.mapping(
+                                                                        TEXT_DESCRIPTION,
+                                                                        "Unavailable object,"
+                                                                            + " representation or"
+                                                                            + " authorization"));
+                                            });
+                                }));
     }
 
     static {
@@ -442,7 +735,7 @@ public final class OpenApiGenerator {
         TAG_MAP.put("profile",       "Profiles");
         TAG_MAP.put("request",       "Requests");
         TAG_MAP.put("revocation",    "Revocation");
-        TAG_MAP.put("status",        "Status Objects");
+        TAG_MAP.put(STATUS,        "Status Objects");
         TAG_MAP.put("publication",   "Publication");
         TAG_MAP.put("algorithm",     "Algorithm Bindings");
         TAG_MAP.put("configuration", "Configuration");
@@ -472,9 +765,9 @@ public final class OpenApiGenerator {
     private void emitRequestBody(YamlBuilder y, String opId) {
         String schemaName = toSchemaName(opId) + "Arguments";
         y.blockMapping("requestBody", () -> {
-            y.mappingLiteral(TEXT_REQUIRED, "true");
+            y.mappingLiteral(TEXT_REQUIRED, TRUE);
             y.blockMapping(CONTENT_FIELD, () -> {
-                y.blockMapping("application/json", () -> {
+                y.blockMapping(JSON, () -> {
                     y.blockMapping(SCHEMA_FIELD, () -> {
                         y.blockMapping("allOf", () -> {
                             y.sequenceItem(() -> y.mapping(TEXT__REF, "#/components/schemas/OperationRequest"));
@@ -500,7 +793,7 @@ public final class OpenApiGenerator {
             for (String header : upload ? List.of("Origin", "X-ZeroEcho-Transfer", "X-ZeroEcho-Artifact", "X-ZeroEcho-Approval")
                     : List.of("Origin", "X-ZeroEcho-Transfer")) {
                 y.sequenceItem(() -> {
-                    y.mapping("name", header);
+                    y.mapping(NAME, header);
                     y.mapping("in", "header");
                     y.mappingLiteral(TEXT_REQUIRED, Boolean.toString("X-ZeroEcho-Artifact".equals(header)));
                     y.blockMapping(SCHEMA_FIELD, () -> y.mapping(TEXT_TYPE, STRING_TYPE));
@@ -508,7 +801,7 @@ public final class OpenApiGenerator {
             }
         });
         y.blockMapping("requestBody", () -> {
-            y.mappingLiteral(TEXT_REQUIRED, "true");
+            y.mappingLiteral(TEXT_REQUIRED, TRUE);
             y.blockMapping(CONTENT_FIELD, () -> y.blockMapping(upload ? "application/zip" : "application/x-www-form-urlencoded", () ->
                     y.blockMapping(SCHEMA_FIELD, () -> {
                         if (upload) {
@@ -541,7 +834,7 @@ public final class OpenApiGenerator {
                             y.mapping("format", "binary");
                         }));
                     } else {
-                        y.blockMapping("application/json", () -> y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse"));
+                        y.blockMapping(JSON, () -> y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse"));
                     }
                 });
             });
@@ -552,7 +845,7 @@ public final class OpenApiGenerator {
                         y.mapping(TEXT_DESCRIPTION, "Retained signing status at /admin/v1/signing-operations/{operationId}");
                         y.blockMapping(SCHEMA_FIELD, () -> y.mapping(TEXT_TYPE, STRING_TYPE));
                     }));
-                    y.blockMapping(CONTENT_FIELD, () -> y.blockMapping("application/json", () ->
+                    y.blockMapping(CONTENT_FIELD, () -> y.blockMapping(JSON, () ->
                             y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse")));
                 });
             }
@@ -560,7 +853,7 @@ public final class OpenApiGenerator {
                 y.blockMapping("'409'", () -> {
                     y.mapping(TEXT_DESCRIPTION, "Dual-control approval required before the operation can proceed");
                     y.blockMapping(CONTENT_FIELD, () -> {
-                        y.blockMapping("application/json", () -> {
+                        y.blockMapping(JSON, () -> {
                             y.refMapping(SCHEMA_FIELD, "#/components/schemas/ApprovalResponse");
                         });
                     });
@@ -579,7 +872,7 @@ public final class OpenApiGenerator {
             y.blockMapping("'200'", () -> {
                 y.mapping(TEXT_DESCRIPTION, "Success");
                 y.blockMapping(CONTENT_FIELD, () -> {
-                    y.blockMapping("application/json", () -> {
+                    y.blockMapping(JSON, () -> {
                         y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse");
                     });
                 });
@@ -631,13 +924,13 @@ public final class OpenApiGenerator {
                 y.sequenceItemString("version");
                 y.sequenceItemString("requestId");
                 y.sequenceItemString("operation");
-                y.sequenceItemString("status");
+                y.sequenceItemString(STATUS);
             });
             y.blockMapping(TEXT_PROPERTIES, () -> {
                 y.blockMapping("version", () -> y.mappingLiteral(TEXT_TYPE, "integer"));
                 y.blockMapping("requestId", () -> y.mappingLiteral(TEXT_TYPE, TEXT_STRING));
                 y.blockMapping("operation", () -> y.mappingLiteral(TEXT_TYPE, TEXT_STRING));
-                y.blockMapping("status", () -> {
+                y.blockMapping(STATUS, () -> {
                     y.mappingLiteral(TEXT_TYPE, TEXT_STRING);
                     y.blockMapping("enum", () -> {
                         y.sequenceItemString("SUCCEEDED");
@@ -648,11 +941,11 @@ public final class OpenApiGenerator {
                 });
                 y.blockMapping("result", () -> {
                     y.mappingLiteral(TEXT_TYPE, TEXT_OBJECT);
-                    y.mappingLiteral("nullable", "true");
+                    y.mappingLiteral("nullable", TRUE);
                     y.mapping(TEXT_DESCRIPTION, "Operation-specific result; null on FAILED");
                 });
                 y.blockMapping("failure", () -> {
-                    y.mappingLiteral("nullable", "true");
+                    y.mappingLiteral("nullable", TRUE);
                     y.mapping(TEXT__REF, "#/components/schemas/OperationFailure");
                 });
             });
@@ -710,7 +1003,7 @@ public final class OpenApiGenerator {
                 y.sequenceItem(() -> y.mapping(TEXT__REF, "#/components/schemas/OperationResponse"));
                 y.sequenceItem(() -> {
                     y.blockMapping(TEXT_PROPERTIES, () -> {
-                        y.blockMapping("status", () -> {
+                        y.blockMapping(STATUS, () -> {
                             y.blockMapping("enum", () -> y.sequenceItemString("APPROVAL_REQUIRED"));
                         });
                         y.blockMapping("result", () -> {
@@ -757,7 +1050,7 @@ public final class OpenApiGenerator {
             case OBJECT -> y.mappingLiteral(TEXT_TYPE, TEXT_OBJECT);
             case TEXT_SET, ENUM_SET -> {
                 y.mappingLiteral(TEXT_TYPE, "array");
-                y.mappingLiteral("uniqueItems", "true");
+                y.mappingLiteral("uniqueItems", TRUE);
                 y.blockMapping("items", () -> {
                     y.mappingLiteral(TEXT_TYPE, TEXT_STRING);
                     if (!field.choices().isEmpty()) { y.blockMapping("enum", () -> field.choices().forEach(y::sequenceItemString)); }
@@ -777,7 +1070,7 @@ public final class OpenApiGenerator {
             y.blockMapping(resp.getKey(), () -> {
                 y.mapping(TEXT_DESCRIPTION, resp.getValue());
                 y.blockMapping(CONTENT_FIELD, () -> {
-                    y.blockMapping("application/json", () -> {
+                    y.blockMapping(JSON, () -> {
                         y.refMapping(SCHEMA_FIELD, "#/components/schemas/OperationResponse");
                     });
                 });

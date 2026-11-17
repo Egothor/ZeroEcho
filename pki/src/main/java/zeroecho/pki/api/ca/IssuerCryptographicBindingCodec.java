@@ -60,8 +60,10 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
  * from compact storage representations.
  */
 public final class IssuerCryptographicBindingCodec {
+    private static final int LIMIT_1 = 1;
+
     private static final int MAGIC = 0x5a494342;
-    private static final int MAXIMUM_BYTES = 4 * 1024 * 1024;
+    private static final int MAXIMUM_BYTES = 4 * 1_024 * 1_024;
     private IssuerCryptographicBindingCodec() {
     }
 
@@ -83,7 +85,7 @@ public final class IssuerCryptographicBindingCodec {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (DataOutputStream out = new DataOutputStream(bytes)) {
                 out.writeInt(MAGIC);
-                out.writeShort(1);
+                out.writeShort(LIMIT_1);
                 out.writeShort(0);
                 text(out, value.issuerId().value());
                 text(out, value.authorityId().value());
@@ -124,12 +126,21 @@ public final class IssuerCryptographicBindingCodec {
      * @return an independently owned immutable complete public binding
      * @throws IllegalArgumentException if input is null, oversized, truncated, unknown or malformed
      */
+    // All malformed runtime/parser failures retain the established single decoding error contract.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public static IssuerCryptographicBinding decode(byte[] bytes) {
         if (bytes == null || bytes.length > MAXIMUM_BYTES) {
             throw invalid();
         }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedShort() != 0) {
+            return readBinding(in);
+        } catch (IOException | RuntimeException failure) {
+            throw new IllegalArgumentException("Malformed issuer binding", failure);
+        }
+    }
+
+    private static IssuerCryptographicBinding readBinding(DataInputStream in) throws IOException {
+            if (in.readInt() != MAGIC || in.readUnsignedShort() != LIMIT_1 || in.readUnsignedShort() != 0) {
                 throw invalid();
             }
             PkiId issuer = new PkiId(text(in));
@@ -149,11 +160,8 @@ public final class IssuerCryptographicBindingCodec {
             if (in.available() != 0) {
                 throw invalid();
             }
-            return new IssuerCryptographicBinding(1, issuer, authority, credential, format, primary, alternative,
+            return new IssuerCryptographicBinding(LIMIT_1, issuer, authority, credential, format, primary, alternative,
                     certificate, reference, bindings, baseline, evidence);
-        } catch (IOException | RuntimeException failure) {
-            throw new IllegalArgumentException("Malformed issuer binding", failure);
-        }
     }
 
     private static void key(DataOutputStream out, IssuerKeyBinding value) throws IOException {
@@ -169,10 +177,10 @@ public final class IssuerCryptographicBindingCodec {
     }
     private static boolean flag(DataInputStream in) throws IOException {
         int value = in.readUnsignedByte();
-        if (value > 1) {
+        if (value > LIMIT_1) {
             throw invalid();
         }
-        return value == 1;
+        return value == LIMIT_1;
     }
     private static void text(DataOutputStream out, String value) throws IOException {
         data(out, value.getBytes(StandardCharsets.UTF_8));
@@ -197,7 +205,7 @@ public final class IssuerCryptographicBindingCodec {
     }
     private static byte[] data(DataInputStream in) throws IOException {
         int length = in.readInt();
-        if (length < 1 || length > MAXIMUM_BYTES || length > in.available()) {
+        if (length < LIMIT_1 || length > MAXIMUM_BYTES || length > in.available()) {
             throw invalid();
         }
         return in.readNBytes(length);

@@ -185,7 +185,8 @@ public interface SigningProvider extends AutoCloseable {
      * @param horizon authoritative identity horizon
      * @param permittedSkew authoritative future skew
      * @throws NullPointerException if namespace, horizon, permittedSkew is null
-     * @throws IllegalArgumentException if namespace does not end with this provider identity, horizon is not 90 days or permittedSkew is nonzero
+     * @throws IllegalArgumentException if namespace does not end with this provider identity, horizon is
+     * not 90 days or permittedSkew is nonzero
      */
     default void validateSigningDomain(String namespace, Duration horizon, Duration permittedSkew) {
         Objects.requireNonNull(namespace, "namespace");
@@ -396,7 +397,8 @@ public interface SigningProvider extends AutoCloseable {
          * @param detailCode finite safe classification
          * @param signature signature only for successful observations
          * @throws NullPointerException if operationId, state, updatedAt, detailCode, signature is null
-         * @throws IllegalArgumentException if signature presence disagrees with success state, its representation is empty or exceeds the finite bound, or detailCode disagrees with state
+         * @throws IllegalArgumentException if signature presence disagrees with success state, its
+         * representation is empty or exceeds the finite bound, or detailCode disagrees with state
          */
         public OperationObservation {
             Objects.requireNonNull(operationId, "operationId");
@@ -511,8 +513,11 @@ public interface SigningProvider extends AutoCloseable {
          * @param preferredSignatureEncoding requested signature encoding
          * @param deadline optional signing deadline
          * @param cancellation cooperative request cancellation signal
-         * @throws NullPointerException if operationId, namespace, semanticFingerprint, configurationCommitment, accessContext, keyRef, algorithmId, contentCommitment, content, preferredSignatureEncoding, deadline, cancellation is null
-         * @throws IllegalArgumentException if namespace or algorithmId is blank, fencingToken is not positive or semanticFingerprint differs from the canonical request fingerprint
+         * @throws NullPointerException if operationId, namespace, semanticFingerprint,
+         * configurationCommitment, accessContext, keyRef, algorithmId, contentCommitment, content,
+         * preferredSignatureEncoding, deadline, cancellation is null
+         * @throws IllegalArgumentException if namespace or algorithmId is blank, fencingToken is not
+         * positive or semanticFingerprint differs from the canonical request fingerprint
          */
         public SignRequest {
             Objects.requireNonNull(operationId, "operationId");
@@ -707,7 +712,8 @@ public interface SigningProvider extends AutoCloseable {
          * @param length exact candidate length
          * @param sha256 lowercase hexadecimal SHA-256 digest
          * @throws NullPointerException if version, sha256 is null
-         * @throws IllegalArgumentException if the version is unsupported, length is negative or sha256 is not 64 lowercase hexadecimal characters
+         * @throws IllegalArgumentException if the version is unsupported, length is negative or sha256
+         * is not 64 lowercase hexadecimal characters
          */
         public ContentCommitment {
             Objects.requireNonNull(version, "version");

@@ -34,6 +34,13 @@
 
 package zeroecho.pki.impl.framework.x509;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.spi.framework.CrlEntry;
+import zeroecho.pki.spi.framework.CrlEntrySource;
+import zeroecho.pkix.Pkix;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -45,13 +52,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+
 import javax.security.auth.x500.X500Principal;
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.api.revocation.RevocationReason;
-import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
-import zeroecho.pki.spi.framework.CrlEntry;
-import zeroecho.pki.spi.framework.CrlEntrySource;
-import zeroecho.pkix.Pkix;
 
 /**
  * Two-pass definite-length DER writer for a full RFC 5280 v2 TBSCertList.
@@ -70,10 +72,10 @@ import zeroecho.pkix.Pkix;
  * Update times must already be whole seconds.</p>
  */
 public final class StreamingX509CrlTbsWriter {
-    private static final DateTimeFormatter UTC_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss'Z'", Locale.ROOT)
-            .withZone(ZoneOffset.UTC);
-    private static final DateTimeFormatter GENERAL_TIME = DateTimeFormatter.ofPattern("uuuuMMddHHmmss'Z'", Locale.ROOT)
-            .withZone(ZoneOffset.UTC);
+    private static final DateTimeFormatter UTC_TIME =
+            DateTimeFormatter.ofPattern("yyMMddHHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
+    private static final DateTimeFormatter GENERAL_TIME =
+            DateTimeFormatter.ofPattern("uuuuMMddHHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
     private final byte[] algorithm;
     private final byte[] issuer;
     private final byte[] alternativeAlgorithm;
@@ -140,18 +142,13 @@ public final class StreamingX509CrlTbsWriter {
             Instant thisUpdate, Instant nextUpdate, Optional<BigInteger> baseNumber,
             boolean alternativeTranscript) throws IOException {
         this.baseNumber = Objects.requireNonNull(baseNumber, "baseNumber");
-        if (baseNumber.filter(number -> number.signum() < 0 || number.bitLength() > 159).isPresent()) {
-            throw new IllegalArgumentException("Base CRL number is outside the issued range");
-        }
-        Objects.requireNonNull(thisUpdate, "thisUpdate");
-        Objects.requireNonNull(nextUpdate, "nextUpdate");
-        if (thisUpdate.getNano() != 0 || nextUpdate.getNano() != 0 || !nextUpdate.isAfter(thisUpdate)) {
-            throw new IllegalArgumentException("CRL update times must be increasing whole seconds");
-        }
-        Objects.requireNonNull(issuerNameDer, "issuerNameDer");
-        if (alternativeTranscript && (issuerNameDer.length > 16 * 1024 || keyIdentifier.length > 16 * 1024)) {
-            throw new IOException("Alternative CRL Name or key identifier exceeds header bound");
-        }
+        validateHeaderInputs(
+                baseNumber,
+                thisUpdate,
+                nextUpdate,
+                issuerNameDer,
+                keyIdentifier,
+                alternativeTranscript);
         this.issuer = issuerNameDer.clone();
         new X500Principal(this.issuer);
         new StreamingDerReader().validate(this.issuer, this.issuer.length);
@@ -162,16 +159,46 @@ public final class StreamingX509CrlTbsWriter {
         this.algorithm = alternativeTranscript ? new byte[0] : selectedAlgorithm;
         this.alternativeAlgorithm = alternativeTranscript ? extension(73, selectedAlgorithm) : new byte[0];
         byte[] identifier = Objects.requireNonNull(keyIdentifier, "keyIdentifier").clone();
-        if (identifier.length == 0) { throw new IllegalArgumentException("Issuer key identifier must not be empty"); }
+        if (identifier.length == 0) {
+            throw new IllegalArgumentException("Issuer key identifier must not be empty");
+        }
         byte[] keyIdentifierValue = tlv(0x30, tlv(0x80, identifier));
         if (alternativeTranscript && keyIdentifierValue.length > 16 * 1024) {
-            throw new IOException("Alternative CRL authority key identifier encoding exceeds header bound");
+            throw new IOException(
+                    "Alternative CRL authority key identifier encoding exceeds header bound");
         }
         this.authorityKeyIdentifier = extension(35, keyIdentifierValue);
         this.thisUpdate = time(thisUpdate);
         this.nextUpdate = time(nextUpdate);
         this.headerLength = Math.addExact(3L, Math.addExact(this.algorithm.length,
                 Math.addExact(this.issuer.length, Math.addExact(this.thisUpdate.length, this.nextUpdate.length))));
+    }
+
+    private static void validateHeaderInputs(
+            Optional<BigInteger> baseNumber,
+            Instant thisUpdate,
+            Instant nextUpdate,
+            byte[] issuerNameDer,
+            byte[] keyIdentifier,
+            boolean alternativeTranscript)
+            throws IOException {
+        if (baseNumber
+                .filter(number -> number.signum() < 0 || number.bitLength() > 159)
+                .isPresent()) {
+            throw new IllegalArgumentException("Base CRL number is outside the issued range");
+        }
+        Objects.requireNonNull(thisUpdate, "thisUpdate");
+        Objects.requireNonNull(nextUpdate, "nextUpdate");
+        if (thisUpdate.getNano() != 0
+                || nextUpdate.getNano() != 0
+                || !nextUpdate.isAfter(thisUpdate)) {
+            throw new IllegalArgumentException("CRL update times must be increasing whole seconds");
+        }
+        Objects.requireNonNull(issuerNameDer, "issuerNameDer");
+        if (alternativeTranscript
+                && (issuerNameDer.length > 16 * 1024 || keyIdentifier.length > 16 * 1024)) {
+            throw new IOException("Alternative CRL Name or key identifier exceeds header bound");
+        }
     }
 
     /**
@@ -328,9 +355,13 @@ public final class StreamingX509CrlTbsWriter {
 
     private static byte[] time(Instant instant) throws IOException {
         int year;
-        try { year = instant.atOffset(ZoneOffset.UTC).getYear(); }
-        catch (java.time.DateTimeException invalid) { throw new IOException("CRL time is not representable", invalid); }
-        if (year < 1 || year > 9999) { throw new IOException("CRL time is outside the X.509 year range"); }
+        try { year = instant.atOffset(ZoneOffset.UTC).getYear();
+        } catch (java.time.DateTimeException invalid) {
+            throw new IOException("CRL time is not representable", invalid);
+        }
+        if (year < 1 || year > 9999) {
+            throw new IOException("CRL time is outside the X.509 year range");
+        }
         boolean utc = year >= 1950 && year <= 2049;
         byte[] value = (utc ? UTC_TIME : GENERAL_TIME).format(instant).getBytes(StandardCharsets.US_ASCII);
         return tlv(utc ? 0x17 : 0x18, value);
@@ -358,5 +389,7 @@ public final class StreamingX509CrlTbsWriter {
         };
     }
 
-    private static IOException divergence() { return new IOException("Full CRL source diverged between passes"); }
+    private static IOException divergence() {
+        return new IOException("Full CRL source diverged between passes");
+    }
 }

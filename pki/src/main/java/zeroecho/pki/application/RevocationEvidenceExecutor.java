@@ -95,7 +95,8 @@ public interface RevocationEvidenceExecutor {
      * @param evidence authenticated server-derived evidence
      * @param cancellation originating cooperative cancellation signal
      * @return completed, durable-pending, or safely classified outcome
-     * @throws IllegalStateException always in this default implementation, which does not support pending-confirmation revocation evidence
+     * @throws IllegalStateException always in this default implementation, which does not support
+     * pending-confirmation revocation evidence
      */
     default PkiOperationOutcome executePendingConfirmationRevocation(
             PkiOperation.RevokePendingCredentialConfirmation operation,
@@ -111,7 +112,7 @@ public interface RevocationEvidenceExecutor {
      * @throws NullPointerException if executor is null
      * @throws IllegalStateException if executor does not implement authoritative revocation evidence
      */
-    static RevocationEvidenceExecutor require(PkiOperationExecutor executor) {
+    /* default */ static RevocationEvidenceExecutor require(PkiOperationExecutor executor) {
         Objects.requireNonNull(executor, "executor");
         if (executor instanceof RevocationEvidenceExecutor supported) {
             return supported;

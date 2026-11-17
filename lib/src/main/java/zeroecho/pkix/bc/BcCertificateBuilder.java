@@ -254,6 +254,19 @@ final class BcCertificateBuilder implements CertificateBuilder {
         generator.setEndDate(new Time(Date.from(notAfter)));
         generator.setSubjectPublicKeyInfo(spki);
         generator.setSignature(signatureAlgorithm == null ? null : BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
+        ExtensionsGenerator selectedExtensions = selectExtensions(spki, alternative);
+        if (!selectedExtensions.isEmpty()) {
+            generator.setExtensions(selectedExtensions.generate());
+        }
+        try {
+            return alternative && signatureAlgorithm == null ? generator.generatePreTBSCertificate().getEncoded(ASN1Encoding.DER)
+                    : generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot encode certificate body", failure);
+        }
+    }
+
+    private ExtensionsGenerator selectExtensions(SubjectPublicKeyInfo spki, boolean alternative) {
         ExtensionsGenerator selectedExtensions = new ExtensionsGenerator();
         if (addSubjectKeyIdentifier) {
             selectedExtensions.addExtension(BcExtensions.subjectKeyIdentifier(spki));
@@ -266,15 +279,7 @@ final class BcCertificateBuilder implements CertificateBuilder {
         if (alternative) {
             validateAlternativeExtensions(selectedExtensions);
         }
-        if (!selectedExtensions.isEmpty()) {
-            generator.setExtensions(selectedExtensions.generate());
-        }
-        try {
-            return alternative && signatureAlgorithm == null ? generator.generatePreTBSCertificate().getEncoded(ASN1Encoding.DER)
-                    : generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
-        } catch (IOException failure) {
-            throw new IllegalStateException("Cannot encode certificate body", failure);
-        }
+        return selectedExtensions;
     }
 
     private static void validateAlternativeExtensions(ExtensionsGenerator selectedExtensions) {

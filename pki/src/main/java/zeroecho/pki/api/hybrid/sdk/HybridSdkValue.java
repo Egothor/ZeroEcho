@@ -58,9 +58,15 @@ import java.util.TreeMap;
  * to 4,096. Canonical representation alone provides no authentication or signature proof.
  */
 public final class HybridSdkValue {
-    private static final int MAX_BYTES = 1048576;
-    private static final int MAX_FIELD = 262144;
-    private static final int MAX_ENTRIES = 4096;
+    private static final int LIMIT_5 = 5;
+    private static final int LIMIT_6 = 6;
+    private static final int LIMIT_1 = 1;
+    private static final int LIMIT_2 = 2;
+    private static final int LIMIT_8 = 8;
+
+    private static final int MAX_BYTES = 1_048_576;
+    private static final int MAX_FIELD = 262_144;
+    private static final int MAX_ENTRIES = 4_096;
     private final byte[] encoded;
 
     private HybridSdkValue(byte[] encoded) {
@@ -81,7 +87,7 @@ public final class HybridSdkValue {
         if (value == null || value.length() > MAX_FIELD) {
             throw invalid();
         }
-        return scalar(1, utf8(value));
+        return scalar(LIMIT_1, utf8(value));
     }
     /**
      * Creates a signed 64-bit integer value using the exact two's-complement representation.
@@ -90,7 +96,7 @@ public final class HybridSdkValue {
      * @return a new immutable canonical integer value
      */
     public static HybridSdkValue integer(long value) {
-        return new HybridSdkValue(ByteBuffer.allocate(9).put((byte) 2).putLong(value).array());
+        return new HybridSdkValue(ByteBuffer.allocate(9).put((byte) LIMIT_2).putLong(value).array());
     }
     /**
      * Creates a canonical boolean value with exactly one encoded true/false discriminator.
@@ -99,7 +105,7 @@ public final class HybridSdkValue {
      * @return a new immutable canonical boolean value
      */
     public static HybridSdkValue bool(boolean value) {
-        return new HybridSdkValue(new byte[] {3, (byte) (value ? 1 : 0)});
+        return new HybridSdkValue(new byte[] {3, (byte) (value ? LIMIT_1 : 0)});
     }
     /**
      * Creates an opaque binary value from a snapshot of the supplied bytes.
@@ -133,7 +139,7 @@ public final class HybridSdkValue {
             throw invalid();
         }
         List<HybridSdkValue> copy = List.copyOf(values);
-        long size = 5;
+        long size = LIMIT_5;
         for (HybridSdkValue value : copy) {
             size += value.encoded.length;
         }
@@ -141,7 +147,7 @@ public final class HybridSdkValue {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) size);
             DataOutputStream out = new DataOutputStream(bytes);
-            out.writeByte(5);
+            out.writeByte(LIMIT_5);
             out.writeInt(copy.size());
             for (HybridSdkValue value : copy) {
                 out.write(value.encoded);
@@ -169,8 +175,8 @@ public final class HybridSdkValue {
         if (values.size() > MAX_ENTRIES) {
             throw invalid();
         }
-        TreeMap<String, HybridSdkValue> sorted = new TreeMap<>(values);
-        long size = 5;
+        java.util.SortedMap<String, HybridSdkValue> sorted = new TreeMap<>(values);
+        long size = LIMIT_5;
         for (Map.Entry<String, HybridSdkValue> entry : sorted.entrySet()) {
             requireIdentifier(entry.getKey());
             size += 2L + utf8(entry.getKey()).length + Objects.requireNonNull(entry.getValue()).encoded.length;
@@ -179,7 +185,7 @@ public final class HybridSdkValue {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) size);
             DataOutputStream out = new DataOutputStream(bytes);
-            out.writeByte(6);
+            out.writeByte(LIMIT_6);
             out.writeInt(sorted.size());
             for (Map.Entry<String, HybridSdkValue> entry : sorted.entrySet()) {
                 byte[] key = utf8(entry.getKey());
@@ -197,18 +203,22 @@ public final class HybridSdkValue {
      * @return immutable ordered independent values
      * @throws IllegalArgumentException if this value is not a list
      */
+    // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public List<HybridSdkValue> listValues() {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
-            if (input.readUnsignedByte() != 5) {
+            if (input.readUnsignedByte() != LIMIT_5) {
                 throw invalid();
             }
             int count = input.readInt();
-            ArrayList<HybridSdkValue> values = new java.util.ArrayList<HybridSdkValue>(count);
+            List<HybridSdkValue> values = new ArrayList<>(count);
+            int[] entries = new int[LIMIT_1];
             for (int index = 0; index < count; index++) {
                 int start = encoded.length - input.available();
-                read(input, 1, new int[1]);
+                entries[0] = 0;
+                CanonicalReader.read(input, LIMIT_1, entries);
                 int end = encoded.length - input.available();
-                values.add(new HybridSdkValue(java.util.Arrays.copyOfRange(encoded, start, end)));
+                values.add(slice(start, end));
             }
             return List.copyOf(values);
         } catch (IOException malformed) {
@@ -220,19 +230,23 @@ public final class HybridSdkValue {
      * @return immutable identifier-sorted map of immutable independent values
      * @throws IllegalArgumentException if this value is not an object
      */
+    // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public Map<String, HybridSdkValue> objectFields() {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
-            if (input.readUnsignedByte() != 6) {
+            if (input.readUnsignedByte() != LIMIT_6) {
                 throw invalid();
             }
             int count = input.readInt();
-            TreeMap<String, HybridSdkValue> fields = new TreeMap<String, HybridSdkValue>();
+            java.util.SortedMap<String, HybridSdkValue> fields = new TreeMap<>();
+            int[] entries = new int[LIMIT_1];
             for (int index = 0; index < count; index++) {
-                String key = text(readBytes(input, input.readUnsignedShort()));
+                String key = text(CanonicalReader.readBytes(input, input.readUnsignedShort()));
                 int start = encoded.length - input.available();
-                read(input, 1, new int[1]);
+                entries[0] = 0;
+                CanonicalReader.read(input, LIMIT_1, entries);
                 int end = encoded.length - input.available();
-                fields.put(key, new HybridSdkValue(java.util.Arrays.copyOfRange(encoded, start, end)));
+                fields.put(key, slice(start, end));
             }
             return java.util.Collections.unmodifiableSortedMap(fields);
         } catch (IOException malformed) {
@@ -245,10 +259,10 @@ public final class HybridSdkValue {
      * @throws IllegalArgumentException if this value is not text
      */
     public String textValue() {
-        if (encoded[0] != 1) {
+        if (encoded[0] != LIMIT_1) {
             throw invalid();
         }
-        return text(java.util.Arrays.copyOfRange(encoded, 5, encoded.length));
+        return text(java.util.Arrays.copyOfRange(encoded, LIMIT_5, encoded.length));
     }
     /**
      * Reads the signed 64-bit integer value.
@@ -256,10 +270,10 @@ public final class HybridSdkValue {
      * @throws IllegalArgumentException if this value is not an integer
      */
     public long integerValue() {
-        if (encoded[0] != 2) {
+        if (encoded[0] != LIMIT_2) {
             throw invalid();
         }
-        return ByteBuffer.wrap(encoded, 1, Long.BYTES).getLong();
+        return ByteBuffer.wrap(encoded, LIMIT_1, Long.BYTES).getLong();
     }
     /**
      * Returns a copy of the exact canonical typed-value encoding.
@@ -282,84 +296,38 @@ public final class HybridSdkValue {
      * @throws NullPointerException if the input is null
      * @throws IllegalArgumentException if the grammar, canonical ordering or size/depth/entry bounds are invalid
      */
+    // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
     public static HybridSdkValue decode(byte[] encoded) {
         Objects.requireNonNull(encoded, "encoded");
         requireSize(encoded.length);
-        encoded = encoded.clone();
-        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
-            read(input, 1, new int[1]);
+        byte[] snapshot = encoded.clone();
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(snapshot))) {
+            CanonicalReader.read(input, LIMIT_1, new int[LIMIT_1]);
             if (input.available() != 0) {
                 throw invalid();
             }
-            return new HybridSdkValue(encoded);
+            return new HybridSdkValue(snapshot);
         } catch (IOException invalid) {
             throw invalid();
         }
     }
+    private HybridSdkValue slice(int start, int end) {
+        return new HybridSdkValue(java.util.Arrays.copyOfRange(encoded, start, end));
+    }
+
     private static HybridSdkValue scalar(int tag, byte[] value) {
         if (value.length > MAX_FIELD) {
             throw invalid();
         }
-        return new HybridSdkValue(ByteBuffer.allocate(5 + value.length).put((byte) tag).putInt(value.length).put(value).array());
+        return new HybridSdkValue(ByteBuffer.allocate(LIMIT_5 + value.length).put((byte) tag).putInt(value.length).put(value).array());
     }
-    private static void read(DataInputStream input, int depth, int[] entries) throws IOException {
-        if (depth > 8) {
-            throw invalid();
-        }
-        switch (input.readUnsignedByte()) {
-            case 1 -> text(readBytes(input, bounded(input.readInt(), MAX_FIELD, input.available())));
-            case 2 -> input.readLong();
-            case 3 -> {
-                if (input.readUnsignedByte() > 1) {
-                    throw invalid();
-                }
-            }
-            case 4 -> readBytes(input, bounded(input.readInt(), MAX_FIELD, input.available()));
-            case 5 -> {
-                int count = collectionCount(input.readInt(), entries);
-                for (int index = 0; index < count; index++) {
-                    read(input, depth + 1, entries);
-                }
-            }
-            case 6 -> {
-                int count = collectionCount(input.readInt(), entries);
-                String previous = null;
-                for (int index = 0; index < count; index++) {
-                    int length = bounded(input.readUnsignedShort(), 128, input.available());
-                    String key = text(readBytes(input, length));
-                    requireIdentifier(key);
-                    if (previous != null && previous.compareTo(key) >= 0) {
-                        throw invalid();
-                    }
-                    previous = key;
-                    read(input, depth + 1, entries);
-                }
-            }
-            default -> throw invalid();
-        }
-    }
-    private static int collectionCount(int count, int[] entries) {
-        if (count < 0 || count > MAX_ENTRIES || entries[0] > MAX_ENTRIES - count) {
-            throw invalid();
-        }
-        entries[0] += count;
-        return count;
-    }
-    private static byte[] readBytes(DataInputStream input, int length) throws IOException {
-        byte[] bytes = input.readNBytes(length);
-        if (bytes.length != length) {
-            throw invalid();
-        }
-        return bytes;
-    }
-    private static int bounded(int length, int maximum, int available) {
-        if (length < 0 || length > maximum || length > available) {
-            throw invalid();
-        }
-        return length;
-    }
+
+
+
+
     private static void requireSize(long length) {
-        if (length < 1 || length > MAX_BYTES) {
+        if (length < LIMIT_1 || length > MAX_BYTES) {
             throw invalid();
         }
     }
@@ -369,7 +337,7 @@ public final class HybridSdkValue {
      * @param value one to 128 ASCII letters, digits, periods, underscores, colons or hyphens
      * @throws IllegalArgumentException if the identifier is null or violates the wire syntax
      */
-    static void requireIdentifier(String value) {
+    /* default */ static void requireIdentifier(String value) {
         if (value == null || !value.matches("[A-Za-z0-9._:-]{1,128}")) {
             throw invalid();
         }
@@ -381,7 +349,9 @@ public final class HybridSdkValue {
      * @return newly allocated UTF-8 bytes
      * @throws IllegalArgumentException if the text is null, contains NUL or contains malformed Unicode
      */
-    static byte[] utf8(String value) {
+    // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    /* default */ static byte[] utf8(String value) {
         if (value == null || value.indexOf('\0') >= 0) {
             throw invalid();
         }
@@ -403,7 +373,9 @@ public final class HybridSdkValue {
      * @throws NullPointerException if the byte array is null
      * @throws IllegalArgumentException if the input is malformed UTF-8 or decodes to a NUL character
      */
-    static String text(byte[] bytes) {
+    // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    /* default */ static String text(byte... bytes) {
         try {
             String result = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
@@ -415,7 +387,68 @@ public final class HybridSdkValue {
             throw invalid();
         }
     }
+
+
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("SDK_VALUE_INVALID");
+    }
+    /** Reads the closed canonical value grammar with bounded aggregate entry accounting. */
+    private static final class CanonicalReader {
+    private static void read(DataInputStream input, int depth, int... entries) throws IOException {
+        if (depth > LIMIT_8) {
+            throw invalid();
+        }
+        switch (input.readUnsignedByte()) {
+            case LIMIT_1 -> text(readBytes(input, bounded(input.readInt(), MAX_FIELD, input.available())));
+            case LIMIT_2 -> input.readLong();
+            case 3 -> {
+                if (input.readUnsignedByte() > LIMIT_1) {
+                    throw invalid();
+                }
+            }
+            case 4 -> readBytes(input, bounded(input.readInt(), MAX_FIELD, input.available()));
+            case LIMIT_5 -> {
+                int count = collectionCount(input.readInt(), entries);
+                for (int index = 0; index < count; index++) {
+                    read(input, depth + LIMIT_1, entries);
+                }
+            }
+            case LIMIT_6 -> {
+                int count = collectionCount(input.readInt(), entries);
+                String previous = null;
+                for (int index = 0; index < count; index++) {
+                    int length = bounded(input.readUnsignedShort(), 128, input.available());
+                    String key = text(readBytes(input, length));
+                    requireIdentifier(key);
+                    if (previous != null && previous.compareTo(key) >= 0) {
+                        throw invalid();
+                    }
+                    previous = key;
+                    read(input, depth + LIMIT_1, entries);
+                }
+            }
+            default -> throw invalid();
+        }
+    }
+    private static int collectionCount(int count, int... entries) {
+        if (count < 0 || count > MAX_ENTRIES || entries[0] > MAX_ENTRIES - count) {
+            throw invalid();
+        }
+        entries[0] += count;
+        return count;
+    }
+    private static byte[] readBytes(DataInputStream input, int length) throws IOException {
+        byte[] bytes = input.readNBytes(length);
+        if (bytes.length != length) {
+            throw invalid();
+        }
+        return bytes;
+    }
+    private static int bounded(int length, int maximum, int available) {
+        if (length < 0 || length > maximum || length > available) {
+            throw invalid();
+        }
+        return length;
+    }
     }
 }

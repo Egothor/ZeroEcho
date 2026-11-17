@@ -79,7 +79,7 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
      * @throws NullPointerException if {@code nextEligible} is null
      * @throws IllegalArgumentException if the cursor or retry-count/eligibility invariant is invalid
      */
-    AuditEvidenceProjectionState {
+    /* default */ AuditEvidenceProjectionState {
         nextEligible = Objects.requireNonNull(nextEligible, "nextEligible");
         if (lastSequence < -1L || failureCount < 0 || failureCount > MAXIMUM_FAILURE_COUNT
                 || failureCount == 0 != nextEligible.isEmpty()) {
@@ -102,7 +102,7 @@ record AuditEvidenceProjectionState(long lastSequence, int failureCount, Optiona
          * @throws NullPointerException if state is null
          * @throws IllegalArgumentException if the commitment is invalid
          */
-        Loaded {
+        /* default */ Loaded {
             Objects.requireNonNull(state, "state");
             requireDigest(recordCommitment);
         }

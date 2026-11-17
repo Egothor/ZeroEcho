@@ -96,7 +96,8 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     }
 
     /**
-     * Streams permanent authority and validates owner/counter pairs and reservation keys without reconstructing authority.
+     * Streams permanent authority and validates owner/counter pairs and reservation keys without
+     * reconstructing authority.
      *
      * @param visitor callback for each validated owner and serial reservation pair
      * @throws IOException if authority is inconsistent, cannot be read or visitor processing fails
@@ -106,7 +107,8 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
     }
 
     /**
-     * Streams all authority rows from one pinned view, validating bidirectional owner/counter links and serial reservation keys.
+     * Streams all authority rows from one pinned view, validating bidirectional owner/counter links and
+     * serial reservation keys.
      *
      * @param owners callback for each validated retained scope owner
      * @param visitor callback for each validated owner and serial reservation pair
@@ -412,7 +414,8 @@ final class CrlScopeReservationStore { // NOPMD - CyclomaticComplexity totals in
      * @param owner existing exact immutable scope owner
      * @return durably allocated CRL number
      * @throws NullPointerException if owner is null
-     * @throws IllegalStateException if ownership is missing or conflicting, the sequence is exhausted, or contention or a definite commit failure prevents allocation
+     * @throws IllegalStateException if ownership is missing or conflicting, the sequence is exhausted,
+     * or contention or a definite commit failure prevents allocation
      * @throws IOException if counter state is inconsistent or allocation durability cannot be confirmed
      */
     /* default */ // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.

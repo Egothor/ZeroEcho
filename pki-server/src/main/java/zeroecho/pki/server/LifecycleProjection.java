@@ -1,3 +1,37 @@
+/*
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
 package zeroecho.pki.server;
 
 import java.util.LinkedHashMap;
@@ -16,6 +50,8 @@ import zeroecho.pki.application.PkiSigningOperation;
  * Canonical public lifecycle coordinates shared by retained envelopes and approval commitments.
  */
 public final class LifecycleProjection {
+    private static final String EXPECTED_HEAD = "expectedHead";
+
     private LifecycleProjection() { }
     /**
      * Decodes an optional exact selected-head object without checking current authoritative state.
@@ -28,10 +64,10 @@ public final class LifecycleProjection {
      * @throws ArithmeticException if the version is not representable as an int
      */
     public static Optional<CaHeadSnapshot> head(Map<String,PkiOperationValue> fields) {
-        if(!fields.containsKey("expectedHead"))return Optional.empty();
-        var object=fields.get("expectedHead");
-        if(!(object instanceof PkiOperationValue.ObjectValue value)||!value.fields().keySet().equals(Set.of("version","caId","epoch","issuerId","pathId","bindingCommitment")))throw new IllegalArgumentException("Invalid expectedHead fields");
-        var f=value.fields();return Optional.of(new CaHeadSnapshot(Math.toIntExact(integer(f,"version")),new PkiId(text(f,"caId")),integer(f,"epoch"),new PkiId(text(f,"issuerId")),new PkiId(text(f,"pathId")),text(f,"bindingCommitment")));
+        if(!fields.containsKey(EXPECTED_HEAD)){ return Optional.empty(); }
+        PkiOperationValue object=fields.get(EXPECTED_HEAD);
+        if(!(object instanceof PkiOperationValue.ObjectValue value)||!value.fields().keySet().equals(Set.of("version","caId","epoch","issuerId","pathId","bindingCommitment"))){ throw new IllegalArgumentException("Invalid expectedHead fields"); }
+        Map<String,PkiOperationValue> f=value.fields();return Optional.of(new CaHeadSnapshot(Math.toIntExact(integer(f,"version")),new PkiId(text(f,"caId")),integer(f,"epoch"),new PkiId(text(f,"issuerId")),new PkiId(text(f,"pathId")),text(f,"bindingCommitment")));
     }
     /**
      * Decodes explicit outgoing-role overrides without resolving retained keys or authorizing signing.
@@ -45,7 +81,7 @@ public final class LifecycleProjection {
         return new CaRotationSelection(1,role(fields,"newKeyRef","primarySignatureAlgorithmId"),role(fields,"newAlternativeKeyRef","alternativeSignatureAlgorithmId"));
     }
     private static Optional<CaRotationSelection.RoleChange> role(Map<String,PkiOperationValue> f,String key,String algorithm) {
-        if(!f.containsKey(key)&&!f.containsKey(algorithm))return Optional.empty();
+        if(!f.containsKey(key)&&!f.containsKey(algorithm)){ return Optional.empty(); }
         return Optional.of(new CaRotationSelection.RoleChange(optional(f,key).map(KeyRef::new),optional(f,algorithm)));
     }
     /**
@@ -67,15 +103,15 @@ public final class LifecycleProjection {
      * @throws NullPointerException if original is null
      */
     public static PkiOperationValue.ObjectValue arguments(PkiOperationValue.ObjectValue original,AdministrativeOperation operation) {
-        var f=new LinkedHashMap<>(original.fields());
+        Map<String,PkiOperationValue> f=new LinkedHashMap<>(original.fields());
         if(operation instanceof AdministrativeOperation.Signing signing) {
-            var op=signing.operation();
+            PkiSigningOperation op=signing.operation();
             if(op instanceof PkiSigningOperation.RotateCaKey rotate) {
-                putRole(f,rotate.selection().primary(),"newKeyRef","primarySignatureAlgorithmId");putRole(f,rotate.selection().alternative(),"newAlternativeKeyRef","alternativeSignatureAlgorithmId");rotate.expectedHead().ifPresent(h->f.put("expectedHead",headValue(h)));
-            } else if(op instanceof PkiSigningOperation.RolloverCaCertificate rollover)rollover.expectedHead().ifPresent(h->f.put("expectedHead",headValue(h)));
-            else if(op instanceof PkiSigningOperation.IssueIntermediateCertificate issue)issue.expectedHead().ifPresent(h->f.put("expectedHead",headValue(h)));
+                putRole(f,rotate.selection().primary(),"newKeyRef","primarySignatureAlgorithmId");putRole(f,rotate.selection().alternative(),"newAlternativeKeyRef","alternativeSignatureAlgorithmId");rotate.expectedHead().ifPresent(h->f.put(EXPECTED_HEAD,headValue(h)));
+            } else if(op instanceof PkiSigningOperation.RolloverCaCertificate rollover){ rollover.expectedHead().ifPresent(h->f.put(EXPECTED_HEAD,headValue(h))); }
+            else if(op instanceof PkiSigningOperation.IssueIntermediateCertificate issue){ issue.expectedHead().ifPresent(h->f.put(EXPECTED_HEAD,headValue(h))); }
         } else if(operation instanceof AdministrativeOperation.Pki pki&&pki.operation() instanceof PkiOperation.SelectIssuancePath selected) {
-            selected.expectedHead().ifPresent(h->f.put("expectedHead",headValue(h)));selected.transitionCommitment().ifPresent(c->f.put("transitionCommitment",value(c)));f.put("distributionAcknowledged",new PkiOperationValue.BooleanValue(selected.distributionAcknowledged()));
+            selected.expectedHead().ifPresent(h->f.put(EXPECTED_HEAD,headValue(h)));selected.transitionCommitment().ifPresent(c->f.put("transitionCommitment",value(c)));f.put("distributionAcknowledged",new PkiOperationValue.BooleanValue(selected.distributionAcknowledged()));
         }
         return new PkiOperationValue.ObjectValue(new java.util.TreeMap<>(f));
     }
@@ -91,8 +127,8 @@ public final class LifecycleProjection {
      * @throws NullPointerException if the map is null or rejects a null key
      * @throws IllegalArgumentException if the field is absent or not text
      */
-    public static String text(Map<String,PkiOperationValue> fields,String name) {if(fields.get(name) instanceof PkiOperationValue.Text text)return text.value();throw new IllegalArgumentException("Invalid lifecycle text: "+name);}
+    public static String text(Map<String,PkiOperationValue> fields,String name) {if(fields.get(name) instanceof PkiOperationValue.Text text){ return text.value(); }throw new IllegalArgumentException("Invalid lifecycle text: "+name);}
     private static Optional<String> optional(Map<String,PkiOperationValue> f,String name){return f.containsKey(name)?Optional.of(text(f,name)):Optional.empty();}
-    private static long integer(Map<String,PkiOperationValue> f,String name){if(f.get(name) instanceof PkiOperationValue.IntegerValue value)return value.value();throw new IllegalArgumentException("Invalid lifecycle integer");}
+    private static long integer(Map<String,PkiOperationValue> f,String name){if(f.get(name) instanceof PkiOperationValue.IntegerValue value){ return value.value(); }throw new IllegalArgumentException("Invalid lifecycle integer");}
     private static PkiOperationValue.Text value(String text){return new PkiOperationValue.Text(text);}
 }

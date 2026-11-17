@@ -34,6 +34,9 @@
 
 package zeroecho.pki.impl.core;
 
+import java.time.Instant;
+import zeroecho.pki.api.signing.ManagedOcspResponderProofTarget;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -109,7 +112,8 @@ public final class ManagedKeyProofPreparation {
      * @param random secure random source for a fresh 32-byte challenge nonce
      * @param pureEdDsaMaximum inclusive raw pure-EdDSA message limit in bytes
      * @throws IllegalArgumentException if algorithm or bounds are invalid
-     * @throws NullPointerException if store, provider, signingAuthority, verificationAuthority, verifier, random, signatureAlgorithm is null
+     * @throws NullPointerException if store, provider, signingAuthority, verificationAuthority, verifier, random,
+     * signatureAlgorithm is null
      */
     public ManagedKeyProofPreparation(PkiStore store, SigningProvider provider,
             X509AuthoritySnapshot signingAuthority, X509AuthoritySnapshot verificationAuthority,
@@ -193,7 +197,8 @@ public final class ManagedKeyProofPreparation {
      * @return method-local public-key and authorized binding metadata with no staged content
      * @throws IOException if key export, DER validation, or cancellation fails
      * @throws NullPointerException if request, cancellation, source.resolvePublicKeyInfo is null
-     * @throws IllegalArgumentException if the verification profile or provider preparation capability is unavailable, or the managed public key is not bounded DER
+     * @throws IllegalArgumentException if the verification profile or provider preparation capability is unavailable,
+     * or the managed public key is not bounded DER
      */
     /* default */ ProofPlan plan(ManagedKeyProofRequest request, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(request, "request");
@@ -247,9 +252,10 @@ public final class ManagedKeyProofPreparation {
      * @return bounded encoded challenge and its validated decoded command
      * @throws IOException if cancellation or challenge processing fails
      * @throws NullPointerException if plan, step, cancellation is null
-     * @throws IllegalArgumentException if a responder candidate uses a CA-proof context or its pure EdDSA challenge exceeds the configured message bound
+     * @throws IllegalArgumentException if a responder candidate uses a CA-proof context or its pure EdDSA challenge
+     * exceeds the configured message bound
      */
-    /* default */ FrozenChallenge challenge(ProofPlan plan, SigningSubmissionId step, java.time.Instant deadline,
+    /* default */ FrozenChallenge challenge(ProofPlan plan, SigningSubmissionId step, Instant deadline,
             Optional<ManagedKeyProofChallenge.CaContext> context, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(plan, "plan");
         Objects.requireNonNull(step, "step");
@@ -263,12 +269,12 @@ public final class ManagedKeyProofPreparation {
         byte[] challenge;
         if (ManagedKeyProofCommand.decodePrefix(new DomainCommandEncoding.Decoded(ManagedKeyProofCommand.OPERATION, metadata))
                 instanceof ManagedKeyProofRequest.OcspResponderCandidate candidate) {
-            if (context.isPresent()) throw new IllegalArgumentException("Responder candidate cannot use a CA proof context");
-            var target = candidate.target();
+            if (context.isPresent()) { throw new IllegalArgumentException("Responder candidate cannot use a CA proof context"); }
+            ManagedOcspResponderProofTarget target = candidate.target();
             challenge = ManagedKeyProofChallenge.encodeCandidate(step.id(), deadline,
                     new ManagedKeyProofChallenge.ResponderCandidateContext(target.parentOperationId(), target.parentIntentCommitment(),
                             target.role(), target.frozenTargetCommitment()), metadata, nonce, spki);
-        } else challenge = ManagedKeyProofChallenge.encode(step.id(), deadline, context, metadata, nonce, spki);
+        } else { challenge = ManagedKeyProofChallenge.encode(step.id(), deadline, context, metadata, nonce, spki); }
         provider.inputCapabilities().select(signature.canonicalForm(), challenge.length);
         if ((signature.equals(BootstrapAlgorithmIdentities.ED25519_SIGNATURE)
                 || signature.equals(BootstrapAlgorithmIdentities.ED448_SIGNATURE)) && challenge.length > pureEdDsaMaximum) {

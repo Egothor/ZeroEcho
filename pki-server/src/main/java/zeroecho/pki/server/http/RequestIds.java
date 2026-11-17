@@ -54,7 +54,7 @@ public final class RequestIds {
      * @param random entropy source for 144-bit request identifiers
      * @throws NullPointerException if random is null
      */
-    RequestIds(SecureRandom random) {
+    /* default */ RequestIds(SecureRandom random) {
         this.random = Objects.requireNonNull(random, "random");
     }
 

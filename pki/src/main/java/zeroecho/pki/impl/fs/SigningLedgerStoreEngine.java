@@ -33,6 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.file.DirectoryStream;
+import java.time.Duration;
+import java.util.Comparator;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import zeroecho.pki.spi.store.SignWorkflowStore;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -68,7 +76,7 @@ import zeroecho.pki.spi.store.StagedContentStore;
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.AvoidSynchronizedStatement", "PMD.AvoidUsingVolatile", "PMD.CloseResource",
-        "PMD.CommentRequired", "PMD.ControlStatementBraces", "PMD.CouplingBetweenObjects",
+        "PMD.CommentRequired", "PMD.CouplingBetweenObjects",
         "PMD.CyclomaticComplexity", "PMD.DoNotUseThreads",
         "PMD.LooseCoupling", "PMD.NcssCount", "PMD.PreserveStackTrace", "PMD.TooManyMethods",
         "PMD.UnusedPrivateField", "PMD.UseTryWithResources" })
@@ -93,8 +101,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private static final int COMPACTION_SEGMENTS = 8;
     private static final int MAXIMUM_RECLAIMS_PER_PASS = 8;
     private static final long DEFAULT_SOFT_LOW_SPACE_BYTES = 1024L * 1024L * 1024L;
-    private static final long SPACE_WARNING_INTERVAL_NANOS = java.time.Duration.ofMinutes(1L).toNanos();
-    private static final java.util.logging.Logger LOG = java.util.logging.Logger.getLogger(
+    private static final long SPACE_WARNING_INTERVAL_NANOS = Duration.ofMinutes(1L).toNanos();
+    private static final Logger LOG = Logger.getLogger(
             SigningLedgerStoreEngine.class.getName());
     private static final AtomicBoolean IDENTITY_SEED = new AtomicBoolean();
     private static final AtomicReference<UsableSpaceObserver> USABLE_SPACE_OBSERVER =
@@ -449,7 +457,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             wal = walOperations == null
                     ? SigningActiveWal.open(activePath, descriptor, activeWalConfiguration)
                     : SigningActiveWal.open(activePath, descriptor, activeWalConfiguration,
-                            walOperations, System::nanoTime, java.util.concurrent.TimeUnit.NANOSECONDS::timedWait);
+                            walOperations, System::nanoTime, TimeUnit.NANOSECONDS::timedWait);
             SigningManifestCodec.ActiveWal active = activeDescriptor(descriptor);
             SigningManifestCodec.Manifest manifest = new SigningManifestCodec.Manifest(
                     0L, 0L, Optional.empty(), List.of(), active);
@@ -481,7 +489,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             wal = null;
             return engine;
         } finally {
-            if (wal != null) wal.close();
+            if (wal != null) { wal.close(); }
         }
     }
 
@@ -694,8 +702,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     closeIndex(retention);
                     closeIndex(due);
                     closeIndex(index);
-                    if (capacity != null) capacity.clearReleaseSignal();
-                    if (transientCapacity != null) transientCapacity.clearReleaseSignal();
+                    if (capacity != null) { capacity.clearReleaseSignal(); }
+                    if (transientCapacity != null) { transientCapacity.clearReleaseSignal(); }
                     closeRecoveryOpen(activated);
                 }
             }
@@ -786,7 +794,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     /**
      * Durably issues a new transaction identity before its mutations may be committed.
      *
-     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted work; must not be null
+     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted
+     * work; must not be null
      * @return fresh store-bound transaction identity
      * @throws IOException if issuance framing or durable publication fails
      * @throws IllegalStateException if the engine is unavailable
@@ -853,7 +862,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * @param transactionId transaction identity previously issued by this engine
      * @param mutations ordered immutable mutation inputs retained through commit coordination
      * @param signingAdmission optional engine-owned signing-capacity reservation, or null when not required
-     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted work; must not be null
+     * @param admissionClass workspace admission class distinguishing ordinary and protected accepted
+     * work; must not be null
      * @return authoritative committed, not-committed, or unknown transaction outcome
      * @throws IOException if durable commit coordination or outcome publication fails
      * @throws IllegalArgumentException if transaction or signing admission belongs to another engine
@@ -967,7 +977,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED,
                     WAL_ADMISSION_FULL_MESSAGE);
         } finally {
-            if (prepared == null) preparation.close();
+            if (prepared == null) { preparation.close(); }
             close(signingAdmission);
         }
         return awaitAndPublish(prepared);
@@ -978,7 +988,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * @param mutationCohort ordered bounded cohort of independent mutation lists
      * @return ordered transaction outcomes for the cohort
      * @throws IOException if cohort admission, framing, or durable publication fails
-     * @throws IllegalArgumentException if the cohort is empty, exceeds the commit batch bound, or contains a mutation list that is not a singleton
+     * @throws IllegalArgumentException if the cohort is empty, exceeds the commit batch bound, or
+     * contains a mutation list that is not a singleton
      * @throws IllegalStateException if the engine is closed or requires recovery
      * @throws NullPointerException if mutationCohort, a member list, or a mutation is null
      */
@@ -1084,7 +1095,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /**
      * Chooses between complete direct mutation sets at WAL admission.
-     * @param decision complete primary/fallback mutation branches with the admission-time guard and pre-primary callback
+     * @param decision complete primary/fallback mutation branches with the admission-time guard and
+     * pre-primary callback
      * @return authoritative outcome of the admitted decision
      * @throws IOException if decision processing or durable publication fails
      * @throws NullPointerException if decision is null
@@ -1150,7 +1162,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED,
                     WAL_ADMISSION_FULL_MESSAGE);
         } finally {
-            if (prepared == null) preparation.close();
+            if (prepared == null) { preparation.close(); }
         }
         return new ConditionalCommitResult(awaitAndPublish(prepared), primaryAdmitted);
     }
@@ -1399,7 +1411,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     }
 
     private static void close(SigningAdmission admission) {
-        if (admission != null) admission.close();
+        if (admission != null) { admission.close(); }
     }
 
     private boolean reserveCoordinator(long bytes) {
@@ -1579,11 +1591,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * @throws IllegalStateException if the engine is unavailable
      */
     /* default */ long advanceWatermark(long observed) throws IOException {
-        if (observed < 0L) throw new IllegalArgumentException("observed");
+        if (observed < 0L) { throw new IllegalArgumentException("observed"); }
         synchronized (watermarkAdvanceLock) {
             synchronized (stateLock) {
                 requireOpen();
-                if (observed <= watermark) return watermark;
+                if (observed <= watermark) { return watermark; }
             }
             UUID token = UUID.randomUUID();
             byte[] payload = SigningTransactionPayloadCodec.watermark(observed);
@@ -1601,7 +1613,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * @throws IllegalStateException if the engine is unavailable
      */
     /* default */ void observeWatermark(long observed) {
-        if (observed < 0L) throw new IllegalArgumentException("observed");
+        if (observed < 0L) { throw new IllegalArgumentException("observed"); }
         synchronized (stateLock) {
             requireOpen();
             observedWatermark = Math.max(observedWatermark, observed);
@@ -1638,7 +1650,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     /* default */ Optional<SnapshotOutcome> snapshotOutcome(
             SigningMvccIndex.SnapshotRecord record) throws IOException {
         Objects.requireNonNull(record, "record");
-        if (!OUTCOME_NAMESPACE.equals(record.key().namespace())) return Optional.empty();
+        if (!OUTCOME_NAMESPACE.equals(record.key().namespace())) { return Optional.empty(); }
         SigningWalFrameCodec.Frame frame = readFrame(record.pointer());
         SigningTransactionPayloadCodec.Payload payload =
                 SigningTransactionPayloadCodec.decode(frame.payload());
@@ -1667,7 +1679,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     /* default */ OptionalLong snapshotWatermark(SigningMvccIndex.SnapshotRecord record)
             throws IOException {
         Objects.requireNonNull(record, "record");
-        if (!WATERMARK_KEY.equals(record.key())) return OptionalLong.empty();
+        if (!WATERMARK_KEY.equals(record.key())) { return OptionalLong.empty(); }
         SigningWalFrameCodec.Frame frame = readFrame(record.pointer());
         SigningTransactionPayloadCodec.Payload payload =
                 SigningTransactionPayloadCodec.decode(frame.payload());
@@ -1699,7 +1711,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         publishFrame(SigningWalFrameCodec.RecordType.ISSUE, token, issued,
                 SigningTransactionPayloadCodec.issuePayload());
         MetadataCommitResult retained = snapshot.result();
-        if (retained.outcome() == MetadataCommitResult.Outcome.UNKNOWN) return;
+        if (retained.outcome() == MetadataCommitResult.Outcome.UNKNOWN) { return; }
         byte[] terminal = retained.outcome() == MetadataCommitResult.Outcome.COMMITTED
                 ? SigningTransactionPayloadCodec.committedOutcome()
                 : SigningTransactionPayloadCodec.reject(retained.failureCategory().orElseThrow());
@@ -1739,7 +1751,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 workProjection.recoverAll(recoveredStates,
                         validatedRecovery.schedulingByOperation(),
                         hybridDependencies.recover(validatedRecovery.hybridExecutions(), key -> {
-                            var record = index.lookup(key);
+                            Optional<SigningMvccIndex.SnapshotRecord> record = index.lookup(key);
                             return record.isEmpty() ? null : readValue(record.orElseThrow());
                         }, validatedRecovery.hybridPublications(), index.preparedKeyCount()));
         recoveryProjectionStatistics = new RecoveryProjectionStatistics(envelopesVisited,
@@ -1827,7 +1839,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     transferred = true;
                     return snapshot;
                 } finally {
-                    if (!transferred) selection.close();
+                    if (!transferred) { selection.close(); }
                 }
             }
         }
@@ -1875,7 +1887,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         try {
             while (true) {
                 List<CommitRequest> batch = takeCommitBatch();
-                if (batch.isEmpty()) return;
+                if (batch.isEmpty()) { return; }
                 try {
                     commitBatch(batch);
                 } catch (RuntimeException failure) {
@@ -1902,7 +1914,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     break;
                 }
             }
-            if (commitQueue.isEmpty()) return List.of();
+            if (commitQueue.isEmpty()) { return List.of(); }
             List<CommitRequest> batch = new ArrayList<>(MAXIMUM_COMMIT_BATCH);
             while (!commitQueue.isEmpty() && batch.size() < MAXIMUM_COMMIT_BATCH) {
                 batch.add(commitQueue.removeFirst());
@@ -1952,7 +1964,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                                 uuid(request.transactionId), payload, semanticPayload,
                                 request.signingAdmission, request.admissionClass);
                         prepared.add(new PreparedCommit(request, conflict, frame));
-                        if (conflict == null) updateShadow(request.mutations, shadow);
+                        if (conflict == null) { updateShadow(request.mutations, shadow); }
                     } catch (SigningActiveWal.OverloadedException overloaded) {
                         preparation.close();
                         request.completeFailure(new MetadataStoreException(
@@ -1974,7 +1986,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     }
                 }
         }
-        for (PreparedCommit value : prepared) finishPrepared(value);
+        for (PreparedCommit value : prepared) { finishPrepared(value); }
     }
 
     private void finishPrepared(PreparedCommit prepared) {
@@ -1996,7 +2008,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
             SigningMvccIndex.SnapshotRecord current = index.lookupPrepared(mutation.key()).orElse(null);
             if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.CREATE) {
-                if (current != null) return MetadataCommitResult.FailureCategory.CONFLICT;
+                if (current != null) { return MetadataCommitResult.FailureCategory.CONFLICT; }
             } else if (current == null || current.revision() != mutation.expectedRevision()) {
                 return MetadataCommitResult.FailureCategory.CONFLICT;
             }
@@ -2190,15 +2202,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             List<SigningMvccIndex.Mutation> mutations = semanticMutations(token, payload, pointer);
             try {
                 int projectedActualKeys = index.preparedKeyCount();
-                for (var mutation : mutations) {
+                for (SigningMvccIndex.Mutation mutation : mutations) {
                     boolean exists = index.lookupPrepared(mutation.key()).isPresent();
-                    if (mutation.pointer() == null && exists) projectedActualKeys--;
-                    else if (mutation.pointer() != null && !exists) projectedActualKeys++;
+                    if (mutation.pointer() == null && exists) { projectedActualKeys--; }
+                    else if (mutation.pointer() != null && !exists) { projectedActualKeys++; }
                 }
                 projectedDependencies = hybridDependencies.prepare(payload,
                         new SigningHybridCrlDependencies.RowReader() {
                             @Override public byte[] read(MetadataKey key) throws IOException {
-                                var record = index.lookup(key);
+                                Optional<SigningMvccIndex.SnapshotRecord> record = index.lookup(key);
                                 return record.isEmpty() ? null : readValue(record.orElseThrow());
                             }
                             @Override public boolean exists(MetadataKey key) {
@@ -2260,13 +2272,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             close(signingAdmission);
             if (!admitted) {
                 if (payload.kind() == SigningTransactionPayloadCodec.Kind.ISSUE
-                        && outcomeSlot != null) outcomes.remove(token, outcomeSlot);
-                if (projectedWork != null) projectedWork.close();
-                if (indexApply != null) indexApply.close();
-                if (projectedDependencies != null) projectedDependencies.close();
+                        && outcomeSlot != null) { outcomes.remove(token, outcomeSlot); }
+                if (projectedWork != null) { projectedWork.close(); }
+                if (indexApply != null) { indexApply.close(); }
+                if (projectedDependencies != null) { projectedDependencies.close(); }
             }
             reservation.close();
-            if (!declined) preparation.close();
+            if (!declined) { preparation.close(); }
         }
     }
 
@@ -2300,7 +2312,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 conditionalAdmission.beforeAdmission().run();
                 Optional<SigningActiveWal.Acknowledgement> guarded =
                         reservation.admitIf(conditionalAdmission.guard());
-                if (guarded.isEmpty()) return Optional.empty();
+                if (guarded.isEmpty()) { return Optional.empty(); }
                 acknowledgement = guarded.orElseThrow();
             }
             preparation.transferToAdmittedLocked();
@@ -2342,8 +2354,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.STORAGE_FAILURE,
                     "Metadata WAL durability is uncertain", actualFailure);
         } finally {
-            if (projectionPending) projectionCompleted();
-            if (interrupted) Thread.currentThread().interrupt();
+            if (projectionPending) { projectionCompleted(); }
+            if (interrupted) { Thread.currentThread().interrupt(); }
         }
     }
 
@@ -2452,7 +2464,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                         return;
                     }
                 }
-                if (maintenanceStopping) return;
+                if (maintenanceStopping) { return; }
                 maintenanceRequested = false;
                 pressureReason = maintenancePressure.beginPass();
                 protectedBaseline = protectedProgressPressure.get();
@@ -2587,8 +2599,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             long threshold = configured > 0L ? configured : DEFAULT_SOFT_LOW_SPACE_BYTES;
             long usable = Files.getFileStore(root).getUsableSpace();
             if (usableSpaceObservation.observe(usable, threshold, now)
-                    && LOG.isLoggable(java.util.logging.Level.WARNING)) {
-                LOG.log(java.util.logging.Level.WARNING,
+                    && LOG.isLoggable(Level.WARNING)) {
+                LOG.log(Level.WARNING,
                         usableSpaceWarning(usable, threshold));
             }
         } catch (IOException | RuntimeException observationFailure) { // NOPMD - observational only
@@ -2696,7 +2708,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 }
             }
         }
-        abandoned.sort(java.util.Comparator.comparing(
+        abandoned.sort(Comparator.comparing(
                 MetadataTransactionId::token));
         for (MetadataTransactionId id : abandoned) {
             closeAbandonedIssuanceDuringRecovery(id);
@@ -2765,7 +2777,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     }
 
     private void requireOpen() {
-        if (state != State.OPEN) throw new IllegalStateException("Metadata store requires recovery");
+        if (state != State.OPEN) { throw new IllegalStateException("Metadata store requires recovery"); }
     }
 
     private void transitionRecoveryRequired(Throwable failure) {
@@ -2799,8 +2811,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     @Override
     public void close() throws IOException {
         synchronized (coordinatorLock) {
-            if (state == State.CLOSED) return;
-            if (state == State.OPEN) state = State.CLOSING;
+            if (state == State.CLOSED) { return; }
+            if (state == State.OPEN) { state = State.CLOSING; }
             coordinatorLock.notifyAll();
         }
         synchronized (walAdmissionLock) {
@@ -2857,15 +2869,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             generations.close();
         }
         state = State.CLOSED;
-        if (interrupted) Thread.currentThread().interrupt();
-        if (failure != null) throw failure;
-        if (interrupted) throw new IOException("Metadata store close was interrupted");
+        if (interrupted) { Thread.currentThread().interrupt(); }
+        if (failure != null) { throw failure; }
+        if (interrupted) { throw new IOException("Metadata store close was interrupted"); }
     }
 
     @SuppressWarnings("PMD.CompareObjectsWithEquals") // Identity prevents Throwable self-suppression.
     private static IOException mergeFailure(IOException current, IOException addition) {
-        if (current == null) return addition;
-        if (current != addition) current.addSuppressed(addition);
+        if (current == null) { return addition; }
+        if (current != addition) { current.addSuppressed(addition); }
         return current;
     }
 
@@ -2886,15 +2898,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     private static long nextIdentity(SigningManifestCodec.Manifest manifest) {
         long maximum = manifest.activeWal().identity();
-        if (manifest.checkpoint().isPresent()) maximum = Math.max(maximum,
-                manifest.checkpoint().orElseThrow().generationIdentity());
+        if (manifest.checkpoint().isPresent()) { maximum = Math.max(maximum,
+                manifest.checkpoint().orElseThrow().generationIdentity()); }
         for (SigningManifestCodec.Segment segment : manifest.sealedSegments())
-            maximum = Math.max(maximum, segment.generationIdentity());
+            { maximum = Math.max(maximum, segment.generationIdentity()); }
         return Math.incrementExact(maximum);
     }
 
     private static boolean hasEntry(Path root) throws IOException {
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(root)) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(root)) {
             return entries.iterator().hasNext();
         }
     }
@@ -2902,7 +2914,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private static void requireRoot(Path root) {
         Objects.requireNonNull(root, "root");
         if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(root))
-            throw new IllegalArgumentException("Metadata ledger root is invalid");
+            { throw new IllegalArgumentException("Metadata ledger root is invalid"); }
     }
 
     private static FormatUnsupportedException formatUnsupported() {
@@ -3746,8 +3758,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             while (!complete) {
                 try { wait(); } catch (InterruptedException value) { interrupted = true; }
             }
-            if (interrupted) Thread.currentThread().interrupt();
-            if (failure != null) throw failure;
+            if (interrupted) { Thread.currentThread().interrupt(); }
+            if (failure != null) { throw failure; }
             return result;
         }
         private void complete(MetadataCommitResult value) {
@@ -3755,17 +3767,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             synchronized (this) {
                 if (!complete) { result = value; complete = true; completed = true; notifyAll(); }
             }
-            if (completed) release();
+            if (completed) { release(); }
         }
         private void completeFailure(IOException value) {
             boolean completed = false;
             synchronized (this) {
                 if (!complete) { failure = value; complete = true; completed = true; notifyAll(); }
             }
-            if (completed) release();
+            if (completed) { release(); }
         }
         private void release() {
-            if (reservationReleased.compareAndSet(false, true)) reservationRelease.run();
+            if (reservationReleased.compareAndSet(false, true)) { reservationRelease.run(); }
         }
     }
 
@@ -4048,7 +4060,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
      * @param malformed whether retained state is malformed and requires guarded handling
      */
     record DueCandidate(String operationId,
-            zeroecho.pki.spi.store.SignWorkflowStore.SchedulingCoordinates scheduling,
+            SignWorkflowStore.SchedulingCoordinates scheduling,
             boolean malformed) {
         /**
          * Creates a {@code DueCandidate} value from the supplied component coordinates.
@@ -4120,7 +4132,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             return snapshot;
         }
         private void requireOpen() {
-            if (closed.get()) throw new IllegalStateException("signing due snapshot is closed");
+            if (closed.get()) { throw new IllegalStateException("signing due snapshot is closed"); }
         }
         /**
          * {@inheritDoc}

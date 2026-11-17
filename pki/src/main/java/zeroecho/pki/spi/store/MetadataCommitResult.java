@@ -112,7 +112,8 @@ public record MetadataCommitResult(MetadataTransactionId transactionId, Outcome 
      * @param committedRevision committed store revision when known
      * @param failureCategory stable safe failure category when applicable
      * @throws NullPointerException if transactionId, outcome, committedRevision, failureCategory is null
-     * @throws IllegalArgumentException if a committed revision is negative, COMMITTED lacks its sole revision or carries a failure category, or another outcome carries a revision
+     * @throws IllegalArgumentException if a committed revision is negative, COMMITTED lacks its sole
+     * revision or carries a failure category, or another outcome carries a revision
      */
     public MetadataCommitResult {
         Objects.requireNonNull(transactionId, "transactionId");

@@ -34,6 +34,11 @@
 
 package zeroecho.pki.impl.framework.x509;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pkix.Pkix;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,10 +46,6 @@ import java.io.OutputStream;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
-import zeroecho.core.io.CancellationSignal;
-import zeroecho.core.io.RepeatableContent;
-import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
-import zeroecho.pkix.Pkix;
 
 /**
  * Streaming transforms for the explicitly qualified BC 1.86 alternative CRL
@@ -77,9 +78,12 @@ public final class StreamingCrlAlternativeSignature {
         if (alternativeSignature.length == 0 || alternativeSignature.length > 1024 * 1024) {
             throw new IOException("Alternative CRL signature exceeds its bounded profile");
         }
-        var layout = new StreamingDerReader().inspectAlternativeCrlTbs(alternativeTbs, cancellation);
+        StreamingDerReader.CrlAlternativeTbsLayout layout =
+                new StreamingDerReader().inspectAlternativeCrlTbs(alternativeTbs, cancellation);
         byte[] algorithm = Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(nativeAlgorithm));
-        if (algorithm.length > 16 * 1024) { throw new IOException("CRL algorithm exceeds header bound"); }
+        if (algorithm.length > 16 * 1024) {
+            throw new IOException("CRL algorithm exceeds header bound");
+        }
         byte[] signature = tlv(0x30, concatenate(new byte[]{6, 3, 0x55, 0x1d, 0x4a},
                 tlv(4, tlv(3, concatenate(new byte[]{0}, alternativeSignature)))));
         long extensionBytes = Math.addExact(layout.extensionsContentLength(), signature.length);
@@ -112,8 +116,9 @@ public final class StreamingCrlAlternativeSignature {
      */
     public static RepeatableContent alternativeTbs(RepeatableContent completeSignedCrl,
             CancellationSignal cancellation) throws IOException {
-        var layout = new StreamingDerReader().inspectAlternativeCrl(completeSignedCrl, cancellation);
-        var signed = layout.semantic().layout();
+        StreamingDerReader.AlternativeCrlLayout layout =
+                new StreamingDerReader().inspectAlternativeCrl(completeSignedCrl, cancellation);
+        StreamingDerReader.SignedObjectLayout signed = layout.semantic().layout();
         long prefix = signed.tbsAlgorithmOffset() - layout.fieldsOffset();
         long tailOffset = Math.addExact(signed.tbsAlgorithmOffset(), signed.tbsAlgorithmLength());
         long tailLength = Math.addExact(layout.fieldsOffset(), layout.fieldsLength()) - tailOffset;
@@ -126,13 +131,26 @@ public final class StreamingCrlAlternativeSignature {
                 bytes(header(0x30, extensionBytes)), slice(layout.extensionsContentOffset(), extensionBytes));
         long length = StreamingDerWriter.encodedLength(body);
         return new RepeatableContent() {
-            @Override public InputStream openStream() throws IOException {
+            @Override
+            public InputStream openStream() throws IOException {
                 cancellation.throwIfCancelled();
                 return new PartsInputStream(completeSignedCrl.openStream(), parts, cancellation);
             }
-            @Override public OptionalLong length() { return OptionalLong.of(length); }
-            @Override public String contentId() { return completeSignedCrl.contentId() + ":crl-alt-bc186-v1"; }
-            @Override public void close() { /* Source custody remains with its owner. */ }
+
+            @Override
+            public OptionalLong length() {
+                return OptionalLong.of(length);
+            }
+
+            @Override
+            public String contentId() {
+                return completeSignedCrl.contentId() + ":crl-alt-bc186-v1";
+            }
+
+            @Override
+            public void close() {
+                /* Source custody remains with its owner. */
+            }
         };
     }
 
@@ -156,6 +174,7 @@ public final class StreamingCrlAlternativeSignature {
     private static Part slice(long offset, long length) { return new Part(null, offset, length); }
     private record Part(byte[] bytes, long offset, long length) { }
 
+    /** Forward-only reader that interleaves immutable headers with borrowed source slices. */
     private static final class PartsInputStream extends InputStream {
         private final InputStream source;
         private final List<Part> parts;
@@ -167,6 +186,7 @@ public final class StreamingCrlAlternativeSignature {
         private boolean closed;
 
         private PartsInputStream(InputStream source, List<Part> parts, CancellationSignal cancellation) {
+            super();
             this.source = source;
             this.parts = parts;
             this.cancellation = cancellation;
@@ -198,17 +218,21 @@ public final class StreamingCrlAlternativeSignature {
                     position(Math.addExact(part.offset(), used));
                     count = source.read(buffer, offset, count);
                     if (count < 0) { throw new IOException("Truncated alternative CRL source"); }
-                    if (count == 0) { continue; }
+
                     sourcePosition = Math.addExact(sourcePosition, count);
                 }
-                used = Math.addExact(used, count);
-                return count;
+                if (count != 0) {
+                    used = Math.addExact(used, count);
+                    return count;
+                }
             }
             return -1;
         }
 
         private void position(long target) throws IOException {
-            if (target < sourcePosition) { throw new IOException("Alternative CRL slices are not forward ordered"); }
+            if (target < sourcePosition) {
+                throw new IOException("Alternative CRL slices are not forward ordered");
+            }
             while (sourcePosition < target) {
                 cancellation.throwIfCancelled();
                 int count = source.read(skipBuffer, 0, (int) Math.min(skipBuffer.length, target - sourcePosition));

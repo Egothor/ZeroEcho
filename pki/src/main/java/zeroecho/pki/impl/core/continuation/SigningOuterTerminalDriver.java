@@ -34,18 +34,18 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.util.Objects;
-import java.util.Optional;
-
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.impl.core.signing.SigningStepExecutor;
 import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
-import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Idempotent local CA-proof verification and terminal-signing publication driver.
@@ -79,7 +79,11 @@ public final class SigningOuterTerminalDriver
         this.store = Objects.requireNonNull(store, "store");
         publisher = new DomainContinuationPublisher(store);
         FullCrlSigningCommand.requireAdmission("", 0, pureEdDsaMaximumTbsBytes);
-        fullCrl = new FullCrlContinuationPublisher(store, Objects.requireNonNull(bindings, "bindings"), pureEdDsaMaximumTbsBytes);
+        fullCrl =
+                new FullCrlContinuationPublisher(
+                        store,
+                        Objects.requireNonNull(bindings, "bindings"),
+                        pureEdDsaMaximumTbsBytes);
         hybridCrl = new CrlHybridContinuation(store, bindings, pureEdDsaMaximumTbsBytes, fullCrl);
         proof = Optional.empty();
     }
@@ -107,15 +111,7 @@ public final class SigningOuterTerminalDriver
      */
     @Override public void advance(SignWorkflowStore.Workflow workflow) {
         SignWorkflowStore.Workflow exact = Objects.requireNonNull(workflow, "workflow");
-        if (exact.envelope().outer().filter(value -> value.kind() == DomainContinuationStore.Kind.STATUS
-                && CrlHybridSigningCommand.isHybrid(DomainCommandEncoding.decode(value.command()))).isPresent()) {
-            hybridCrl.advance(exact);
-            return;
-        }
-        if (exact.state() == SignWorkflowStore.State.DISPATCHED
-                && (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
-                        || exact.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING)) {
-            advanceCaProof(exact);
+        if (advanceCapturedStage(exact)) {
             return;
         }
         for (int attempt = 0; attempt < MAXIMUM_CAS_ATTEMPTS; attempt++) {
@@ -154,7 +150,10 @@ public final class SigningOuterTerminalDriver
 
     private void advanceCaProof(SignWorkflowStore.Workflow workflow) {
         try {
-            proof.orElseThrow(() -> new IllegalStateException("Managed key proof verifier unavailable"))
+            proof.orElseThrow(
+                            () ->
+                                    new IllegalStateException(
+                                            "Managed key proof verifier unavailable"))
                     .verifyComposite(workflow);
             store.completeCaProofVerification(workflow.operationId(), workflow.revision(), workflow.fence())
                     .filter(changed -> changed.state() == SignWorkflowStore.State.EXPIRED)
@@ -182,8 +181,12 @@ public final class SigningOuterTerminalDriver
         EncodedObject result;
         try {
             if (publishing.kind() == DomainContinuationStore.Kind.KEY_PROOF) {
-                result = proof.orElseThrow(() -> new IllegalStateException("Managed key proof verifier unavailable"))
-                        .verify(publishing, workflow);
+                result =
+                        proof.orElseThrow(
+                                        () ->
+                                                new IllegalStateException(
+                                                        "Managed key proof verifier unavailable"))
+                                .verify(publishing, workflow);
             } else if (FullCrlSigningCommand.supports(DomainCommandEncoding.decode(publishing.command()).operation())) {
                 result = fullCrl.publish(publishing, signature);
             } else {
@@ -208,5 +211,26 @@ public final class SigningOuterTerminalDriver
         return state == DomainContinuationStore.State.COMPLETED
                 || state == DomainContinuationStore.State.FAILED
                 || state == DomainContinuationStore.State.EXPIRED;
+    }
+
+    private boolean advanceCapturedStage(SignWorkflowStore.Workflow exact) {
+        if (exact.envelope()
+                .outer()
+                .filter(
+                        value ->
+                                value.kind() == DomainContinuationStore.Kind.STATUS
+                                        && CrlHybridSigningCommand.isHybrid(
+                                                DomainCommandEncoding.decode(value.command())))
+                .isPresent()) {
+            hybridCrl.advance(exact);
+            return true;
+        }
+        if (exact.state() == SignWorkflowStore.State.DISPATCHED
+                && (exact.stage() == SignWorkflowStore.Stage.CA_PROOF_VERIFYING
+                        || exact.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING)) {
+            advanceCaProof(exact);
+            return true;
+        }
+        return false;
     }
 }

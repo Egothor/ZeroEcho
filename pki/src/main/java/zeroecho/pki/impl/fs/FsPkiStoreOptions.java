@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import zeroecho.pki.spi.store.CrlHybridNativeChildVerifier;
+import zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier;
+
 import java.math.BigInteger;
 import java.time.Duration;
 import java.util.Objects;
@@ -76,7 +79,8 @@ import java.util.Optional;
  * @param signingEvidenceAudit whether optional best-effort signing/proof evidence is appended; defaults to false
  * @param initialCrlNumber initial number for a newly created CRL scope counter,
  *                         from zero through {@code 2^159 - 1}; defaults to one
- * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved through snapshots and restore
+ * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved through
+ * snapshots and restore
  * @param crlHybridNativeChildVerifier optional immutable configured public hybrid CRL authority
  * @param credentialSearch optional explicitly budgeted embedded credential search
  */
@@ -86,8 +90,21 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
         long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
         BigInteger initialCrlNumber, boolean signingEvidenceAudit, Optional<CredentialSearch> credentialSearch,
-        Optional<zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier,
-        Optional<zeroecho.pki.spi.store.CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier) {
+        Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier,
+        Optional<CrlHybridNativeChildVerifier> crlHybridNativeChildVerifier) {
+
+    private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
+    private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
+    /**
+     * Default maximum resident index accounting budget in bytes.
+     */
+    /* default */ static final long DEFAULT_RESIDENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
+    /**
+     * Default maximum transient index workspace budget in bytes.
+     */
+    /* default */ static final long DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
+    private static final long MINIMUM_RESIDENT_INDEX_BUDGET_BYTES = 1L;
+
 
     /**
      * Preserves existing options with hybrid CRL verification unavailable.
@@ -116,29 +133,20 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @throws IllegalArgumentException if a duration, group size, budget, combined
      *         budget or initial CRL number is outside its supported range
      */
+    // Retains the existing source and binary-compatible constructor signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
             FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
             Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
             long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
             BigInteger initialCrlNumber, boolean signingEvidenceAudit, Optional<CredentialSearch> credentialSearch,
-            Optional<zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier) {
+            Optional<IssuerAlgorithmEvidenceVerifier> issuerAlgorithmEvidenceVerifier) {
         this(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize, signingResidentIndexBudgetBytes,
                 signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit, credentialSearch,
                 issuerAlgorithmEvidenceVerifier, Optional.empty());
     }
 
-    private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
-    private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
-    /**
-     * Default maximum resident index accounting budget in bytes.
-     */
-    /* default */ static final long DEFAULT_RESIDENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
-    /**
-     * Default maximum transient index workspace budget in bytes.
-     */
-    /* default */ static final long DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
-    private static final long MINIMUM_RESIDENT_INDEX_BUDGET_BYTES = 1L;
 
     /**
      * Explicit resource settings for the derived embedded H2 search index.
@@ -215,6 +223,8 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @throws NullPointerException if a required object or optional container is null
      * @throws IllegalArgumentException if a canonical duration, group, budget or number bound is invalid
      */
+    // Retains the existing source and binary-compatible constructor signature.
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     public FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
             FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
             Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
@@ -243,13 +253,18 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @param strictSnapshotExport whether snapshot export is strict (fail-closed)
      * @param signingOperationHorizon maximum stable signing identifier and record retention horizon
      * @param signingIdPermittedSkew permitted future signing identifier clock skew
-     * @param signingMaximumGroupSize maximum number of newly committed signing WAL requests per durability group, from 1 through 32
-     * @param signingResidentIndexBudgetBytes maximum conservatively accounted resident bytes shared by the signing indexes; must be positive
-     * @param signingCompactionTransientBudgetBytes maximum conservatively accounted resident bytes available only to detached compaction work; must be positive
-     * @param initialCrlNumber initial number for a newly created CRL scope counter, from zero through {@code 2^159 - 1}; defaults to one
+     * @param signingMaximumGroupSize maximum number of newly committed signing WAL requests per
+     * durability group, from 1 through 32
+     * @param signingResidentIndexBudgetBytes maximum conservatively accounted resident bytes shared by
+     * the signing indexes; must be positive
+     * @param signingCompactionTransientBudgetBytes maximum conservatively accounted resident bytes
+     * available only to detached compaction work; must be positive
+     * @param initialCrlNumber initial number for a newly created CRL scope counter, from zero through
+     * {@code 2^159 - 1}; defaults to one
      * @param signingEvidenceAudit whether optional best-effort signing/proof evidence is appended; defaults to false
      * @param credentialSearch optional explicitly budgeted embedded credential search
-     * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved through snapshots and restore
+     * @param issuerAlgorithmEvidenceVerifier optional immutable public algorithm rules, preserved
+     * through snapshots and restore
      * @param crlHybridNativeChildVerifier optional immutable configured public hybrid CRL authority
      */
     public FsPkiStoreOptions {
@@ -421,7 +436,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @return immutable options preserving all resource and history settings
      * @throws NullPointerException if the verifier is null
      */
-    public FsPkiStoreOptions withIssuerAlgorithmEvidenceVerifier(zeroecho.pki.spi.store.IssuerAlgorithmEvidenceVerifier verifier) {
+    public FsPkiStoreOptions withIssuerAlgorithmEvidenceVerifier(IssuerAlgorithmEvidenceVerifier verifier) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
                 strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
                 signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,
@@ -434,7 +449,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      * @return immutable options preserving all existing settings
      * @throws NullPointerException if the verifier is null
      */
-    public FsPkiStoreOptions withCrlHybridNativeChildVerifier(zeroecho.pki.spi.store.CrlHybridNativeChildVerifier verifier) {
+    public FsPkiStoreOptions withCrlHybridNativeChildVerifier(CrlHybridNativeChildVerifier verifier) {
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy, revocationHistoryPolicy, workflowHistoryPolicy,
                 strictSnapshotExport, signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
                 signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber,

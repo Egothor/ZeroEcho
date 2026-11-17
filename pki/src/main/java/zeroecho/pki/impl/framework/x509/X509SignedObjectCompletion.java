@@ -33,20 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
-import java.util.Objects;
-
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.spi.crypto.SigningProvider;
+
+import java.util.Objects;
 
 /**
  * Non-forgeable live completion of one X.509 signed status-object operation.
  *
- * <p>
- * Only the owning {@link X509AuthoritySnapshot} can construct this value. It
- * binds the immutable status metadata to the exact live SIGN plan and opaque
- * runtime provenance. The completion is not persisted and contains no key
- * material or signed-object payload.
- * </p>
+ * <p>Only the owning {@link X509AuthoritySnapshot} can construct this value. It binds the immutable
+ * status metadata to the exact live SIGN plan and opaque runtime provenance. The completion is not
+ * persisted and contains no key material or signed-object payload.
  */
 public final class X509SignedObjectCompletion implements zeroecho.pki.spi.framework.SignedObjectCompletion {
     private final StatusObject statusObject;

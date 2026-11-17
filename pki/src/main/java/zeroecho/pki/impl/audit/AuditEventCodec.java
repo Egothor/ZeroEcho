@@ -33,6 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.impl.audit;
 
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.AuditChainHead;
+import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -41,13 +48,6 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
-
-import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.audit.AuditChainHead;
-import zeroecho.pki.api.audit.AuditEvent;
-import zeroecho.pki.api.audit.Principal;
-import zeroecho.pki.api.audit.Purpose;
 
 /**
  * Internal codec for deterministic audit event identification and line-based
@@ -74,6 +74,9 @@ final class AuditEventCodec {
      */
     private static final String INTEGRITY_DOMAIN = "ZEROECHO-AUDIT-CHAIN-V1";
     private static final int MINIMUM_CHAIN_PARTS = 4;
+    private static final char ESCAPE = '\\';
+    private static final char ESCAPED_NEWLINE = 'n';
+    private static final char ESCAPED_RETURN = 'r';
 
     private AuditEventCodec() {
     }
@@ -149,7 +152,14 @@ final class AuditEventCodec {
             throw new IllegalArgumentException("previousHash must be lowercase 64-hex");
         }
         String recordHash = recordHash(sequence, previousHash, event);
-        return "s=" + sequence + "|ph=" + previousHash + "|rh=" + recordHash + '|' + encodeLine(event);
+        return "s="
+                + sequence
+                + "|ph="
+                + previousHash
+                + "|rh="
+                + recordHash
+                + '|'
+                + encodeLine(event);
     }
 
     /**
@@ -168,7 +178,8 @@ final class AuditEventCodec {
         }
         String trimmed = line.strip();
         if (!trimmed.startsWith("s=")) {
-            return new ChainedRecord(-1L, AuditChainHead.GENESIS_RECORD_HASH, "", decodeLine(trimmed));
+            return new ChainedRecord(
+                    -1L, AuditChainHead.GENESIS_RECORD_HASH, "", decodeLine(trimmed));
         }
         String[] parts = trimmed.split("\\|", -1);
         if (parts.length < MINIMUM_CHAIN_PARTS) {
@@ -177,7 +188,9 @@ final class AuditEventCodec {
         long sequence = Long.parseLong(chainValue(parts[0], "s"));
         String previousHash = chainValue(parts[1], "ph");
         String recordHash = chainValue(parts[2], "rh");
-        if (isNegative(sequence) || !previousHash.matches("[0-9a-f]{64}") || !recordHash.matches("[0-9a-f]{64}")) {
+        if (isNegative(sequence)
+                || !previousHash.matches("[0-9a-f]{64}")
+                || !recordHash.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("Malformed chained audit header");
         }
         String eventLine = String.join("|", Arrays.copyOfRange(parts, 3, parts.length));
@@ -225,20 +238,28 @@ final class AuditEventCodec {
         }
 
         StringBuilder sb = new StringBuilder(256);
-        sb.append("time=").append(event.time().toString()).append('\n');
-        sb.append("category=").append(event.category()).append('\n');
-        sb.append("action=").append(event.action()).append('\n');
-        sb.append("principal.type=").append(event.principal().type()).append('\n');
-        sb.append("principal.name=").append(event.principal().name()).append('\n');
-        sb.append("purpose=").append(event.purpose().value()).append('\n');
+        sb.append("time=")
+                .append(event.time().toString())
+                .append("\ncategory=")
+                .append(event.category())
+                .append("\naction=")
+                .append(event.action())
+                .append("\nprincipal.type=")
+                .append(event.principal().type())
+                .append("\nprincipal.name=")
+                .append(event.principal().name())
+                .append("\npurpose=")
+                .append(event.purpose().value());
 
         Optional<PkiId> objectId = event.objectId();
-        sb.append("objectId=").append(objectId.isPresent() ? objectId.get().value() : "").append('\n');
+        sb.append("\nobjectId=").append(objectId.isPresent() ? objectId.get().value() : "");
 
         Optional<FormatId> formatId = event.formatId();
-        sb.append("formatId=").append(formatId.isPresent() ? formatId.get().value() : "").append('\n');
+        sb.append("\nformatId=")
+                .append(formatId.isPresent() ? formatId.get().value() : "")
+                .append('\n');
 
-        TreeMap<String, String> sorted = new TreeMap<String, String>();
+        Map<String, String> sorted = new TreeMap<>();
         sorted.putAll(event.details());
         for (Map.Entry<String, String> e : sorted.entrySet()) {
             sb.append("d.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
@@ -261,18 +282,25 @@ final class AuditEventCodec {
         }
 
         StringBuilder sb = new StringBuilder(256);
-        sb.append("t=").append(event.time().toString()).append('|');
-        sb.append("c=").append(escape(event.category())).append('|');
-        sb.append("a=").append(escape(event.action())).append('|');
-        sb.append("pt=").append(escape(event.principal().type())).append('|');
-        sb.append("pn=").append(escape(event.principal().name())).append('|');
-        sb.append("pu=").append(escape(event.purpose().value())).append('|');
-        sb.append("oid=").append(escape(event.objectId().isPresent() ? event.objectId().get().value() : ""))
-                .append('|');
-        sb.append("fid=").append(escape(event.formatId().isPresent() ? event.formatId().get().value() : ""))
+        sb.append("t=")
+                .append(event.time().toString())
+                .append("|c=")
+                .append(escape(event.category()))
+                .append("|a=")
+                .append(escape(event.action()))
+                .append("|pt=")
+                .append(escape(event.principal().type()))
+                .append("|pn=")
+                .append(escape(event.principal().name()))
+                .append("|pu=")
+                .append(escape(event.purpose().value()))
+                .append("|oid=")
+                .append(escape(event.objectId().isPresent() ? event.objectId().get().value() : ""))
+                .append("|fid=")
+                .append(escape(event.formatId().isPresent() ? event.formatId().get().value() : ""))
                 .append('|');
 
-        TreeMap<String, String> sorted = new TreeMap<String, String>();
+        Map<String, String> sorted = new TreeMap<>();
         sorted.putAll(event.details());
 
         boolean first = true;
@@ -308,7 +336,8 @@ final class AuditEventCodec {
         String category = unescape(value(parts, "c"));
         String action = unescape(value(parts, "a"));
 
-        Principal principal = new Principal(unescape(value(parts, "pt")), unescape(value(parts, "pn")));
+        Principal principal =
+                new Principal(unescape(value(parts, "pt")), unescape(value(parts, "pn")));
         Purpose purpose = new Purpose(unescape(value(parts, "pu")));
 
         String oid = unescape(value(parts, "oid"));
@@ -366,7 +395,7 @@ final class AuditEventCodec {
         for (int i = 0; i < s.length(); i++) {
             char ch = s.charAt(i);
             if (!esc) {
-                if (ch == '\\') {
+                if (ch == ESCAPE) {
                     esc = true;
                 } else {
                     out.append(ch);
@@ -374,9 +403,9 @@ final class AuditEventCodec {
                 continue;
             }
             esc = false;
-            if (ch == 'n') {
+            if (ch == ESCAPED_NEWLINE) {
                 out.append('\n');
-            } else if (ch == 'r') {
+            } else if (ch == ESCAPED_RETURN) {
                 out.append('\r');
             } else {
                 out.append(ch);

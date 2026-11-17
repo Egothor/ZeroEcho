@@ -50,9 +50,7 @@ import zeroecho.pki.api.PkiId;
 /**
  * Durable disclosure authority and capability-based retrieval decision service.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition",
-        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.CyclomaticComplexity" })
+@SuppressWarnings({"PMD.AvoidLiteralsInIfCondition", "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel", "PMD.CyclomaticComplexity"})
 public final class DisclosureService {
     /**
      * Durable one-time delivery classification without retaining the raw token.
@@ -71,7 +69,7 @@ public final class DisclosureService {
          */
         DELIVERY_UNKNOWN(3);
         private final int code;
-        DeliveryState(int code) { this.code = code; }
+        /* default */ DeliveryState(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -119,7 +117,7 @@ public final class DisclosureService {
          */
         NOT_PUBLISHED(6);
         private final int code;
-        Policy(int code) { this.code = code; }
+        /* default */ Policy(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -134,7 +132,7 @@ public final class DisclosureService {
          * @throws IllegalArgumentException if the code does not identify a supported disclosure policy
          */
         public static Policy fromCode(int code) {
-            for (Policy candidate : values()) if (candidate.code == code) return candidate;
+            for (Policy candidate : values()) { if (candidate.code == code) { return candidate; } }
             throw new IllegalArgumentException("Unknown disclosure-policy code");
         }
     }
@@ -168,7 +166,7 @@ public final class DisclosureService {
          */
         DELTA_CRL(6);
         private final int code;
-        ObjectType(int code) { this.code = code; }
+        /* default */ ObjectType(int code) { this.code = code; }
         /**
          * Returns the stable persistence code.
          *
@@ -183,7 +181,7 @@ public final class DisclosureService {
          * @throws IllegalArgumentException if the code does not identify a supported disclosure object type
          */
         public static ObjectType fromCode(int code) {
-            for (ObjectType candidate : values()) if (candidate.code == code) return candidate;
+            for (ObjectType candidate : values()) { if (candidate.code == code) { return candidate; } }
             throw new IllegalArgumentException("Unknown disclosure object-type code");
         }
     }
@@ -390,7 +388,7 @@ public final class DisclosureService {
             Permission.requireBounded(action, 128, "capability action");
             Permission.requirePrincipal(issuerPrincipalId);
             tokenCommitment = Objects.requireNonNull(tokenCommitment, "tokenCommitment").clone();
-            if (tokenCommitment.length != 32) throw new IllegalArgumentException("Capability commitment length");
+            if (tokenCommitment.length != 32) { throw new IllegalArgumentException("Capability commitment length"); }
             Objects.requireNonNull(expiresAt, "expiresAt");
             Objects.requireNonNull(deliveryState, "deliveryState");
         }
@@ -455,7 +453,7 @@ public final class DisclosureService {
         public IssuedCapability(Capability capability, byte[] token) {
             this.capability = Objects.requireNonNull(capability, "capability");
             this.token = Objects.requireNonNull(token, "token").clone();
-            if (token.length != 32) throw new IllegalArgumentException("Capability token length");
+            if (token.length != 32) { throw new IllegalArgumentException("Capability token length"); }
         }
         /**
          * Returns the persisted commitment-only metadata.
@@ -470,7 +468,7 @@ public final class DisclosureService {
          * @throws IllegalStateException if the one-time capability token has already been consumed
          */
         public synchronized byte[] token() {
-            if (consumed) throw new IllegalStateException("Capability token was already consumed");
+            if (consumed) { throw new IllegalStateException("Capability token was already consumed"); }
             consumed = true;
             byte[] result = token.clone();
             java.util.Arrays.fill(token, (byte) 0);
@@ -731,7 +729,7 @@ public final class DisclosureService {
      */
     public static String bearerCredential(String capabilityId, byte[] token) {
         Permission.requireId(capabilityId, "capability");
-        if (token == null || token.length != 32) throw new IllegalArgumentException("Capability token length");
+        if (token == null || token.length != 32) { throw new IllegalArgumentException("Capability token length"); }
         return capabilityId + '.' + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(token);
     }
 
@@ -789,7 +787,7 @@ public final class DisclosureService {
      */
     public synchronized Capability classifyDelivery(String capabilityId, boolean delivered) {
         Capability current = store.requireCapability(capabilityId);
-        if (current.deliveryState() != DeliveryState.PENDING) return current;
+        if (current.deliveryState() != DeliveryState.PENDING) { return current; }
         Capability updated = new Capability(current.capabilityId(), current.realmId(), current.objectId(),
                 current.action(), current.issuerPrincipalId(), current.tokenCommitment(), current.expiresAt(),
                 delivered ? DeliveryState.DELIVERED : DeliveryState.DELIVERY_UNKNOWN, current.revoked());
@@ -800,19 +798,19 @@ public final class DisclosureService {
     }
 
     private boolean validCapability(PkiId objectId, byte[] token) {
-        if (token == null || token.length != 32) return false;
+        if (token == null || token.length != 32) { return false; }
         for (Capability capability : store.capabilitiesFor(objectId)) {
             if (!capability.revoked() && capability.realmId().equals(realmId)
                     && "RETRIEVE".equals(capability.action())
                     && clock.instant().isBefore(capability.expiresAt())
                     && MessageDigest.isEqual(capability.tokenCommitment(),
-                            capabilityCommitment(objectId, capability.expiresAt(), token))) return true;
+                            capabilityCommitment(objectId, capability.expiresAt(), token))) { return true; }
         }
         return false;
     }
 
     private boolean validBearer(PkiId objectId, String bearer) {
-        if (bearer == null || !bearer.matches("cap-[0-9a-f]{32}\\.[A-Za-z0-9_-]{43}")) return false;
+        if (bearer == null || !bearer.matches("cap-[0-9a-f]{32}\\.[A-Za-z0-9_-]{43}")) { return false; }
         int separator = bearer.indexOf('.');
         DisclosureService.Capability capability;
         try {

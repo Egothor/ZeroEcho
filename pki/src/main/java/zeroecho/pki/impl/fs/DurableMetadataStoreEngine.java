@@ -104,7 +104,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
      * @param storeId exact authoritative metadata store identity
      * @return owned engine; caller closes it after all child streams and snapshots release ownership
      * @throws NullPointerException if a required collaborator is null
-     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable
+     * initialization fails
      */
     /* default */ static DurableMetadataStoreEngine create(Path path, MetadataStoreId storeId)
             throws IOException {
@@ -120,7 +121,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
      * @param engineFaults checked fault injector for post-force state publication
      * @return owned engine; caller closes it after all child streams and snapshots release ownership
      * @throws NullPointerException if a required collaborator is null
-     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable
+     * initialization fails
      */
     /* default */ static DurableMetadataStoreEngine create(
             Path path,
@@ -139,7 +141,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
      * @param path exact secured structural metadata log path
      * @return owned engine; caller closes it after all child streams and snapshots release ownership
      * @throws NullPointerException if a required collaborator is null
-     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable
+     * initialization fails
      */
     /* default */ static DurableMetadataStoreEngine open(Path path) throws IOException {
         return open(path, DurableMetadataLog.FaultInjector.NONE, FaultInjector.NONE);
@@ -153,7 +156,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
      * @param engineFaults checked fault injector for post-force state publication
      * @return owned engine; caller closes it after all child streams and snapshots release ownership
      * @throws NullPointerException if a required collaborator is null
-     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable initialization fails
+     * @throws IOException if secure opening, exclusive locking, integrity validation, repair or durable
+     * initialization fails
      */
     /* default */ static DurableMetadataStoreEngine open(
             Path path,
@@ -212,7 +216,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
      * @return definite committed result or retained conflict rejection
      * @throws NullPointerException if a required collaborator is null
      * @throws IllegalStateException if the engine is closed or requires recovery
-     * @throws MetadataStoreException if transaction descriptors, ownership, revision or nonconflict validation are invalid
+     * @throws MetadataStoreException if transaction descriptors, ownership, revision or nonconflict
+     * validation are invalid
      * @throws OutcomeUnknownException if terminal durability or post-force state publication cannot be confirmed
      * @throws IOException if mutation transfer, structural persistence or owned-resource cleanup fails
      */
@@ -805,7 +810,8 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
          * @param revision authoritative metadata revision
          * @param failureCode stable terminal failure code, absent when not applicable
          * @param failureReason closed reconstruction failure reason, or empty when not applicable
-         * @throws NullPointerException if {@code revision} is null; or if {@code failureCode} is null; or if {@code failureReason} is null
+         * @throws NullPointerException if {@code revision} is null; or if {@code failureCode} is
+         * null; or if {@code failureReason} is null
          */
         CommitResult {
             Objects.requireNonNull(revision, "revision");
@@ -868,7 +874,9 @@ final class DurableMetadataStoreEngine implements AutoCloseable {
          * @param cancellation cooperative cancellation signal for reading or writing the payload
          * @param ownedValue value content lease owned by this prepared mutation
          * @param closed shared lifecycle flag preventing repeated resource release
-         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if {@code expectedRevision} is null; or if {@code payload} is null; or if {@code cancellation} is null; or if {@code closed} is null
+         * @throws NullPointerException if {@code kind} is null; or if {@code key} is null; or if
+         * {@code expectedRevision} is null; or if {@code payload} is null; or if {@code
+         * cancellation} is null; or if {@code closed} is null
          * @throws IllegalArgumentException if {@code (valueLength < 0L || payloadLength < valueLength)}
          */
         PreparedMutation {

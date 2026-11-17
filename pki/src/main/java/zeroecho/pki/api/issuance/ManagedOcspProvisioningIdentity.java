@@ -56,6 +56,8 @@ import zeroecho.pki.api.PkiId;
  * core identity and must come from trusted configuration.
  */
 public final class ManagedOcspProvisioningIdentity {
+    private static final int LIMIT_1 = 1;
+
     private ManagedOcspProvisioningIdentity() {
     }
     /**
@@ -135,7 +137,7 @@ public final class ManagedOcspProvisioningIdentity {
     }
     private static String canonical(String slot, long revision) {
         digest(slot);
-        if (revision < 1) {
+        if (revision < LIMIT_1) {
             throw invalid();
         }
         return "ocsp-prov:" + slot + ":r" + revision;

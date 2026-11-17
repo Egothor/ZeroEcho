@@ -33,6 +33,12 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.nio.file.StandardCopyOption;
+import java.util.NoSuchElementException;
+import java.util.stream.Stream;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -143,7 +149,9 @@ final class FsSnapshotExporter {
      * bearing causes or filesystem paths.
      */
     /**
-     * Exports the selected historical view into a new target store root while preserving current signing safety metadata. The source is borrowed and remains open; failures can leave a partial target for caller cleanup.
+     * Exports the selected historical view into a new target store root while preserving current signing
+     * safety metadata. The source is borrowed and remains open; failures can leave a partial target for
+     * caller cleanup.
      *
      * @param source source file or borrowed source store
      * @param targetRoot fresh target store root
@@ -269,9 +277,9 @@ final class FsSnapshotExporter {
             List<StatusObject> statuses = source.snapshotStatusObjects(snapshot);
             Set<String> remintedContentIds = new HashSet<>(inventory.contentIds());
             for (StatusObject status : statuses) {
-                var issuer = status.attributes().get(zeroecho.pki.impl.core.continuation.CrlHybridSigningCommand.ISSUER_GENERATION);
+                Optional<AttributeValue> issuer = status.attributes().get(CrlHybridSigningCommand.ISSUER_GENERATION);
                 if (issuer.isPresent()) {
-                    if (!(issuer.orElseThrow() instanceof zeroecho.pki.api.attr.AttributeValue.StringValue text)) throw new IOException("Hybrid status issuer metadata is malformed");
+                    if (!(issuer.orElseThrow() instanceof AttributeValue.StringValue text)) { throw new IOException("Hybrid status issuer metadata is malformed"); }
                     includeGeneration(generations, new PkiId(text.value()));
                 }
                 remintedContentIds.add(status.content().contentId());
@@ -285,7 +293,7 @@ final class FsSnapshotExporter {
                 generations.put(issuerId, AuthorityMetadataStore.find(snapshot,
                         AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation)
                         .orElseThrow(() -> new SnapshotAuthorityFailure("Snapshot issuer generation is missing")));
-                var lineage = AuthorityMetadataStore.lineage(snapshot, issuerId);
+                Optional<CrlSignerLineage> lineage = AuthorityMetadataStore.lineage(snapshot, issuerId);
                 if (lineage.isPresent() && lineage.orElseThrow().predecessorSelectedIssuerId().isPresent()) {
                     includeGeneration(generations, lineage.orElseThrow().predecessorSelectedIssuerId().orElseThrow());
                 }
@@ -360,7 +368,7 @@ final class FsSnapshotExporter {
                 return ca.caId().equals(path.authorityId())
                         && ca.currentIssuanceIssuerId().equals(path.issuerId())
                         && path.orderedCredentialIds().stream().allMatch(credentials::containsKey);
-            } catch (IllegalStateException | java.util.NoSuchElementException failure) {
+            } catch (IllegalStateException | NoSuchElementException failure) {
                 return false;
             }
         }
@@ -399,7 +407,7 @@ final class FsSnapshotExporter {
             boolean published = false;
             try {
                 build(temporaryRoot, at);
-                PlatformFs.atomicMove(temporaryRoot, absoluteTarget, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                PlatformFs.atomicMove(temporaryRoot, absoluteTarget, StandardCopyOption.ATOMIC_MOVE);
                 published = true;
             } catch (IOException | IllegalStateException failure) {
                 if (!published) {
@@ -425,14 +433,14 @@ final class FsSnapshotExporter {
                 reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                         options.workflowHistoryPolicy(), options.strictSnapshotExport());
                 new AuthorityRestorer(source, options, plan.authority(), snapshot).restore(targetRoot, at);
-                installRevocationAuthority(targetRoot, stagedRevocationPrefix);
+                SnapshotRevocationFiles.installRevocationAuthority(targetRoot, stagedRevocationPrefix);
                 try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(
                         targetRoot, options)) {
                     // Opening validates the restored authority and rebuilds its derived index.
                     restorePublicationMetadata(publications, target);
                     target.validateRecoveredCrlAuthority();
                 }
-                writeSnapshotBoundary(targetRoot, captured.boundary());
+                SnapshotRevocationFiles.writeSnapshotBoundary(targetRoot, captured.boundary());
             }
         }
 
@@ -455,31 +463,9 @@ final class FsSnapshotExporter {
             }
         }
 
-        private static void writeSnapshotBoundary(Path targetRoot, long boundary) throws IOException {
-            Path marker = new FsPaths(targetRoot).revocationSnapshotBoundary();
-            Files.writeString(marker, Long.toString(boundary), StandardCharsets.US_ASCII,
-                    java.nio.file.StandardOpenOption.CREATE_NEW,
-                    java.nio.file.StandardOpenOption.WRITE);
-            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(
-                    marker, java.nio.file.StandardOpenOption.WRITE)) {
-                channel.force(true);
-            }
-            PlatformFs.forceDirectory(targetRoot);
-        }
 
-        private static void installRevocationAuthority(Path targetRoot, Path stagedPrefix) throws IOException {
-            FsPaths paths = new FsPaths(targetRoot);
-            Files.deleteIfExists(paths.revocationCurrentIndex());
-            Files.createDirectories(paths.revocationTransitionLog().getParent());
-            try {
-                PlatformFs.atomicMove(stagedPrefix, paths.revocationTransitionLog(),
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                throw new IOException("Atomic revocation snapshot restoration is unsupported", unsupported);
-            }
-            PlatformFs.forceDirectory(paths.revocationTransitionLog().getParent());
-        }
+
+
 
         private static void addCleanupFailure(Exception primary, Path temporaryRoot) {
             try {
@@ -708,7 +694,7 @@ final class FsSnapshotExporter {
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
-        try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
+        try (Stream<Path> paths = Files.walk(root)) {
             List<Path> ordered = paths.sorted(Comparator.reverseOrder()).toList();
             for (Path path : ordered) {
                 Files.delete(path);
@@ -727,7 +713,7 @@ final class FsSnapshotExporter {
             return List.of();
         }
         List<SnapshotProfileArtifact> selected = new ArrayList<>();
-        try (java.util.stream.Stream<Path> files = Files.walk(profilesRoot)) {
+        try (Stream<Path> files = Files.walk(profilesRoot)) {
             for (Path path : files.filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).toList()) {
                 collectProfileArtifact(profilesRoot, path, at, selected);
             }
@@ -795,7 +781,7 @@ final class FsSnapshotExporter {
         if (!Files.exists(srcTree)) {
             return;
         }
-        try (java.util.stream.Stream<Path> tree = Files.walk(srcTree)) {
+        try (Stream<Path> tree = Files.walk(srcTree)) {
         tree.filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).forEach(p -> {
             // only process current.bin; replace it based on history
             if (!FsPaths.CURRENT_FILE.equals(p.getFileName().toString())) {
@@ -832,7 +818,7 @@ final class FsSnapshotExporter {
     }
 
     private static Path selectHistoryEntry(final Path historyDir, final Instant at) {
-        try (java.util.stream.Stream<Path> entries = Files.list(historyDir)) {
+        try (Stream<Path> entries = Files.list(historyDir)) {
             return entries.filter(Files::isRegularFile)
                     .sorted(Comparator.comparing(Path::getFileName).reversed()).filter(p -> {
                         String name = p.getFileName().toString();
@@ -862,7 +848,7 @@ final class FsSnapshotExporter {
         if (!Files.exists(src)) {
             return;
         }
-        try (java.util.stream.Stream<Path> tree = Files.walk(src)) {
+        try (Stream<Path> tree = Files.walk(src)) {
         tree.sorted(Comparator.comparing(Path::toString)).forEach(p -> {
             try {
                 Path rel = src.relativize(p);
@@ -885,7 +871,7 @@ final class FsSnapshotExporter {
         if (!Files.exists(src)) {
             return;
         }
-        try (java.util.stream.Stream<Path> paths = Files.walk(src)) {
+        try (Stream<Path> paths = Files.walk(src)) {
             for (Path path : paths.sorted(Comparator.comparing(Path::toString)).toList()) {
                 Path relative = src.relativize(path);
                 Path output = dst.resolve(relative);

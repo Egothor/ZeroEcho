@@ -34,16 +34,6 @@
 
 package zeroecho.pki.impl.core.continuation;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.security.GeneralSecurityException;
-import java.security.PublicKey;
-import java.security.SignatureException;
-import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.Optional;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.common.sig.SignatureInteropProfile;
 import zeroecho.core.alg.common.sig.SignatureInteropProfiles;
@@ -66,6 +56,17 @@ import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pkix.Pkix;
 import zeroecho.sdk.ZeroEchoSession;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
+import java.security.SignatureException;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.Optional;
 
 /**
  * Verifies bounded proof challenges without publishing any PKI artifact.
@@ -114,7 +115,8 @@ final class ManagedKeyProofVerifier {
             return ManagedKeyProofBindings.result(domain);
         } catch (IOException | GeneralSecurityException failure) {
             // Read failures, missing engines and key-store/provider infrastructure are retryable.
-            throw new PkiException("Managed key proof verification is temporarily unavailable", failure);
+            throw new PkiException(
+                    "Managed key proof verification is temporarily unavailable", failure);
         }
     }
 
@@ -132,8 +134,10 @@ final class ManagedKeyProofVerifier {
                 || workflow.leaseUntil().isEmpty()) {
             throw new IllegalArgumentException("CA proof is not claimed for verification");
         }
-        var role = workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
-                ? SignWorkflowStore.SubjectKeyRole.ALTERNATIVE : SignWorkflowStore.SubjectKeyRole.PRIMARY;
+        SignWorkflowStore.SubjectKeyRole role =
+                workflow.stage() == SignWorkflowStore.Stage.CA_ALT_PROOF_VERIFYING
+                        ? SignWorkflowStore.SubjectKeyRole.ALTERNATIVE
+                        : SignWorkflowStore.SubjectKeyRole.PRIMARY;
         boolean responder = OcspResponderSubjectProofBindings.supports(workflow.envelope());
         DomainCommandEncoding.Decoded command = responder ? OcspResponderSubjectProofBindings.requireEnvelope(workflow.envelope(), role)
                 : CaSubjectProofBindings.requireEnvelope(workflow.envelope(), role);
@@ -143,13 +147,19 @@ final class ManagedKeyProofVerifier {
         if (signature.encoding() != Encoding.BINARY || signature.byteLength() > 1_048_576) { throw invalid(); }
         FullCrlSigningCommand.requireAdmission(step.algorithmId(), step.challenge().length(), pureEdDsaMaximum);
         try {
-            if (responder) OcspResponderSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
-            else CaSubjectProofBindings.requireLiveCandidates(store.stagedContent(), workflow.envelope());
+            if (responder) {
+                OcspResponderSubjectProofBindings.requireLiveCandidates(
+                        store.stagedContent(), workflow.envelope());
+            } else {
+                CaSubjectProofBindings.requireLiveCandidates(
+                        store.stagedContent(), workflow.envelope());
+            }
             byte[] challenge = ManagedKeyProofBindings.readChallenge(store.stagedContent(), step.operationId(), workflow.deadline(),
                     responder ? Optional.empty() : Optional.of(CaSubjectProofBindings.context(workflow.envelope(), role)), command, step.challenge());
             verify(command, challenge, signature);
         } catch (IOException | GeneralSecurityException failure) {
-            throw new PkiException("Managed key proof verification is temporarily unavailable", failure);
+            throw new PkiException(
+                    "Managed key proof verification is temporarily unavailable", failure);
         }
     }
 
@@ -168,8 +178,13 @@ final class ManagedKeyProofVerifier {
         if (!HexFormat.of().formatHex(algorithm).equals(command.field(9))) {
             throw new IllegalStateException("Managed key proof verification binding differs");
         }
-        SignatureInteropProfile profile = SignatureInteropProfiles.resolve(identity.canonicalForm())
-                .orElseThrow(() -> new IllegalStateException("Managed key proof verification profile unavailable"));
+        SignatureInteropProfile profile =
+                SignatureInteropProfiles.resolve(identity.canonicalForm())
+                        .orElseThrow(
+                                () ->
+                                        new IllegalStateException(
+                                                "Managed key proof verification profile"
+                                                    + " unavailable"));
         byte[] nativeSpki = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(spki);
         // Parse through the same provider-neutral PKIX boundary as certificate
         // verification. The default JCA ML-DSA factory may return a JDK key that
@@ -208,6 +223,7 @@ final class ManagedKeyProofVerifier {
     }
 
     private static DomainContinuationPublisher.PostconditionFailure invalid() {
-        return new DomainContinuationPublisher.PostconditionFailure("MANAGED_KEY_PROOF_SIGNATURE_INVALID");
+        return new DomainContinuationPublisher.PostconditionFailure(
+                "MANAGED_KEY_PROOF_SIGNATURE_INVALID");
     }
 }

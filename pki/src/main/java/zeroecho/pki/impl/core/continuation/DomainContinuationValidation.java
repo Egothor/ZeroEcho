@@ -33,15 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Instant;
-import java.util.HexFormat;
-import java.util.Objects;
-
-import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
@@ -50,10 +43,18 @@ import zeroecho.pki.api.credential.CredentialLineage;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.HexFormat;
+import java.util.Objects;
+
 /**
  * Central fail-closed validation for recovered durable domain continuations.
  */
 public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity - One persisted command grammar validates correlated domain continuations; individual methods remain checked.
+    private static final int ROOT_LIFECYCLE_FIELDS = 16;
     private static final int MAXIMUM_TOTAL_BYTES = 2 * 1_048_576;
     private static final String CREATE_ROOT = "CREATE_ROOT";
     private static final String ROLLOVER_ROOT = "ROLLOVER_ROOT";
@@ -68,17 +69,19 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
      * @param encodedBytes total persisted record size
      * @return the exact validated record
      * @throws NullPointerException if expectedOperationId, record is null
-     * @throws IllegalStateException if the operation identity, command commitment or kind-specific continuation invariants are inconsistent
+     * @throws IllegalStateException if the operation identity, command commitment or kind-specific
+     *     continuation invariants are inconsistent
      */
-    public static DomainContinuationStore.Record validate(PkiId expectedOperationId,
-            DomainContinuationStore.Record record, int encodedBytes) {
+    public static DomainContinuationStore.Record validate(
+            PkiId expectedOperationId, DomainContinuationStore.Record record, int encodedBytes) {
         Objects.requireNonNull(expectedOperationId, "expectedOperationId");
         Objects.requireNonNull(record, "record");
         if (!expectedOperationId.equals(record.operationId())
                 || encodedBytes <= 0 || encodedBytes > MAXIMUM_TOTAL_BYTES
                 || !MessageDigest.isEqual(record.commandCommitment().getBytes(StandardCharsets.US_ASCII),
                         DomainContinuationTemplate.commitment(record.command()).getBytes(StandardCharsets.US_ASCII))) {
-            throw new IllegalStateException("Domain continuation identity or commitment is invalid");
+            throw new IllegalStateException(
+                    "Domain continuation identity or commitment is invalid");
         }
         DomainCommandEncoding.Decoded command = validateCanonical(record.kind(), record.command());
         if (record.kind() == DomainContinuationStore.Kind.KEY_PROOF) { validateProofRecord(record, command); }
@@ -147,36 +150,34 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
             case KEY_PROOF -> {
                 try { ManagedKeyProofCommand.validateComplete(command); }
                 catch (IllegalArgumentException invalid) {
-                    throw new IllegalStateException("Managed key proof command is invalid", invalid);
+                    throw new IllegalStateException(
+                            "Managed key proof command is invalid", invalid);
                 }
             }
         }
     }
 
     private static void validateIssuance(DomainCommandEncoding.Decoded command) {
-        if (command.operation().equals(OcspResponderCertificateCommand.OPERATION)) {
+        if (OcspResponderCertificateCommand.OPERATION.equals(command.operation())) {
             new OcspResponderCertificateCommand(command.fields());
             return;
         }
-        boolean lifecycle = switch (command.operation()) {
-            case "ISSUE_END_ENTITY" -> false;
-            case "RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY" -> true;
-            default -> throw new IllegalStateException("Domain continuation kind and operation differ");
-        };
+        boolean lifecycle =
+                switch (command.operation()) {
+                    case "ISSUE_END_ENTITY" -> false;
+                    case "RENEW_END_ENTITY", "REPLACE_END_ENTITY", "REISSUE_END_ENTITY" -> true;
+                    default ->
+                            throw new IllegalStateException(
+                                    "Domain continuation kind and operation differ");
+                };
         int legacyFields = lifecycle ? 24 : 23;
-        if (command.fields().size() == legacyFields + 1) digest(command.field(legacyFields));
-        else command.requireFields(legacyFields);
+        if (command.fields().size() == legacyFields + 1) {
+            digest(command.field(legacyFields));
+        } else {
+            command.requireFields(legacyFields);
+        }
         if (lifecycle) {
-            pkiId(command, 23);
-            String predecessor = command.field(23);
-            if (!predecessor.startsWith("x509:")) {
-                throw new IllegalStateException("Lifecycle predecessor is not an X.509 credential identity");
-            }
-            digest(predecessor.substring(5));
-            if ("REISSUE_END_ENTITY".equals(command.operation())
-                    && (!command.field(15).isEmpty() || !command.field(16).isEmpty())) {
-                throw new IllegalStateException("Lifecycle continuation cannot contain an external publication identity");
-            }
+            validateIssuancePredecessor(command);
         }
         pkiId(command, 0);
         pkiId(command, 1);
@@ -193,7 +194,8 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         AttributeSet evidence = DomainAttributeEncoding.decode(command.field(22));
         if (evidence.ids().contains(CredentialLineage.SUPERSEDES_CREDENTIAL_ID)
                 || evidence.ids().contains(CredentialLineage.SUPERSESSION_REASON)) {
-            throw new IllegalStateException("Issuance execution evidence cannot supply credential lineage");
+            throw new IllegalStateException(
+                    "Issuance execution evidence cannot supply credential lineage");
         }
         validatePublicationIdentity(command);
     }
@@ -234,18 +236,7 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (CREATE_ROOT.equals(command.operation()) || ROLLOVER_ROOT.equals(command.operation())) {
             // Both operations freeze the authority before signing. Creation derives
             // it from the operation; rollover retains the existing authority.
-            if (command.fields().size() == 15 || command.fields().size() == 16) {
-                CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
-                if (command.fields().size() == 16) {
-                    var context = CaLifecycleContextCodec.decode(command.field(15));
-                    if (!ROLLOVER_ROOT.equals(command.operation())
-                            || !context.expectedHead().caId().value().equals(command.field(13))
-                            || context.operation() != CaLifecycleContext.Operation.ROOT_ROLLOVER
-                                    && context.operation() != CaLifecycleContext.Operation.ROOT_CANDIDATE) {
-                        throw new IllegalStateException("Root lifecycle context differs");
-                    }
-                }
-            } else command.requireFields(14);
+            validateRootFormat(command);
             new FormatId(command.field(0));
             new SubjectRef(command.field(1));
             new KeyRef(command.field(3));
@@ -259,8 +250,11 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (!IntermediateSigningCommand.supports(command.operation())) {
             throw new IllegalStateException("Domain continuation kind and operation differ");
         }
-        if (command.fields().size() == 25 || command.fields().size() == 26) CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
-        else command.requireFields(23);
+        if (command.fields().size() == 25 || command.fields().size() == 26) {
+            CaOutgoingBinding.decodeForSubject(command.field(23), new KeyRef(command.field(6)));
+        } else {
+            command.requireFields(23);
+        }
         new FormatId(command.field(0));
         pkiId(command, 1);
         pkiId(command, 2);
@@ -274,7 +268,7 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         instant(command.field(12));
         integer(command.field(13));
         new KeyRef(command.field(14));
-        digest(command.field(16));
+        digest(command.field(ROOT_LIFECYCLE_FIELDS));
         digest(command.field(17));
         IntermediateSigningCommand.validate(command);
     }
@@ -285,8 +279,8 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
         if (!Long.toString(version).equals(command.field(offset + 1))) {
             throw new IllegalStateException("Domain continuation profile version is noncanonical");
         }
-        new zeroecho.pki.api.profile.CertificateProfileRef(id, version,
-                HexFormat.of().parseHex(digest(command.field(offset + 2))));
+        new zeroecho.pki.api.profile.CertificateProfileRef(
+                id, version, HexFormat.of().parseHex(digest(command.field(offset + 2))));
     }
 
     private static PkiId pkiId(DomainCommandEncoding.Decoded command, int index) {
@@ -325,7 +319,7 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
 
     private static void validatePublicationIdentity(DomainCommandEncoding.Decoded command) {
         boolean hasPublicationIdentity = !command.field(15).isEmpty();
-        if (hasPublicationIdentity != !command.field(16).isEmpty()) {
+        if (hasPublicationIdentity != !command.field(ROOT_LIFECYCLE_FIELDS).isEmpty()) {
             throw new IllegalStateException("Domain continuation issuance identity is incomplete");
         }
         if (hasPublicationIdentity) {
@@ -333,7 +327,45 @@ public final class DomainContinuationValidation { // NOPMD CyclomaticComplexity 
                     || !command.field(15).matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
                 throw new IllegalStateException("Domain continuation issuance identity is invalid");
             }
-            digest(command.field(16));
+            digest(command.field(ROOT_LIFECYCLE_FIELDS));
         }
+    }
+
+    private static void validateIssuancePredecessor(DomainCommandEncoding.Decoded command) {
+
+        pkiId(command, 23);
+        String predecessor = command.field(23);
+        if (!predecessor.startsWith("x509:")) {
+            throw new IllegalStateException(
+                    "Lifecycle predecessor is not an X.509 credential identity");
+        }
+        digest(predecessor.substring(5));
+        if ("REISSUE_END_ENTITY".equals(command.operation())
+                && (!command.field(15).isEmpty()
+                        || !command.field(ROOT_LIFECYCLE_FIELDS).isEmpty())) {
+            throw new IllegalStateException(
+                    "Lifecycle continuation cannot contain an external publication identity");
+        }
+    }
+
+    private static void requireRootLifecycle(DomainCommandEncoding.Decoded command) {
+
+        CaLifecycleContext context = CaLifecycleContextCodec.decode(command.field(15));
+        if (!ROLLOVER_ROOT.equals(command.operation())
+                || !context.expectedHead().caId().value().equals(command.field(13))
+                || context.operation() != CaLifecycleContext.Operation.ROOT_ROLLOVER
+                        && context.operation() != CaLifecycleContext.Operation.ROOT_CANDIDATE) {
+            throw new IllegalStateException("Root lifecycle context differs");
+        }
+    }
+    private static void validateRootFormat(DomainCommandEncoding.Decoded command) {
+            if (command.fields().size() == 15 || command.fields().size() == ROOT_LIFECYCLE_FIELDS) {
+                CaOutgoingBinding.decodeForSubject(command.field(14), new KeyRef(command.field(3)));
+                if (command.fields().size() == ROOT_LIFECYCLE_FIELDS) {
+                    requireRootLifecycle(command);
+                }
+            } else {
+                command.requireFields(14);
+            }
     }
 }

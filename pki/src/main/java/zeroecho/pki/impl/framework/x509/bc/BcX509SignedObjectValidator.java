@@ -33,23 +33,12 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.security.GeneralSecurityException;
-import java.security.cert.X509Certificate;
-import java.time.Instant;
-import java.util.Objects;
-import java.util.Optional;
-
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ContentSlice;
 import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
-import zeroecho.pkix.Pkix;
-import zeroecho.pkix.ocsp.OcspResponse;
-import zeroecho.pkix.ocsp.ResponderId;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
@@ -57,6 +46,17 @@ import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
 import zeroecho.pki.impl.framework.x509.X509SuiteCompatibility;
 import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.ocsp.OcspResponse;
+import zeroecho.pkix.ocsp.ResponderId;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.GeneralSecurityException;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Edge inspection of a canonically validated signed X.509 object.
@@ -109,7 +109,8 @@ public final class BcX509SignedObjectValidator {
         Objects.requireNonNull(cancellation, "cancellation");
         long contentLength = content.length().orElse(-1L);
         if (contentLength <= 0L || contentLength > MAXIMUM_CERTIFICATE_BYTES) {
-            throw new IOException("Certificate exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+            throw new IOException(
+                    "Certificate exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
         }
         StreamingDerReader.SignedObjectLayout layout = reader.inspectSignedObject(content,
                 StreamingDerReader.SignedObjectKind.CERTIFICATE, cancellation);
@@ -118,13 +119,15 @@ public final class BcX509SignedObjectValidator {
         ContentSlice outerAlgorithm = new ContentSlice(content, layout.outerAlgorithmOffset(),
                 layout.outerAlgorithmLength());
         if (!equalContent(tbsAlgorithm, outerAlgorithm, cancellation)) {
-            throw new IOException("Certificate algorithms differ: code=OUTER_TBS_ALGORITHM_MISMATCH");
+            throw new IOException(
+                    "Certificate algorithms differ: code=OUTER_TBS_ALGORITHM_MISMATCH");
         }
         AlgorithmIdentity signature = decodeAlgorithm(tbsAlgorithm, X509AlgorithmRole.SIGNATURE_ALGORITHM);
         X509SecurityFloor.requirePermitted(signature);
         if (expectedSignature.isPresent() && !expectedSignature.get().equals(signature)) {
             throw new IOException(
-                    "Certificate signature differs from execution plan: code=EXPECTED_SIGNATURE_IDENTITY_MISMATCH");
+                    "Certificate signature differs from execution plan:"
+                        + " code=EXPECTED_SIGNATURE_IDENTITY_MISMATCH");
         }
         ContentSlice spki = new ContentSlice(content, layout.subjectPublicKeyInfoOffset(),
                 layout.subjectPublicKeyInfoLength());
@@ -152,26 +155,29 @@ public final class BcX509SignedObjectValidator {
     }
 
     /**
-     * Validates a generated CRL against its exact live signing plan and issuer
-     * certificate.
+     * Validates a generated CRL against its exact live signing plan and issuer certificate.
      *
      * @param content original complete CRL DER
      * @param plan exact non-forgeable SIGN plan used for generation
-     * @param issuerCertificate authorized issuer certificate whose exact subject
-     *                          Name and SPKI must bind the CRL
-     * @param expectedThisUpdate exact {@code thisUpdate} metadata to bind to the
-     *                           signed TBSCertList
-     * @param expectedNextUpdate exact optional {@code nextUpdate} metadata to bind
-     *                           to the signed TBSCertList
+     * @param issuerCertificate authorized issuer certificate whose exact subject Name and SPKI must
+     *     bind the CRL
+     * @param expectedThisUpdate exact {@code thisUpdate} metadata to bind to the signed TBSCertList
+     * @param expectedNextUpdate exact optional {@code nextUpdate} metadata to bind to the signed
+     *     TBSCertList
      * @param cancellation operation cancellation signal
-     * @throws IOException if canonical DER, binding, suite, or signature
-     *                     validation fails
+     * @throws IOException if canonical DER, binding, suite, or signature validation fails
      * @throws IllegalArgumentException if the plan belongs to another runtime
-     * @throws NullPointerException if {@code content}, {@code plan}, {@code issuerCertificate}, {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
+     * @throws NullPointerException if {@code content}, {@code plan}, {@code issuerCertificate},
+     *     {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
      */
-    public void validateGeneratedCrl(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
-            X509Certificate issuerCertificate, Instant expectedThisUpdate,
-            Optional<Instant> expectedNextUpdate, CancellationSignal cancellation) throws IOException {
+    public void validateGeneratedCrl(
+            RepeatableContent content,
+            X509ExecutionPlan<SigningProvider> plan,
+            X509Certificate issuerCertificate,
+            Instant expectedThisUpdate,
+            Optional<Instant> expectedNextUpdate,
+            CancellationSignal cancellation)
+            throws IOException {
         Objects.requireNonNull(content, "content");
         Objects.requireNonNull(plan, "plan");
         Objects.requireNonNull(issuerCertificate, "issuerCertificate");
@@ -183,13 +189,16 @@ public final class BcX509SignedObjectValidator {
                 StreamingDerReader.SignedObjectKind.CRL, cancellation);
         if (!layout.thisUpdate().equals(Optional.of(expectedThisUpdate))
                 || !layout.nextUpdate().equals(expectedNextUpdate)) {
-            throw new IOException("CRL update times differ from metadata: code=STATUS_OBJECT_BINDING_MISMATCH");
+            throw new IOException(
+                    "CRL update times differ from metadata: code=STATUS_OBJECT_BINDING_MISMATCH");
         }
         ContentSlice issuer = new ContentSlice(content, layout.issuerOffset(), layout.issuerLength());
         try (RepeatableContent expectedIssuer = new ImmutableByteContent(
                 issuerCertificate.getSubjectX500Principal().getEncoded())) {
             if (!equalContent(issuer, expectedIssuer, cancellation)) {
-                throw new IOException("CRL issuer differs from issuer certificate: code=STATUS_OBJECT_BINDING_MISMATCH");
+                throw new IOException(
+                        "CRL issuer differs from issuer certificate:"
+                            + " code=STATUS_OBJECT_BINDING_MISMATCH");
             }
         }
         ContentSlice tbsAlgorithm = new ContentSlice(content, layout.tbsAlgorithmOffset(),
@@ -202,7 +211,9 @@ public final class BcX509SignedObjectValidator {
         AlgorithmIdentity signatureIdentity = decodeAlgorithm(outerAlgorithm,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM);
         if (!plan.selection().requested().equals(signatureIdentity)) {
-            throw new IOException("CRL signature differs from execution plan: code=STATUS_OBJECT_BINDING_MISMATCH");
+            throw new IOException(
+                    "CRL signature differs from execution plan:"
+                        + " code=STATUS_OBJECT_BINDING_MISMATCH");
         }
         byte[] issuerPublicKey = Pkix.subjectPublicKeyInfo(issuerCertificate);
         AlgorithmIdentity issuerKey = new BcX509AlgorithmAdapter(authority.bindings()).decode(
@@ -223,31 +234,37 @@ public final class BcX509SignedObjectValidator {
                 throw new IOException("CRL signature invalid: code=SIGNATURE_VERIFICATION_FAILED");
             }
         } catch (GeneralSecurityException exception) {
-            throw new IOException("CRL signature invalid: code=SIGNATURE_VERIFICATION_FAILED", exception);
+            throw new IOException(
+                    "CRL signature invalid: code=SIGNATURE_VERIFICATION_FAILED", exception);
         } finally {
             java.util.Arrays.fill(signature, (byte) 0);
         }
     }
 
     /**
-     * Validates a generated persistent OCSP status object at the service boundary:
-     * the plan is re-authorized, the DER parses as a {@code SUCCESSFUL} OCSP
-     * response, its responder id and single-response update times bind to the
-     * expected metadata, and its signature verifies under the responder (issuer)
-     * public key.
+     * Validates a generated persistent OCSP status object at the service boundary: the plan is
+     * re-authorized, the DER parses as a {@code SUCCESSFUL} OCSP response, its responder id and
+     * single-response update times bind to the expected metadata, and its signature verifies under
+     * the responder (issuer) public key.
      *
-     * @param content              signed OCSP response content
-     * @param plan                 exact live signing plan minted by this authority
+     * @param content signed OCSP response content
+     * @param plan exact live signing plan minted by this authority
      * @param responderCertificate responder (issuer) certificate
-     * @param expectedThisUpdate   exact producedAt / single-response thisUpdate
-     * @param expectedNextUpdate   exact single-response nextUpdate metadata
-     * @param cancellation         operation cancellation signal
+     * @param expectedThisUpdate exact producedAt / single-response thisUpdate
+     * @param expectedNextUpdate exact single-response nextUpdate metadata
+     * @param cancellation operation cancellation signal
      * @throws IOException if parsing, binding, or signature validation fails
-     * @throws NullPointerException if {@code content}, {@code plan}, {@code responderCertificate}, {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
+     * @throws NullPointerException if {@code content}, {@code plan}, {@code responderCertificate},
+     *     {@code expectedThisUpdate}, {@code expectedNextUpdate} or {@code cancellation} is null
      */
-    public void validateGeneratedOcsp(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
-            X509Certificate responderCertificate, Instant expectedThisUpdate,
-            Optional<Instant> expectedNextUpdate, CancellationSignal cancellation) throws IOException {
+    public void validateGeneratedOcsp(
+            RepeatableContent content,
+            X509ExecutionPlan<SigningProvider> plan,
+            X509Certificate responderCertificate,
+            Instant expectedThisUpdate,
+            Optional<Instant> expectedNextUpdate,
+            CancellationSignal cancellation)
+            throws IOException {
         Objects.requireNonNull(content, "content");
         Objects.requireNonNull(plan, "plan");
         Objects.requireNonNull(responderCertificate, "responderCertificate");
@@ -260,7 +277,8 @@ public final class BcX509SignedObjectValidator {
             der = input.readNBytes(MAXIMUM_OCSP_RESPONSE_BYTES + 1);
         }
         if (der.length > MAXIMUM_OCSP_RESPONSE_BYTES) {
-            throw new IOException("OCSP response exceeds its finite bound: code=STATUS_OBJECT_BINDING_MISMATCH");
+            throw new IOException(
+                    "OCSP response exceeds its finite bound: code=STATUS_OBJECT_BINDING_MISMATCH");
         }
         try {
             OcspResponse response = Pkix.parseOcspResponse(der);
@@ -268,16 +286,20 @@ public final class BcX509SignedObjectValidator {
             if (!response.isSuccessful() || !response.producedAt().equals(expectedThisUpdate)
                     || !response.responderId().equals(expectedResponder)
                     || !response.verifySignature(responderCertificate.getPublicKey())) {
-                throw new IOException("OCSP response binding invalid: code=STATUS_OBJECT_BINDING_MISMATCH");
+                throw new IOException(
+                        "OCSP response binding invalid: code=STATUS_OBJECT_BINDING_MISMATCH");
             }
             for (OcspResponse.SingleResponse single : response.responses()) {
                 if (!single.thisUpdate().equals(expectedThisUpdate)
                         || !single.nextUpdate().equals(expectedNextUpdate)) {
-                    throw new IOException("OCSP single-response times differ: code=STATUS_OBJECT_BINDING_MISMATCH");
+                    throw new IOException(
+                            "OCSP single-response times differ:"
+                                + " code=STATUS_OBJECT_BINDING_MISMATCH");
                 }
             }
         } catch (IllegalArgumentException exception) {
-            throw new IOException("OCSP signature invalid: code=SIGNATURE_VERIFICATION_FAILED", exception);
+            throw new IOException(
+                    "OCSP signature invalid: code=SIGNATURE_VERIFICATION_FAILED", exception);
         }
     }
 
@@ -286,7 +308,8 @@ public final class BcX509SignedObjectValidator {
         try {
             return Pkix.parseAlgorithmIdentifier(encoded);
         } catch (IllegalArgumentException exception) {
-            throw new IOException("Malformed AlgorithmIdentifier: code=UNKNOWN_SIGNATURE_BINDING", exception);
+            throw new IOException(
+                    "Malformed AlgorithmIdentifier: code=UNKNOWN_SIGNATURE_BINDING", exception);
         } finally {
             java.util.Arrays.fill(encoded, (byte) 0);
         }
@@ -298,7 +321,8 @@ public final class BcX509SignedObjectValidator {
             zeroecho.pkix.AlgorithmIdentifier identifier = Pkix.parseAlgorithmIdentifier(encoded);
             return new BcX509AlgorithmAdapter(authority.bindings()).decode(identifier, role);
         } catch (IllegalArgumentException exception) {
-            throw new IOException("Unknown X.509 algorithm binding: code=UNKNOWN_SIGNATURE_BINDING", exception);
+            throw new IOException(
+                    "Unknown X.509 algorithm binding: code=UNKNOWN_SIGNATURE_BINDING", exception);
         } finally {
             java.util.Arrays.fill(encoded, (byte) 0);
         }
@@ -319,7 +343,8 @@ public final class BcX509SignedObjectValidator {
     private static byte[] materializeElement(RepeatableContent content) throws IOException {
         long length = content.length().orElse(-1L);
         if (length <= 0L || length > MAXIMUM_ELEMENT_BYTES) {
-            throw new IOException("X.509 element exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+            throw new IOException(
+                    "X.509 element exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
         }
         byte[] encoded = new byte[(int) length];
         try (InputStream input = content.openStream()) {

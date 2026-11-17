@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.time.Instant;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -98,7 +100,7 @@ final class MetadataEvidenceLog {
      */
     // Every optimistic retry needs fresh keys, content wrappers, and transaction-owned immutable values.
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
-    /* default */ boolean append(PkiId objectId, java.time.Instant recordedAt, byte[] payload) throws IOException {
+    /* default */ boolean append(PkiId objectId, Instant recordedAt, byte[] payload) throws IOException {
         Objects.requireNonNull(objectId, "objectId");
         Objects.requireNonNull(recordedAt, "recordedAt");
         byte[] exactPayload = Objects.requireNonNull(payload, "payload").clone();
@@ -192,7 +194,7 @@ final class MetadataEvidenceLog {
      * @param recordedAt retained evidence recording timestamp
      * @param payload exact encoded payload retained for this operation
      */
-    /* default */ record Entry(long sequence, PkiId objectId, java.time.Instant recordedAt, byte[] payload) {
+    /* default */ record Entry(long sequence, PkiId objectId, Instant recordedAt, byte[] payload) {
         /**
          * Creates one decoded append entry.
          *
@@ -304,7 +306,7 @@ final class MetadataEvidenceLog {
         return String.format("%019d", sequence);
     }
 
-    private static byte[] encodeEntry(PkiId objectId, java.time.Instant recordedAt, byte[] payload) {
+    private static byte[] encodeEntry(PkiId objectId, Instant recordedAt, byte[] payload) {
         byte[] id = objectId.value().getBytes(StandardCharsets.UTF_8);
         return ByteBuffer.allocate(Long.BYTES + Integer.BYTES + id.length + payload.length)
                 .putLong(recordedAt.toEpochMilli()).putInt(id.length).put(id).put(payload).array();
@@ -312,7 +314,7 @@ final class MetadataEvidenceLog {
 
     private static Entry decodeEntry(long sequence, byte[] value) {
         ByteBuffer buffer = ByteBuffer.wrap(value);
-        java.time.Instant recordedAt = java.time.Instant.ofEpochMilli(buffer.getLong());
+        Instant recordedAt = Instant.ofEpochMilli(buffer.getLong());
         int idLength = buffer.getInt();
         if (idLength < 0 || idLength > buffer.remaining()) {
             throw new IllegalStateException("Evidence-log entry payload is malformed");

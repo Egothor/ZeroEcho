@@ -103,7 +103,7 @@ public record SdkLifecycleTarget(int version, String operation, PkiId predecesso
      * @throws IllegalArgumentException if fields, types, version, identifier or commitments are invalid
      */
     public static SdkLifecycleTarget decode(HybridSdkValue value) {
-        var fields = Objects.requireNonNull(value, "value").objectFields();
+        Map<String,HybridSdkValue> fields = Objects.requireNonNull(value, "value").objectFields();
         if (!fields.keySet().equals(FIELDS) || fields.get("version").integerValue() != 1) {
             throw new IllegalArgumentException("Invalid SDK lifecycle extension schema");
         }

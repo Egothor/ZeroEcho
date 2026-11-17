@@ -33,21 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.continuation;
 
-import java.math.BigInteger;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.Objects;
-import java.util.Optional;
-
-import java.security.cert.X509Certificate;
-
-import zeroecho.pkix.Pkix;
-
-import zeroecho.pki.api.status.StatusObjectType;
-
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
@@ -58,7 +43,9 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerCryptographicBinding;
 import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialLineage;
 import zeroecho.pki.api.credential.CredentialStatus;
@@ -69,12 +56,24 @@ import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationState;
-import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.impl.core.X509ExtensionOids;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
 import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pkix.Pkix;
+
+import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Reconstructs, validates, and idempotently publishes one durable domain result.
@@ -115,7 +114,8 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
                     domain.kind(), domain.correlationId(), domain.command(), domain.commandCommitment())), result, domain);
             case STATUS -> statusPublisher.publish(command, result);
             case CA -> caPublisher.publish(command, result, domain);
-            case KEY_PROOF -> throw new PostconditionFailure("KEY_PROOF_ARTIFACT_PUBLICATION_FORBIDDEN");
+            case KEY_PROOF ->
+                    throw new PostconditionFailure("KEY_PROOF_ARTIFACT_PUBLICATION_FORBIDDEN");
         }
     }
 
@@ -140,8 +140,12 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
             Arrays.fill(signatureBytes, (byte) 0);
             throw new PostconditionFailure("SIGNATURE_RESULT_INVALID");
         }
-        byte[] tbs = contentAccess.materialize(domain.signingContent().orElseThrow(
-                () -> new PostconditionFailure("SIGNING_CONTENT_INVALID")), "SIGNING_CONTENT_INVALID");
+        byte[] tbs =
+                contentAccess.materialize(
+                        domain.signingContent()
+                                .orElseThrow(
+                                        () -> new PostconditionFailure("SIGNING_CONTENT_INVALID")),
+                        "SIGNING_CONTENT_INVALID");
         try {
             boolean status = domain.kind() == DomainContinuationStore.Kind.STATUS;
             if (status && isOcsp(domain)) {
@@ -180,7 +184,7 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
 
     private void publishIssuance(DomainCommandEncoding.Decoded command, EncodedObject result,
             DomainContinuationStore.Record domain) {
-        if (command.operation().equals(OcspResponderCertificateCommand.OPERATION)) {
+        if (OcspResponderCertificateCommand.OPERATION.equals(command.operation())) {
             publishManagedOcsp(new OcspResponderCertificateCommand(command.fields()), result, domain);
             return;
         }
@@ -192,8 +196,12 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
         requireFrozenIssuer(generation, path, frozen.authorityId(), frozen.issuerId(), frozen.pathCommitment());
         int bindingIndex = "ISSUE_END_ENTITY".equals(command.operation()) ? 23 : 24;
         if (command.fields().size() == bindingIndex + 1) {
-            var binding = store.getIssuerCryptographicBinding(generation.issuerId())
-                    .orElseThrow(() -> new PostconditionFailure("FROZEN_ISSUER_BINDING_MISSING"));
+            IssuerCryptographicBinding binding =
+                    store.getIssuerCryptographicBinding(generation.issuerId())
+                            .orElseThrow(
+                                    () ->
+                                            new PostconditionFailure(
+                                                    "FROZEN_ISSUER_BINDING_MISSING"));
             if (!binding.commitment().equals(command.field(bindingIndex))
                     || !binding.primary().keyRef().value().equals(command.field(11))) {
                 throw new PostconditionFailure("FROZEN_ISSUER_BINDING_DIFFERS");
@@ -242,63 +250,75 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
 
     private void publishManagedOcsp(OcspResponderCertificateCommand command, EncodedObject result,
             DomainContinuationStore.Record domain) {
-        var fields = command.fields();
-        var authority = new PkiId(fields.get(1));
-        var issuerId = new PkiId(fields.get(2));
-        var generation = store.getIssuerGeneration(issuerId).orElseThrow(() -> new PostconditionFailure("ISSUER_GENERATION_UNAVAILABLE"));
-        var path = store.getIssuerChainPath(new PkiId(fields.get(4))).orElseThrow(() -> new PostconditionFailure("ISSUER_PATH_UNAVAILABLE"));
+        java.util.List<String> fields = command.fields();
+        PkiId authority = new PkiId(fields.get(1));
+        PkiId issuerId = new PkiId(fields.get(2));
+        IssuerGeneration generation =
+                store.getIssuerGeneration(issuerId)
+                        .orElseThrow(
+                                () -> new PostconditionFailure("ISSUER_GENERATION_UNAVAILABLE"));
+        IssuerChainPath path =
+                store.getIssuerChainPath(new PkiId(fields.get(4)))
+                        .orElseThrow(() -> new PostconditionFailure("ISSUER_PATH_UNAVAILABLE"));
         requireFrozenIssuer(generation, path, authority, issuerId, fields.get(5));
-        var binding = store.getIssuerCryptographicBinding(issuerId).orElseThrow();
+        IssuerCryptographicBinding binding =
+                store.getIssuerCryptographicBinding(issuerId).orElseThrow();
         if (!binding.commitment().equals(fields.get(14)) || !generation.credentialId().value().equals(fields.get(3))) {
             throw new PostconditionFailure("FROZEN_ISSUER_BINDING_DIFFERS");
         }
-        var issuer = store.getCredential(generation.credentialId()).orElseThrow();
-        var certificate = certificate(result);
-        try {
-            if (!sha256(certificate.getTBSCertificate()).equals(fields.get(16))
-                    || !certificate.getSerialNumber().toString().equals(fields.get(24))
-                    || !certificate.getSubjectX500Principal().equals(zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(
-                            OcspResponderCertificateCommand.decodeSubject(fields.get(9))))
-                    || !certificate.getNotBefore().toInstant().equals(Instant.parse(fields.get(10)))
-                    || !certificate.getNotAfter().toInstant().equals(Instant.parse(fields.get(11)))
-                    || !sha256(Pkix.subjectPublicKeyInfo(certificate)).equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256())
-                    || !sha256(zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(certificate, "2.5.29.72"))
-                            .equals(command.subjectBinding(SignWorkflowStore.SubjectKeyRole.ALTERNATIVE).subjectSpkiSha256())
-                    || certificate.getBasicConstraints() >= 0 || certificate.getKeyUsage() == null || !certificate.getKeyUsage()[0]
-                    || certificate.getKeyUsage().length > 5 && certificate.getKeyUsage()[5]
-                    || !java.util.List.of("1.3.6.1.5.5.7.3.9").equals(certificate.getExtendedKeyUsage())) {
-                throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS");
-            }
-        } catch (java.security.cert.CertificateException | java.io.IOException invalid) {
-            throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS", invalid);
-        }
+        Credential issuer = store.getCredential(generation.credentialId()).orElseThrow();
+        X509Certificate certificate = certificate(result);
+        requireManagedOcspCertificate(command, fields, certificate);
         verifyIssuerSignature(certificate, issuer.content());
         String issuance = fields.get(17);
         int marker = issuance.lastIndexOf(":r");
         String slot = issuance.substring("ocsp-prov:".length(), marker);
         String revision = issuance.substring(marker + 2);
-        var attributes = SimpleAttributeSet.builder().putAll(command.executionAttributes());
+        SimpleAttributeSet.Builder attributes =
+                SimpleAttributeSet.builder().putAll(command.executionAttributes());
         putIntent(attributes, new IssuanceIntent(issuance, fields.get(18), command.profile(), issuerId, path.pathId(), path.pathCommitment()));
-        attributes.put(new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-core-slot:v1"), new AttributeValue.StringValue(slot));
-        attributes.put(new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-revision:v1"), new AttributeValue.StringValue(revision));
+        attributes.put(
+                new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-core-slot:v1"),
+                new AttributeValue.StringValue(slot));
+        attributes.put(
+                new zeroecho.pki.api.attr.AttributeId("urn:zeroecho:pki:ocsp-provision-revision:v1"),
+                new AttributeValue.StringValue(revision));
         byte[] der = result.bytes();
-        var id = new PkiId("x509:" + sha256(der));
-        var existing = store.getCredential(id);
+        PkiId id = new PkiId("x509:" + sha256(der));
+        Optional<Credential> existing = store.getCredential(id);
         DurableContentReference content = existing.map(Credential::content).orElseGet(() -> persist(der));
         boolean published = false;
         try {
-            var credential = new Credential(id, new FormatId("x509"), new IssuerRef(authority, issuerId, path.pathId()),
-                    new SubjectRef(zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subjectRefString(
-                            OcspResponderCertificateCommand.decodeSubject(fields.get(9)))),
-                    new Validity(Instant.parse(fields.get(10)), Instant.parse(fields.get(11))), certificate.getSerialNumber().toString(),
-                    new PkiId("spki:" + command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY).subjectSpkiSha256()),
-                    new EndEntityProfileBinding(command.profile()), CredentialStatus.ISSUED, content, attributes.build());
+            Credential credential =
+                    new Credential(
+                            id,
+                            new FormatId("x509"),
+                            new IssuerRef(authority, issuerId, path.pathId()),
+                            new SubjectRef(
+                                    zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subjectRefString(
+                                            OcspResponderCertificateCommand.decodeSubject(
+                                                    fields.get(9)))),
+                            new Validity(
+                                    Instant.parse(fields.get(10)), Instant.parse(fields.get(11))),
+                            certificate.getSerialNumber().toString(),
+                            new PkiId(
+                                    "spki:"
+                                            + command.subjectBinding(
+                                                            SignWorkflowStore.SubjectKeyRole
+                                                                    .PRIMARY)
+                                                    .subjectSpkiSha256()),
+                            new EndEntityProfileBinding(command.profile()),
+                            CredentialStatus.ISSUED,
+                            content,
+                            attributes.build());
             existing.ifPresent(value -> requireCanonicalIssuanceCredential(value, credential, der));
             store.putCredentialFromSigning(credential, domain.operationId(), domain.commandCommitment());
             published = true;
         } finally {
             Arrays.fill(der, (byte) 0);
-            if (existing.isEmpty()) releaseUnlessPublished(content, published);
+            if (existing.isEmpty()) {
+                releaseUnlessPublished(content, published);
+            }
         }
     }
 
@@ -311,15 +331,18 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
                 || !predecessor.formatId().equals(new FormatId("x509"))
                 || !(predecessor.profileBinding() instanceof EndEntityProfileBinding)
                 || !predecessor.issuerRef().caId().equals(frozen.authorityId())
-                || !generation.issuerId().equals(frozen.issuerId()) || !path.pathId().equals(frozen.pathId())
+                || !generation.issuerId().equals(frozen.issuerId())
+                || !path.pathId().equals(frozen.pathId())
                 || !issuer.credentialId().equals(generation.credentialId())
                 || !path.orderedCredentialIds().getFirst().equals(issuer.credentialId())
                 || !generation.signingKeyRef().value().equals(command.field(11))
                 || !issuer.content().contentId().equals(command.field(12))
                 || !issuer.content().sha256().equals(command.field(13))
                 || certificate.getBasicConstraints() >= 0
-                || !BcX509CertificationRequestParser.reconstructForRenewal(certificate, new FormatId("x509"))
-                        .subjectRef().equals(frozen.subject())) {
+                || !BcX509CertificationRequestParser.reconstructForRenewal(
+                                certificate, new FormatId("x509"))
+                        .subjectRef()
+                        .equals(frozen.subject())) {
             throw new PostconditionFailure("LIFECYCLE_FROZEN_BINDING_DIFFERS");
         }
     }
@@ -363,7 +386,8 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
             throw failure;
         }
         if (!permanentlyRevoked(predecessor)) {
-            throw new IllegalStateException("Predecessor supersession has not been durably confirmed");
+            throw new IllegalStateException(
+                    "Predecessor supersession has not been durably confirmed");
         }
     }
 
@@ -503,10 +527,15 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
             X509Certificate issuerCertificate = certificate(issuerDer);
             try {
                 certificate.verify(issuerCertificate.getPublicKey());
-                if (certificate.getExtensionValue("2.5.29.72") != null
-                        || certificate.getExtensionValue("2.5.29.73") != null
-                        || certificate.getExtensionValue("2.5.29.74") != null) {
-                    byte[] alternativeSpki = zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(issuerCertificate, "2.5.29.72");
+                if (certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo())
+                                != null
+                        || certificate.getExtensionValue(X509ExtensionOids.altSignatureAlgorithm())
+                                != null
+                        || certificate.getExtensionValue(X509ExtensionOids.altSignatureValue())
+                                != null) {
+                    byte[] alternativeSpki =
+                            zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(
+                                    issuerCertificate, X509ExtensionOids.subjectAltPublicKeyInfo());
                     if (!Pkix.verifyAlternativeSignatureCor3(certificate, Pkix.publicKeyFromSubjectPublicKeyInfo(alternativeSpki))) {
                         throw new PostconditionFailure("CERTIFICATE_ALT_SIGNATURE_DIFFERS");
                     }
@@ -526,16 +555,20 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
      *
      * @param certificate certificate whose exact signed metadata is checked; must not be null
      * @return exact native TBS signature identifier
-     * @throws java.security.cert.CertificateEncodingException if the certificate cannot supply its TBS encoding
+     * @throws java.security.cert.CertificateEncodingException if the certificate cannot supply its
+     *     TBS encoding
      * @throws java.io.IOException if the TBS DER or algorithm identifier is invalid
      */
     /* default */ static zeroecho.pkix.AlgorithmIdentifier nativeSignatureAlgorithm(X509Certificate certificate)
             throws java.security.cert.CertificateEncodingException, java.io.IOException {
         byte[] tbs = certificate.getTBSCertificate();
-        var layout = new zeroecho.pki.impl.framework.x509.StreamingDerReader()
-                .inspectUnsignedCertificateTbs(tbs, 1_048_576);
-        return Pkix.parseAlgorithmIdentifier(java.util.Arrays.copyOfRange(tbs, layout.algorithmOffset(),
-                layout.algorithmOffset() + layout.algorithmLength()));
+        zeroecho.pki.impl.framework.x509.StreamingDerReader.CertificateTbsLayout layout =
+                new zeroecho.pki.impl.framework.x509.StreamingDerReader().inspectUnsignedCertificateTbs(tbs, 1_048_576);
+        return Pkix.parseAlgorithmIdentifier(
+                Arrays.copyOfRange(
+                        tbs,
+                        layout.algorithmOffset(),
+                        layout.algorithmOffset() + layout.algorithmLength()));
     }
 
     /**
@@ -736,5 +769,44 @@ final class DomainContinuationPublisher { // NOPMD - CyclomaticComplexity totals
          * @param point durable boundary at which an injected failure may be raised
          */
         void fail(PublicationFaultPoint point);
+    }
+
+    private static void requireManagedOcspCertificate(
+            OcspResponderCertificateCommand command,
+            java.util.List<String> fields,
+            X509Certificate certificate) {
+        try {
+            if (!sha256(certificate.getTBSCertificate()).equals(fields.get(16))
+                    || !certificate.getSerialNumber().toString().equals(fields.get(24))
+                    || !certificate
+                            .getSubjectX500Principal()
+                            .equals(
+                                    zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(
+                                            OcspResponderCertificateCommand.decodeSubject(
+                                                    fields.get(9))))
+                    || !certificate.getNotBefore().toInstant().equals(Instant.parse(fields.get(10)))
+                    || !certificate.getNotAfter().toInstant().equals(Instant.parse(fields.get(11)))
+                    || !sha256(Pkix.subjectPublicKeyInfo(certificate))
+                            .equals(
+                                    command.subjectBinding(SignWorkflowStore.SubjectKeyRole.PRIMARY)
+                                            .subjectSpkiSha256())
+                    || !sha256(
+                                    zeroecho.pki.impl.hybrid.AltSignatureExtensions.requiredValue(
+                                            certificate,
+                                            X509ExtensionOids.subjectAltPublicKeyInfo()))
+                            .equals(
+                                    command.subjectBinding(
+                                                    SignWorkflowStore.SubjectKeyRole.ALTERNATIVE)
+                                            .subjectSpkiSha256())
+                    || certificate.getBasicConstraints() >= 0
+                    || certificate.getKeyUsage() == null
+                    || !certificate.getKeyUsage()[0]
+                    || certificate.getKeyUsage().length > 5 && certificate.getKeyUsage()[5]
+                    || !java.util.List.of("1.3.6.1.5.5.7.3.9").equals(certificate.getExtendedKeyUsage())) {
+                throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS");
+            }
+        } catch (java.security.cert.CertificateException | java.io.IOException invalid) {
+            throw new PostconditionFailure("ISSUED_OCSP_CERTIFICATE_DIFFERS", invalid);
+        }
     }
 }

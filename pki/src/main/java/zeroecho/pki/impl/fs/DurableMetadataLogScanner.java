@@ -340,7 +340,8 @@ final class DurableMetadataLogScanner {
          * @param kind closed TerminalKind discriminator
          * @param committedRevision authoritative committed revision, absent when no commit occurred
          * @param failureCode stable terminal failure code, absent when not applicable
-         * @throws NullPointerException if {@code kind} is null; or if {@code committedRevision} is null; or if {@code failureCode} is null
+         * @throws NullPointerException if {@code kind} is null; or if {@code committedRevision} is
+         * null; or if {@code failureCode} is null
          */
         Terminal {
             Objects.requireNonNull(kind, "kind");
@@ -478,8 +479,15 @@ final class DurableMetadataLogScanner {
          * @param transactionTokensExhausted whether the transaction-token space has been exhausted
          * @param recoveryEpoch authoritative recovery incarnation
          * @param openTransactionCount number of issued transactions without terminal outcomes
-         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if {@code transactions} is null; or if {@code nextTransactionToken} is null
-         * @throws IllegalArgumentException if {@code (lastCompleteFrameBoundary < MINIMUM_COUNT || physicalEnd < MINIMUM_COUNT)}; or if {@code (lastCompleteFrameBoundary > physicalEnd)}; or if {@code (tail == Tail.CLEAN_END && lastCompleteFrameBoundary != physicalEnd)}; or if {@code (tail == Tail.INCOMPLETE_TAIL && lastCompleteFrameBoundary >= physicalEnd)}; or if {@code (transactionTokensExhausted && nextTransactionToken.isPresent())}; or if {@code (!transactionTokensExhausted && nextTransactionToken.isEmpty())}; or if {@code (recoveryEpoch < MINIMUM_COUNT || openTransactionCount < MINIMUM_COUNT)}
+         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if
+         * {@code transactions} is null; or if {@code nextTransactionToken} is null
+         * @throws IllegalArgumentException if {@code (lastCompleteFrameBoundary < MINIMUM_COUNT ||
+         * physicalEnd < MINIMUM_COUNT)}; or if {@code (lastCompleteFrameBoundary > physicalEnd)}; or
+         * if {@code (tail == Tail.CLEAN_END && lastCompleteFrameBoundary != physicalEnd)}; or if
+         * {@code (tail == Tail.INCOMPLETE_TAIL && lastCompleteFrameBoundary >= physicalEnd)}; or if
+         * {@code (transactionTokensExhausted && nextTransactionToken.isPresent())}; or if {@code
+         * (!transactionTokensExhausted && nextTransactionToken.isEmpty())}; or if {@code
+         * (recoveryEpoch < MINIMUM_COUNT || openTransactionCount < MINIMUM_COUNT)}
          */
         RecoveryResult {
             Objects.requireNonNull(storeId, "storeId");
@@ -563,8 +571,13 @@ final class DurableMetadataLogScanner {
          * @param recoveryFullMapCopies number of full-map copies performed during recovery
          * @param recoveryFinalInstalls number of final reconstructed-state installations
          * @param discardedDescriptorCount number of mutation descriptors discarded during replay
-         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if {@code nextTransactionToken} is null; or if {@code stateIndex} is null; or if {@code outcomes} is null; or if {@code restartOutcomes} is null
-         * @throws IllegalArgumentException if {@code (recoveryEpoch < MINIMUM_COUNT || openTransactionCount < MINIMUM_COUNT || recoveryFullMapCopies < MINIMUM_COUNT || recoveryFinalInstalls < MINIMUM_COUNT || discardedDescriptorCount < MINIMUM_COUNT)}; or if {@code (restartOutcomes.size() != openTransactionCount)}
+         * @throws NullPointerException if {@code storeId} is null; or if {@code tail} is null; or if
+         * {@code nextTransactionToken} is null; or if {@code stateIndex} is null; or if {@code
+         * outcomes} is null; or if {@code restartOutcomes} is null
+         * @throws IllegalArgumentException if {@code (recoveryEpoch < MINIMUM_COUNT ||
+         * openTransactionCount < MINIMUM_COUNT || recoveryFullMapCopies < MINIMUM_COUNT ||
+         * recoveryFinalInstalls < MINIMUM_COUNT || discardedDescriptorCount < MINIMUM_COUNT)}; or if
+         * {@code (restartOutcomes.size() != openTransactionCount)}
          */
         ReplayResult {
             Objects.requireNonNull(storeId, "storeId");
@@ -631,7 +644,8 @@ final class DurableMetadataLogScanner {
         /**
          * Restores the next transaction token or a permanently exhausted counter from validated recovery facts.
          *
-         * @param nextTransactionToken validated exact 32-character lowercase hexadecimal next token, required when not exhausted
+         * @param nextTransactionToken validated exact 32-character lowercase hexadecimal next token,
+         * required when not exhausted
          * @param exhausted whether recovery proved the full token space exhausted
          * @return new restored counter
          * @throws NullPointerException if a required input is null

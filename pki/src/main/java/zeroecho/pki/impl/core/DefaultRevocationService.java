@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import zeroecho.pki.spi.store.MetadataStoreId;
+
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
@@ -323,7 +325,7 @@ public final class DefaultRevocationService implements RevocationService {
          * {@inheritDoc}
          */
         @Override
-        public zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() {
+        public MetadataStoreId sourceStoreId() {
             return source.sourceStoreId();
         }
 

@@ -548,7 +548,7 @@ public final class CertificateProfileDocumentCodec {
                 }
                 case "semanticCommitment" -> {
                     seen = mark(seen, 1, path + ".semanticCommitment");
-                    commitment = readBoundedString(parser, path + ".semanticCommitment", 1024);
+                    commitment = readBoundedString(parser, path + ".semanticCommitment", 1_024);
                 }
                 default -> throw failure("UNKNOWN_FIELD", path + ".?");
             }
@@ -1129,13 +1129,13 @@ public final class CertificateProfileDocumentCodec {
             throw failure("MISSING_FIELD", path + ".type");
         }
         if (TWIN_CERTIFICATE.equals(type)) {
-            if (isSeen(seen, 3)) throw failure("SEMANTIC_INVALID", path + ".subjectKeySource");
+            if (isSeen(seen, 3)) { throw failure("SEMANTIC_INVALID", path + ".subjectKeySource"); }
             return HybridCertificateMode.TwinCertificate.INSTANCE;
         }
         if (!"ALT_SIGNATURE".equals(type)) {
             throw failure("TOKEN_INVALID", path + ".type");
         }
-        if (!isSeen(seen, 1)) throw failure("MISSING_FIELD", path + ".altSignatureAlgorithmId");
+        if (!isSeen(seen, 1)) { throw failure("MISSING_FIELD", path + ".altSignatureAlgorithmId"); }
         try {
             return new HybridCertificateMode.AltSignature(altAlgorithmId,
                     HybridCertificateMode.AlternativeSubjectKeySource.valueOf(subjectKeySource), Optional.ofNullable(altKeyRef));

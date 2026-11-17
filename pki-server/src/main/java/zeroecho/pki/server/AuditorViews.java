@@ -44,7 +44,7 @@ import zeroecho.pki.api.PkiId;
 /**
  * Explicit certificate/request/status projection boundary for auditor data views.
  */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass" })
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass"})
 public final class AuditorViews {
     /**
      * Safe source metadata from which authorized projections are produced.
@@ -97,8 +97,8 @@ public final class AuditorViews {
             Permission.requireBounded(algorithmId, 1024, "algorithm identity");
             bindingId = Objects.requireNonNull(bindingId, "bindingId");
             if (commitment == null || !commitment.matches("[0-9a-f]{64}"))
-                throw new IllegalArgumentException("Object commitment is invalid");
-            if (subjectAlternativeNameCount < 0) throw new IllegalArgumentException("SAN count is negative");
+                { throw new IllegalArgumentException("Object commitment is invalid"); }
+            if (subjectAlternativeNameCount < 0) { throw new IllegalArgumentException("SAN count is negative"); }
             fullSubject = Objects.requireNonNull(fullSubject, "fullSubject");
             fullSubjectAlternativeNames = java.util.List.copyOf(
                     Objects.requireNonNull(fullSubjectAlternativeNames, "fullSubjectAlternativeNames"));
@@ -227,7 +227,7 @@ public final class AuditorViews {
      * @throws SecurityException if the caller is not authorized for the full-metadata auditor view
      */
     public FullMetadata fullMetadata(Source source, boolean authorized) {
-        if (!authorized) throw new SecurityException("Auditor view is not authorized");
+        if (!authorized) { throw new SecurityException("Auditor view is not authorized"); }
         return new FullMetadata(redacted(source), Map.of("view", "METADATA_FULL"));
     }
 
@@ -241,7 +241,7 @@ public final class AuditorViews {
      * @throws SecurityException if the selected object has no authorized full-content view
      */
     public FullContent fullContent(Source source, boolean metadataFullAuthorized, boolean contentAuthorized) {
-        if (!contentAuthorized || source.content().isEmpty()) throw new SecurityException("Content view is unavailable");
+        if (!contentAuthorized || source.content().isEmpty()) { throw new SecurityException("Content view is unavailable"); }
         return new FullContent(fullMetadata(source, metadataFullAuthorized), source.content().orElseThrow());
     }
 
@@ -258,7 +258,7 @@ public final class AuditorViews {
      */
     public Pii pii(Source source, SecurityPrincipal principal, String reasonReference,
             boolean metadataFullAuthorized, boolean piiAuthorized) {
-        if (!metadataFullAuthorized || !piiAuthorized) throw new SecurityException("PII view is not authorized");
+        if (!metadataFullAuthorized || !piiAuthorized) { throw new SecurityException("PII view is not authorized"); }
         Permission.requireBounded(reasonReference, 256, "PII reason reference");
         audit.record("PII_VIEW", principal.principalId(), Optional.of(source.objectId()),
                 Map.of("reasonReference", reasonReference));

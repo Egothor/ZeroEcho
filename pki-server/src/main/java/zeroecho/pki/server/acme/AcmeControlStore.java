@@ -46,6 +46,7 @@ import zeroecho.pki.server.ServerControlStore;
  * Typed ACME record facade over the realm's sole transactional control authority.
  */
 public final class AcmeControlStore {
+    private static final String ZERO = "0".repeat(64);
     private final ServerControlStore control;
     private final AcmeStateCodec codec = new AcmeStateCodec();
 
@@ -66,6 +67,8 @@ public final class AcmeControlStore {
      * @param unsealed validated unsealed domain record
      * @return canonically sealed and durably created record
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement" })
     public <T> T create(T unsealed) {
         T sealed = seal(unsealed);
         synchronized (control) {
@@ -115,6 +118,8 @@ public final class AcmeControlStore {
      * @param creations finite related records to create
      * @return atomically committed transition result
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement" })
     public Transition transition(List<Replacement> replacements, List<?> creations) {
         List<Object> sealed = replacements.stream().map(Replacement::next).map(this::sealObject).toList();
         List<Object> created = creations.stream().map(this::sealObject).toList();
@@ -125,7 +130,7 @@ public final class AcmeControlStore {
         }
         created.forEach(value -> changes.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty())));
         synchronized (control) {
-            for (Object value : created) validateEnrollmentBinding(value, true);
+            for (Object value : created) { validateEnrollmentBinding(value, true); }
             for (Object value : sealed) {
                 if (value instanceof AcmeState.Directory directory && directory.status() == AcmeState.DirectoryStatus.ACTIVE) {
                     validateEnrollmentBinding(directory, true);
@@ -151,6 +156,8 @@ public final class AcmeControlStore {
      * @throws IllegalStateException if an active ACME directory would become incompatible with the replacement
      *         profile
      */
+    // Preserves the existing standalone-server monitor owner and atomic protocol transition ordering.
+    @SuppressWarnings({ "PMD.AvoidSynchronizedStatement" })
     public void requireCompatibleEnrollmentProfile(zeroecho.pki.server.enrollment.EnrollmentProfile replacement) {
         synchronized (control) {
             visit(AcmeState.Directory.class, directory -> {
@@ -286,7 +293,7 @@ public final class AcmeControlStore {
     public void validateAndRecover(Clock clock) {
         Instant now = Objects.requireNonNull(clock, "clock").instant();
         visit(AcmeState.Directory.class, directory -> {
-            if (directory.status() == AcmeState.DirectoryStatus.ACTIVE) validateEnrollmentBinding(directory, false);
+            if (directory.status() == AcmeState.DirectoryStatus.ACTIVE) { validateEnrollmentBinding(directory, false); }
         });
         visit(AcmeState.Account.class, account -> {
             AcmeState.Directory directory = get(AcmeState.Directory.class, account.directoryId()).orElseThrow();
@@ -370,17 +377,17 @@ public final class AcmeControlStore {
 
     private <T> void visit(Class<T> type, java.util.function.Consumer<T> consumer) {
         int offset = 0;
+        ServerControlStore.Page<T> current;
         do {
-            ServerControlStore.Page<T> current = page(type, offset, 256);
+            current = page(type, offset, 256);
             current.values().forEach(consumer);
             if (!current.hasMore()) {
                 return;
             }
             offset = current.nextOffset();
-        } while (true);
+        } while (current.hasMore());
     }
 
-    private static final String ZERO = "0".repeat(64);
 
     /**
      * Immutable atomically committed order graph.
@@ -428,12 +435,12 @@ public final class AcmeControlStore {
         };
     }
     private static String namespace(Class<?> type) {
-        if (type == AcmeState.Directory.class) return ServerControlStore.ACME_DIRECTORY;
-        if (type == AcmeState.Account.class) return ServerControlStore.ACME_ACCOUNT;
-        if (type == AcmeState.Order.class) return ServerControlStore.ACME_ORDER;
-        if (type == AcmeState.Authorization.class) return ServerControlStore.ACME_AUTHORIZATION;
-        if (type == AcmeState.Challenge.class) return ServerControlStore.ACME_CHALLENGE;
-        if (type == AcmeState.AuthorizationEvidence.class) return ServerControlStore.ACME_EVIDENCE;
+        if (type == AcmeState.Directory.class) { return ServerControlStore.ACME_DIRECTORY; }
+        if (type == AcmeState.Account.class) { return ServerControlStore.ACME_ACCOUNT; }
+        if (type == AcmeState.Order.class) { return ServerControlStore.ACME_ORDER; }
+        if (type == AcmeState.Authorization.class) { return ServerControlStore.ACME_AUTHORIZATION; }
+        if (type == AcmeState.Challenge.class) { return ServerControlStore.ACME_CHALLENGE; }
+        if (type == AcmeState.AuthorizationEvidence.class) { return ServerControlStore.ACME_EVIDENCE; }
         throw new IllegalArgumentException("Unsupported ACME record type");
     }
 }

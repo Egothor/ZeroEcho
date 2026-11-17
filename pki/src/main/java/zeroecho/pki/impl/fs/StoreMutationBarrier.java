@@ -33,6 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.util.concurrent.TimeUnit;
+import zeroecho.core.io.CancellationSignal;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -96,7 +101,7 @@ final class StoreMutationBarrier {
      * @throws java.io.InterruptedIOException if the waiting thread is interrupted; its interrupt flag is restored
      * @throws java.io.IOException if cancellation is requested or the deadline expires
      */
-    /* default */ Lease enter(long deadline, zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException {
+    /* default */ Lease enter(long deadline, CancellationSignal cancellation) throws IOException {
         Lock shared = lock.readLock();
         boolean acquired = false;
         try {
@@ -107,10 +112,10 @@ final class StoreMutationBarrier {
                 }
                 long remaining = deadline - System.nanoTime();
                 if (remaining <= 0) {
-                    throw new java.io.IOException("Credential search deadline exceeded");
+                    throw new IOException("Credential search deadline exceeded");
                 }
-                acquired = shared.tryLock(Math.min(remaining, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(25)),
-                        java.util.concurrent.TimeUnit.NANOSECONDS);
+                acquired = shared.tryLock(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(25)),
+                        TimeUnit.NANOSECONDS);
             }
             cancellation.throwIfCancelled();
             if (!accepting.get()) {
@@ -119,8 +124,8 @@ final class StoreMutationBarrier {
             return new Lease(shared);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); // NOPMD DoNotUseThreads - Restores caller cancellation after interruption; this standalone component creates no thread.
-            throw new java.io.InterruptedIOException("Credential search interrupted"); // NOPMD PreserveStackTrace - Cancellation retains its public category and interrupt flag without exposing internal I/O state.
-        } catch (java.io.IOException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException, ExceptionAsFlowControl - Failure cleanup must retain the original ownership, release and fencing guarantees for unchecked failures too.
+            throw new InterruptedIOException("Credential search interrupted"); // NOPMD PreserveStackTrace - Cancellation retains its public category and interrupt flag without exposing internal I/O state.
+        } catch (IOException | RuntimeException failure) { // NOPMD AvoidCatchingGenericException, ExceptionAsFlowControl - Failure cleanup must retain the original ownership, release and fencing guarantees for unchecked failures too.
             if (acquired) {
                 shared.unlock();
             }

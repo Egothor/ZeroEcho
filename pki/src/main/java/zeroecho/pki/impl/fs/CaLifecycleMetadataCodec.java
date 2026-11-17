@@ -33,13 +33,25 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.DateTimeException;
+import java.util.Arrays;
+import java.util.HexFormat;
+import zeroecho.pki.api.ca.CaHeadSnapshot;
+import zeroecho.pki.api.ca.RootTrustAnchorActivation;
+import zeroecho.pki.api.ca.RootTrustAnchorTransition;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataKey;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Optional;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.ca.*;
-import zeroecho.pki.spi.store.*;
 
 /**
  * Strict v1 CA lifecycle companion metadata, independent of unchanged FsCodec11 payloads.
@@ -68,6 +80,7 @@ final class CaLifecycleMetadataCodec {
      * Exact metadata namespace {@code io.zeroecho.pki.root-anchor-candidate}; persisted identities depend on this value.
      */
     /* default */ static final String CANDIDATE_INDEX = "io.zeroecho.pki.root-anchor-candidate";
+    private static final int BOOLEAN_TRUE = 1;
     private static final int MAGIC = 0x5a434c43;
     private CaLifecycleMetadataCodec() { }
     /**
@@ -93,7 +106,7 @@ final class CaLifecycleMetadataCodec {
      * @return canonical root trust-anchor transition key
      * @throws NullPointerException if a required input is null
      */
-    /* default */ static MetadataKey transitionKey(PkiId id) { return new MetadataKey(TRANSITION, digest(id.value())); }
+    /* default */ static MetadataKey transitionKey(PkiId id) { return new MetadataKey(TRANSITION, Scalars.digest(id.value())); }
     /**
      * Derives the root trust-anchor activation metadata identity.
      *
@@ -101,7 +114,7 @@ final class CaLifecycleMetadataCodec {
      * @return canonical root trust-anchor activation key
      * @throws NullPointerException if a required input is null
      */
-    /* default */ static MetadataKey activationKey(PkiId id) { return new MetadataKey(ACTIVATION, digest(id.value())); }
+    /* default */ static MetadataKey activationKey(PkiId id) { return new MetadataKey(ACTIVATION, Scalars.digest(id.value())); }
     /**
      * Derives the candidate issuer lookup for a root transition metadata identity.
      *
@@ -109,7 +122,7 @@ final class CaLifecycleMetadataCodec {
      * @return canonical candidate issuer lookup for a root transition key
      * @throws NullPointerException if a required input is null
      */
-    /* default */ static MetadataKey candidateKey(PkiId id) { return new MetadataKey(CANDIDATE_INDEX, digest(id.value())); }
+    /* default */ static MetadataKey candidateKey(PkiId id) { return new MetadataKey(CANDIDATE_INDEX, Scalars.digest(id.value())); }
 
     /**
      * Reads and validates the exact current CA lifecycle head from a stable metadata snapshot.
@@ -122,7 +135,7 @@ final class CaLifecycleMetadataCodec {
      */
     /* default */ static Optional<CaHeadSnapshot> head(MetadataSnapshot snapshot, PkiId ca) throws IOException {
         return read(snapshot, headKey(ca), bytes -> {
-            var value = decodeHead(bytes); if (!value.caId().equals(ca)) { throw invalid(); } return value;
+            CaHeadSnapshot value = decodeHead(bytes); if (!value.caId().equals(ca)) { throw Scalars.invalid(); } return value;
         });
     }
     /**
@@ -136,7 +149,7 @@ final class CaLifecycleMetadataCodec {
      */
     /* default */ static Optional<RootTrustAnchorTransition> transition(MetadataSnapshot snapshot, PkiId id) throws IOException {
         return read(snapshot, transitionKey(id), bytes -> {
-            var value = decodeTransition(bytes); if (!value.transitionId().equals(id)) { throw invalid(); } return value;
+            RootTrustAnchorTransition value = decodeTransition(bytes); if (!value.transitionId().equals(id)) { throw Scalars.invalid(); } return value;
         });
     }
     /**
@@ -150,7 +163,7 @@ final class CaLifecycleMetadataCodec {
      */
     /* default */ static Optional<RootTrustAnchorActivation> activation(MetadataSnapshot snapshot, PkiId id) throws IOException {
         return read(snapshot, activationKey(id), bytes -> {
-            var value = decodeActivation(bytes); if (!value.transitionId().equals(id)) { throw invalid(); } return value;
+            RootTrustAnchorActivation value = decodeActivation(bytes); if (!value.transitionId().equals(id)) { throw Scalars.invalid(); } return value;
         });
     }
     /**
@@ -163,7 +176,7 @@ final class CaLifecycleMetadataCodec {
      * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
      */
     /* default */ static CaHeadSnapshot headRow(MetadataKey key, byte[] bytes) {
-        try { var value = decodeHead(bytes); if (!key.equals(headKey(value.caId()))) { throw invalid(); } return value; }
+        try { return headRowValue(key, bytes); }
         catch (IOException failure) { throw new IllegalStateException("CA head metadata invalid", failure); }
     }
     /**
@@ -176,8 +189,7 @@ final class CaLifecycleMetadataCodec {
      * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
      */
     /* default */ static RootTrustAnchorTransition transitionRow(MetadataKey key, byte[] bytes) {
-        try { var value = decodeTransition(bytes); if (!key.equals(transitionKey(value.transitionId()))
-                && !key.equals(candidateKey(value.candidateIssuerId()))) { throw invalid(); } return value; }
+        try { return transitionRowValue(key, bytes); }
         catch (IOException failure) { throw new IllegalStateException("Root transition metadata invalid", failure); }
     }
     /**
@@ -190,12 +202,19 @@ final class CaLifecycleMetadataCodec {
      * @throws IllegalStateException if encoded framing, semantic fields or key identity are invalid
      */
     /* default */ static RootTrustAnchorActivation activationRow(MetadataKey key, byte[] bytes) {
-        try { var value = decodeActivation(bytes); if (!key.equals(activationKey(value.transitionId()))) { throw invalid(); } return value; }
+        try { return activationRowValue(key, bytes); }
         catch (IOException failure) { throw new IllegalStateException("Root activation metadata invalid", failure); }
     }
-    @FunctionalInterface private interface Decoder<T> { T decode(byte[] bytes) throws IOException; }
+    /** Decodes one bounded lifecycle metadata payload. */
+    @FunctionalInterface private interface Decoder<T> {
+        /** @return decoded value
+         * @param bytes bounded payload
+         * @throws IOException if framing or fields are invalid
+         */
+        T decode(byte[] bytes) throws IOException;
+    }
     private static <T> Optional<T> read(MetadataSnapshot snapshot, MetadataKey key, Decoder<T> decoder) throws IOException {
-        try (var row = snapshot.get(key).orElse(null)) {
+        try (MetadataSnapshot.Record row = snapshot.get(key).orElse(null)) {
             return row == null ? Optional.empty() : Optional.of(decoder.decode(CredentialMetadataAuthority.read(row, SigningWalFrameCodec.MAX_PAYLOAD_BYTES)));
         }
     }
@@ -220,11 +239,11 @@ final class CaLifecycleMetadataCodec {
      */
     /* default */ static byte[] encode(RootTrustAnchorTransition value) throws IOException {
         return encode(2, out -> {
-            out.writeInt(value.version()); text(out, value.transitionId().value()); text(out, value.caId().value()); writeHead(out, value.expectedHead());
-            text(out, value.oldCredentialId().value()); text(out, value.oldCertificateSha256()); text(out, value.oldBindingCommitment());
-            text(out, value.candidateIssuerId().value()); text(out, value.candidatePathId().value()); text(out, value.candidateCredentialId().value());
-            text(out, value.candidateCertificateSha256()); text(out, value.candidateBindingCommitment());
-            text(out, value.originatingSigningOperationId().value()); text(out, value.commandCommitment());
+            out.writeInt(value.version()); Scalars.text(out, value.transitionId().value()); Scalars.text(out, value.caId().value()); writeHead(out, value.expectedHead());
+            Scalars.text(out, value.oldCredentialId().value()); Scalars.text(out, value.oldCertificateSha256()); Scalars.text(out, value.oldBindingCommitment());
+            Scalars.text(out, value.candidateIssuerId().value()); Scalars.text(out, value.candidatePathId().value()); Scalars.text(out, value.candidateCredentialId().value());
+            Scalars.text(out, value.candidateCertificateSha256()); Scalars.text(out, value.candidateBindingCommitment());
+            Scalars.text(out, value.originatingSigningOperationId().value()); Scalars.text(out, value.commandCommitment());
         });
     }
     /**
@@ -237,9 +256,9 @@ final class CaLifecycleMetadataCodec {
      */
     /* default */ static byte[] encode(RootTrustAnchorActivation value) throws IOException {
         return encode(3, out -> {
-            out.writeInt(value.version()); text(out, value.transitionId().value()); text(out, value.transitionCommitment()); writeHead(out, value.expectedHead());
-            text(out, value.candidateIssuerId().value()); text(out, value.candidatePathId().value()); out.writeLong(value.newEpoch());
-            text(out, value.activationRequestId().value()); text(out, value.actorId()); text(out, value.approvalPolicyCommitment()); text(out, value.approvedTargetCommitment());
+            out.writeInt(value.version()); Scalars.text(out, value.transitionId().value()); Scalars.text(out, value.transitionCommitment()); writeHead(out, value.expectedHead());
+            Scalars.text(out, value.candidateIssuerId().value()); Scalars.text(out, value.candidatePathId().value()); out.writeLong(value.newEpoch());
+            Scalars.text(out, value.activationRequestId().value()); Scalars.text(out, value.actorId()); Scalars.text(out, value.approvalPolicyCommitment()); Scalars.text(out, value.approvedTargetCommitment());
             out.writeLong(value.acceptedAt().getEpochSecond()); out.writeInt(value.acceptedAt().getNano()); out.writeBoolean(value.distributionAcknowledged());
         });
     }
@@ -251,8 +270,8 @@ final class CaLifecycleMetadataCodec {
      * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
      */
     /* default */ static CaHeadSnapshot decodeHead(byte[] bytes) throws IOException {
-        try (var in = input(bytes, 1)) { var value = readHead(in); end(in); return value; }
-        catch (RuntimeException failure) { throw new IOException("CA head metadata invalid", failure); }
+        try (DataInputStream in = Scalars.input(bytes, 1)) { CaHeadSnapshot value = readHead(in); Scalars.end(in); return value; }
+        catch (IllegalArgumentException | IllegalStateException | NullPointerException | DateTimeException failure) { throw new IOException("CA head metadata invalid", failure); }
     }
     /**
      * Decodes one exact versioned root trust-anchor transition record.
@@ -262,10 +281,10 @@ final class CaLifecycleMetadataCodec {
      * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
      */
     /* default */ static RootTrustAnchorTransition decodeTransition(byte[] bytes) throws IOException {
-        try (var in = input(bytes, 2)) {
-            var value = new RootTrustAnchorTransition(in.readInt(), id(in), id(in), readHead(in), id(in), text(in), text(in), id(in), id(in), id(in), text(in), text(in), id(in), text(in));
-            end(in); return value;
-        } catch (RuntimeException failure) { throw new IOException("Root transition metadata invalid", failure); }
+        try (DataInputStream in = Scalars.input(bytes, 2)) {
+            RootTrustAnchorTransition value = new RootTrustAnchorTransition(in.readInt(), Scalars.id(in), Scalars.id(in), readHead(in), Scalars.id(in), Scalars.text(in), Scalars.text(in), Scalars.id(in), Scalars.id(in), Scalars.id(in), Scalars.text(in), Scalars.text(in), Scalars.id(in), Scalars.text(in));
+            Scalars.end(in); return value;
+        } catch (IllegalArgumentException | IllegalStateException | NullPointerException | DateTimeException failure) { throw new IOException("Root transition metadata invalid", failure); }
     }
     /**
      * Decodes one exact versioned root trust-anchor activation record.
@@ -275,48 +294,97 @@ final class CaLifecycleMetadataCodec {
      * @throws IOException if version, kind, framing, model coordinates or trailing data is invalid
      */
     /* default */ static RootTrustAnchorActivation decodeActivation(byte[] bytes) throws IOException {
-        try (var in = input(bytes, 3)) {
-            var value = new RootTrustAnchorActivation(in.readInt(), id(in), text(in), readHead(in), id(in), id(in), in.readLong(), id(in), text(in), text(in), text(in),
-                    instant(in), flag(in)); end(in); return value;
-        } catch (RuntimeException failure) { throw new IOException("Root activation metadata invalid", failure); }
+        try (DataInputStream in = Scalars.input(bytes, 3)) {
+            RootTrustAnchorActivation value = new RootTrustAnchorActivation(in.readInt(), Scalars.id(in), Scalars.text(in), readHead(in), Scalars.id(in), Scalars.id(in), in.readLong(), Scalars.id(in), Scalars.text(in), Scalars.text(in), Scalars.text(in),
+                    Scalars.instant(in), Scalars.flag(in)); Scalars.end(in); return value;
+        } catch (IllegalArgumentException | IllegalStateException | NullPointerException | DateTimeException failure) { throw new IOException("Root activation metadata invalid", failure); }
     }
     private static void writeHead(DataOutputStream out, CaHeadSnapshot value) throws IOException {
-        out.writeInt(value.version()); text(out, value.caId().value()); out.writeLong(value.epoch()); text(out, value.issuerId().value()); text(out, value.pathId().value()); text(out, value.bindingCommitment());
+        out.writeInt(value.version()); Scalars.text(out, value.caId().value()); out.writeLong(value.epoch()); Scalars.text(out, value.issuerId().value()); Scalars.text(out, value.pathId().value()); Scalars.text(out, value.bindingCommitment());
     }
-    private static CaHeadSnapshot readHead(DataInputStream in) throws IOException { return new CaHeadSnapshot(in.readInt(), id(in), in.readLong(), id(in), id(in), text(in)); }
-    @FunctionalInterface private interface Encoder { void write(DataOutputStream out) throws IOException; }
+    private static CaHeadSnapshot readHead(DataInputStream in) throws IOException { return new CaHeadSnapshot(in.readInt(), Scalars.id(in), in.readLong(), Scalars.id(in), Scalars.id(in), Scalars.text(in)); }
+    /** Writes one canonical lifecycle metadata payload. */
+    @FunctionalInterface private interface Encoder {
+        /** @param out borrowed output stream
+         * @throws IOException if encoding fails
+         */
+        void write(DataOutputStream out) throws IOException;
+    }
     private static byte[] encode(int type, Encoder encoder) throws IOException {
-        var bytes = new ByteArrayOutputStream();
-        try (var out = new DataOutputStream(bytes)) { out.writeInt(MAGIC); out.writeShort(1); out.writeByte(type); out.writeByte(0); encoder.write(out); }
-        if (bytes.size() > SigningWalFrameCodec.MAX_PAYLOAD_BYTES) { throw invalid(); } return bytes.toByteArray();
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(bytes)) { out.writeInt(MAGIC); out.writeShort(1); out.writeByte(type); out.writeByte(0); encoder.write(out); }
+        if (bytes.size() > SigningWalFrameCodec.MAX_PAYLOAD_BYTES) { throw Scalars.invalid(); } return bytes.toByteArray();
     }
-    private static DataInputStream input(byte[] bytes, int type) throws IOException {
-        if (bytes == null || bytes.length > SigningWalFrameCodec.MAX_PAYLOAD_BYTES) { throw invalid(); }
-        var in = new DataInputStream(new ByteArrayInputStream(bytes));
-        if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedByte() != type || in.readUnsignedByte() != 0) { throw invalid(); } return in;
+
+
+
+
+
+
+
+
+
+
+    /** Isolates the canonical lifecycle scalar wire encoding. */
+    private static final class Scalars {
+        private static void text(DataOutputStream out, String value) throws IOException {
+            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            if (bytes.length < 1 || bytes.length > 1_048_576 || (long)out.size() + 4 + bytes.length > SigningWalFrameCodec.MAX_PAYLOAD_BYTES
+                    || !value.equals(new String(bytes, StandardCharsets.UTF_8))) { throw invalid(); }
+            out.writeInt(bytes.length); out.write(bytes);
+        }
+
+        private static String text(DataInputStream in) throws IOException {
+            int length = in.readInt(); if (length < 1 || length > 1_048_576 || length > in.available()) { throw invalid(); }
+            byte[] bytes = in.readNBytes(length); String value = new String(bytes, StandardCharsets.UTF_8);
+            if (!Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) { throw invalid(); } return value;
+        }
+
+        private static PkiId id(DataInputStream in) throws IOException { return new PkiId(text(in)); }
+
+        private static boolean flag(DataInputStream in) throws IOException { int value = in.readUnsignedByte(); if (value > BOOLEAN_TRUE) { throw invalid(); } return value == 1; }
+
+        private static Instant instant(DataInputStream in) throws IOException {
+            long seconds = in.readLong(); int nanos = in.readInt();
+            if (nanos < 0 || nanos > 999_999_999) { throw invalid(); }
+            return Instant.ofEpochSecond(seconds, nanos);
+        }
+
+        private static String digest(String value) {
+            try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
+            catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        }
+
+        private static DataInputStream input(byte[] bytes, int type) throws IOException {
+            if (bytes == null || bytes.length > SigningWalFrameCodec.MAX_PAYLOAD_BYTES) { throw invalid(); }
+            DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
+            if (in.readInt() != MAGIC || in.readUnsignedShort() != 1 || in.readUnsignedByte() != type || in.readUnsignedByte() != 0) { throw invalid(); } return in;
+        }
+
+        private static void end(DataInputStream in) throws IOException { if (in.read() != -1) { throw invalid(); } }
+
+        private static IOException invalid() { return new IOException("CA lifecycle metadata is malformed or incomplete"); }
     }
-    private static void text(DataOutputStream out, String value) throws IOException {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length < 1 || bytes.length > 1_048_576 || (long)out.size() + 4 + bytes.length > SigningWalFrameCodec.MAX_PAYLOAD_BYTES
-                || !value.equals(new String(bytes, StandardCharsets.UTF_8))) { throw invalid(); }
-        out.writeInt(bytes.length); out.write(bytes);
+
+
+    private static CaHeadSnapshot headRowValue(MetadataKey key, byte[] bytes) throws IOException {
+        CaHeadSnapshot value = decodeHead(bytes);
+        if (!key.equals(headKey(value.caId()))) { throw Scalars.invalid(); }
+        return value;
     }
-    private static String text(DataInputStream in) throws IOException {
-        int length = in.readInt(); if (length < 1 || length > 1_048_576 || length > in.available()) { throw invalid(); }
-        byte[] bytes = in.readNBytes(length); String value = new String(bytes, StandardCharsets.UTF_8);
-        if (!java.util.Arrays.equals(bytes, value.getBytes(StandardCharsets.UTF_8))) { throw invalid(); } return value;
+
+
+    private static RootTrustAnchorTransition transitionRowValue(MetadataKey key, byte[] bytes) throws IOException {
+        RootTrustAnchorTransition value = decodeTransition(bytes);
+        if (!key.equals(transitionKey(value.transitionId())) && !key.equals(candidateKey(value.candidateIssuerId()))) { throw Scalars.invalid(); }
+        return value;
     }
-    private static PkiId id(DataInputStream in) throws IOException { return new PkiId(text(in)); }
-    private static boolean flag(DataInputStream in) throws IOException { int value = in.readUnsignedByte(); if (value > 1) { throw invalid(); } return value == 1; }
-    private static Instant instant(DataInputStream in) throws IOException {
-        long seconds = in.readLong(); int nanos = in.readInt();
-        if (nanos < 0 || nanos > 999_999_999) { throw invalid(); }
-        return Instant.ofEpochSecond(seconds, nanos);
+
+
+    private static RootTrustAnchorActivation activationRowValue(MetadataKey key, byte[] bytes) throws IOException {
+        RootTrustAnchorActivation value = decodeActivation(bytes);
+        if (!key.equals(activationKey(value.transitionId()))) { throw Scalars.invalid(); }
+        return value;
     }
-    private static void end(DataInputStream in) throws IOException { if (in.read() != -1) { throw invalid(); } }
-    private static String digest(String value) {
-        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
-    }
-    private static IOException invalid() { return new IOException("CA lifecycle metadata is malformed or incomplete"); }
+
 }

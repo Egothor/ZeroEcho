@@ -68,6 +68,7 @@ import zeroecho.pki.application.PkiOperationValue;
 // A single closed registry keeps every stable external operation name visibly bound to its typed parser.
 @SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.TooManyMethods", "PMD.UnusedFormalParameter"})
 final class PkiOperationRegistry {
+    private static final String SUBJECT_REF = "subjectRef";
     private static final String PARAM_JUSTIFICATION = "justification";
     private static final String TEXT_CA_ID = "caId";
 
@@ -303,10 +304,10 @@ final class PkiOperationRegistry {
     }
 
     private PkiSigningOperation createAuthority(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        allowedFields(arguments, Set.of(FORMAT_ID, "subjectRef", PROFILE_ID, "keyRef"),
-                Set.of(FORMAT_ID, "subjectRef", PROFILE_ID, "keyRef", "signatureAlgorithmId"));
+        allowedFields(arguments, Set.of(FORMAT_ID, SUBJECT_REF, PROFILE_ID, "keyRef"),
+                Set.of(FORMAT_ID, SUBJECT_REF, PROFILE_ID, "keyRef", "signatureAlgorithmId"));
         return new PkiSigningOperation.CreateAuthority(new FormatId(text(arguments, FORMAT_ID)),
-                new SubjectRef(text(arguments, "subjectRef")), text(arguments, PROFILE_ID),
+                new SubjectRef(text(arguments, SUBJECT_REF)), text(arguments, PROFILE_ID),
                 new KeyRef(text(arguments, "keyRef")), optionalText(arguments, "signatureAlgorithmId"));
     }
 
@@ -364,18 +365,18 @@ final class PkiOperationRegistry {
 
     private PkiSigningOperation createIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
-        if (!supplied.containsAll(Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID))
-                || !Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID, "keyRef", "signatureAlgorithmId").containsAll(supplied)) {
+        if (!supplied.containsAll(Set.of(FORMAT_ID, ISSUER_CA_ID, SUBJECT_REF, PROFILE_ID))
+                || !Set.of(FORMAT_ID, ISSUER_CA_ID, SUBJECT_REF, PROFILE_ID, "keyRef", "signatureAlgorithmId").containsAll(supplied)) {
             throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiSigningOperation.CreateIntermediate(new FormatId(text(arguments, FORMAT_ID)),
-                new PkiId(text(arguments, ISSUER_CA_ID)), new SubjectRef(text(arguments, "subjectRef")),
+                new PkiId(text(arguments, ISSUER_CA_ID)), new SubjectRef(text(arguments, SUBJECT_REF)),
                 text(arguments, PROFILE_ID), optionalText(arguments, "keyRef").map(KeyRef::new),
                 optionalText(arguments, "signatureAlgorithmId"));
     }
 
     private PkiSigningOperation issueIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        if(!arguments.fields().keySet().containsAll(Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID))||!Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID,"expectedHead").containsAll(arguments.fields().keySet()))throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        if(!arguments.fields().keySet().containsAll(Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID))||!Set.of(FORMAT_ID,ISSUER_CA_ID,"subjectCaId",PROFILE_ID,"expectedHead").containsAll(arguments.fields().keySet())){ throw new IllegalArgumentException(INVALID_ARGUMENTS); }
         return new PkiSigningOperation.IssueIntermediateCertificate(new FormatId(text(arguments, FORMAT_ID)),
                 new PkiId(text(arguments, ISSUER_CA_ID)), new PkiId(text(arguments, "subjectCaId")),
                 text(arguments, PROFILE_ID), java.util.Optional.empty(),CliLifecycleArguments.head(arguments.fields()));
@@ -422,7 +423,7 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation selectIssuancePath(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        if(!arguments.fields().keySet().containsAll(Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON))||!Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON,"expectedHead","transitionCommitment","distributionAcknowledged").containsAll(arguments.fields().keySet()))throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        if(!arguments.fields().keySet().containsAll(Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON))||!Set.of(AUTHORITY_ID,ISSUER_ID,"pathId",FAILURE_REASON,"expectedHead","transitionCommitment","distributionAcknowledged").containsAll(arguments.fields().keySet())){ throw new IllegalArgumentException(INVALID_ARGUMENTS); }
         return new PkiOperation.SelectIssuancePath(new PkiId(text(arguments, AUTHORITY_ID)),
                 new PkiId(text(arguments, ISSUER_ID)), new PkiId(text(arguments, "pathId")),
                 text(arguments, FAILURE_REASON),CliLifecycleArguments.head(arguments.fields()),optionalText(arguments,"transitionCommitment"),arguments.fields().containsKey("distributionAcknowledged")&&bool(arguments,"distributionAcknowledged"));
