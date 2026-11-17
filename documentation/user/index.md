@@ -9,6 +9,10 @@ You do **not** need to be a realm administrator to follow this guide. You need a
 identity the realm recognises, and the guide explains what that identity lets you
 see and do.
 
+If you are setting up the realm for the first time, use the
+[administrator walkthrough](../admin/getting-started.md) to create the issuing CA
+and configure identities and grants before following the user procedures.
+
 ## What you can do
 
 Depending on the permissions attached to your identity, you can typically:

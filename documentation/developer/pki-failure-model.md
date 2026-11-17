@@ -1,7 +1,7 @@
 # PKI failure model
 
 This document defines the consistent, stable, and safe failure semantics used
-across the `pki` and `pki-server` modules (issue #16). It is the
+across the `pki` and `pki-server` modules. It is the
 authoritative reference for how failures are classified, carried, redacted, and
 translated into external protocol outcomes.
 
@@ -33,7 +33,7 @@ translated into external protocol outcomes.
 
 `PkiException` carries an optional typed `PkiFailureReason` (`failureReason()`).
 `DefaultPkiOperationExecutor.classify` maps the
-owner-approved `STORE_DURABILITY_UNCONFIRMED` case to application classification
+`STORE_DURABILITY_UNCONFIRMED` case to application classification
 `RECOVERY_REQUIRED` and stable external code `RECOVERY_REQUIRED`. The internal
 reason token, exception message and cause remain internal. Classification does
 not retry the failed operation or inspect message text.
@@ -74,10 +74,9 @@ external model:
 - **PKIX / CRL** — the closed `RevocationReason` enum maps to standard CRL reason codes.
 - **CLI** — `PkiServerMain` maps startup/config failures to fixed exit codes.
 
-## Documented, intentional residuals
+## Classification details and integration boundaries
 
-These are deliberate and reviewed; they are not the internal message-parsing
-anti-pattern this model removes.
+The following boundaries have distinct classification behavior.
 
 1. **Type-only structural fallback in `classify()`.** The executor's internal
    markers (`Missing`, `Conflict`, `CapabilityMissing`, `ExternalUnknown`) carry
@@ -99,4 +98,4 @@ anti-pattern this model removes.
    `OUTSIDE_REALM`) in the response body for the authenticated caller. This is
    intentional, non-sensitive, actionable authorization feedback — no secret, other
    principal's data, or internal system state is disclosed — and the finer per-operation
-   denial codes remain audit-only. Reviewed and retained.
+   denial codes remain audit-only.

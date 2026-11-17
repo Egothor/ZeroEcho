@@ -1,7 +1,5 @@
 # Container images
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on image/layout changes.
-Source-reviewed procedures remain unverified pending rehearsal.
 
 The supported baseline uses a fresh empty v18 store, with no earlier-store
 migration path. See [earlier-deployment boundaries](operations.md#mount-layout-and-earlier-deployments).

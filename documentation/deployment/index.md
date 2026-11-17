@@ -90,5 +90,6 @@ by the two containers.
 
 If you are new to the platform's concepts, read the
 [architecture overview](../overview/architecture.md) first. Once the stack is
-running, the [Administrator Guide](../admin/console.md) explains how to use the
-console.
+running, follow [Set up and use a certificate authority](../admin/getting-started.md)
+to create an issuing CA, enroll a client identity and issue and revoke a
+certificate. The [console guide](../admin/console.md) explains the web interface.

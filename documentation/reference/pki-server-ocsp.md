@@ -1,7 +1,5 @@
 # ZeroEcho OCSP responder
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on responder/SDK contract
-changes. Written procedures remain unverified pending clean-environment rehearsal.
 
 ZeroEcho serves OCSP only on the separately bounded public listener at
 `/ocsp/{responderAlias}`. Administrative operations remain under `/admin/v1`,

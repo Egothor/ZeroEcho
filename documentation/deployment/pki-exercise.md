@@ -1,11 +1,8 @@
 # PKI deployment and host-client qualification
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review when launchers, protocol
-configuration or cryptographic contracts change. These written procedures have
-source review only; clean-environment rehearsal and assembled-site checks remain
-outstanding. Start with the [fast-track](pki-fast-track.md) or
+Start with the [fast-track](pki-fast-track.md) or
 [persistent deployment](pki-production.md), then use this reference for detailed
-qualification and algorithm recipes.
+client exercises and algorithm recipes.
 
 The two entry points have separate responsibilities:
 
@@ -332,21 +329,10 @@ profile registration, root/intermediate creation, request import/verification an
 issuance through typed forms; each retains the same actual identifiers and
 approval boundary. A plain issuance form does not manufacture hybrid SDK proofs.
 
-The native rehearsal runs the real Python client and local helper against a
-fresh localhost HTTPS PKI, including completed-run observation without mutation
-replay:
-
-```sh
-./gradlew :app:test --tests zeroecho.pki.cli.CertificateScenarioCryptoTest
-./gradlew :pki-server:certificateScenarioTest
-PYTHONPATH=deploy python3 -m unittest discover -s deploy -p 'test_*.py'
-```
-
-This native rehearsal is distinct from a live PKI in Podman. Scenario artifacts
-alone are not a full-catalogue, CRL, OCSP or protocol qualification report.
-Retain actual deployment association and independent verification for those
-separate claims; a source/helper test is not a hosted result. No P-521, SLH-DSA
-or Composite scenario is supplied by this command's four-variant menu.
+Scenario artifacts cover the selected algorithm workflow against the specified
+deployment. Check CRL, OCSP and enrollment protocols separately when your
+deployment exposes them. No P-521, SLH-DSA or Composite scenario is supplied by
+this command's four-variant menu.
 
 For reusable requests and named downloads outside qualification scenarios, see
 [the host operator client](pki-operator.md).

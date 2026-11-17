@@ -53,6 +53,7 @@ GET|HEAD /public/v1/authorities/{authorityId}/issuers/{issuerId}/certificate
 GET|HEAD /public/v1/authorities/{authorityId}/issuers/{issuerId}/paths/{pathId}
 GET|HEAD /public/v1/authorities/{authorityId}/chain
 GET|HEAD /public/v1/authorities/{authorityId}/crl
+GET|HEAD /public/v1/authorities/{authorityId}/delta-crl
 GET|HEAD /public/v1/certificates/{credentialId}
 GET|HEAD /public/v1/status/{statusObjectId}
 ```

@@ -13,6 +13,30 @@ The three request operations you will use are:
 | `request.verify` | Confirm the request's signature and proof of possession. |
 | `request.inspect` | Look up a submitted request by its identifier. |
 
+## Before you start
+
+Install OpenSSL and the `zeroecho` command-line distribution. Obtain the
+administrative API URL, your client PKCS#12 file (`me.p12` in these examples),
+and the server trust bundle (`server-trust.pem`) from your administrator. The
+client identity must already be trusted, mapped to a principal and granted the
+request operations; registering a principal alone does not configure TLS trust.
+See [Accessing the platform](accessing.md) and
+[administrative setup](../admin/getting-started.md).
+
+Use a private working directory and enter the keystore password without putting
+it in shell history. These commands use Bash:
+
+```bash
+umask 077
+read -r -s -p 'Client keystore password: ' PKI_P12_PASSWORD
+printf '\n'
+export PKI_P12_PASSWORD
+```
+
+Replace the example URL and filenames with the supplied values in every command.
+Your authentication key and the new certificate's key are separate credentials.
+Keep both private; send only the CSR to the issuing service.
+
 ## Step 1 — Prepare a key and a CSR
 
 A CSR (Certificate Signing Request, PKCS#10) bundles your public key and requested
@@ -29,6 +53,7 @@ You can create a key pair and a CSR with common tooling. Two examples:
     openssl req -new \
       -newkey rsa:3072 -nodes -keyout example.key \
       -out example.csr \
+      -addext "subjectAltName=DNS:service.example.com" \
       -subj "/CN=service.example.com/O=Example Org"
     ```
 
@@ -78,17 +103,22 @@ track and act on the request.
     # Convert the PEM CSR to DER first.
     openssl req -in example.csr -outform DER -out example.der
 
-    # Submit it over mutual TLS. request.import takes the format id and the
-    # base64-encoded DER CSR in CSR_B64 (encode example.der before submission).
+    # Base64 must be one uninterrupted string.
+    CSR_B64=$(openssl base64 -A -in example.der)
+
+    # Submit it over mutual TLS, checking the command's exit status.
     zeroecho pki request.import \
       --url https://pki.example.com:8443 \
       --client-keystore me.p12 --client-keystore-password-env PKI_P12_PASSWORD \
+      --trust server-trust.pem \
       --format-id x509 \
       --arg "encoded=$CSR_B64" \
-      --output json
+      --output json > imported-request.json
     ```
 
-    The response carries the new **request identifier**. Record it. See
+    Continue only after exit code `0`. The response carries the new **request
+    identifier** at `.result.requestId` in `imported-request.json`. Copy that
+    value in place of `<request-id>` below. See
     [Command line](command-line.md) for connection and output details.
 
 === "Web console"
@@ -114,6 +144,7 @@ CSR is well-formed and that its proof of possession holds.
     zeroecho pki request.verify \
       --url https://pki.example.com:8443 \
       --client-keystore me.p12 --client-keystore-password-env PKI_P12_PASSWORD \
+      --trust server-trust.pem \
       --request-id <request-id> \
       --output json
     ```
@@ -165,9 +196,10 @@ that applies:
 
 - The issuance does not complete immediately; it becomes **pending** until a
   privileged user (or the required number of approvers) approves it.
-- From a scripted client this surfaces as a *"outcome not yet known / resume
-  later"* result rather than a failure. See
-  [that result explained](command-line.md#outcome-not-yet-known).
+- The issuing operator may receive `APPROVAL_REQUIRED` (CLI exit `4`) and must
+  follow the administrative approval process. This differs from an accepted
+  signing operation that is still processing (exit `7`); see
+  [command-line outcomes](command-line.md#outcome-not-yet-known).
 
 !!! info "You track; administrators issue and approve"
     As a requester you can submit, verify, and inspect your request, and later
@@ -185,6 +217,7 @@ Use the request identifier to check on a request:
     zeroecho pki request.inspect \
       --url https://pki.example.com:8443 \
       --client-keystore me.p12 --client-keystore-password-env PKI_P12_PASSWORD \
+      --trust server-trust.pem \
       --request-id <request-id> \
       --output json
     ```

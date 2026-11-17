@@ -6,9 +6,6 @@ covers the administrative side of each protocol: registering and governing the
 endpoints that expose them, and understanding how each protocol authenticates
 enrolling clients.
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on protocol/SDK changes.
-These written procedures remain unverified pending clean-environment rehearsal.
-
 Protocol endpoints are managed via the administrative API. ACME is managed under
 the **ACME** area (Directories and Accounts tabs); EST, SCEP, and CMP endpoints
 are managed via API operations in their respective namespaces.

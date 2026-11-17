@@ -1,9 +1,8 @@
 # Certificate authorities and issuer generations
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on CA/issuer contract
-changes. Written procedures remain unverified pending clean-environment rehearsal.
-See the [activity reference](operator-activities.md) for the shared retained
-CLI/TUI workflow and [algorithm recipes](../deployment/pki-exercise.md#approved-algorithm-scenarios).
+For runnable managed-key, root and intermediate commands, follow
+[Set up and administer a PKI](getting-started.md#3-generate-a-managed-key-and-create-a-root-ca).
+Use this reference for authority state, generation and chain changes.
 
 A certificate authority (CA) is the trust anchor or intermediate that issues
 credentials in your realm. This page covers creating root and intermediate CAs,

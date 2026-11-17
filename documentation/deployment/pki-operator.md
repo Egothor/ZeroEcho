@@ -1,9 +1,9 @@
 # Host PKI operator client
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on client/API contract
-changes. Written procedures are source-reviewed and remain unverified pending
-clean-environment rehearsal. See [activities](../admin/operator-activities.md)
-and the [exact interface reference](../reference/pki-operator-interfaces.md).
+For an end-to-end command walkthrough, start with
+[Set up and administer a PKI](../admin/getting-started.md). Use this page for
+client authentication, retained requests, downloads and interactive operation;
+see also the [exact interface reference](../reference/pki-operator-interfaces.md).
 
 `deploy/pki-operator.sh` is the reusable Python 3 host client for the administrative
 HTTPS API. It shares bounded mTLS transport with `exercise-pki.sh` but does not run
@@ -185,7 +185,7 @@ environment/source and representation/signature evidence separately from a
 download result. SDK OCSP evidence remains separately signed
 ZeroEcho evidence and is not standard AltSignature OCSP.
 
-## Library use and rollback
+## Library use and client replacement
 
 Import `pki_operator.Operator` with a shared `pki_http.Api` and use it as a context
 manager. `submit`/`observe` return raw durable records, `action` returns its exact
@@ -194,8 +194,8 @@ byte/identity evidence. Use `result_exit` to distinguish completion from pending
 The TUI consumes this layer directly without spawning Java to forward
 requests; Java is used only for local chain cryptography.
 
-Removing this client change requires no server migration. Preserve retained
-checkpoints and reconcile any submitted requests before replacing client files.
+Preserve retained checkpoints and reconcile any submitted requests before
+replacing client files.
 Removing a checkpoint does not cancel server work. No automatic cleanup/reset,
 server restart, certificate revocation or trust-store change is performed.
 

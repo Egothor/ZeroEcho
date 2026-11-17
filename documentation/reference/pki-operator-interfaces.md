@@ -1,8 +1,5 @@
 # PKI operator interfaces
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on launcher, API or schema
-changes. Commands are checked against source contracts; procedure execution and
-assembled-site verification remain outstanding.
 
 ## Choose the correct boundary
 

@@ -1,7 +1,5 @@
 # ZeroEcho administrative HTTPS server
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on listener/API changes.
-Source-reviewed examples remain unverified as written pending procedure rehearsal.
 
 The `pki-server` distribution exposes the transport-neutral realm gateway through mutual TLS. One process opens one realm and one long-lived PKI session; all administrative execution uses the existing typed operation catalog and `ServerOperationGateway`.
 

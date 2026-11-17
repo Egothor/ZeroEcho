@@ -1,8 +1,8 @@
 # Operator activity reference
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review when the operation catalog,
-profiles or approval policy changes. Written procedures remain unverified pending
-clean-environment rehearsal; this is the source-reviewed operator baseline.
+For a complete command sequence, start with
+[Set up and administer a PKI](getting-started.md). This page maps administrative
+tasks to their interfaces, permissions and resulting objects.
 
 Use this reference to choose an activity, its authority and its safe completion
 condition. [The host client and forms](../deployment/pki-operator.md) provide the

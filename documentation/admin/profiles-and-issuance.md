@@ -1,9 +1,8 @@
 # Profiles and issuance
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on profile/issuance changes.
-These source-reviewed procedures remain unverified pending clean-environment
-rehearsal. Use the [activity reference](operator-activities.md) for the shared
-CLI/TUI retained submission and recovery procedure.
+For runnable profile, CSR, issuance and holder-confirmation commands, follow
+[Set up and administer a PKI](getting-started.md#5-validate-and-manage-certificate-profiles).
+Use this page to understand the profile and credential lifecycle contracts.
 
 This page covers the material that governs what may be issued and the act of
 issuing it: registering, validating, inspecting, and activating certificate
@@ -205,6 +204,17 @@ fully in force. The **Credential Confirmation** area supports this exchange:
   commitments.
 - **Revoke pending confirmation** (`credential.confirmation.pending.revoke`) —
   withdraw a pending confirmation, optionally with a justification.
+
+Enroll the exact credential with `certificate.publication.enroll` and its intended
+`ownerPrincipalId` before issuing an OWNER_ONLY challenge. Use the challenge's
+actual lifecycle revision and lifecycle/challenge commitments; pending-review rows
+do not supply those CAS fields. Check expiry and current state before submission.
+For RSA with `zeroecho.signature-pop.v1`, sign the decoded presentation with
+SHA-256/RSA-PSS, MGF1-SHA256 and a 32-byte salt; ordinary PKCS#1 v1.5 is not valid
+for that proof suite. Require `confirmationResult: CONFIRMED`, not merely a
+SUCCEEDED operation containing REJECTED. The
+[complete command walkthrough](getting-started.md#8-enroll-publication-and-confirm-possession)
+shows enrollment, exact response construction and recovery boundaries.
 
 ## Related tasks
 

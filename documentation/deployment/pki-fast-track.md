@@ -1,9 +1,5 @@
 # PKI fast-track: a disposable qualification
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on launcher or configuration
-changes. These written instructions have source review only; clean-environment
-procedure execution and assembled-site verification are still outstanding.
-
 Use this path to qualify a new disposable instance from a source checkout.
 For a retained service use [production deployment](pki-production.md). The
 qualification environment prepares test accounts, authorities, protocol listeners

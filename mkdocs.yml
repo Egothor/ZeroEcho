@@ -172,6 +172,7 @@ nav:
               - deployment/pki-operator.md
           - Administration:
               - admin/index.md
+              - admin/getting-started.md
               - admin/operator-activities.md
               - admin/console.md
               - admin/authorities.md

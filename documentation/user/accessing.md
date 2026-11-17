@@ -1,9 +1,11 @@
 # Accessing the platform
 
-ZeroEcho does not use passwords, one-time codes, or bearer tokens for interactive
-access. You authenticate by **presenting an X.509 client certificate over mutual
-TLS (mTLS)**. Your certificate *is* your identity, and the realm decides what you
-can do from that identity alone.
+The administrative API and web console authenticate with **X.509 client
+certificates over mutual TLS (mTLS)**. They do not provide password, one-time-code
+or bearer-token login. Your certificate must match the configured transport
+identity mapping to an enabled principal; the principal's grants determine its
+permissions. Public repository and enrollment protocols have separate access
+policies and do not use this console login procedure.
 
 ## Mutual TLS in one picture
 
@@ -24,8 +26,8 @@ flowchart LR
 
 !!! important "No password, token, or anonymous login"
     There is no login form and no API key. If your browser or client does not
-    present a certificate the realm trusts, the console will not load and API
-    calls are rejected. Access is refused rather than downgraded.
+    present a certificate the realm trusts and maps to a permitted principal,
+    access to the protected console and administrative API is refused.
 
 ## What you need
 
@@ -41,15 +43,19 @@ flowchart LR
   provided by your administrator.
 
 !!! tip "Keep your private key private"
-    Your private key never leaves your device and is never sent to the server.
-    Protect it as you would any credential. If it is lost or exposed, ask an
-    administrator to revoke the corresponding certificate.
+    Mutual TLS proves possession without sending your private key to the server.
+    Keep locally generated keys on your device. If an administrator supplies an
+    initial PKCS#12 identity, transfer and store that file securely because it
+    contains a private key. If a key is lost or exposed, ask an administrator to
+    revoke the corresponding certificate.
 
 ## How access maps to what you can do
 
 Authentication (proving who you are) and authorization (what you may do) are
-separate steps. Presenting a valid certificate gets you *in*; your granted
-permissions decide what you *see*.
+separate steps. A valid certificate chain alone does not grant access: the server
+also needs the matching identity mapping, an enabled principal and applicable
+grants. Ask your administrator to configure these using
+[Access control](../admin/access-control.md).
 
 The console asks the server which operations your identity may perform and renders
 only those. The same is true of the API: an operation your identity is not

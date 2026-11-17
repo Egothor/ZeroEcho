@@ -152,7 +152,7 @@ remote server catalog. Do not infer local commands from every lower-level API.
 | Selected interrupted signing completion | Existing backend recovery | Explicit local completion by ID |
 | RBAC, grants, server approvals, ACME control and server-only configuration/search endpoints | Existing server catalog | Unsupported before mutation |
 
-**Owner clarification (2026-09-28):** in mode c the operator acts as a trusted
+In mode c the operator acts as a trusted
 root/superadministrator. Explicitly requesting an operation constitutes its
 local administrative approval, including issuance/lifecycle commands whose
 effective profile declares `SINGLE` or `THRESHOLD`. No additional approvers or
@@ -301,8 +301,8 @@ Source anchors: `PkiSession`, `PkiSessionConfiguration`, `PkiSigningOperation`,
 
 ## Deployment-only profile bootstrap
 
-The owner approved an internal distribution launcher,
-`zeroecho-pki-profile-bootstrap`, for container startup. It does not extend the
+The distribution launcher `zeroecho-pki-profile-bootstrap` runs during container
+startup. It does not extend the
 public `pki` command catalog or backend API. Its explicit mounted local-v1
 configuration supplies the trusted local operator, filesystem store and audit
 provider; signing and publishers are absent. The helper parses bounded profile

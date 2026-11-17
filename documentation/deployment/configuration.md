@@ -1,7 +1,5 @@
 # Configuration
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on configuration/bootstrap
-changes. Source-reviewed procedures remain unverified pending rehearsal.
 
 The store volume mounts at `/var/lib/zeroecho/store-container`, with PKI state
 under `store/` and server-control state under `server-control/`. The writable

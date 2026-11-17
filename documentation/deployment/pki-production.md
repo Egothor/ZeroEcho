@@ -1,10 +1,9 @@
 # Production deployment from a source checkout
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on installer, identity or
-listener changes. Procedures are source-reviewed and remain unverified as written
-until clean-environment rehearsal; this page grants no production promotion.
-
 This guide is the operating path for a persistent Linux rootless installation.
+For the complete command sequence from installation to CA creation, operator
+onboarding, issuance and revocation, follow
+[Set up and administer a PKI](../admin/getting-started.md).
 Use [fast-track qualification](pki-fast-track.md) for disposable test fixtures.
 The supported baseline starts with an **empty version-18 store**. No migration
 from earlier PKI stores is supplied. Updating a compatible installation's images
@@ -36,7 +35,7 @@ secrets, not public certificates. Record expiry dates and a renewal change plan.
 
 ## Install and establish the first session
 
-From the reviewed checkout, as the service owner without sudo:
+From the source checkout, as the service owner without sudo:
 
 ```sh
 ./deploy/rootless-pki.sh install \

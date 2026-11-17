@@ -183,11 +183,3 @@ all durable state while investigating a reconciliation-required result. A source
 rollback before any new state is admitted remains possible; after admission prefer
 a reviewed forward fix or an operator-controlled coherent restore under the
 separate disaster-recovery procedure.
-
-The repository `AdministrativeWorkflowFixture` rehearses this forward-recovery
-branch against the actual filesystem store, control log, local signing provider
-and cryptographic keys: close/reopen after approval, interruption before acceptance,
-and lost projection after actual acceptance. It asserts three actual authorities
-for three approved intents, with no replay of an uncertain synchronous mutation.
-This is JVM integration evidence; it does not establish a native Podman or browser
-rehearsal of these exact source changes.

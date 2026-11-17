@@ -1,7 +1,5 @@
 # Kubernetes
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on manifest/layout changes.
-Source-reviewed procedures remain unverified pending rehearsal.
 
 The qualified baseline is fresh empty v18; no earlier-store/PVC migration is
 supplied. See [earlier-deployment boundaries](operations.md#mount-layout-and-earlier-deployments).

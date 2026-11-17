@@ -13,6 +13,28 @@ toolkit out of your compile-time dependencies.
     once at application startup — see [Cryptography](cryptography.md) for
     the one-liner and the activation contract.
 
+## Choose the integration you need
+
+Use JDK 25 for the current artifacts. Add the dependency described under
+[Adding the dependency](#adding-the-dependency), then choose the smallest API
+surface that serves your application:
+
+| Task | Entry point | What your application supplies |
+| --- | --- | --- |
+| Parse a certificate or CSR | `Pkix.parseCertificate` / `Pkix.parseCertificationRequest` | DER bytes and application trust or issuance policy. |
+| Build an X.509 certificate or CRL | `Pkix.certificateBuilder` / `Pkix.crlBuilder` | Fields, extensions and a signing implementation. |
+| Sign or verify a stream | `ContentSigner` / `ContentVerifier` | Keys, exact algorithm identifier and the bytes to authenticate. |
+| Use algorithm discovery and policy | `ZeroEchoSession` | Algorithm choice, parameters, policy and audit configuration. |
+| Store exportable software keys | `KeyringStore` | Private POSIX path, password lifecycle and backup policy. |
+| Embed authority workflows | `zeroecho.pki` | Store, signing, audit and publication provider configuration; see [extension points](extending.md). |
+
+The certificate-building example below creates an in-memory, self-signed CA
+certificate. It does not register an authority, publish a trust anchor or run a
+PKI server. For a managed CA, follow the
+[administrator walkthrough](../admin/getting-started.md). Parsing a certificate
+also does not validate its trust chain, validity, intended usage or revocation
+status; apply your relying-party validation policy separately.
+
 ## The `zeroecho.pkix` API
 
 `zeroecho.pkix` is a JCA-aligned facade for building and parsing X.509
@@ -426,14 +448,18 @@ leaving the original unchanged.
 ## Adding the dependency
 
 `lib` is a JPMS module named `zeroecho.lib`. Its Gradle coordinates are
-`org.egothor:lib`. Add it to your build and declare the module in your own
+`org.egothor:ZeroEcho-lib`. Select an available released version from Maven
+Central; `<version>` below is a placeholder. Add it to your build and declare the module in your own
 `module-info.java`:
 
 === "Gradle"
 
     ```groovy
+    repositories {
+        mavenCentral()
+    }
     dependencies {
-        implementation 'org.egothor:lib:<version>'
+        implementation 'org.egothor:ZeroEcho-lib:<version>'
     }
     ```
 
@@ -448,7 +474,7 @@ leaving the original unchanged.
 Because the cryptographic toolkit is confined to `lib` with non-transitive
 `requires`, you do not (and should not) depend on it yourself — program against
 `zeroecho.pkix` and standard `java.security` types. If you consume the PKI domain
-as well, depend on `zeroecho.pki` (`org.egothor:pki`), which re-exports `lib`
+as well, depend on `zeroecho.pki` (`org.egothor:ZeroEcho-pki`), which re-exports `lib`
 transitively.
 
 !!! note "Provider activation"

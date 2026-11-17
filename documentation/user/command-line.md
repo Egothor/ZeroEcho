@@ -125,8 +125,8 @@ text. Local and remote modes use the **same** codes:
 
 ### What exit code 7 means
 
-Some operations — notably issuance that is signed asynchronously or that requires
-approval — may not have a *final* answer by the time the command returns. When that
+Some operations — notably issuance that is signed asynchronously — may not have
+a *final* answer by the time the command returns. When that
 happens, the command exits cleanly with code **`7`** ("outcome not yet known").
 
 This is **not** proof of failure or acceptance. A pending receipt can be inspected

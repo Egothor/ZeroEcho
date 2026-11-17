@@ -9,9 +9,11 @@ These areas live under **Trust & Access**: **Principals**, **Roles & Grants**,
 [security model reference](../reference/security-model.md).
 
 !!! warning "Access-control changes are governed changes"
-    Registering or disabling a principal, creating a role assignment or a grant,
-    and creating or activating break-glass are all high-risk and require an
-    [approval](#approvals). Access control is itself dual-controlled.
+    Disabling a principal, creating a role assignment or grant, and creating or
+    activating break-glass are high-risk and require an [approval](#approvals).
+    Principal registration and enablement are not statically high-risk; current
+    grants can still impose approval. Check the exact operation and policy
+    rather than assuming all access-control writes have the same approval rule.
 
 ## Principals
 
@@ -201,6 +203,172 @@ Manage break-glass under **Break-glass** (`security.break-glass.list`):
 
 ## Related tasks
 
+For a command-based principal/grant workflow, start with
+[Set up and administer a PKI](getting-started.md#6-register-another-operator-and-grant-access).
+For the deployment-owned TLS login step, use the procedure below.
+
 - See the outcome of governed actions: [Audit and disclosure](audit-and-disclosure.md).
 - Understand how discoverability reflects your permissions in the UI:
   [The administration console](console.md#the-console-hides-what-you-cannot-do).
+
+## Give a registered operator a TLS login
+
+This procedure adds a login to an existing persistent installation created by
+`rootless-pki.sh install`. The principal must already exist and have the intended
+grants. It does not create a new business CA or change approval eligibility.
+
+### The operator creates the private key and CSR
+
+On Alice's machine, in her private client directory:
+
+```sh
+umask 077
+mkdir -p "$HOME/northstar-alice"
+chmod 700 "$HOME/northstar-alice"
+cd "$HOME/northstar-alice"
+openssl req -new -newkey rsa:3072 -keyout alice-login.key \
+  -out alice-login.csr -subj '/CN=Alice PKI Operator'
+openssl req -in alice-login.csr -verify -noout
+```
+
+OpenSSL prompts for a private-key encryption password. Alice sends only the CSR
+to the deployment owner. Her private key/password never go to the server owner.
+The owner verifies the requested principal and CSR/public-key fingerprint through
+the organization's identity-verification channel.
+
+### The deployment owner signs the login certificate
+
+On the deployment host, as the original service owner, set the actual paths:
+
+```sh
+INSTALL="$HOME/.local/share/northstar-pki"
+LOGIN_WORK="$HOME/northstar-login-alice-01"
+umask 077
+mkdir "$LOGIN_WORK"
+chmod 700 "$LOGIN_WORK"
+```
+
+Receive the verified CSR as `$LOGIN_WORK/alice-login.csr`. Do not overwrite a
+previous enrollment directory. Validate it and create the fixed client extension:
+
+```sh
+openssl req -in "$LOGIN_WORK/alice-login.csr" -verify -noout
+cat > "$LOGIN_WORK/client.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+EOF
+```
+
+The installer encrypts `provisioning/ca.key` with a randomly generated transport
+secret retained in its private `secrets.conf`. This is **not** either user's
+PKCS#12 password or the business signing-keyring password. The following supplies
+only that named secret to OpenSSL through an inherited descriptor, without
+printing it or putting it in command arguments/environment values:
+
+```sh
+SERIAL=$(python3 -c 'import secrets; print(secrets.randbits(159) or 1)')
+openssl x509 -req -in "$LOGIN_WORK/alice-login.csr" \
+  -CA "$INSTALL/provisioning/ca.crt" -CAkey "$INSTALL/provisioning/ca.key" \
+  -passin fd:3 -set_serial "$SERIAL" -days 365 -sha256 \
+  -extfile "$LOGIN_WORK/client.ext" -out "$LOGIN_WORK/alice-login.crt" \
+  3< <(python3 - "$INSTALL/secrets.conf" <<'PY'
+import pathlib, sys
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+values = [line.partition('=')[2] for line in lines if line.startswith('ZEROECHO_TLS_PASSWORD=')]
+assert len(values) == 1 and values[0]
+sys.stdout.write(values[0] + '\n')
+PY
+)
+openssl verify -purpose sslclient -CAfile "$INSTALL/provisioning/ca.crt" \
+  "$LOGIN_WORK/alice-login.crt"
+```
+
+Run this only in a private owner console without shell tracing or transcript
+capture. The secret-producing subprocess writes to the OpenSSL descriptor, not
+the terminal. The certificate lifetime must fit your login-CA and renewal policy.
+For an externally managed administrative CA, use its enrollment process instead;
+do not copy its key into this installation.
+
+### The deployment owner adds the exact mapping and restarts
+
+Stop consistently and retain a private configuration backup before changing it:
+
+```sh
+./deploy/rootless-pki.sh stop --directory "$INSTALL"
+cp -p "$INSTALL/config/server.json" "$LOGIN_WORK/server-before.json"
+python3 - "$INSTALL/config/server.json" "$LOGIN_WORK/alice-login.crt" <<'PY'
+import hashlib, json, os, pathlib, subprocess, sys
+path = pathlib.Path(sys.argv[1])
+certificate = subprocess.run(['openssl', 'x509', '-in', sys.argv[2], '-outform', 'DER'],
+                             check=True, stdout=subprocess.PIPE).stdout
+digest = hashlib.sha256(certificate).hexdigest()
+document = json.loads(path.read_text())
+authentication = document['authentication']
+assert authentication['mode'] == 'TRUSTED_REVERSE_PROXY'
+mappings = authentication['forwardedClientMappings']
+assert not any(item['mappingId'] == 'alice-login-01' or
+               item.get('certificateSha256') == digest for item in mappings)
+mappings.append(dict(mappingId='alice-login-01', principalId='alice', certificateSha256=digest))
+temporary = path.with_name('server-alice-next.json')
+with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as output:
+    json.dump(document, output, indent=2)
+    output.write('\n')
+os.replace(temporary, path)
+print('Mapped alice-login-01 to alice; certificate SHA-256:', digest)
+PY
+./deploy/rootless-pki.sh start --directory "$INSTALL"
+./deploy/rootless-pki.sh status --directory "$INSTALL"
+```
+
+The certificate chains to the installer's already configured login CA; leave
+`tls/admin-trust/admin-ca-bundle.pem`, backend administrative-client trust and all
+existing proxy/client mappings intact. A certificate from a different login CA
+requires a separately planned trust update at both verification boundaries.
+If validation/start fails, keep the stopped state and inspect the specific error;
+do not keep issuing certificates or delete retained service state to retry.
+
+Deliver only `alice-login.crt`, the public administrative CA chain and the public
+web CA to Alice. Keep `server-before.json` private; never give her `secrets.conf`
+or `provisioning/ca.key`.
+
+### The operator exports PKCS#12 and connects
+
+Alice puts the delivered certificate and CA in her original directory, then:
+
+```sh
+cd "$HOME/northstar-alice"
+openssl pkcs12 -export -inkey alice-login.key -in alice-login.crt \
+  -certfile administrators-ca.pem -out alice-login.p12
+chmod 600 alice-login.key alice-login.p12
+```
+
+OpenSSL prompts for her existing key password and a new PKCS#12 export password.
+Set the real checkout, origin and realm on Alice's machine. Her initial grant in
+the walkthrough permits realm metadata, so verify that access before mutations:
+
+```sh
+REPO="$HOME/work/ZeroEcho"
+URL='https://pki.northstar.example:8443'
+REALM='northstar'
+umask 077
+alice() {
+  "$REPO/deploy/pki-operator.sh" --url "$URL" --realm "$REALM" \
+    --trust "$HOME/northstar-alice/web-ca.pem" \
+    --p12 "$HOME/northstar-alice/alice-login.p12" \
+    --checkpoint "$HOME/northstar-alice/operator-state" "$@"
+}
+alice discover
+```
+
+Enter Alice's PKCS#12 export password at the hidden prompt. Successful discovery
+exits 0 and prints `{"exit":0,"result":{"operations":...,"schema":...}}`.
+Before fetching those descriptors, the client reads `GET /admin/v1/realm` and
+requires its actual realm to match `--realm`; a mismatch fails discovery. The
+realm check is built in, not a separate `realm.inspect` operation, and its fields
+are not repeated in discovery's result. Discovery is not a grant: if authentication
+succeeds but a request is refused, inspect the principal's effective `REALM_READ`
+permission and mapping.
+A TLS/trust, wrong-realm or permission refusal exits 2; do not bypass it with
+disabled certificate validation or another user's identity. Keep this checkpoint
+separate from administrator and approver sessions.

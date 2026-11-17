@@ -29,26 +29,30 @@ Automatic publication is irreversible. Inspect the deployment UUID in Central
 Portal for its final result and before retrying if validation later fails;
 do not blindly upload the same immutable version again.
 
-## Change scope and acceptance
+## Prepare a local release bundle
 
-Baseline: Gitea publication depended on a Gitea token, used development versions,
-and resolved Conflux through a private repository. This migration replaces that
-release workflow and repository, keeping existing artifact IDs and license rules.
-Acceptance: license/tooling tests, module checks and strict Javadoc pass; local
-signed staging produces all five complete coordinates; independent review checks
-the workflow before merge. Live Central account access and the first real upload
-remain the repository owner's release-time checks. No upload is needed for local validation.
+Use local staging to inspect the artifacts before publishing. Set the signing
+environment variables listed above to a disposable signing identity for a local
+trial, and run from the repository root with JDK 25:
 
-For local inspection, run `./gradlew check javadoc` and
-`python3 -m unittest discover -s tools -p 'test_prepare_central_bundle.py'`.
-With a disposable signing key supplied through the signing environment variables,
-run `./gradlew publishMavenJavaPublicationToCentralBundleRepository -PreleaseVersion=1.2.3`
-and `python3 tools/prepare_central_bundle.py --repository build/central-repository --output build/central-bundle.zip --version 1.2.3`.
-The local stage command has no remote publishing repository.
+```sh
+./gradlew check javadoc
+python3 -m unittest discover -s tools -p 'test_prepare_central_bundle.py'
+./gradlew publishMavenJavaPublicationToCentralBundleRepository -PreleaseVersion=1.2.3
+python3 tools/prepare_central_bundle.py --repository build/central-repository --output build/central-bundle.zip --version 1.2.3
+```
 
-Rollback before publication: revert the migration commit, remove no tags, and
-confirm the previous workflow/conventions are restored with `git diff`. After a
-Central version is published it cannot be overwritten or removed through this
-workflow; publish a corrected new version and update the GitHub release notes.
-The repository owner approves the actual release; this change prepares automation
-and does not itself create a tag, GitHub release or Maven Central publication.
+Replace `1.2.3` consistently with the intended release version. Inspect
+`build/central-bundle.zip` for all five publications, sources, Javadoc, POMs and
+signatures. Local staging does not upload to a remote publishing repository.
+
+## Publish and recover from a failed release
+
+After the release is approved, push the corresponding `release@x.y.z` tag.
+Observe the GitHub workflow and the retained Central deployment UUID. Confirm
+Central publication separately before directing consumers to the new version.
+
+If Central rejects the upload, inspect the validation result for that deployment
+before retrying. A published Central version cannot be overwritten or removed
+through this workflow. Publish corrections under a new version and update the
+GitHub release notes with the compatibility impact and required upgrade actions.

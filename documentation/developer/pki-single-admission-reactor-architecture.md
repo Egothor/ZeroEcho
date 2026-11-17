@@ -1,6 +1,5 @@
 # PKI Durable Signing Reactor Architecture
 
-**Status:** Normative for the implemented reactive backend and shared local execution.
 **Applies to:** Signing-backed PKI workflows.
 
 ## Architectural boundary
@@ -166,17 +165,17 @@ while uncertainty preserves it for recovery.
 
 ## Clean persistent format
 
-The only supported outer format is v16, with `FsCodec` 10 and schema 1 for the
+The only supported outer format is v18, with `FsCodec` 11 and schema 1 for the
 separate envelope, mutable state, and binding records. Unchanged low-level WAL
 formats remain unchanged. There are no legacy readers, combined-record readers,
 owner-key formats, or migration paths.
 
-The v16 boundary adds immutable raw-signing mode and the durable bounded
-initial-attempt phase, with `accept-sign:v2` commitments. The preceding v15
-boundary requires the exact 23-field intermediate command for creation,
+The acceptance envelope retains immutable raw-signing mode and the durable bounded
+initial-attempt phase, with `accept-sign:v2` commitments. Intermediate commands
+require the exact 23-field representation for creation,
 additional issuance and rollover, including frozen managed-key proof scope and
 TBS length/digest. Creation uses no existing subject scope; the other operations
-bind their exact subject authority. Previous 21-field commands and v14 roots are
+bind their exact subject authority. Previous 21-field commands and older roots are
 rejected; lower-level record encodings are unchanged.
 
 An empty-store initialization durably publishes and validates namespace,

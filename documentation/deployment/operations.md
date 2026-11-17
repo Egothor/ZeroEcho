@@ -1,9 +1,5 @@
 # Operations
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on deployment/recovery
-changes. Written procedures remain unverified pending clean-environment rehearsal.
-For the supported fresh-v18 rootless operating path, start with
-[production deployment](pki-production.md).
 
 This page covers running the platform day to day: checking health, backing up and
 restoring the volumes, upgrading the images, recovering from disaster, and handling
@@ -110,9 +106,14 @@ volumes carry the state forward.
 
 === "Kubernetes"
 
+    Set `NEW_IMAGE` to the complete image reference you built or obtained for
+    this upgrade, including its release tag or immutable digest:
+
     ```bash
+    read -r -p 'New PKI server image reference: ' NEW_IMAGE
+    : "${NEW_IMAGE:?A server image reference is required}"
     kubectl -n zeroecho-pki set image statefulset/pki-server \
-      pki-server=zeroecho/pki-server:<new-tag>
+      "pki-server=$NEW_IMAGE"
     ```
 
     Because the store is single-writer, the StatefulSet's single replica is

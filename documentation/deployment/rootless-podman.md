@@ -1,20 +1,16 @@
 # Rootless Podman installer
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on installer/configuration
-changes. These source-reviewed written procedures remain unverified pending
-clean-environment rehearsal. See [production deployment](pki-production.md) for
-the operating sequence and [fast-track](pki-fast-track.md) for disposable testing.
+See [production deployment](pki-production.md) for the operating sequence and
+[fast-track](pki-fast-track.md) for disposable testing.
 
 `deploy/rootless-pki.sh install` prepares a **fresh** persistent PKI realm and
 starts the production server and web console under the current Linux user's
 systemd manager. It uses the regular nginx mTLS edge and backend, not frontend
 demo mode. One curses form collects all operator inputs before provisioning.
 
-This automation has native and actual rootless qualification evidence for the
-recorded candidate. A new target platform still needs its own installation and
-operating checks; a historical successful result is not current health or
-production promotion. The baseline is a fresh empty version-18 store, with no
-earlier-store migration path.
+Installation requires a fresh empty version-18 store. An earlier-store migration
+path is not supplied. Check host prerequisites before installation and confirm
+service health and client access afterwards.
 
 ## Requirements
 
@@ -257,42 +253,24 @@ Only after explicit inspection and a decision to abandon that installation shoul
 an operator remove its unit links, network and private data. There is no automatic
 uninstall or reset command. Reuse retained state for restart, not another `install`.
 
-## Validation
+## Check the installed service
 
-The startup correction was also verified on an existing rootless deployment:
-backend readiness returned HTTP 200 over verified mTLS, and authenticated access
-through the published edge succeeded with the existing client identity. This
-confirms the observed startup fix; fresh-install and broader lifecycle coverage
-remain the responsibility of the explicit target-host gate below.
-
-Local validation (real OpenSSL certificates, PKCS12, production Java decoder and
-JSSE trust-store recognition when the server distribution exists):
+Run the status command with the retained installation directory, replacing the
+example path with the exact path selected during installation:
 
 ```sh
-./gradlew :pki-server:installDist
-python3 -m unittest discover -s deploy -p 'test_*.py'
-./gradlew :pki-server:test --tests '*PkiAdminBootstrapTest'
+./deploy/rootless-pki.sh status --directory /absolute/path
 ```
 
-The `Rootless installer checks` CI workflow builds the server distribution, runs
-the bootstrap JUnit tests and deployment/TLS contracts on Fedora with OpenSSL
-JDK trust support. The real-engine gate remains an explicit target-host check.
+Confirm both services are running.
+Import the exported administrator identity into your browser and open the
+printed console URL. Confirm the dashboard loads using that identity before
+starting authority administration. Use the
+[administrator walkthrough](../admin/getting-started.md) for the first CA and
+[external client exercises](pki-exercise.md) to check the published interfaces.
 
-The explicit target-host gate builds both images and creates temporary user
-services and a private network. It checks installation, source update with explicit root designation, unchanged
-configuration/client export/keyring, mTLS access, anonymous rejection, backend
-replacement with edge recovery, and stop/start persistence;
-cleanup targets only its own generated services/network:
-
-```sh
-ZEROECHO_RUN_INSTALLER_INTEGRATION=1 \
-  python3 -m unittest discover -s deploy -p test_rootless_pki.py
-```
-
-This gate requires a functioning local Podman and user systemd manager. It does
-not change host trust or lingering. For issuance/browser behavior through the
-packaged nginx/server images, also run the existing
-[packaged deployment gate](https://github.com/Egothor/ZeroEcho/blob/main/pki-frontend/e2e/packaged/README.md).
+If the service fails, retain its state and inspect the user-systemd logs described
+above. Do not repeat `install` against an initialized directory.
 
 ## Certificate access on an existing installation
 

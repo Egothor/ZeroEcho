@@ -1,7 +1,5 @@
 # Certificate profile schema
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on profile/codec changes.
-Source-reviewed examples remain unverified as written pending procedure rehearsal.
 
 A certificate profile document is a strict JSON object that constrains a class
 of certificates. The codec enforces schema version 5. Documents must not exceed

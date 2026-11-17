@@ -15,8 +15,9 @@ Two distinct surfaces are involved, and it helps to know which is which:
 
 ## Find and inspect your credential
 
-Every issued credential has an identifier. You will have seen it when the
-credential was issued from your request; you can also find it from the request.
+Every issued credential has an identifier. Obtain it from the issuing operator's
+completed issuance result. Keep the request ID, credential ID, authority ID,
+issuer ID and chain path ID together; they identify different objects.
 Use the identifier to inspect the credential's details.
 
 === "Command line"
@@ -80,25 +81,56 @@ embed in tooling. All live under `/public/v1/`.
 | List of authorities *(if exposed)* | `GET /public/v1/authorities` |
 | One authority's summary | `GET /public/v1/authorities/{authorityId}` |
 
-Downloading your certificate and verifying it against its chain:
+For these Bash examples, install `curl`, OpenSSL and `jq`. Obtain the public
+repository URL and an independently trusted root certificate from your
+administrator. The public repository can use a different URL from the
+administrative API. A downloaded chain does not establish trust in its own root.
+The HTTPS server must chain to a CA trusted by `curl`'s system trust store. If
+the repository uses a private web-server CA, obtain its PEM bundle through a
+trusted channel and add `--cacert /path/to/web-server-ca.pem` to **every** `curl`
+command below, including the command inside the loop and the later CRL download.
+This web-server CA authenticates the download connection; it is distinct from
+`trusted-root.pem`, which validates the issued certificate. Do not disable TLS
+verification if either trust prerequisite is missing.
+Set these values to the supplied URL and actual returned IDs:
 
 ```bash
-# Download your leaf certificate (DER).
-curl -sSf https://pki.example.com/public/v1/certificates/<credential-id> \
-  -o leaf.crt
+PUBLIC_URL=https://pki.example.com
+CREDENTIAL_ID=replace-with-credential-id
+AUTHORITY_ID=replace-with-authority-id
+ISSUER_ID=replace-with-issuer-id
+PATH_ID=replace-with-path-id
 
-# Download the issuing authority's current chain descriptor (JSON). It lists the
-# ordered certificate URLs that make up the chain.
-curl -sSf https://pki.example.com/public/v1/authorities/<authority-id>/chain
+curl --fail --silent --show-error \
+  "$PUBLIC_URL/public/v1/certificates/$CREDENTIAL_ID" -o leaf.der
+openssl x509 -inform DER -in leaf.der -out leaf.pem
+openssl x509 -in leaf.pem -noout -subject -issuer -serial -dates
 
-# Fetch each certificate the chain descriptor points at (each is a
-# /public/v1/certificates/{id} URL), concatenate them into chain.pem, then verify.
-openssl verify -CAfile chain.pem leaf.crt
+# Use the exact issuance path: the current-chain alias may change after rollover.
+curl --fail --silent --show-error \
+  "$PUBLIC_URL/public/v1/authorities/$AUTHORITY_ID/issuers/$ISSUER_ID/paths/$PATH_ID" \
+  -o chain.json
+jq -er '.result.certificates[]' chain.json > chain-links.txt
+
+# Each response is DER, so convert each certificate before combining PEM files.
+: > chain.pem
+while IFS= read -r certificate_path; do
+  case "$certificate_path" in
+    /public/v1/certificates/*) ;;
+    *) printf 'Unexpected certificate path\n' >&2; exit 1 ;;
+  esac
+  curl --fail --silent --show-error "$PUBLIC_URL$certificate_path" -o issuer.der || exit 1
+  openssl x509 -inform DER -in issuer.der -out issuer.pem || exit 1
+  cat issuer.pem >> chain.pem
+done < chain-links.txt
+
+# trusted-root.pem comes from your administrator through a trusted channel.
+openssl verify -CAfile trusted-root.pem -untrusted chain.pem leaf.pem
 ```
 
 !!! note "The chain descriptor points at certificate URLs"
     `/public/v1/authorities/{authorityId}/chain` returns a small JSON document
-    whose `certificates` array holds `/public/v1/certificates/{id}` links in
+    whose `.result.certificates` array holds `/public/v1/certificates/{id}` links in
     issuing order. Fetch those to assemble the full chain.
 
 !!! tip "Caching and conditional requests"
@@ -124,7 +156,7 @@ expiry. Two independent things establish this:
 1. **The validity window** printed in the certificate itself:
 
     ```bash
-    openssl x509 -in leaf.crt -noout -dates -subject -issuer
+    openssl x509 -in leaf.pem -noout -dates -subject -issuer
     ```
 
 2. **The revocation status** published by the realm. As a relying party you check

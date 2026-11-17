@@ -5,7 +5,6 @@ on a specific `resourceType`. This page maps the principal operator families;
 the live catalog/schema supplies the complete configured set, including optional
 protocol/backup operations. Profile approval is additional to HIGH_RISK.
 
-Owner: PKI maintainers. Reviewed: 2026-11-16. Review on catalog/permission changes.
 
 To discover this mapping at runtime, call `GET /admin/v1/operations` — the response includes `action`, `resourceType`, and `approval` for every operation the caller is permitted to see.
 

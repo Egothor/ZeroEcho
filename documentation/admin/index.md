@@ -130,7 +130,7 @@ separate explicit approval-ID contract. A grant may additionally *condition* an 
 approval-free operation (for example a revocation) on approval. Examples of
 statically high-risk operations include creating an authority (`ca.create`),
 transitioning an authority's state (`ca.transition`), selecting an issuance path
-(`issuer.path.select`), registering a principal (`security.principal.register`),
+(`issuer.path.select`), disabling a principal (`security.principal.disable`),
 creating a grant (`security.grant.create`), and creating or activating
 break-glass access.
 
@@ -152,6 +152,9 @@ data views, and conditions — is described under
 [security model reference](../reference/security-model.md).
 
 ## Where to go next
+
+Start with [Set up and administer a PKI](getting-started.md) for a persistent
+installation, runnable CA/operator/issuance commands and safe request recovery.
 
 | If you want to… | Read |
 |---|---|
