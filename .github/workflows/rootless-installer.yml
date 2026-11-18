@@ -49,12 +49,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Install verification toolchain
-        run: dnf install -y git python3 openssl java-25-openjdk-devel curl tar gzip unzip findutils
+        run: dnf install -y git python3 openssl java-25-openjdk-devel curl tar gzip unzip findutils shadow-utils util-linux
       - uses: actions/checkout@v4
       - name: Build server distribution and exercise bootstrap and root approval boundaries
-        run: ./gradlew :pki-server:installDist :pki-server:test --tests '*PkiAdminBootstrapTest' --tests '*PkiRootAdminTest' --tests '*RootApprovalCapabilityTest' --no-daemon
+        run: ./gradlew :pki-server:installDist :pki-server:generateSchema :pki-server:test --tests '*PkiAdminBootstrapTest' --tests '*PkiRootAdminTest' --tests '*RootApprovalCapabilityTest' --no-daemon --no-parallel
       - name: Check deployment contracts and real TLS material
-        run: python3 -m unittest discover -s deploy -p 'test_*.py'
+        run: |
+          useradd --create-home --user-group zeroecho-checks
+          # Keep rootless guards active; this suite must exercise an ordinary UID.
+          # The checkout and generated schema are read-only inputs for this user.
+          runuser --user zeroecho-checks -- env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p 'test_*.py'
       - name: Check shell syntax and source licenses
         run: |
           sh -n deploy/rootless-pki.sh
