@@ -174,6 +174,21 @@ public final class Pkix {
     }
 
     /**
+     * Returns a certificate's extensions as provider-independent values.
+     * Each value contains the inner DER payload, without the surrounding OCTET STRING.
+     * This does not establish certificate validity, signature validity or trust.
+     *
+     * @param certificate nonnull certificate to inspect
+     * @return immutable extension list, empty when no extensions are present
+     * @throws NullPointerException if the certificate is null
+     * @throws IllegalArgumentException if its encoded certificate cannot be parsed
+     * @throws UnsupportedOperationException if the provider lacks this capability
+     */
+    public static List<CertificateExtension> certificateExtensions(X509Certificate certificate) {
+        return provider().certificateExtensions(Objects.requireNonNull(certificate, "certificate"));
+    }
+
+    /**
      * Creates a certification-request builder.
      *
      * @return a fresh CSR builder

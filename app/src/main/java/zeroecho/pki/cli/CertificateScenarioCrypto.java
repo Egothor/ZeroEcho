@@ -57,7 +57,6 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -68,31 +67,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.pkcs.Attribute;
-import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.Extensions;
-import org.bouncycastle.asn1.x509.ExtensionsGenerator;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.jcajce.spec.MLDSAParameterSpec;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
-import org.bouncycastle.pkcs.PKCS10CertificationRequest;
-import org.bouncycastle.pkcs.PKCSException;
-import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkProofs;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkValue;
 import zeroecho.pkix.Pkix;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.CertificateExtension;
+import zeroecho.pkix.GeneralName;
+import zeroecho.pkix.csr.CertificationRequest;
+import zeroecho.pkix.csr.CertificationRequestBuilder;
+import zeroecho.pkix.csr.CsrAttribute;
+import java.security.spec.NamedParameterSpec;
 import zeroecho.pkix.PublicKeyIdentity;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
@@ -109,11 +95,21 @@ public final class CertificateScenarioCrypto {
     private static final String HYBRID = "hybrid";
     private static final String SHA256 = "SHA-256";
     private static final String EC_OID = "1.2.840.10045.2.1";
-    private static final String CURVE_OID = "1.3.132.0.34";
     private static final String RSA_OID = "1.2.840.113549.1.1.1";
     private static final String EC_SIGNATURE = "1.2.840.10045.4.3.3";
     private static final String RSA_SIGNATURE = "1.2.840.113549.1.1.12";
+    private static final String MLDSA_SIGNATURE = "ML-DSA-87";
     private static final String ML_OID = "2.16.840.1.101.3.4.3.19";
+    // X.509 extension object identifiers are not IP addresses.
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
+    private static final String ALT_SPKI = "2.5.29.72";
+    // X.509 extension object identifiers are not IP addresses.
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
+    private static final String ALT_ALGORITHM = "2.5.29.73";
+    // X.509 extension object identifiers are not IP addresses.
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
+    private static final String ALT_SIGNATURE = "2.5.29.74";
+    private static final String EXTENSION_REQUEST = "1.2.840.113549.1.9.14";
     private static final String CLIENT_URI = "spiffe://zeroecho.invalid/scenario/client";
     private static final Set<String> VARIANTS = Set.of(P384, RSA4096, MLDSA87, HYBRID);
     private CertificateScenarioCrypto() { }
@@ -131,10 +127,8 @@ public final class CertificateScenarioCrypto {
      * @param args exact command arguments, without passwords or private material
      * @throws IOException if bounded input or output cannot be read or written
      * @throws GeneralSecurityException if keys, certificates or signatures fail validation
-     * @throws OperatorCreationException if CSR signer or verifier creation fails
-     * @throws PKCSException if CSR proof verification fails
      */
-    public static void main(String... args) throws IOException, GeneralSecurityException, OperatorCreationException, PKCSException {
+    public static void main(String... args) throws IOException, GeneralSecurityException {
         BouncyCastleActivator.init();
         if (args.length == 2 && "describe".equals(args[0])) {
             requireVariant(args[1]);
@@ -176,27 +170,25 @@ public final class CertificateScenarioCrypto {
             boolean[] usage = certificate.getKeyUsage();
             require(usage != null && usage.length > 5 && usage[5], "Issuer certificate lacks keyCertSign usage");
             require(certificate.getIssuerX500Principal().equals(issuer.getSubjectX500Principal()), "Issuer chain order or anchor name differs");
-            X509CertificateHolder holder = holder(certificate);
-            require(Arrays.equals(holder.getSignatureAlgorithm().getEncoded("DER"),
-                    holder.toASN1Structure().getTBSCertificate().getSignature().getEncoded("DER")), "Inner and outer signature algorithms differ");
+            requireCertificateEncoding(certificate);
             certificate.verify(issuer.getPublicKey(), "BC");
-            verifyIssuerAlternative(certificate, issuer, holder);
+            verifyIssuerAlternative(certificate, issuer);
             if (!certificate.getSubjectX500Principal().equals(certificate.getIssuerX500Principal())) { subordinateCas++; }
         }
         System.out.println("VERIFIED issuer-chain certificates=" + chain.size() + " selected-anchor-sha256="
                 + hex(digest(SHA256, chain.get(chain.size() - 1).getEncoded())));
     }
 
-    private static void verifyIssuerAlternative(X509Certificate certificate, X509Certificate issuer,
-            X509CertificateHolder holder) throws IOException, GeneralSecurityException {
-            boolean alternative = holder.getExtension(Extension.altSignatureAlgorithm) != null
-                    || holder.getExtension(Extension.altSignatureValue) != null || holder.getExtension(Extension.subjectAltPublicKeyInfo) != null;
-            if (alternative) {
-                require(holder.getExtension(Extension.altSignatureAlgorithm) != null
-                        && holder.getExtension(Extension.altSignatureValue) != null
-                        && holder.getExtension(Extension.subjectAltPublicKeyInfo) != null, "Incomplete alternative-signature certificate");
-                require(Pkix.verifyAlternativeSignatureCor3(certificate, publicKey(alternativeSpki(issuer))), "Alternative issuer signature is invalid");
-            }
+    private static void verifyIssuerAlternative(X509Certificate certificate, X509Certificate issuer)
+            throws IOException, GeneralSecurityException {
+        Map<String, CertificateExtension> extensions = extensions(certificate);
+        boolean alternative = extensions.containsKey(ALT_ALGORITHM) || extensions.containsKey(ALT_SIGNATURE)
+                || extensions.containsKey(ALT_SPKI);
+        if (alternative) {
+            require(extensions.containsKey(ALT_ALGORITHM) && extensions.containsKey(ALT_SIGNATURE)
+                    && extensions.containsKey(ALT_SPKI), "Incomplete alternative-signature certificate");
+            require(Pkix.verifyAlternativeSignatureCor3(certificate, publicKey(alternativeSpki(issuer))), "Alternative issuer signature is invalid");
+        }
     }
 
     private static void authContext(String... args) throws IOException, GeneralSecurityException {
@@ -217,22 +209,26 @@ public final class CertificateScenarioCrypto {
         System.out.println(hex(HybridSdkFrame.hash(frame.encode())));
     }
 
-    private static void generate(String variant, Path directory) throws IOException, GeneralSecurityException, OperatorCreationException, PKCSException {
+    private static void generate(String variant, Path directory) throws IOException, GeneralSecurityException {
         requireVariant(variant);
         Files.createDirectory(directory, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
         KeyPair primary = pair(HYBRID.equals(variant) ? P384 : variant);
-        ExtensionsGenerator extensions = new ExtensionsGenerator();
-        extensions.addExtension(Extension.subjectAlternativeName, false,
-                new GeneralNames(new GeneralName(GeneralName.uniformResourceIdentifier, CLIENT_URI)));
+        CertificationRequestBuilder builder = Pkix.certificationRequestBuilder()
+                .subject(new javax.security.auth.x500.X500Principal("CN=ZeroEcho scenario client"))
+                .publicKey(primary.getPublic())
+                .subjectAlternativeNames(List.of(new GeneralName.UniformResourceIdentifier(CLIENT_URI)), false);
         if (HYBRID.equals(variant)) {
             KeyPair alternative = pair(MLDSA87);
             write(directory.resolve("alternative.key"), alternative.getPrivate().getEncoded());
             write(directory.resolve("alternative.spki.der"), alternative.getPublic().getEncoded());
-            extensions.addExtension(Extension.subjectAltPublicKeyInfo, false, alternative.getPublic().getEncoded());
+            builder.requestExtension(new CertificateExtension(ALT_SPKI, false, alternative.getPublic().getEncoded()));
         }
-        byte[] csr = new JcaPKCS10CertificationRequestBuilder(new X500Name("CN=ZeroEcho scenario client"), primary.getPublic())
-                .addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate())
-                .build(new JcaContentSignerBuilder(signature(variant)).setProvider("BC").build(primary.getPrivate())).getEncoded();
+        AlgorithmIdentifier algorithm = switch (variant) {
+            case RSA4096 -> AlgorithmIdentifier.derNull(RSA_SIGNATURE);
+            case MLDSA87 -> AlgorithmIdentifier.absent(ML_OID);
+            default -> AlgorithmIdentifier.absent(EC_SIGNATURE);
+        };
+        byte[] csr = builder.build(Pkix.signer(primary.getPrivate(), algorithm)).encoded();
         write(directory.resolve("client.key"), primary.getPrivate().getEncoded());
         write(directory.resolve("client.spki.der"), primary.getPublic().getEncoded());
         write(directory.resolve("client.csr.der"), csr);
@@ -249,7 +245,7 @@ public final class CertificateScenarioCrypto {
         switch (variant) {
             case P384 -> generator.initialize(new ECGenParameterSpec("secp384r1"));
             case RSA4096 -> generator.initialize(4096);
-            case MLDSA87 -> generator.initialize(MLDSAParameterSpec.ml_dsa_87);
+            case MLDSA87 -> generator.initialize(new NamedParameterSpec(MLDSA_SIGNATURE));
             default -> throw invalid("Unsupported key variant");
         }
         return generator.generateKeyPair();
@@ -259,7 +255,7 @@ public final class CertificateScenarioCrypto {
         return switch (variant) {
             case P384, HYBRID -> "SHA384withECDSA";
             case RSA4096 -> "SHA384withRSA";
-            case MLDSA87 -> "ML-DSA-87";
+            case MLDSA87 -> MLDSA_SIGNATURE;
             default -> throw invalid("Unsupported scenario variant");
         };
     }
@@ -267,7 +263,7 @@ public final class CertificateScenarioCrypto {
     /** Verifies the fixed root, intermediate and client scenario without granting trust. */
     private static final class IssuedChainVerifier {
         private static final int CA_COUNT = 2;
-        private static void verify(String variant, Path directory, Path rootFile, Path intermediateFile, Path leafFile) throws IOException, GeneralSecurityException, OperatorCreationException, PKCSException {
+        private static void verify(String variant, Path directory, Path rootFile, Path intermediateFile, Path leafFile) throws IOException, GeneralSecurityException {
             requireVariant(variant); requireDirectory(directory); requireCsr(directory, variant);
             X509Certificate root = certificate(rootFile); X509Certificate intermediate = certificate(intermediateFile); X509Certificate leaf = certificate(leafFile);
             List<X509Certificate> chain = List.of(root, intermediate, leaf);
@@ -282,10 +278,10 @@ public final class CertificateScenarioCrypto {
             if (HYBRID.equals(variant)) {
                 byte[] alternative = read(directory.resolve("alternative.spki.der"), 16_384);
                 require(Arrays.equals(alternative, alternativeSpki(leaf)), "Issued alternative subject key differs from retained client key");
-                requirePossession(directory.resolve("alternative.key"), alternative, "ML-DSA-87");
+                requirePossession(directory.resolve("alternative.key"), alternative, MLDSA_SIGNATURE);
             }
-            PKCS10CertificationRequest csr = new PKCS10CertificationRequest(read(directory.resolve("client.csr.der"), 262_144));
-            require(leaf.getSubjectX500Principal().equals(new javax.security.auth.x500.X500Principal(csr.getSubject().getEncoded())), "Issued subject differs from CSR");
+            CertificationRequest csr = Pkix.parseCertificationRequest(read(directory.resolve("client.csr.der"), 262_144));
+            require(leaf.getSubjectX500Principal().equals(csr.subject()), "Issued subject differs from CSR");
             require(leaf.getSubjectAlternativeNames() != null && leaf.getSubjectAlternativeNames().stream()
                     .anyMatch(name -> name.size() == 2 && name.get(0).equals(6) && CLIENT_URI.equals(name.get(1))), "Issued URI SAN differs from scenario request");
             System.out.println("VERIFIED " + variant + " chain, signatures, algorithms and retained client key possession");
@@ -294,22 +290,21 @@ public final class CertificateScenarioCrypto {
 
         private static void verifyCertificate(String variant, Path directory, X509Certificate certificate,
                 X509Certificate issuer, int i) throws IOException, GeneralSecurityException {
-            X509CertificateHolder holder = holder(certificate);
-            verifyPrimary(variant, directory, certificate, issuer, holder, i);
-            verifyHybrid(variant, directory, certificate, issuer, holder, i);
-            System.out.println("CERTIFICATE " + i + " SPKI-OID=" + SubjectPublicKeyInfo.getInstance(certificate.getPublicKey().getEncoded()).getAlgorithm().getAlgorithm()
+            verifyPrimary(variant, directory, certificate, issuer, i);
+            verifyHybrid(variant, directory, certificate, issuer, i);
+            System.out.println("CERTIFICATE " + i + " SPKI-OID=" + Pkix.subjectPublicKeyAlgorithm(certificate.getPublicKey().getEncoded()).oid()
                     + " SIGNATURE-OID=" + certificate.getSigAlgOID() + " SHA256=" + hex(digest(SHA256, certificate.getEncoded()))
                     + (HYBRID.equals(variant) ? " ALTERNATIVE-OID=" + ML_OID + " ALTERNATIVE-VERIFIED=true" : ""));
         }
 
         private static void verifyPrimary(String variant, Path directory, X509Certificate certificate,
-                X509Certificate issuer, X509CertificateHolder holder, int i) throws IOException, GeneralSecurityException {
+                X509Certificate issuer, int i) throws IOException, GeneralSecurityException {
             certificate.checkValidity();
             KeyEncoding.requireKey(certificate.getPublicKey().getEncoded(), HYBRID.equals(variant) ? P384 : variant);
-            AlgorithmIdentifier algorithm = holder.getSignatureAlgorithm();
+            AlgorithmIdentifier algorithm = signatureAlgorithm(certificate);
             String expected = switch (variant) { case RSA4096 -> RSA_SIGNATURE; case MLDSA87 -> ML_OID; default -> EC_SIGNATURE; };
-            require(expected.equals(algorithm.getAlgorithm().getId()), "Wrong certificate signature OID");
-            require(Arrays.equals(algorithm.getEncoded("DER"), holder.toASN1Structure().getTBSCertificate().getSignature().getEncoded("DER")), "Inner and outer signature algorithms differ");
+            require(expected.equals(algorithm.oid()), "Wrong certificate signature OID");
+            requireCertificateEncoding(certificate);
             KeyEncoding.requireParameters(algorithm, RSA4096.equals(variant));
             if (i < CA_COUNT) { require(Arrays.equals(read(directory.resolve(i == 0 ? "root.spki.der" : "intermediate.spki.der"), 16_384), certificate.getPublicKey().getEncoded()),
                     "CA subject key differs from selected managed key"); }
@@ -332,23 +327,27 @@ public final class CertificateScenarioCrypto {
         }
 
         private static void verifyHybrid(String variant, Path directory, X509Certificate certificate,
-                X509Certificate issuer, X509CertificateHolder holder, int i) throws IOException, GeneralSecurityException {
+                X509Certificate issuer, int i) throws IOException, GeneralSecurityException {
             if (HYBRID.equals(variant)) {
                 byte[] alternative = alternativeSpki(certificate); KeyEncoding.requireKey(alternative, MLDSA87);
                 if (i < CA_COUNT) { require(Arrays.equals(read(directory.resolve(i == 0 ? "root-alternative.spki.der" : "intermediate-alternative.spki.der"), 16_384), alternative),
                         "CA alternative subject key differs from selected managed key"); }
-                Extension extension = holder.getExtension(Extension.altSignatureAlgorithm);
-                require(extension != null && !extension.isCritical(), "Missing or critical alternative signature algorithm");
-                require(Arrays.equals(extension.getExtnValue().getOctets(), HybridSdkFrame.alternativeAlgorithm()), "Wrong alternative signature algorithm");
-                require(holder.getExtension(Extension.subjectAltPublicKeyInfo) != null && !holder.getExtension(Extension.subjectAltPublicKeyInfo).isCritical()
-                        && holder.getExtension(Extension.altSignatureValue) != null && !holder.getExtension(Extension.altSignatureValue).isCritical(), "Missing or critical hybrid extensions");
+                Map<String, CertificateExtension> extensions = extensions(certificate);
+                CertificateExtension extension = extensions.get(ALT_ALGORITHM);
+                require(extension != null && !extension.critical(), "Missing or critical alternative signature algorithm");
+                require(Arrays.equals(extension.derValue(), HybridSdkFrame.alternativeAlgorithm()), "Wrong alternative signature algorithm");
+                require(extensions.containsKey(ALT_SPKI) && !extensions.get(ALT_SPKI).critical()
+                        && extensions.containsKey(ALT_SIGNATURE) && !extensions.get(ALT_SIGNATURE).critical(), "Missing or critical hybrid extensions");
                 require(Pkix.verifyAlternativeSignatureCor3(certificate, publicKey(alternativeSpki(issuer))), "Alternative signature is invalid");
-            } else { require(holder.getExtension(Extension.subjectAltPublicKeyInfo) == null && holder.getExtension(Extension.altSignatureAlgorithm) == null
-                    && holder.getExtension(Extension.altSignatureValue) == null, "Unexpected hybrid certificate in ordinary scenario"); }
+            } else {
+                Map<String, CertificateExtension> extensions = extensions(certificate);
+                require(!extensions.containsKey(ALT_SPKI) && !extensions.containsKey(ALT_ALGORITHM)
+                        && !extensions.containsKey(ALT_SIGNATURE), "Unexpected hybrid certificate in ordinary scenario");
+            }
         }
     }
 
-    private static void sign(String... args) throws IOException, GeneralSecurityException, OperatorCreationException, PKCSException {
+    private static void sign(String... args) throws IOException, GeneralSecurityException {
         Path directory = Path.of(args[1]); requireDirectory(directory); requireCsr(directory, HYBRID);
         HybridSdkFrame first = HybridSdkFrame.decode(read(Path.of(args[2]), 1_048_576));
         HybridSdkFrame second = HybridSdkFrame.decode(read(Path.of(args[3]), 1_048_576));
@@ -368,31 +367,32 @@ public final class CertificateScenarioCrypto {
         require(!Files.exists(directory.resolve("primary.proof"), LinkOption.NOFOLLOW_LINKS)
                 && !Files.exists(directory.resolve("alternative.proof"), LinkOption.NOFOLLOW_LINKS), "Proof files already exist");
         byte[] primary = signFile(directory.resolve("client.key"), "SHA384withECDSA", first.encode());
-        byte[] alternative = signFile(directory.resolve("alternative.key"), "ML-DSA-87", second.encode());
+        byte[] alternative = signFile(directory.resolve("alternative.key"), MLDSA_SIGNATURE, second.encode());
         HybridSdkProofs.verify(HybridSdkProofs.parse(read(directory.resolve("client.csr.der"), 262_144)), first, primary, alternative, Instant.now());
         write(directory.resolve("primary.proof"), primary); write(directory.resolve("alternative.proof"), alternative);
         System.out.println("SIGNED exact approved F1 and F2");
     }
 
-    private static void requireCsr(Path directory, String variant) throws IOException, GeneralSecurityException, OperatorCreationException, PKCSException {
+    private static void requireCsr(Path directory, String variant) throws IOException, GeneralSecurityException {
         requireDirectory(directory);
         byte[] encoded = read(directory.resolve("client.csr.der"), 262_144);
-        PKCS10CertificationRequest csr = new PKCS10CertificationRequest(encoded);
-        require(Arrays.equals(encoded, csr.getEncoded()), "Noncanonical CSR");
+        CertificationRequest csr = Pkix.parseCertificationRequest(encoded);
+        require(Arrays.equals(encoded, csr.encoded()), "Noncanonical CSR");
         byte[] primary = read(directory.resolve("client.spki.der"), 16_384);
         KeyEncoding.requireKey(primary, HYBRID.equals(variant) ? P384 : variant);
-        require(Arrays.equals(primary, csr.getSubjectPublicKeyInfo().getEncoded()), "Retained CSR primary key differs");
-        require(csr.isSignatureValid(new JcaContentVerifierProviderBuilder().setProvider("BC").build(publicKey(primary))), "Invalid native CSR proof");
+        require(Arrays.equals(primary, csr.subjectPublicKeyInfo()), "Retained CSR primary key differs");
+        require(csr.verifySelfSignature(), "Invalid native CSR proof");
         requirePossession(directory.resolve("client.key"), primary, signature(variant));
         if (HYBRID.equals(variant)) {
             HybridSdkProofs.parse(encoded);
             byte[] alternative = read(directory.resolve("alternative.spki.der"), 16_384); KeyEncoding.requireKey(alternative, MLDSA87);
-            Attribute[] attributes = csr.getAttributes(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest);
-            require(attributes.length == 1 && attributes[0].getAttrValues().size() == 1, "Wrong SDK CSR extension request");
-            Extensions extensions = Extensions.getInstance(attributes[0].getAttrValues().getObjectAt(0));
-            Extension extension = extensions.getExtension(Extension.subjectAltPublicKeyInfo);
-            require(extension != null && !extension.isCritical() && Arrays.equals(alternative, extension.getExtnValue().getOctets()), "Retained CSR alternative key differs");
-            requirePossession(directory.resolve("alternative.key"), alternative, "ML-DSA-87");
+            List<CsrAttribute> attributes = csr.rawAttributes().stream()
+                    .filter(attribute -> EXTENSION_REQUEST.equals(attribute.oid())).toList();
+            require(attributes.size() == 1 && attributes.getFirst().derValues().size() == 1, "Wrong SDK CSR extension request");
+            List<CertificateExtension> extensions = Pkix.parseExtensions(attributes.getFirst().derValues().getFirst());
+            CertificateExtension extension = extensions.stream().filter(value -> ALT_SPKI.equals(value.oid())).findFirst().orElse(null);
+            require(extension != null && !extension.critical() && Arrays.equals(alternative, extension.derValue()), "Retained CSR alternative key differs");
+            requirePossession(directory.resolve("alternative.key"), alternative, MLDSA_SIGNATURE);
         }
     }
 
@@ -404,53 +404,69 @@ public final class CertificateScenarioCrypto {
     }
 
     private static byte[] signFile(Path keyFile, String algorithm, byte[] message) throws IOException, GeneralSecurityException {
-        String family = "ML-DSA-87".equals(algorithm) ? "ML-DSA" : algorithm.endsWith("ECDSA") ? "EC" : "RSA";
+        String family = MLDSA_SIGNATURE.equals(algorithm) ? "ML-DSA" : algorithm.endsWith("ECDSA") ? "EC" : "RSA";
         PrivateKey key = KeyFactory.getInstance(family, "BC").generatePrivate(new PKCS8EncodedKeySpec(read(keyFile, 32_768)));
         Signature signer = Signature.getInstance(algorithm, "BC"); signer.initSign(key); signer.update(message); return signer.sign();
     }
 
-    private static PublicKey publicKey(byte[] encoded) throws GeneralSecurityException {
-        String oid = SubjectPublicKeyInfo.getInstance(encoded).getAlgorithm().getAlgorithm().getId();
-        String family = EC_OID.equals(oid) ? "EC" : RSA_OID.equals(oid) ? "RSA" : ML_OID.equals(oid) ? "ML-DSA" : "unsupported";
-        return KeyFactory.getInstance(family, "BC").generatePublic(new X509EncodedKeySpec(encoded));
+    private static PublicKey publicKey(byte[] encoded) {
+        return Pkix.publicKeyFromSubjectPublicKeyInfo(encoded);
     }
 
     /** Checks canonical subject-key encodings for the fixed scenario suites. */
     private static final class KeyEncoding {
         private static void requireKey(byte[] encoded, String variant) throws IOException, GeneralSecurityException {
-            SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
-            require(Arrays.equals(encoded, spki.getEncoded("DER")) && spki.getPublicKeyData().getPadBits() == 0, "Noncanonical SPKI");
-            AlgorithmIdentifier algorithm = spki.getAlgorithm(); String oid = algorithm.getAlgorithm().getId();
+            AlgorithmIdentifier algorithm = Pkix.subjectPublicKeyAlgorithm(encoded);
+            byte[] bits = Pkix.subjectPublicKeyBytes(encoded);
+            require(Arrays.equals(encoded, Pkix.buildSubjectPublicKeyInfo(algorithm, bits)), "Noncanonical SPKI");
+            String oid = algorithm.oid();
             switch (variant) {
                 case P384 -> {
-                    require(EC_OID.equals(oid) && algorithm.getParameters() instanceof ASN1ObjectIdentifier
-                            && algorithm.getParameters().equals(new ASN1ObjectIdentifier(CURVE_OID)), "Expected named P-384 key");
-                    require(spki.getPublicKeyData().getBytes().length == 97 && spki.getPublicKeyData().getBytes()[0] == 4, "Expected uncompressed P-384 point");
+                    require(EC_OID.equals(oid) && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.EXACT_DER
+                            && Arrays.equals(algorithm.parameters(), HexFormat.of().parseHex("06052b81040022")), "Expected named P-384 key");
+                    require(bits.length == 97 && bits[0] == 4, "Expected uncompressed P-384 point");
                 }
                 case RSA4096 -> {
                     require(RSA_OID.equals(oid), "Expected RSA key"); requireParameters(algorithm, true);
                     require(((RSAPublicKey) publicKey(encoded)).getModulus().bitLength() == 4096, "Expected RSA-4096 modulus");
                 }
-                case MLDSA87 -> {
-                    require(ML_OID.equals(oid) && algorithm.getParameters() == null && spki.getPublicKeyData().getBytes().length == 2592, "Expected pure ML-DSA-87 key");
-                }
+                case MLDSA87 -> require(ML_OID.equals(oid) && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.ABSENT
+                        && bits.length == 2592, "Expected pure ML-DSA-87 key");
                 default -> throw invalid("Unsupported scenario key variant");
             }
             publicKey(encoded);
         }
 
         private static void requireParameters(AlgorithmIdentifier algorithm, boolean nullRequired) {
-            require(nullRequired ? algorithm.getParameters() instanceof org.bouncycastle.asn1.ASN1Null : algorithm.getParameters() == null,
-                    "Unexpected AlgorithmIdentifier parameters");
+            require(algorithm.parameterForm() == (nullRequired ? AlgorithmIdentifier.ParameterForm.DER_NULL
+                    : AlgorithmIdentifier.ParameterForm.ABSENT), "Unexpected AlgorithmIdentifier parameters");
         }
     }
 
-    private static byte[] alternativeSpki(X509Certificate certificate) {
-        byte[] value = certificate.getExtensionValue(Extension.subjectAltPublicKeyInfo.getId());
-        require(value != null, "Missing alternative subject key"); return ASN1OctetString.getInstance(value).getOctets();
+    private static Map<String, CertificateExtension> extensions(X509Certificate certificate) {
+        Map<String, CertificateExtension> extensions = new java.util.HashMap<>();
+        for (CertificateExtension extension : Pkix.certificateExtensions(certificate)) {
+            require(extensions.put(extension.oid(), extension) == null, "Duplicate certificate extension");
+        }
+        return extensions;
     }
-    private static X509CertificateHolder holder(X509Certificate certificate) throws IOException, GeneralSecurityException {
-        return new X509CertificateHolder(certificate.getEncoded());
+
+    private static byte[] alternativeSpki(X509Certificate certificate) {
+        CertificateExtension extension = extensions(certificate).get(ALT_SPKI);
+        require(extension != null, "Missing alternative subject key");
+        return extension.derValue();
+    }
+
+    private static AlgorithmIdentifier signatureAlgorithm(X509Certificate certificate) {
+        byte[] parameters = certificate.getSigAlgParams();
+        if (parameters == null) { return AlgorithmIdentifier.absent(certificate.getSigAlgOID()); }
+        return Arrays.equals(parameters, new byte[] {5, 0}) ? AlgorithmIdentifier.derNull(certificate.getSigAlgOID())
+                : AlgorithmIdentifier.exact(certificate.getSigAlgOID(), parameters);
+    }
+
+    private static void requireCertificateEncoding(X509Certificate certificate) throws GeneralSecurityException {
+        require(Arrays.equals(certificate.getEncoded(), Pkix.assembleCertificateOrCrl(certificate.getTBSCertificate(),
+                certificate.getSignature(), false)), "Inner and outer signature algorithms differ");
     }
     private static X509Certificate decodeCertificate(byte[] encoded) throws GeneralSecurityException {
         return (X509Certificate) CertificateFactory.getInstance("X.509", "BC").generateCertificate(new ByteArrayInputStream(encoded));

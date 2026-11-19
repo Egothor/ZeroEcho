@@ -486,6 +486,18 @@ public final class BcPkixProvider implements PkixProvider {
      * {@inheritDoc}
      */
     @Override
+    public List<zeroecho.pkix.CertificateExtension> certificateExtensions(X509Certificate certificate) {
+        try {
+            return List.copyOf(BcExtensions.fromBc(new X509CertificateHolder(certificate.getEncoded()).getExtensions()));
+        } catch (IOException | CertificateException failure) {
+            throw new IllegalArgumentException("Cannot read certificate extensions", failure);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
     public byte[] buildSubjectPublicKeyInfo(zeroecho.pkix.AlgorithmIdentifier algorithm, byte[] publicKeyBits) {
         try {
             return new SubjectPublicKeyInfo(BcAlgorithmIdentifiers.toBc(algorithm), publicKeyBits)

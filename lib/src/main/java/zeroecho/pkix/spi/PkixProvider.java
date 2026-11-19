@@ -120,6 +120,18 @@ public interface PkixProvider {
     X509Certificate parseCertificate(byte[] der);
 
     /**
+     * Returns the encoded certificate extensions without asserting validity or trust.
+     *
+     * @param certificate nonnull certificate to inspect
+     * @return immutable extension list with inner DER payloads and exact criticality
+     * @throws IllegalArgumentException if the certificate encoding cannot be parsed
+     * @throws UnsupportedOperationException if this provider lacks extension inspection
+     */
+    default List<zeroecho.pkix.CertificateExtension> certificateExtensions(X509Certificate certificate) {
+        throw new UnsupportedOperationException("Certificate extension inspection is unavailable");
+    }
+
+    /**
      * Creates a new certification-request builder.
      *
      * @return a fresh CSR builder
