@@ -213,7 +213,7 @@ class DocumentationExamplesTest {
                     if (!command.startsWith("zeroecho pki ") || !command.contains("--url ")) {
                         continue;
                     }
-                    List<String> tokens = tokens(command.substring("zeroecho pki ".length()));
+                    List<String> tokens = remoteTokens(command.substring("zeroecho pki ".length()));
                     String operation = tokens.getFirst();
                     AtomicBoolean reached = new AtomicBoolean();
                     PkiCli.RemoteExchangeFactory factory = target -> request -> {
@@ -252,10 +252,54 @@ class DocumentationExamplesTest {
         System.out.println("Validated documented remote commands: " + commands);
     }
 
+    @Test
+    void remoteArgumentsExcludeTheShellOutputDestination() {
+        assertEquals(List.of("request.import", "--arg", "encoded=$CSR_B64", "--output", "json"),
+                remoteTokens("request.import --arg \"encoded=$CSR_B64\" --output json > imported-request.json"));
+    }
+
+    @Test
+    void remoteArgumentsPreserveQuotedOperatorsPlaceholdersAndArgumentsAfterRedirection() {
+        assertEquals(List.of("request.inspect", "--request-id", "<request-id>", "--arg", ">",
+                        "--arg", "note=a > b", "--output", "json"),
+                remoteTokens("request.inspect --request-id <request-id> --arg '>' --arg \"note=a > b\""
+                        + " > \"result file.json\" --output json"));
+    }
+
+    @Test
+    void remoteArgumentsDoNotHideInvalidCliOptionsAfterRedirection() {
+        List<String> arguments = remoteTokens("ca.list --url https://pki.example.test:8443"
+                + " --client-cert admin.crt --client-key admin.key --trust server-ca.crt"
+                + " > result.json --unexpected-option");
+        AtomicBoolean reached = new AtomicBoolean();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int exit = PkiCli.execute(arguments.toArray(String[]::new), output,
+                configuration -> { throw new AssertionError("Remote example opened local store"); },
+                () -> false, target -> request -> {
+                    reached.set(true);
+                    throw new IOException("Documentation fixture stops before network I/O");
+                });
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, exit, output.toString());
+        assertFalse(reached.get(), "Invalid CLI arguments reached the remote exchange");
+    }
+
+    private static List<String> remoteTokens(String command) {
+        return tokens(command, true);
+    }
+
     private static List<String> tokens(String command) {
+        return tokens(command, false);
+    }
+
+    private static List<String> tokens(String command, boolean shellOutputRedirection) {
         List<String> result = new ArrayList<>();
         Matcher tokens = TOKEN.matcher(command);
         while (tokens.find()) {
+            // A shell consumes the documented output destination before invoking the CLI.
+            if (shellOutputRedirection && ">".equals(tokens.group(3))) {
+                assertTrue(tokens.find(), "Output redirection requires a destination: " + command);
+                continue;
+            }
             String token = tokens.group(1) != null ? tokens.group(1)
                     : tokens.group(2) != null ? tokens.group(2) : tokens.group(3);
             result.add(token);
