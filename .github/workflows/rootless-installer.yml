@@ -62,4 +62,6 @@ jobs:
       - name: Check shell syntax and source licenses
         run: |
           sh -n deploy/rootless-pki.sh
+          # Checkout configures trust under a temporary HOME; this step uses its own Git context.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           python3 tools/validate_source_licenses.py
