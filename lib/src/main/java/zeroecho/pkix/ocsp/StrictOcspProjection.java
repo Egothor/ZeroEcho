@@ -61,12 +61,20 @@ import java.util.HexFormat;
 import java.util.List;
 
 /**
- * Bounded, provider-neutral structural projection of native OCSP request/response pairs.
+ * Extracts a bounded structural view of a matching native OCSP request and response.
  *
- * <p>The parser derives status and native-nonce values from the exact original
- * request and response, not caller-supplied status assertions. It does not verify
- * responder signatures or discover trust and does not implement standard
- * AltSignature OCSP.</p>
+ * <p>This class implements a restricted profile for successful basic OCSP responses.
+ * It derives certificate status, nonce and time values from the supplied native
+ * encodings and verifies their structural correspondence. The result is suitable
+ * as input to a separate signature, responder-authorization and freshness check;
+ * it is not evidence that those checks have succeeded. Standard AltSignature OCSP
+ * is outside this profile.
+ *
+ * <p>Parsing does not consult a clock or perform network, file or trust-store
+ * access. Input arrays are borrowed only for the duration of a call and must not
+ * be modified concurrently. Returned projections own their mutable byte storage.
+ * Direct construction of a {@link Status} or {@link Projection} provides that
+ * storage ownership but does not perform the parser's structural validation.
  */
 public final class StrictOcspProjection {
     private static final String DER = "DER";
@@ -75,15 +83,30 @@ public final class StrictOcspProjection {
     private static final int LIMIT_262_144 = 262_144;
 
     /**
-     * Complete-response ceiling derived from the supported native DER component bounds.
-     * For D(n)=1+DER-length-octets(n)+n: single=171, nonce-extension=4127,
-     * responseData=406357, BasicOCSPResponse=1455067, outer response=1455101.
-     * This is a preallocation ceiling for this strict profile, not an ordinary OCSP quota.
+     * Maximum accepted size, in bytes, of a complete response in this restricted profile.
+     *
+     * <p>The value is 1,455,101 bytes. It is derived from the DER envelope and the
+     * permitted component bounds, including 819 status entries and the embedded
+     * certificate envelope. For {@code D(n) = 1 + DER-length-octets(n) + n}, the
+     * intermediate bounds are 171 bytes per status, 4,127 bytes for the nonce
+     * extension, 406,357 bytes for ResponseData and 1,455,067 bytes for
+     * BasicOCSPResponse. This is a parser allocation ceiling, not a general OCSP
+     * response quota or a recommended response size.
      */
     public static final int MAXIMUM_RESPONSE_BYTES = responseLimit();
 
     private StrictOcspProjection() {}
 
+    /**
+     * Includes the one-byte tag and DER length field in a bounded content size.
+     *
+     * <p>Checked addition prevents the response-ceiling calculation from silently
+     * wrapping if its component limits are changed in a future profile.
+     *
+     * @param bytes nonnegative content size used by this profile
+     * @return complete encoded size for a one-byte-tagged DER value
+     * @throws ArithmeticException if the resulting size exceeds the integer range
+     */
     private static int der(int bytes) {
         int lengthBytes =
                 bytes < 128
@@ -92,6 +115,12 @@ public final class StrictOcspProjection {
         return Math.addExact(Math.addExact(LIMIT_1, lengthBytes), bytes);
     }
 
+    /**
+     * Derives the complete response ceiling from nested native component bounds.
+     *
+     * @return maximum complete response size, including all enclosing DER values
+     * @throws ArithmeticException if a derived envelope size exceeds the integer range
+     */
     private static int responseLimit() {
         int single = der(108 + der(17 + der(3)) + 17 + der(17));
         int nonce = der(der(der(11 + der(der(4_096)))));
@@ -101,26 +130,34 @@ public final class StrictOcspProjection {
     }
 
     /**
-     * Parses exact native bytes and verifies ordered CertID/nonce and shared time correspondence.
-     * This pure operation verifies structure, not signer authorization or signatures.
-     * Work and memory are bounded by one MiB/request, the derived response ceiling and 819 entries.
+     * Parses a native request and response and validates their ordered structural correspondence.
      *
-     * <p>Inputs are borrowed for parsing and must not be mutated concurrently. Checks
-     * include canonical native encoding, a successful BasicOCSPResponse, the caller's exact
-     * signature algorithm and bounded P-384 ECDSA signature syntax, ordered nonduplicate matching
-     * CertIDs, common mandatory nextUpdate and matching optional native nonces of
-     * 1 through 4096 bytes. SHA-1 and SHA-256 are the permitted CertID hash identities.</p>
+     * <p>The request is limited to one mebibyte and the response to
+     * {@link #MAXIMUM_RESPONSE_BYTES}. The response must be successful and contain
+     * a BasicOCSPResponse with the exact supplied signature AlgorithmIdentifier.
+     * The signature must have bounded canonical ECDSA syntax; this method does
+     * not cryptographically verify that signature.
+     *
+     * <p>There must be between one and 819 request entries and the same number of
+     * response entries, in the same order. CertIDs must match without duplicates;
+     * SHA-1 and SHA-256 are the supported issuer-hash algorithms. All entries must
+     * share {@code thisUpdate} and a mandatory {@code nextUpdate}. The request and
+     * response must either both omit the native nonce or contain identical nonces
+     * of one through 4,096 bytes. Single-response extensions are not accepted.
      *
      * <p>Times must be supported whole-second values with thisUpdate no later than
      * producedAt and nextUpdate after thisUpdate. No clock is consulted, so these
      * relationships do not establish freshness at the caller's evaluation time.
-     * GOOD is a parsed status value, not certificate-path validity.</p>
+     * Supported times range from the Unix epoch through the last second of year
+     * 9999, inclusive. A parsed {@code GOOD} status is not certificate-path validity.
      *
-     * @param requestDer original complete native request
-     * @param responseDer complete successful native response
-     * @param expectedSignatureAlgorithm exact DER AlgorithmIdentifier required by the caller
-     * @return structurally checked projection; no signature or trust verification is performed
-     * @throws IllegalArgumentException for malformed, oversized or inconsistent native values
+     * @param requestDer the original complete native request; must be non-null and nonempty
+     * @param responseDer the complete native response; must be non-null and nonempty
+     * @param expectedSignatureAlgorithm the exact DER AlgorithmIdentifier required
+     *     by the caller; must be non-null and nonempty
+     * @return a structurally checked projection with defensively owned byte arrays
+     * @throws IllegalArgumentException if an argument is null or empty, an encoding
+     *     exceeds its bound, or native structure or correspondence violates this profile
      */
     // Untrusted parser/crypto exceptions are normalized to the existing finite safe failure.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -161,6 +198,12 @@ public final class StrictOcspProjection {
         }
     }
 
+    /**
+     * Requires a nonempty bounded one-to-one entry count and equal optional native nonces.
+     *
+     * <p>Individual identities are checked separately, in their original order,
+     * when each status entry is projected.
+     */
     private static void requireMatchingRequest(
             Req[] wanted,
             SingleResp[] actual,
@@ -174,6 +217,9 @@ public final class StrictOcspProjection {
         }
     }
 
+    /**
+     * Rejects absent, empty or oversized native inputs before creating parser objects.
+     */
     private static void requireInputBounds(byte[] requestDer, byte[] responseDer) {
         if (requestDer == null
                 || responseDer == null
@@ -185,12 +231,22 @@ public final class StrictOcspProjection {
         }
     }
 
+    /**
+     * Holds the native parser views needed to compare exact wire values and typed projections.
+     */
     private record ParsedNative(
             OCSPReq request,
             BasicOCSPResp response,
             OcspRequest nativeRequest,
             OcspResponse nativeResponse) {}
 
+    /**
+     * Reads canonical native envelopes and enforces response-shape and nonce-size limits.
+     *
+     * <p>Both low-level and provider-neutral parser views are retained so that
+     * status matching uses native identities while nonce values use the library's
+     * decoded representation. Neither view establishes signature validity.
+     */
     private static ParsedNative readNative(byte[] requestDer, byte[] responseDer, byte[] expectedSignatureAlgorithm)
             throws IOException, org.bouncycastle.cert.ocsp.OCSPException {
         OCSPReq request = new OCSPReq(requestDer);
@@ -217,6 +273,13 @@ public final class StrictOcspProjection {
         return new ParsedNative(request, response, nativeRequest, nativeResponse);
     }
 
+    /**
+     * Converts one matched native entry while preserving its status and optional revocation details.
+     *
+     * <p>The shared identity sets reject duplicates in either sequence. Native
+     * revocation times use the same supported whole-second range as other times;
+     * reason values are absent or within the supported CRL reason range, excluding 7.
+     */
     private static Status statusValue(
             SingleResp item,
             Req wanted,
@@ -250,12 +313,18 @@ public final class StrictOcspProjection {
         return new Status(certId, state, revoked, reason);
     }
 
+    /**
+     * Compares nonce presence and bytes without treating an absent nonce as an empty one.
+     */
     private static boolean equalNonce(
             java.util.Optional<byte[]> left, java.util.Optional<byte[]> right) {
         return left.isPresent() == right.isPresent()
                 && (left.isEmpty() || Arrays.equals(left.orElseThrow(), right.orElseThrow()));
     }
 
+    /**
+     * Requires a whole-second instant within the profile's epoch-through-year-9999 range.
+     */
     private static Instant whole(Instant time) {
         if (time.getNano() != 0
                 || time.getEpochSecond() < 0
@@ -266,19 +335,32 @@ public final class StrictOcspProjection {
     }
 
     /**
-     * Validates a canonical SHA-1/SHA-256 native CertID and returns its digest/serial identity.
-     * Absent versus NULL digest parameters have the same returned identity.
-     * @param bytes complete canonical DER CertID, at most 108 bytes
-     * @return digest OID, issuer hash hex values and positive serial separated by colons
-     * @throws IllegalArgumentException for malformed DER, unsupported digest, hash lengths or serial
+     * Returns a representation-independent identity for a bounded native CertID.
+     *
+     * <p>The CertID must be canonical DER and use SHA-1 or SHA-256 with absent or
+     * ASN.1 NULL parameters. Both issuer hashes must have the length required by
+     * that digest, and the serial number must be positive and at most 160 bits.
+     * Absent and NULL digest parameters intentionally yield the same identity.
+     * This operation does not locate an issuer or verify a response signature.
+     *
+     * @param bytes the complete CertID DER; must be non-null, nonempty and at most 108 bytes
+     * @return the digest OID, lowercase issuer-name-hash hex, lowercase issuer-key-hash
+     *     hex and decimal serial number, in that order and separated by colons
+     * @throws IllegalArgumentException if the input is null, empty, oversized,
+     *     noncanonical or violates the supported digest, hash-length or serial-number rules
      */
     public static String certIdIdentity(byte[] bytes) {
         return CertIdSyntax.identity(bytes);
     }
 
-    /** Strict canonical CertID syntax and digest/serial identity checks. */
+    /**
+     * Enforces the restricted CertID syntax before deriving an identity that ignores NULL parameters.
+     */
     private static final class CertIdSyntax {
         // Preserve the finite safe parser failure without exposing untrusted causes.
+        /**
+         * Parses one bounded canonical CertID and encodes its validated semantic identity.
+         */
         @SuppressWarnings("PMD.PreserveStackTrace")
         private static String identity(byte[] bytes) {
             if (bytes == null || bytes.length == 0 || bytes.length > 108) { throw invalid(); }
@@ -301,6 +383,9 @@ public final class StrictOcspProjection {
             }
         }
 
+        /**
+         * Requires a supported digest with absent or NULL parameters and returns its hash size.
+         */
         private static int hashLength(AlgorithmIdentifier algorithm) {
             if (algorithm.getParameters() != null
                     && !(algorithm.getParameters() instanceof org.bouncycastle.asn1.ASN1Null)) {
@@ -313,6 +398,9 @@ public final class StrictOcspProjection {
             };
         }
 
+        /**
+         * Requires digest-sized issuer hashes and a positive serial number of at most 160 bits.
+         */
         private static void requireComponents(CertID id, int hashLength) {
             if (id.getIssuerNameHash().getOctets().length != hashLength
                     || id.getIssuerKeyHash().getOctets().length != hashLength
@@ -323,57 +411,101 @@ public final class StrictOcspProjection {
         }
     }
 
+    /**
+     * Creates the finite profile-validation failure without embedding untrusted native values.
+     */
     private static IllegalArgumentException invalid() {
         return new IllegalArgumentException("OCSP projection invalid");
     }
 
     /**
-     * Parsed native status entry; parsing enforces the documented strict profile.
-     * Direct construction copies DER but does not validate status semantics.
-     * @param certIdDer canonical native CertID representation
-     * @param status GOOD, REVOKED or UNKNOWN when returned by parsing
-     * @param revocationTime whole-second ISO-8601 time, or empty for an unrevoked entry
-     * @param reason CRL reason, or -1 when absent
+     * Holds one native certificate-status entry without exposing its retained CertID array.
+     *
+     * <p>Entries returned by {@link StrictOcspProjection#parse(byte[], byte[], byte[])}
+     * have status {@code GOOD}, {@code REVOKED} or {@code UNKNOWN}. Only a revoked
+     * entry carries a whole-second ISO-8601 revocation time; other entries carry
+     * an empty string. A missing revocation reason is represented by {@code -1}.
+     * These are parsed assertions from a response, not independently authenticated status.
+     *
+     * <p>The public constructor copies {@code certIdDer} but does not validate its
+     * DER or any status semantics. In particular, directly supplied strings may
+     * be null and the reason need not be one of the parser's accepted values.
+     *
+     * @param certIdDer native CertID bytes; copied on construction and access
+     * @param status parsed status text, or the unvalidated directly supplied value
+     * @param revocationTime parsed revocation time or empty string, or the unvalidated
+     *     directly supplied value
+     * @param reason parsed CRL reason or {@code -1}, or the unvalidated directly supplied value
      */
     public record Status(byte[] certIdDer, String status, String revocationTime, int reason) {
         /**
-         * Copies the native identity; other fields are retained without validation.
-         * @param certIdDer native identity bytes, not null
-         * @param status supplied status text
-         * @param revocationTime supplied revocation time text
-         * @param reason supplied reason
-         * @throws NullPointerException if identity bytes are null
+         * Creates a status entry with an independently owned copy of its native identity.
+         *
+         * <p>Direct construction does not parse the CertID, validate the status
+         * text or enforce a relationship between status, revocation time and reason.
+         * Use the parser when the restricted native-profile checks are required.
+         *
+         * @param certIdDer native CertID bytes; must not be {@code null}
+         * @param status status text, retained unchanged; may be {@code null}
+         * @param revocationTime revocation-time text, retained unchanged; may be {@code null}
+         * @param reason the reason value, retained without range validation
+         * @throws NullPointerException if {@code certIdDer} is {@code null}
          */
         public Status { certIdDer = certIdDer.clone(); }
 
-        /** @return independently owned native CertID bytes */
+        /**
+         * Returns the native certificate identity without exposing this entry's byte storage.
+         *
+         * <p>Each call creates a new array. Modifying it cannot change this entry.
+         * Bytes from a directly constructed entry are not necessarily valid DER.
+         *
+         * @return a new copy of the retained native CertID bytes; never {@code null}
+         */
         @Override public byte[] certIdDer() { return certIdDer.clone(); }
     }
 
     /**
-     * Immutable snapshot of parsed native values. Direct construction copies arrays
-     * but does not establish structural validity, signature validity or trust.
-     * @param producedAt native production time
-     * @param thisUpdate common status time
-     * @param nextUpdate mandatory common expiry
-     * @param nonce optional native nonce
-     * @param statuses ordered status entries
-     * @param algorithmIdentifier response signature AlgorithmIdentifier DER
-     * @param certificates ordered embedded certificate DER values
+     * Holds the native values needed for subsequent OCSP verification and policy evaluation.
+     *
+     * <p>Parser-produced instances contain matching, ordered status entries, common
+     * update times, the native nonce, the response signature algorithm and embedded
+     * certificates in their encoded order. They satisfy this class's structural
+     * profile, but neither their signatures nor their trust and current freshness
+     * have been established.
+     *
+     * <p>Construction copies mutable byte arrays and collection storage. Accessors
+     * for byte-valued components return copies. Direct construction does not
+     * validate DER, temporal relationships or status semantics, and permits null
+     * time components. Consumers must not treat arbitrary constructed instances
+     * as parser-validated responses.
+     *
+     * @param producedAt native production time; may be null on direct construction
+     * @param thisUpdate common status time; may be null on direct construction
+     * @param nextUpdate common mandatory expiry when parsed; may be null on direct construction
+     * @param nonce the optional native nonce; its contained bytes are defensively copied
+     * @param statuses ordered, non-null status entries retained in an unmodifiable list
+     * @param algorithmIdentifier response signature AlgorithmIdentifier bytes; defensively copied
+     * @param certificates ordered embedded certificate bytes; each array is defensively copied
      */
     public record Projection(Instant producedAt, Instant thisUpdate, Instant nextUpdate,
             java.util.Optional<byte[]> nonce, List<Status> statuses, byte[] algorithmIdentifier,
             List<byte[]> certificates) {
         /**
-         * Copies all mutable inputs without validating their semantic relationships.
-         * @param producedAt native production time
-         * @param thisUpdate common status time
-         * @param nextUpdate common expiry
-         * @param nonce optional native nonce, not null
-         * @param statuses ordered entries, not null
-         * @param algorithmIdentifier native algorithm bytes, not null
-         * @param certificates ordered certificate bytes, not null
-         * @throws NullPointerException if an array, collection or contained array is null
+         * Creates a projection that owns copies of its mutable byte and collection inputs.
+         *
+         * <p>Times are retained as supplied, including nulls. Status entries are
+         * immutable records and are retained in their original order. No native
+         * syntax, signature, time relationship or trust check is performed here.
+         *
+         * @param producedAt supplied production time; may be {@code null}
+         * @param thisUpdate supplied common status time; may be {@code null}
+         * @param nextUpdate supplied common expiry; may be {@code null}
+         * @param nonce optional native nonce; must not be {@code null}; present bytes are copied
+         * @param statuses ordered entries; neither the list nor an entry may be {@code null}
+         * @param algorithmIdentifier signature algorithm bytes; must not be {@code null}
+         * @param certificates ordered certificate bytes; neither the list nor an array
+         *     may be {@code null}
+         * @throws NullPointerException if a required container, array or status entry is null
          */
         public Projection {
             nonce = nonce.map(byte[]::clone);
@@ -382,16 +514,53 @@ public final class StrictOcspProjection {
             certificates = certificates.stream().map(byte[]::clone).toList();
         }
 
-        /** @return optional independently owned native nonce */
+        /**
+         * Returns the optional native nonce without exposing the retained nonce bytes.
+         *
+         * <p>An absent nonce remains absent. When present, the returned optional
+         * contains a new byte array, so modifying it cannot change this projection.
+         * Direct construction does not enforce the parser's nonce-length bounds.
+         *
+         * @return an optional containing a new nonce-byte copy, or an empty optional;
+         *     never {@code null}
+         */
         @Override public java.util.Optional<byte[]> nonce() { return nonce.map(byte[]::clone); }
-        /** @return independently owned algorithm DER */
+
+        /**
+         * Returns the response signature algorithm representation in independently owned storage.
+         *
+         * <p>Each call creates a new array. The bytes are an exact native
+         * AlgorithmIdentifier when the projection came from parsing; direct
+         * construction does not establish that they are valid DER.
+         *
+         * @return a new copy of the retained signature algorithm bytes; never {@code null}
+         */
         @Override public byte[] algorithmIdentifier() { return algorithmIdentifier.clone(); }
-        /** @return ordered independently owned embedded certificate DER values */
+
+        /**
+         * Returns the embedded certificates in their retained order without exposing their arrays.
+         *
+         * <p>The returned list is unmodifiable and contains a new array for every
+         * certificate. Changing an array therefore cannot change this projection.
+         * These certificates are untrusted response data; this accessor does not
+         * parse them, select a certification path or verify their signatures.
+         *
+         * @return an unmodifiable ordered list of independently owned certificate
+         *     byte arrays; never {@code null}, and empty when none were retained
+         */
         @Override public List<byte[]> certificates() { return certificates.stream().map(byte[]::clone).toList(); }
     }
 
-    /** Validates native OCSP response representation before exposing the immutable projection. */
+    /**
+     * Enforces response, certificate-identity and signature-representation constraints before projection.
+     */
     private static final class ResponseSyntax {
+        /**
+         * Requires the selected signature algorithm, bounded responder identity and nonce-only extensions.
+         *
+         * <p>The algorithm bytes must match exactly; no NULL-versus-absent
+         * equivalence is applied to the response signature algorithm here.
+         */
         private static void requireResponseShape(BasicOCSPResp response, byte[] expectedSignatureAlgorithm) throws IOException {
             if (!Arrays.equals(
                             response.getSignatureAlgorithmID().getEncoded(DER),
@@ -420,6 +589,9 @@ public final class StrictOcspProjection {
             }
         }
 
+        /**
+         * Forms the semantic identity of a CertID whose digest and component sizes were checked separately.
+         */
         private static String certIdIdentity(CertID id) {
             return id.getHashAlgorithm().getAlgorithm().getId()
                     + ":"
@@ -430,6 +602,12 @@ public final class StrictOcspProjection {
                     + id.getSerialNumber().getValue();
         }
 
+        /**
+         * Requires a supported issuer-hash algorithm and digest-sized native identity components.
+         *
+         * <p>Absent and NULL digest parameters are both accepted. Serial-number
+         * constraints are checked with the complete ordered status correspondence.
+         */
         private static void requireCertId(CertID id) {
             AlgorithmIdentifier algorithm = id.getHashAlgorithm();
             String oid = algorithm.getAlgorithm().getId();
@@ -448,6 +626,13 @@ public final class StrictOcspProjection {
             }
         }
 
+        /**
+         * Requires an ordered matching identity, no duplicate identities and the shared update times.
+         *
+         * <p>Digest parameters may be absent or NULL without changing identity.
+         * The supplied sets retain identities already accepted in either sequence
+         * so later duplicate entries cannot be projected as independent statuses.
+         */
         private static void requireStatusIdentity(
                 SingleResp item,
                 Req wanted,
@@ -485,6 +670,13 @@ public final class StrictOcspProjection {
             }
         }
 
+        /**
+         * Requires version-zero response data and canonical, positive ECDSA signature integers.
+         *
+         * <p>The signature BIT STRING must be octet-aligned and both integers
+         * must fit within 384 bits. These syntax bounds do not verify a signature
+         * or replace the caller's curve-specific cryptographic checks.
+         */
         private static void requireSignature(BasicOCSPResp response) throws IOException {
             BasicOCSPResponse nativeBasic = BasicOCSPResponse.getInstance(response.getEncoded());
             if (nativeBasic.getSignature().getPadBits() != 0
@@ -504,6 +696,13 @@ public final class StrictOcspProjection {
             }
         }
 
+        /**
+         * Extracts ordered embedded certificates within the count and per-certificate allocation limits.
+         *
+         * <p>No more than 32 certificates are accepted, each at most 262,144
+         * encoded bytes. The returned data is untrusted certificate material;
+         * no certification path is selected or validated by this operation.
+         */
         private static List<byte[]> requireCertificates(BasicOCSPResp response) throws IOException {
             X509CertificateHolder[] certificates = response.getCerts();
             if (certificates.length > LIMIT_32) {

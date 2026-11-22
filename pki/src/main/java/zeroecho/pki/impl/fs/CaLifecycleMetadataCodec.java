@@ -205,11 +205,22 @@ final class CaLifecycleMetadataCodec {
         try { return activationRowValue(key, bytes); }
         catch (IOException failure) { throw new IllegalStateException("Root activation metadata invalid", failure); }
     }
-    /** Decodes one bounded lifecycle metadata payload. */
+    /**
+     * Decodes a lifecycle payload after its persisted byte count has been bounded.
+     *
+     * @param <T> the immutable lifecycle value produced by the selected decoder
+     */
     @FunctionalInterface private interface Decoder<T> {
-        /** @return decoded value
-         * @param bytes bounded payload
-         * @throws IOException if framing or fields are invalid
+        /**
+         * Decodes one complete lifecycle metadata payload and checks its framing and fields.
+         *
+         * <p>The caller supplies bytes already limited to the metadata payload
+         * ceiling. The selected decoder is responsible for its record kind and
+         * semantic fields; this function does not read additional storage records.
+         *
+         * @param bytes the complete bounded payload to decode
+         * @return the decoded lifecycle value
+         * @throws IOException if framing or encoded fields are invalid
          */
         T decode(byte[] bytes) throws IOException;
     }
@@ -303,10 +314,19 @@ final class CaLifecycleMetadataCodec {
         out.writeInt(value.version()); Scalars.text(out, value.caId().value()); out.writeLong(value.epoch()); Scalars.text(out, value.issuerId().value()); Scalars.text(out, value.pathId().value()); Scalars.text(out, value.bindingCommitment());
     }
     private static CaHeadSnapshot readHead(DataInputStream in) throws IOException { return new CaHeadSnapshot(in.readInt(), Scalars.id(in), in.readLong(), Scalars.id(in), Scalars.id(in), Scalars.text(in)); }
-    /** Writes one canonical lifecycle metadata payload. */
+    /**
+     * Writes the record-specific payload inside the codec's versioned lifecycle envelope.
+     */
     @FunctionalInterface private interface Encoder {
-        /** @param out borrowed output stream
-         * @throws IOException if encoding fails
+        /**
+         * Writes one lifecycle value's canonical payload to the supplied stream.
+         *
+         * <p>The enclosing codec owns the stream and writes the framing fields.
+         * Implementations write only their payload and must not close the stream.
+         * The enclosing codec checks the complete record size after encoding.
+         *
+         * @param out the borrowed data output stream for the current record
+         * @throws IOException if a payload field cannot be encoded or written
          */
         void write(DataOutputStream out) throws IOException;
     }

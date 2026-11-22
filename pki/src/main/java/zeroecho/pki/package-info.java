@@ -32,6 +32,17 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * 
+ * Provides the namespace for the ZeroEcho PKI domain and its extension points.
+ *
+ * <p>Public domain types are defined in {@code zeroecho.pki.api} and its
+ * subpackages. Application services in {@code zeroecho.pki.application}
+ * coordinate the domain's persistence and cryptographic operations through the
+ * contracts in {@code zeroecho.pki.spi}. Default implementations live below
+ * {@code zeroecho.pki.impl}; their presence does not make them public extension APIs.
+ *
+ * <p>Cryptographic encoding and provider-specific operations are delegated to
+ * the {@code zeroecho.lib} module. Transport applications remain responsible for
+ * authenticating remote identities before invoking domain services. The package
+ * namespace does not confer operation authority on its callers.
  */
 package zeroecho.pki;

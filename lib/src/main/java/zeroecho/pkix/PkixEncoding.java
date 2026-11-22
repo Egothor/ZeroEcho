@@ -51,8 +51,17 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.math.ec.ECPoint;
 
 /**
- * Strict DER and fixed-suite signature checks with no provider types in the public contract.
- * Inputs are borrowed only for each call; returned byte arrays are independently owned.
+ * Validates the encodings and signature primitives used by the fixed PKIX proof suites.
+ *
+ * <p>The encoding checks distinguish canonical representation from cryptographic
+ * verification. A structurally valid subject key or certification request is not
+ * thereby trusted, and an encoded ECDSA scalar pair is not thereby a valid
+ * signature. Callers must perform the applicable proof and trust checks separately.
+ *
+ * <p>Methods do not retain or modify input arrays. Callers must not modify an input
+ * array while a call is in progress; returned arrays belong to the caller. Signature
+ * verification initializes the library's cryptographic provider when necessary.
+ * Provider-specific types do not form part of this API.
  */
 public final class PkixEncoding {
     private static final String DER = "DER";
@@ -60,32 +69,53 @@ public final class PkixEncoding {
 
     /**
      * Re-encodes exactly one ASN.1 value as canonical DER.
-     * @param encoded one complete ASN.1 value, not null
-     * @return canonical DER in a new array
-     * @throws IOException if the encoding is malformed or contains trailing data
-     * @throws NullPointerException if encoded is null
+     *
+     * <p>This operation normalizes an accepted ASN.1 representation; it does not
+     * require the input already to be DER and does not validate a PKIX schema.
+     * Compare the result with the input when canonical input is a precondition.
+     * The input must contain one complete value with no trailing bytes.
+     *
+     * @param encoded the complete ASN.1 representation; must not be {@code null}
+     * @return a newly allocated canonical DER representation of the value
+     * @throws IOException if decoding or encoding fails, including trailing input
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static byte[] canonicalDer(byte[] encoded) throws IOException {
         return ASN1Primitive.fromByteArray(Objects.requireNonNull(encoded, "encoded")).getEncoded(DER);
     }
 
     /**
-     * Unwraps one ASN.1 OCTET STRING, as returned by X509Certificate extension accessors.
-     * @param encoded complete encoded OCTET STRING, not null
-     * @return independently owned payload bytes
-     * @throws IllegalArgumentException if the value is malformed or has a different ASN.1 type
-     * @throws NullPointerException if encoded is null
+     * Extracts the contents of an encoded ASN.1 OCTET STRING.
+     *
+     * <p>Use this operation for the outer wrapper returned by
+     * {@link java.security.cert.X509Certificate#getExtensionValue(String)}. The
+     * extracted bytes are not interpreted or validated as an extension value,
+     * and this operation does not require canonical DER input.
+     *
+     * @param encoded one complete encoded OCTET STRING; must not be {@code null}
+     * @return a new array containing the OCTET STRING payload without its wrapper
+     * @throws IllegalArgumentException if the representation cannot be decoded as
+     *     an OCTET STRING
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static byte[] octetStringContents(byte[] encoded) {
         return ASN1OctetString.getInstance(Objects.requireNonNull(encoded, "encoded")).getOctets().clone();
     }
 
     /**
-     * Requires a canonical SPKI with a zero-padding subject public-key BIT STRING.
-     * @param encoded complete subject public-key info DER, not null
-     * @throws IOException if the value cannot be encoded
-     * @throws IllegalArgumentException if malformed, noncanonical, or padded
-     * @throws NullPointerException if encoded is null
+     * Requires canonical DER SubjectPublicKeyInfo with an octet-aligned public key.
+     *
+     * <p>The complete representation must equal its DER re-encoding and the
+     * subject-public-key BIT STRING must have zero unused bits. This check does
+     * not select an algorithm, validate algorithm parameters or establish that
+     * the key is mathematically valid for a particular algorithm.
+     *
+     * @param encoded the complete SubjectPublicKeyInfo representation; must not
+     *     be {@code null}
+     * @throws IOException if DER re-encoding fails
+     * @throws IllegalArgumentException if the structure is malformed, differs
+     *     from its canonical DER encoding or contains unused public-key bits
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static void requireCanonicalSubjectPublicKeyInfo(byte[] encoded) throws IOException {
         SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(Objects.requireNonNull(encoded, "encoded"));
@@ -95,11 +125,18 @@ public final class PkixEncoding {
     }
 
     /**
-     * Requires a canonical PKCS#10 encoding with an unpadded signature BIT STRING.
-     * @param encoded complete PKCS#10 DER, not null
-     * @throws IOException if ASN.1 decoding or encoding fails
-     * @throws IllegalArgumentException if malformed, noncanonical, or signature bits are padded
-     * @throws NullPointerException if encoded is null
+     * Requires a canonical PKCS#10 certification request with an octet-aligned signature.
+     *
+     * <p>The input must contain exactly one complete request, equal its DER
+     * re-encoding and have zero unused signature bits. This is an encoding check:
+     * it does not verify proof of possession, select a signature algorithm or
+     * authorize any requested subject name or extension.
+     *
+     * @param encoded the complete PKCS#10 request; must not be {@code null}
+     * @throws IOException if ASN.1 decoding or DER re-encoding fails
+     * @throws IllegalArgumentException if the request structure is malformed,
+     *     noncanonical or contains unused signature bits
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static void requireCanonicalCertificationRequest(byte[] encoded) throws IOException {
         CertificationRequest request = CertificationRequest.getInstance(
@@ -110,11 +147,19 @@ public final class PkixEncoding {
     }
 
     /**
-     * Validates the canonical, uncompressed, finite P-384 point and exact named-curve identity.
-     * @param encoded complete subject public-key info DER, not null
-     * @throws IOException if the value cannot be encoded
-     * @throws IllegalArgumentException if the key is malformed, noncanonical or outside P-384
-     * @throws NullPointerException if encoded is null
+     * Validates a canonical SubjectPublicKeyInfo containing a finite P-384 public point.
+     *
+     * <p>The algorithm must be {@code id-ecPublicKey} with the exact named-curve
+     * identifier {@code secp384r1}. Explicit curve parameters and other curves are
+     * rejected. The public key must be an uncompressed 97-byte point with zero
+     * unused bits, and the decoded point must be valid and not the point at infinity.
+     * This does not establish possession of the corresponding private key.
+     *
+     * @param encoded the complete SubjectPublicKeyInfo DER; must not be {@code null}
+     * @throws IOException if DER re-encoding fails
+     * @throws IllegalArgumentException if the encoding, algorithm parameters or
+     *     public point do not satisfy the fixed P-384 profile
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static void requireP384SubjectPublicKeyInfo(byte[] encoded) throws IOException {
         requireCanonicalSubjectPublicKeyInfo(encoded);
@@ -134,11 +179,18 @@ public final class PkixEncoding {
     }
 
     /**
-     * Requires canonical DER ECDSA scalars in the open interval (0, P-384 order).
-     * @param encoded complete signature DER, not null, 8 through 104 bytes
-     * @throws IOException if ASN.1 decoding fails
-     * @throws IllegalArgumentException if noncanonical, wrong-shaped or a scalar is out of range
-     * @throws NullPointerException if encoded is null
+     * Validates the representation and scalar bounds of an ECDSA P-384 signature.
+     *
+     * <p>The input must be an 8-through-104-byte canonical DER SEQUENCE containing
+     * exactly two INTEGERs. Each scalar must be greater than zero and less than
+     * the P-384 group order. This method does not check a message signature or
+     * require a particular representative of the equivalent ECDSA signatures.
+     *
+     * @param encoded the complete DER signature; must not be {@code null}
+     * @throws IOException if ASN.1 decoding or DER re-encoding fails
+     * @throws IllegalArgumentException if the length, structure, canonical
+     *     representation or scalar bounds are invalid
+     * @throws NullPointerException if {@code encoded} is {@code null}
      */
     public static void requireP384Signature(byte[] encoded) throws IOException {
         Objects.requireNonNull(encoded, "encoded");
@@ -159,12 +211,17 @@ public final class PkixEncoding {
     }
 
     /**
-     * Encodes an ECDSA scalar pair without asserting an algorithm or scalar range.
-     * @param first first non-null scalar
-     * @param second second non-null scalar
-     * @return canonical DER SEQUENCE of the two INTEGERs
+     * Encodes two integers in the DER representation used for an ECDSA signature.
+     *
+     * <p>The result contains {@code first} followed by {@code second}. No curve,
+     * positivity or scalar-range checks are performed, so encoding succeeds for
+     * values that are not valid ECDSA signature scalars.
+     *
+     * @param first the first INTEGER value; must not be {@code null}
+     * @param second the second INTEGER value; must not be {@code null}
+     * @return a new array containing the canonical DER SEQUENCE of the two INTEGERs
      * @throws IOException if DER encoding fails
-     * @throws NullPointerException if either scalar is null
+     * @throws NullPointerException if either scalar is {@code null}
      */
     public static byte[] ecdsaSignature(BigInteger first, BigInteger second) throws IOException {
         return new DERSequence(new ASN1Integer[] {new ASN1Integer(Objects.requireNonNull(first, "first")),
@@ -172,13 +229,23 @@ public final class PkixEncoding {
     }
 
     /**
-     * Verifies pure ML-DSA-87 with the explicitly empty FIPS 204 context.
-     * @param key non-null ML-DSA public key
-     * @param message non-null message bytes
-     * @param signature non-null signature bytes
-     * @return true only if the signature verifies with an empty context
-     * @throws GeneralSecurityException if the required engine, parameters or key are invalid
-     * @throws NullPointerException if an argument is null
+     * Verifies a pure ML-DSA-87 signature using an explicitly empty FIPS 204 context.
+     *
+     * <p>The supplied message is passed directly to ML-DSA-87; this is not a
+     * HashML-DSA operation. A fresh verification engine is configured with an
+     * empty context for each call. The library's cryptographic providers are
+     * initialized if necessary. Successful verification establishes only the
+     * signature relationship, not the origin or trustworthiness of the key.
+     *
+     * @param key the verification public key accepted by the ML-DSA-87 engine;
+     *     must not be {@code null}
+     * @param message the message bytes; must not be {@code null}
+     * @param signature the signature representation; must not be {@code null}
+     * @return {@code true} if the engine accepts the signature for this message
+     *     and empty context; {@code false} if verification completes negatively
+     * @throws GeneralSecurityException if the engine or context cannot be
+     *     configured, the key is unsuitable or signature processing fails
+     * @throws NullPointerException if any argument is {@code null}
      */
     public static boolean verifyEmptyContextMldsa87(PublicKey key, byte[] message, byte[] signature)
             throws GeneralSecurityException {

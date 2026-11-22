@@ -483,7 +483,17 @@ public final class BcPkixProvider implements PkixProvider {
     }
 
     /**
-     * {@inheritDoc}
+     * Extracts extension values from the supplied certificate's encoded representation.
+     *
+     * <p>The native certificate parser reads the enclosing extension structures;
+     * individual extension payloads remain uninterpreted. The result preserves
+     * their criticality flags and contains independently owned payload arrays.
+     * No signature, validity-period or trust check is performed.
+     *
+     * @param certificate the certificate whose encoding is inspected; must not be {@code null}
+     * @return an unmodifiable extension list, empty when no extensions are present
+     * @throws NullPointerException if {@code certificate} is {@code null}
+     * @throws IllegalArgumentException if reading or parsing the certificate encoding fails
      */
     @Override
     public List<zeroecho.pkix.CertificateExtension> certificateExtensions(X509Certificate certificate) {

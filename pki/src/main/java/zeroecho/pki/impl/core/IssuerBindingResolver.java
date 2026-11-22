@@ -279,7 +279,12 @@ public final class IssuerBindingResolver {
         return PublicEvidenceDefaults.VERIFIER;
     }
 
-    /** Lazily retains the immutable default public-evidence verifier. */
+    /**
+     * Retains the default public-evidence verifier without initializing it for callers that do not use it.
+     *
+     * <p>Class initialization publishes the shared verifier when the default
+     * verification path is first selected.
+     */
     private static final class PublicEvidenceDefaults {
         private static final IssuerAlgorithmEvidenceVerifier VERIFIER = publicEvidenceVerifier(
                 new BcX509AlgorithmAdapter(X509BindingCatalog.builtIn(Stream.concat(

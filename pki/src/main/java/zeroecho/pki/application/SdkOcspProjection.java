@@ -41,24 +41,46 @@ import zeroecho.pki.api.hybrid.sdk.HybridSdkValue;
 import zeroecho.pkix.ocsp.StrictOcspProjection;
 
 /**
- * Maps bounded native OCSP structure to the separate SDK F4/F5 profile.
- * Native parsing remains in the provider-neutral library boundary. This class
- * enforces the SDK typed-value size limits without verifying signatures or trust.
+ * Converts a structurally checked native OCSP exchange into the SDK F4/F5 value representation.
+ *
+ * <p>Native request and response parsing is delegated to the provider-neutral
+ * library. This layer selects the SDK's fixed primary signature algorithm and
+ * enforces the additional size limits of {@link HybridSdkValue}. It derives
+ * statuses and nonce values from native bytes rather than caller-supplied
+ * assertions. Signature verification, responder authorization and freshness
+ * evaluation remain separate responsibilities.
  */
 public final class SdkOcspProjection {
-    /** SDK-only complete-response ceiling derived from native DER component bounds. */
+    /**
+     * Maximum complete native response size accepted by the SDK structural parser, in bytes.
+     *
+     * <p>The native DER ceiling is shared with
+     * {@link StrictOcspProjection#MAXIMUM_RESPONSE_BYTES}. Individual SDK typed
+     * values and aggregates remain subject to stricter bounds during projection.
+     */
     public static final int MAXIMUM_RESPONSE_BYTES = StrictOcspProjection.MAXIMUM_RESPONSE_BYTES;
     private SdkOcspProjection() {}
 
     /**
-     * Parses exact native bytes and enforces the fixed SDK algorithm and typed-value bounds.
-     * Requires canonical native encoding, ordered matching nonduplicate CertIDs,
-     * shared whole-second times and equal optional native nonces. No clock, trust
-     * discovery or signature verification is performed. Inputs must not be mutated concurrently.
-     * @param requestDer original complete native request, at most one MiB
-     * @param responseDer original complete successful response within the SDK response ceiling
-     * @return canonical native projection without accepting caller-provided status assertions
-     * @throws IllegalArgumentException for malformed, oversized or inconsistent native values
+     * Parses a native OCSP exchange and constructs its bounded SDK projection.
+     *
+     * <p>The native profile requires canonical encodings, ordered matching and
+     * nonduplicate CertIDs, common whole-second update times and equal optional
+     * nonces. The signature AlgorithmIdentifier must match the SDK primary
+     * algorithm. The resulting nonce and status values must also satisfy the
+     * SDK encoding limits, including the 262,144-byte aggregate ceilings checked here.
+     *
+     * <p>No evaluation clock, trust discovery or signature verification is used.
+     * Inputs are borrowed for the call and must not be modified concurrently.
+     * The returned value does not authenticate the parsed status assertions.
+     *
+     * @param requestDer the original complete request; must be non-null, nonempty
+     *     and at most one mebibyte
+     * @param responseDer the original complete successful response; must be non-null,
+     *     nonempty and no larger than {@link #MAXIMUM_RESPONSE_BYTES}
+     * @return the structurally checked SDK projection derived from native values
+     * @throws IllegalArgumentException if an input is null, empty, oversized or
+     *     violates the native profile or SDK typed-value bounds
      */
     @SuppressWarnings("PMD.PreserveStackTrace") // Keep the finite safe SDK parser failure.
     public static Projection parse(byte[] requestDer, byte[] responseDer) {

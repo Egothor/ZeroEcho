@@ -175,14 +175,26 @@ public final class Pkix {
 
     /**
      * Returns a certificate's extensions as provider-independent values.
-     * Each value contains the inner DER payload, without the surrounding OCTET STRING.
-     * This does not establish certificate validity, signature validity or trust.
      *
-     * @param certificate nonnull certificate to inspect
-     * @return immutable extension list, empty when no extensions are present
-     * @throws NullPointerException if the certificate is null
-     * @throws IllegalArgumentException if its encoded certificate cannot be parsed
-     * @throws UnsupportedOperationException if the provider lacks this capability
+     * <p>Each value preserves the extension OID, criticality flag and exact contents
+     * of its {@code extnValue} OCTET STRING. The surrounding OCTET STRING wrapper
+     * is not included in {@link CertificateExtension#derValue()}. The payloads
+     * remain opaque: this method does not interpret individual extensions or
+     * determine whether a critical extension is understood by an application.
+     *
+     * <p>The configured PKIX provider inspects the supplied certificate encoding.
+     * The result is detached from its mutable byte storage. This inspection does
+     * not check certificate validity dates, cryptographic signatures, certification
+     * paths or trust anchors.
+     *
+     * @param certificate the certificate to inspect; must not be {@code null}
+     * @return an unmodifiable list of extension values with defensively owned
+     *     payload bytes; an empty list if the certificate contains no extensions
+     * @throws NullPointerException if {@code certificate} is {@code null}
+     * @throws IllegalArgumentException if the provider cannot read or parse the
+     *     certificate encoding
+     * @throws UnsupportedOperationException if the configured provider does not
+     *     support certificate-extension inspection
      */
     public static List<CertificateExtension> certificateExtensions(X509Certificate certificate) {
         return provider().certificateExtensions(Objects.requireNonNull(certificate, "certificate"));

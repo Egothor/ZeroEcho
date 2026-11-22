@@ -32,8 +32,12 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * ZeroEcho PKI domain: API, SPI, application services, and the default
- * filesystem/BouncyCastle backends discovered via ServiceLoader.
+ * Defines the PKI domain API, extension points and application services.
+ *
+ * <p>Default backends provide filesystem persistence and library-backed
+ * cryptographic adapters. Provider-specific cryptographic representation is
+ * encapsulated by {@code zeroecho.lib}; application services coordinate those
+ * capabilities through the PKI domain and service-provider contracts.
  */
 module zeroecho.pki {
     requires java.sql;

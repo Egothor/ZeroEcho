@@ -360,7 +360,13 @@ public final class SdkOcspEvidenceVerifier {
          */
         @Override public byte[] responderCertificateDer() { return responderCertificateDer.clone(); }
     }
-    /** Performs the supplied certificate-path and fixed-suite responder checks. */
+    /**
+     * Validates the supplied responder chain against the retained issuer-role baseline.
+     *
+     * <p>Validation uses the caller's evaluation time and supplied certificates;
+     * it does not discover additional trust anchors or fetch missing issuers.
+     * Fixed-suite key checks accompany the responder-delegation and chain checks.
+     */
     private static final class Certificates {
     private static List<X509Certificate> validatedChain(List<byte[]> chain,
             List<HybridSignatureBaseline> baselineSnapshot, Instant now)

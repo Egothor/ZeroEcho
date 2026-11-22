@@ -120,12 +120,25 @@ public interface PkixProvider {
     X509Certificate parseCertificate(byte[] der);
 
     /**
-     * Returns the encoded certificate extensions without asserting validity or trust.
+     * Extracts certificate-extension representations without asserting certificate validity or trust.
      *
-     * @param certificate nonnull certificate to inspect
-     * @return immutable extension list with inner DER payloads and exact criticality
-     * @throws IllegalArgumentException if the certificate encoding cannot be parsed
-     * @throws UnsupportedOperationException if this provider lacks extension inspection
+     * <p>Implementations return the extension OID, exact criticality flag and
+     * contents of each {@code extnValue} OCTET STRING, without the outer wrapper.
+     * Returned payloads must be defensively owned, and the list must be
+     * unmodifiable. Inspecting these representations does not verify signatures,
+     * evaluate a certification path or interpret extension-specific semantics.
+     *
+     * <p>The default implementation throws {@link UnsupportedOperationException}
+     * without inspecting the argument. This allows providers that do not offer
+     * extension inspection to retain their existing behavior explicitly.
+     *
+     * @param certificate the certificate to inspect; must not be {@code null}
+     * @return an unmodifiable list containing the exact extension payloads and
+     *     criticality flags; an empty list when no extensions are present
+     * @throws IllegalArgumentException if an implementing provider cannot read or
+     *     parse the certificate encoding
+     * @throws UnsupportedOperationException if extension inspection is unavailable,
+     *     including when this default implementation is used
      */
     default List<zeroecho.pkix.CertificateExtension> certificateExtensions(X509Certificate certificate) {
         throw new UnsupportedOperationException("Certificate extension inspection is unavailable");

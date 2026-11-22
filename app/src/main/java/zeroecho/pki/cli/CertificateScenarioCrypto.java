@@ -115,18 +115,53 @@ public final class CertificateScenarioCrypto {
     private CertificateScenarioCrypto() { }
 
     /**
-     * Runs generate, sign or verify; writes only new owner-only files and prints public evidence.
-     * <p>Usage: {@code generate VARIANT NEW_DIRECTORY}; {@code verify VARIANT DIRECTORY ROOT_DER
-     * INTERMEDIATE_DER CLIENT_DER}; {@code sign DIRECTORY F1_FILE F2_FILE F7_FILE ORIGIN REALM_ID
-     * CLIENT_NONCE_HEX EXPECTED_TARGET_SHA512_HEX EXPECTED_AUTH_CONTEXT_SHA512_HEX};
-     * {@code verify-chain PEM_BUNDLE} (leaf issuer to explicitly selected self-signed anchor;
-     * verifies certificate signatures and CA constraints, without asserting external trust);
-     * {@code describe VARIANT}; {@code auth-context LOGIN_CERT PRINCIPAL MODE TRANSPORT_PRINCIPAL}.
-     * The sign caller must independently approve the F7 semantics and construct trusted F6
-     * before passing their hashes; hashes copied blindly from the challenge are insufficient.
-     * @param args exact command arguments, without passwords or private material
-     * @throws IOException if bounded input or output cannot be read or written
-     * @throws GeneralSecurityException if keys, certificates or signatures fail validation
+     * Executes one client-owned certificate-scenario operation and writes its public result to standard output.
+     *
+     * <p>The supported command forms are:
+     * <ul>
+     *   <li>{@code generate VARIANT NEW_DIRECTORY}: create client keys, public-key
+     *       encodings and a CSR for {@code p384}, {@code rsa4096}, {@code mldsa87}
+     *       or {@code hybrid} in a new directory;</li>
+     *   <li>{@code verify VARIANT DIRECTORY ROOT_DER INTERMEDIATE_DER CLIENT_DER}:
+     *       check the fixed certificate chain, requested identities, algorithm
+     *       profile and possession of the retained client keys;</li>
+     *   <li>{@code verify-chain PEM_BUNDLE}: validate the ordered issuer chain to
+     *       its supplied self-signed anchor, without establishing external trust
+     *       in that anchor;</li>
+     *   <li>{@code sign DIRECTORY F1_FILE F2_FILE F7_FILE ORIGIN REALM_ID
+     *       CLIENT_NONCE_HEX EXPECTED_TARGET_SHA512_HEX EXPECTED_AUTH_CONTEXT_SHA512_HEX}:
+     *       verify the supplied challenge bindings and create the two hybrid proof files;</li>
+     *   <li>{@code describe VARIANT}: print the scenario's canonical signing-algorithm identity;</li>
+     *   <li>{@code auth-context LOGIN_CERT PRINCIPAL MODE TRANSPORT_PRINCIPAL}:
+     *       print the authentication-context commitment for the supplied public inputs.</li>
+     * </ul>
+     *
+     * <p>Generation and signing use client-owned files and request owner-only POSIX
+     * permissions for newly created artifacts. The filesystem must support those
+     * attributes. Existing output files are not replaced. Failure can leave a
+     * partially populated directory or a subset of output files; the operation
+     * does not provide transactional rollback. Private keys written by generation
+     * are unencrypted PKCS#8 DER and must remain under the client's control.
+     *
+     * <p>The signing caller must independently approve the F7 target semantics and
+     * construct the trusted F6 authentication context before supplying their
+     * expected hashes. Copying those hashes from an untrusted challenge does not
+     * provide that approval. The helper performs no deployment, server-store
+     * access or administrative operation. It initializes the library's
+     * cryptographic providers before processing the command.
+     *
+     * @param args the command and its exact operands; the array and required
+     *     operands must not be {@code null}; arguments contain public values and
+     *     local paths, not passwords or private-key material
+     * @throws IOException if a bounded local input cannot be read or a new output
+     *     cannot be created or written
+     * @throws GeneralSecurityException if a cryptographic operation cannot be
+     *     performed or certificate validation fails
+     * @throws IllegalArgumentException if the command, variant, representation or
+     *     scenario bindings are invalid
+     * @throws NullPointerException if {@code args} or a required referenced operand is null
+     * @throws UnsupportedOperationException if the filesystem cannot apply the
+     *     requested POSIX creation attributes
      */
     public static void main(String... args) throws IOException, GeneralSecurityException {
         BouncyCastleActivator.init();
@@ -260,7 +295,12 @@ public final class CertificateScenarioCrypto {
         };
     }
 
-    /** Verifies the fixed root, intermediate and client scenario without granting trust. */
+    /**
+     * Checks the fixed scenario chain against retained key material and requested certificate identities.
+     *
+     * <p>The selected root is an explicit test input, not a newly discovered trust
+     * anchor. Successful scenario verification does not grant it external trust.
+     */
     private static final class IssuedChainVerifier {
         private static final int CA_COUNT = 2;
         private static void verify(String variant, Path directory, Path rootFile, Path intermediateFile, Path leafFile) throws IOException, GeneralSecurityException {
@@ -413,7 +453,12 @@ public final class CertificateScenarioCrypto {
         return Pkix.publicKeyFromSubjectPublicKeyInfo(encoded);
     }
 
-    /** Checks canonical subject-key encodings for the fixed scenario suites. */
+    /**
+     * Enforces the exact canonical public-key encodings selected by each scenario suite.
+     *
+     * <p>These checks bind algorithm identifiers, parameter forms and key sizes
+     * before retained keys are used for proof or certificate verification.
+     */
     private static final class KeyEncoding {
         private static void requireKey(byte[] encoded, String variant) throws IOException, GeneralSecurityException {
             AlgorithmIdentifier algorithm = Pkix.subjectPublicKeyAlgorithm(encoded);

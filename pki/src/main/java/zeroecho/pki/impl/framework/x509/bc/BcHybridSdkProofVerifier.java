@@ -64,7 +64,13 @@ public final class BcHybridSdkProofVerifier {
     private static final int PRIMARY_FRAME_KIND = 1;
     private static final int MLDSA_SIGNATURE_BYTES = 4627;
 
-    /** Creates a stateless, thread-safe verifier. */
+    /**
+     * Creates a verifier that retains no request, key or mutable verification state.
+     *
+     * <p>Verification state belongs to individual calls, so an instance may be
+     * shared by concurrent callers. Callers remain responsible for the ownership
+     * and immutability requirements of the arguments passed to each call.
+     */
     public BcHybridSdkProofVerifier() {
         // This verifier retains no mutable state.
     }
@@ -224,7 +230,13 @@ public final class BcHybridSdkProofVerifier {
         }
     }
 
-    /** Fixed-suite key, encoding and signature checks. */
+    /**
+     * Enforces the SDK's fixed key and signature representations before accepting proof commitments.
+     *
+     * <p>Structural checks are separate from cryptographic verification so that
+     * an otherwise usable key or signature cannot silently select a different
+     * algorithm, curve, parameter form or message context.
+     */
     private static final class ProofChecks {
         private static Keys keys(ParsedHybridSdkRequest request)
                 throws java.io.IOException, GeneralSecurityException {
