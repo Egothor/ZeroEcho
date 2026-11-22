@@ -33,7 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.api.hybrid.sdk;
 
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import zeroecho.pkix.Pkix;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 
@@ -193,8 +193,7 @@ final class HybridSdkFrameValues {
         }
         try {
             new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(field(4), 1_024);
-            AlgorithmIdentifier algorithm = AlgorithmIdentifier.getInstance(field(4));
-            if (!Arrays.equals(algorithm.getEncoded("DER"), field(4))) {
+            if (!Arrays.equals(Pkix.encodeAlgorithmIdentifier(Pkix.parseAlgorithmIdentifier(field(4))), field(4))) {
                 throw invalid();
             }
         } catch (IOException malformed) {

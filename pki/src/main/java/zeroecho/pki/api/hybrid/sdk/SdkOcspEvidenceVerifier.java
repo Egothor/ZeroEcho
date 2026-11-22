@@ -49,9 +49,8 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
+import zeroecho.pkix.PkixEncoding;
+import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.IssuerCryptographicBinding.HybridSignatureBaseline;
 import zeroecho.pki.application.SdkOcspProjection;
@@ -247,13 +246,13 @@ public final class SdkOcspEvidenceVerifier {
 
 
     private static PublicKey key(byte[] der) throws java.io.IOException, GeneralSecurityException {
-        SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(der); equal(der, info.getEncoded("DER"));
-        zeroecho.sdk.util.BouncyCastleActivator.init(); return new JcaPEMKeyConverter().setProvider("BC").getPublicKey(info);
+        equal(der, PkixEncoding.canonicalDer(der));
+        zeroecho.sdk.util.BouncyCastleActivator.init(); return Pkix.publicKeyFromSubjectPublicKeyInfo(der);
     }
 
     private static boolean verifySignature(String algorithm, PublicKey key, byte[] message, byte[] signature, boolean alternative) throws GeneralSecurityException {
-        Signature verifier = alternative ? Signature.getInstance(algorithm, "BC") : Signature.getInstance(algorithm);
-        if (alternative) { verifier.setParameter(new org.bouncycastle.jcajce.spec.ContextParameterSpec(new byte[0])); }
+        if (alternative) { return PkixEncoding.verifyEmptyContextMldsa87(key, message, signature); }
+        Signature verifier = Signature.getInstance(algorithm);
         verifier.initVerify(key); verifier.update(message); return verifier.verify(signature);
     }
     private static byte[] valueBytes(HybridSdkValue value) { byte[] encoded = value.encode(); if (encoded[0] != LIMIT_4) { throw invalid(); } return Arrays.copyOfRange(encoded, 5, encoded.length); }
@@ -400,17 +399,20 @@ public final class SdkOcspEvidenceVerifier {
     }
     private static PublicKey alternativeKey(X509Certificate certificate) throws java.io.IOException, GeneralSecurityException {
         byte[] extension = certificate.getExtensionValue(zeroecho.pki.impl.hybrid.AltSignatureExtensions.OID_SUBJECT_ALT_PUBLIC_KEY_INFO); if (extension == null) { throw invalid(); }
-        return key(ASN1OctetString.getInstance(extension).getOctets());
+        return key(PkixEncoding.octetStringContents(extension));
     }
     private static PublicKey suiteKey(byte[] der, boolean alternative) throws java.io.IOException, GeneralSecurityException {
-        SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(der); PublicKey key = key(der);
-        if (info.getPublicKeyData().getPadBits() != 0) { throw invalid(); }
+        PublicKey key = key(der);
+        PkixEncoding.requireCanonicalSubjectPublicKeyInfo(der);
+        AlgorithmIdentifier algorithm = Pkix.subjectPublicKeyAlgorithm(der);
+        byte[] bits = Pkix.subjectPublicKeyBytes(der);
         if (alternative) {
-            if (!"2.16.840.1.101.3.4.3.19".equals(info.getAlgorithm().getAlgorithm().getId()) || info.getAlgorithm().getParameters() != null
-                    || info.getPublicKeyData().getBytes().length != 2_592) { throw invalid(); }
-        } else if (!"1.2.840.10045.2.1".equals(info.getAlgorithm().getAlgorithm().getId())
-                || !"1.3.132.0.34".equals(org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(info.getAlgorithm().getParameters()).getId())
-                || info.getPublicKeyData().getBytes().length != 97 || info.getPublicKeyData().getBytes()[0] != LIMIT_4) { throw invalid(); }
+            if (!"2.16.840.1.101.3.4.3.19".equals(algorithm.oid())
+                    || algorithm.parameterForm() != AlgorithmIdentifier.ParameterForm.ABSENT
+                    || bits.length != 2_592) { throw invalid(); }
+        } else {
+            PkixEncoding.requireP384SubjectPublicKeyInfo(der);
+        }
         return key;
     }
     }

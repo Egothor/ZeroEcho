@@ -33,22 +33,17 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import org.bouncycastle.asn1.ASN1Integer;
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.ASN1Sequence;
-import org.bouncycastle.asn1.sec.SECNamedCurves;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.asn1.x9.X9ECParameters;
-import org.bouncycastle.math.ec.ECPoint;
 
 import zeroecho.pki.api.PkiException;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.PkixEncoding;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.csr.CertificationRequest;
 import zeroecho.pki.api.hybrid.sdk.HybridSdkFrame;
 import zeroecho.pki.api.hybrid.sdk.ParsedHybridSdkRequest;
 import zeroecho.pki.api.request.X509EnrollmentPayload;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
@@ -200,7 +195,7 @@ public final class BcHybridSdkProofVerifier {
             if (request.originalPayload().kind() == X509EnrollmentPayload.Kind.CRMF) {
                 zeroecho.pkix.cmp.CrmfRequest crmf = zeroecho.pkix.cmp.CrmfRequest.parse(der);
                 if (!Arrays.equals(
-                                zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(crmf.signatureAlgorithm()),
+                                Pkix.encodeAlgorithmIdentifier(crmf.signatureAlgorithm()),
                                 HybridSdkFrame.primaryAlgorithm())
                         || !Arrays.equals(
                                 crmf.subjectPublicKeyInfo(),
@@ -213,24 +208,14 @@ public final class BcHybridSdkProofVerifier {
                     throw invalid();
                 }
             } else {
-                org.bouncycastle.asn1.pkcs.CertificationRequest csr =
-                        org.bouncycastle.asn1.pkcs.CertificationRequest.getInstance(ASN1Primitive.fromByteArray(der));
-                if (!Arrays.equals(
-                                csr.getSignatureAlgorithm().getEncoded("DER"),
-                                HybridSdkFrame.primaryAlgorithm())
-                        || csr.getSignature().getPadBits() != 0
-                        || !Arrays.equals(
-                                csr.getCertificationRequestInfo()
-                                        .getSubjectPublicKeyInfo()
-                                        .getEncoded("DER"),
-                                request.primary().publicKeyInfo().bytes())) {
+                PkixEncoding.requireCanonicalCertificationRequest(der);
+                CertificationRequest csr = Pkix.parseCertificationRequest(der);
+                if (!Arrays.equals(Pkix.encodeAlgorithmIdentifier(csr.signatureAlgorithm()), HybridSdkFrame.primaryAlgorithm())
+                        || !Arrays.equals(csr.subjectPublicKeyInfo(), request.primary().publicKeyInfo().bytes())) {
                     throw invalid();
                 }
-                ProofChecks.requireEcdsaSignature(csr.getSignature().getBytes());
-                if (!ProofChecks.verifyEcdsa(
-                        keys.primary(),
-                        csr.getCertificationRequestInfo().getEncoded("DER"),
-                        csr.getSignature().getBytes())) {
+                ProofChecks.requireEcdsaSignature(csr.signature());
+                if (!ProofChecks.verifyEcdsa(keys.primary(), csr.certificationRequestInfo(), csr.signature())) {
                     throw invalid();
                 }
             }
@@ -245,29 +230,13 @@ public final class BcHybridSdkProofVerifier {
                 throws java.io.IOException, GeneralSecurityException {
         byte[] primary = request.primary().publicKeyInfo().bytes();
         byte[] alternative = request.alternativeSubjectPublicKeyInfo().bytes();
-            SubjectPublicKeyInfo primaryInfo = spki(primary);
-            SubjectPublicKeyInfo alternativeInfo = spki(alternative);
-            if (!"1.2.840.10045.2.1".equals(primaryInfo.getAlgorithm().getAlgorithm().getId())
-                    || !"1.3.132.0.34"
-                            .equals(
-                                    ASN1ObjectIdentifier.getInstance(
-                                                    primaryInfo.getAlgorithm().getParameters())
-                                            .getId())) {
-                throw invalid();
-            }
-        byte[] point = primaryInfo.getPublicKeyData().getBytes();
-            if (point.length != 97 || point[0] != 4) {
-                throw invalid();
-            }
-            X9ECParameters curve = SECNamedCurves.getByName("secp384r1");
-            ECPoint decoded = curve.getCurve().decodePoint(point);
-            if (decoded.isInfinity() || !decoded.isValid()) {
-                throw invalid();
-            }
-            if (!"2.16.840.1.101.3.4.3.19"
-                            .equals(alternativeInfo.getAlgorithm().getAlgorithm().getId())
-                    || alternativeInfo.getAlgorithm().getParameters() != null
-                    || alternativeInfo.getPublicKeyData().getBytes().length != 2592) {
+            spki(primary);
+            spki(alternative);
+            PkixEncoding.requireP384SubjectPublicKeyInfo(primary);
+            AlgorithmIdentifier alternativeAlgorithm = Pkix.subjectPublicKeyAlgorithm(alternative);
+            if (!"2.16.840.1.101.3.4.3.19".equals(alternativeAlgorithm.oid())
+                    || alternativeAlgorithm.parameterForm() != AlgorithmIdentifier.ParameterForm.ABSENT
+                    || Pkix.subjectPublicKeyBytes(alternative).length != 2592) {
                 throw invalid();
             }
             zeroecho.sdk.util.BouncyCastleActivator.init();
@@ -283,15 +252,10 @@ public final class BcHybridSdkProofVerifier {
         return new Keys(primaryKey, alternativeKey);
     }
 
-        private static SubjectPublicKeyInfo spki(byte[] der) throws java.io.IOException {
-        new StreamingDerReader().validate(der, 8192);
-        SubjectPublicKeyInfo result = SubjectPublicKeyInfo.getInstance(ASN1Primitive.fromByteArray(der));
-            if (!Arrays.equals(der, result.getEncoded("DER"))
-                    || result.getPublicKeyData().getPadBits() != 0) {
-                throw invalid();
-            }
-            return result;
-    }
+        private static void spki(byte[] der) throws java.io.IOException {
+            new StreamingDerReader().validate(der, 8192);
+            PkixEncoding.requireCanonicalSubjectPublicKeyInfo(der);
+        }
     private static byte[] original(ParsedHybridSdkRequest request) {
         X509EnrollmentPayload payload = BcX509RequestPayloads.extract(request.primary());
             if (payload.kind() != request.originalPayload().kind()
@@ -305,26 +269,12 @@ public final class BcHybridSdkProofVerifier {
             verifier.initVerify(key); verifier.update(bytes); return verifier.verify(signature);
     }
     private static boolean verifyMldsa(PublicKey key, byte[] bytes, byte[] signature) throws GeneralSecurityException {
-        Signature verifier = Signature.getInstance("ML-DSA-87", "BC");
-            verifier.setParameter(new org.bouncycastle.jcajce.spec.ContextParameterSpec(new byte[0]));
-        verifier.initVerify(key); verifier.update(bytes); return verifier.verify(signature);
+        return PkixEncoding.verifyEmptyContextMldsa87(key, bytes, signature);
     }
 
         private static void requireEcdsaSignature(byte[] der) throws java.io.IOException {
-            if (der.length < 8 || der.length > 104) {
-                throw invalid();
-            }
-        new StreamingDerReader().validate(der, 104); ASN1Sequence value = ASN1Sequence.getInstance(ASN1Primitive.fromByteArray(der));
-            if (value.size() != 2 || !Arrays.equals(der, value.getEncoded("DER"))) {
-                throw invalid();
-            }
-            BigInteger order = SECNamedCurves.getByName("secp384r1").getN();
-        for (int i = 0; i < 2; i++) {
-                BigInteger integer = ASN1Integer.getInstance(value.getObjectAt(i)).getValue();
-                if (integer.signum() <= 0 || integer.compareTo(order) >= 0) {
-                    throw invalid();
-                }
-        }
+            new StreamingDerReader().validate(der, 104);
+            PkixEncoding.requireP384Signature(der);
     }
     }
 

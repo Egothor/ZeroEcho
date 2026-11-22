@@ -32,10 +32,27 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { OutcomeView } from '@/components/operation/OutcomeView';
 import type { OperationEnvelope } from '@/api/types';
+import type * as Results from '@/components/ResultView';
+
+const renderer = vi.hoisted(() => {
+  let release!: () => void;
+  let complete!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  const loaded = new Promise<void>((resolve) => { complete = resolve; });
+  return { ready, loaded, release: () => release(), complete: () => complete() };
+});
+
+// Control the chunk boundary while retaining the real dashboard result renderer.
+vi.mock('@/components/ResultView', async (original) => {
+  await renderer.ready;
+  const module = await original<typeof Results>();
+  renderer.complete();
+  return module;
+});
 
 const pending: OperationEnvelope = {
   version: 1, requestId: 'r', operation: 'credential.issue', status: 'PENDING', result: { operationId: 'sign:1' }, failure: null,
@@ -49,7 +66,10 @@ describe('operation outcomes', () => {
         statusScheduleWorkerRunning: { state: 'UNAVAILABLE', reason: 'NOT_CONFIGURED' },
         auditProjectionFailureTotal: { state: 'FAILED', reason: 'COLLECTION_FAILED' },
       } } } }} />);
+    expect(screen.getByText(/"approvalPendingTotal": 0/, { selector: 'pre' })).toBeVisible();
+    await act(async () => { renderer.release(); await renderer.loaded; });
     expect(await screen.findByText('0')).toBeVisible();
+    expect(screen.queryByText(/"approvalPendingTotal": 0/, { selector: 'pre' })).not.toBeInTheDocument();
     expect(screen.getByText(/UNAVAILABLE/)).toBeVisible();
     expect(screen.getByText(/COLLECTION_FAILED/)).toBeVisible();
     expect(screen.getAllByText('0')).toHaveLength(1);

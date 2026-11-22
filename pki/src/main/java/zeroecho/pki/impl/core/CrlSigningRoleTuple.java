@@ -34,7 +34,6 @@
 
 package zeroecho.pki.impl.core;
 
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 
@@ -110,8 +109,7 @@ public final class CrlSigningRoleTuple {
         byte[] extension = certificate.getExtensionValue(X509ExtensionOids.subjectKeyIdentifier());
         if (extension != null) { return FullCrlTbsPreparation.decodeKeyIdentifier(extension); }
         try {
-            byte[] publicBits = SubjectPublicKeyInfo.getInstance(
-                    Pkix.subjectPublicKeyInfo(certificate)).getPublicKeyData().getBytes();
+            byte[] publicBits = Pkix.subjectPublicKeyBytes(Pkix.subjectPublicKeyInfo(certificate));
             return MessageDigest.getInstance("SHA-1").digest(publicBits);
         } catch (GeneralSecurityException impossible) { throw new IllegalStateException(impossible); }
     }

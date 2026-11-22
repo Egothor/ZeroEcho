@@ -33,11 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.api.hybrid.sdk;
 
-import org.bouncycastle.asn1.ASN1Sequence;
+import zeroecho.pkix.PkixEncoding;
 
 import java.io.IOException;
-import java.math.BigInteger;
-import java.util.Arrays;
 
 /**
  * Checks canonical fixed-suite primary signature syntax.
@@ -53,23 +51,8 @@ final class HybridSdkProofSyntax {
         }
         try {
             new zeroecho.pki.impl.framework.x509.StreamingDerReader().validate(bytes, 104);
-            ASN1Sequence sequence =
-                    ASN1Sequence.getInstance(
-                            org.bouncycastle.asn1.ASN1Primitive.fromByteArray(bytes));
-            if (sequence.size() != 2 || !Arrays.equals(bytes, sequence.getEncoded("DER"))) {
-                throw invalid();
-            }
-            BigInteger order =
-                    org.bouncycastle.asn1.sec.SECNamedCurves.getByName("secp384r1").getN();
-            for (int i = 0; i < 2; i++) {
-                BigInteger scalar =
-                        org.bouncycastle.asn1.ASN1Integer.getInstance(sequence.getObjectAt(i))
-                                .getValue();
-                if (scalar.signum() <= 0 || scalar.compareTo(order) >= 0) {
-                    throw invalid();
-                }
-            }
-        } catch (IOException malformed) {
+            PkixEncoding.requireP384Signature(bytes);
+        } catch (IOException | IllegalArgumentException malformed) {
             throw invalid();
         }
     }

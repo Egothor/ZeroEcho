@@ -33,14 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.api.hybrid.sdk;
 
-import org.bouncycastle.asn1.ocsp.CertID;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import zeroecho.pkix.ocsp.StrictOcspProjection;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -99,38 +96,12 @@ final class HybridSdkOcspStatusValues {
             }
     }
 
-    // Preserve the finite safe parser failure without exposing untrusted causes.
+    // Preserve the finite safe frame parser failure without exposing untrusted causes.
     @SuppressWarnings("PMD.PreserveStackTrace")
     private static String ocspCertIdIdentity(byte[] bytes) {
         try {
-            CertID id = CertID.getInstance(bytes);
-            if (!Arrays.equals(bytes, id.getEncoded("DER")) || bytes.length > 108) {
-                throw invalid();
-            }
-            AlgorithmIdentifier algorithm = id.getHashAlgorithm();
-            int length =
-                    switch (algorithm.getAlgorithm().getId()) {
-                        case "1.3.14.3.2.26" -> 20;
-                        case "2.16.840.1.101.3.4.2.1" -> 32;
-                        default -> throw invalid();
-                    };
-            if (algorithm.getParameters() != null
-                            && !(algorithm.getParameters()
-                                    instanceof org.bouncycastle.asn1.ASN1Null)
-                    || id.getIssuerNameHash().getOctets().length != length
-                    || id.getIssuerKeyHash().getOctets().length != length
-                    || id.getSerialNumber().getValue().signum() <= 0
-                    || id.getSerialNumber().getValue().bitLength() > 160) {
-                throw invalid();
-            }
-            return algorithm.getAlgorithm().getId()
-                    + ":"
-                    + HexFormat.of().formatHex(id.getIssuerNameHash().getOctets())
-                    + ":"
-                    + HexFormat.of().formatHex(id.getIssuerKeyHash().getOctets())
-                    + ":"
-                    + id.getSerialNumber().getValue();
-        } catch (IOException malformed) {
+            return StrictOcspProjection.certIdIdentity(bytes);
+        } catch (IllegalArgumentException malformed) {
             throw invalid();
         }
     }

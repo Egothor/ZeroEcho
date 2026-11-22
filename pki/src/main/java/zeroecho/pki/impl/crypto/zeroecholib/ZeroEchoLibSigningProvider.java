@@ -393,6 +393,12 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 DetailCode.LOCAL_RESTART_UNRECOVERABLE, Optional.empty());
     }
 
+    // The provider owns the borrowed keyring; closing it during enumeration would invalidate
+    // subsequent signing.
+    // Each iteration requires its own immutable value or failure object; sharing would conflate
+    // distinct records or attempts.
+    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary
+    // exception.
     /**
      * Visits private-key references already known by this local keyring without opening private key
      * material. The keyring alias snapshot is bounded by its existing entry limit; callbacks are
@@ -403,17 +409,7 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
      * @throws IllegalStateException when the keyring is unavailable
      * @throws NullPointerException if {@code visitor} is null
      */
-    // The provider owns the borrowed keyring; closing it during enumeration would invalidate
-    // subsequent signing.
-    // Each iteration requires its own immutable value or failure object; sharing would conflate
-    // distinct records or attempts.
-    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary
-    // exception.
-    @SuppressWarnings({
-        "PMD.AvoidInstantiatingObjectsInLoops",
-        "PMD.CloseResource",
-        "PMD.PreserveStackTrace"
-    })
+    @SuppressWarnings({"PMD.AvoidInstantiatingObjectsInLoops", "PMD.CloseResource", "PMD.PreserveStackTrace"})
     public void visitKnownKeyReferences(java.util.function.Consumer<KeyRef> visitor) {
         Objects.requireNonNull(visitor, "visitor");
         try {
@@ -639,34 +635,23 @@ public final class ZeroEchoLibSigningProvider implements SigningProvider, Public
                 throw new IllegalStateException("Managed key pair is incomplete");
             }
             PublicKey publicKey = keyringOrNull.getPublic(alias);
-            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo info =
-                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(publicKey.getEncoded());
-            String oid = info.getAlgorithm().getAlgorithm().getId();
+            byte[] encoded = publicKey.getEncoded();
+            zeroecho.pkix.AlgorithmIdentifier algorithm = zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(encoded);
+            String oid = algorithm.oid();
             boolean matches =
                     switch (parameters) {
                         case ECDSA_P384 ->
                                 "1.2.840.10045.2.1".equals(oid)
-                                        && "1.3.132.0.34"
-                                                .equals(
-                                                        org.bouncycastle.asn1.ASN1ObjectIdentifier
-                                                                .getInstance(
-                                                                        info.getAlgorithm()
-                                                                                .getParameters())
-                                                                .getId());
+                                        && algorithm.parameterForm() == zeroecho.pkix.AlgorithmIdentifier.ParameterForm.EXACT_DER
+                                        && Arrays.equals(algorithm.parameters(), HexFormat.of().parseHex("06052b81040022"));
                         case RSA_4096 ->
                                 "1.2.840.113549.1.1.1".equals(oid)
-                                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(
-                                                                info.parsePublicKey())
-                                                        .getModulus()
-                                                        .bitLength()
-                                                == 4096
-                                        && org.bouncycastle.asn1.pkcs.RSAPublicKey.getInstance(
-                                                        info.parsePublicKey())
-                                                .getPublicExponent()
-                                                .equals(java.math.BigInteger.valueOf(65_537));
+                                        && publicKey instanceof java.security.interfaces.RSAPublicKey rsa
+                                        && rsa.getModulus().bitLength() == 4096
+                                        && rsa.getPublicExponent().equals(java.math.BigInteger.valueOf(65_537));
                         case ML_DSA_87 ->
                                 "2.16.840.1.101.3.4.3.19".equals(oid)
-                                        && info.getAlgorithm().getParameters() == null;
+                                        && algorithm.parameterForm() == zeroecho.pkix.AlgorithmIdentifier.ParameterForm.ABSENT;
                     };
             if (!matches) {
                 throw new IllegalStateException("Managed key parameters conflict");

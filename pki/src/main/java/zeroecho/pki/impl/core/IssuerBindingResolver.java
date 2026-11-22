@@ -36,7 +36,7 @@ package zeroecho.pki.impl.core;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.stream.Stream;
-import org.bouncycastle.asn1.ASN1OctetString;
+import zeroecho.pkix.PkixEncoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
@@ -51,8 +51,6 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.util.HexFormat;
 import java.util.Objects;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -120,7 +118,7 @@ public final class IssuerBindingResolver {
                     throw invalid("Alternative issuer subject key missing");
                 }
                 validateKey(binding.alternative().orElseThrow(),
-                        ASN1OctetString.getInstance(extension).getOctets(), keys, authority);
+                        PkixEncoding.octetStringContents(extension), keys, authority);
             } else if (extension != null) {
                 throw invalid("Unexpected alternative issuer subject key");
             }
@@ -197,7 +195,7 @@ public final class IssuerBindingResolver {
                     throw invalid("Alternative CA subject key missing");
                 }
                 alternate = Optional.of(createKey(selected.keyRef(), selected.signatureAlgorithm(),
-                        ASN1OctetString.getInstance(extension).getOctets(), keys, authority));
+                        PkixEncoding.octetStringContents(extension), keys, authority));
             } else if (certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo()) != null) {
                 throw invalid("Alternative CA signer selection missing");
             }
@@ -307,16 +305,14 @@ public final class IssuerBindingResolver {
         if (!digest(subjectSpki).equals(binding.subjectSpkiSha256())) {
             throw invalid("Issuer public-key digest differs");
         }
-        SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(subjectSpki);
-        if (!MessageDigest.isEqual(subjectSpki, info.getEncoded("DER"))) {
+        if (!MessageDigest.isEqual(subjectSpki, PkixEncoding.canonicalDer(subjectSpki))) {
             throw invalid("Noncanonical subject public key");
         }
         if (!binding.publicKeyAlgorithm().equals(adapter.decode(Pkix.subjectPublicKeyAlgorithm(subjectSpki),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM))) {
             throw invalid("Issuer public-key algorithm differs");
         }
-        AlgorithmIdentifier signature = AlgorithmIdentifier.getInstance(binding.signatureAlgorithmIdentifier().bytes());
-        if (!MessageDigest.isEqual(signature.getEncoded("DER"), binding.signatureAlgorithmIdentifier().bytes())
+        if (!MessageDigest.isEqual(Pkix.encodeAlgorithmIdentifier(Pkix.parseAlgorithmIdentifier(binding.signatureAlgorithmIdentifier().bytes())), binding.signatureAlgorithmIdentifier().bytes())
                 || !binding.signatureAlgorithm().equals(adapter.decode(Pkix.parseAlgorithmIdentifier(
                         binding.signatureAlgorithmIdentifier().bytes()), X509AlgorithmRole.SIGNATURE_ALGORITHM))) {
             throw invalid("Issuer outgoing signature algorithm differs");
@@ -356,7 +352,7 @@ public final class IssuerBindingResolver {
         }
         byte[] extension = certificate.getExtensionValue(X509ExtensionOids.subjectAltPublicKeyInfo());
         if (alternative.isPresent()) {
-            if (extension == null || !digest(ASN1OctetString.getInstance(extension).getOctets())
+            if (extension == null || !digest(PkixEncoding.octetStringContents(extension))
                     .equals(alternative.orElseThrow().subjectSpkiSha256())) {
                 throw invalid("Captured alternative issuer evidence differs");
             }

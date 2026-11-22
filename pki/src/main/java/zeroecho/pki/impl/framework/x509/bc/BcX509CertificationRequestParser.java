@@ -91,7 +91,7 @@ import java.util.Set;
 })
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
     private static final String ALTERNATIVE_SPKI_OID =
-            org.bouncycastle.asn1.x509.Extension.subjectAltPublicKeyInfo.getId();
+            "2.5.29.72";
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
     private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
     /**
@@ -183,7 +183,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         byte[] der = request.encoded().bytes();
         try {
             new StreamingDerReader().validate(der, MAXIMUM_CSR_DER_BYTES);
-            if (!java.util.Arrays.equals(der, org.bouncycastle.asn1.ASN1Primitive.fromByteArray(der).getEncoded("DER"))) {
+            if (!java.util.Arrays.equals(der, zeroecho.pkix.PkixEncoding.canonicalDer(der))) {
                 throw new PkiException("SDK_REQUEST_NONCANONICAL");
             }
             java.util.concurrent.atomic.AtomicReference<byte[]> alternative = new java.util.concurrent.atomic.AtomicReference<>();

@@ -44,6 +44,16 @@ import org.junit.jupiter.api.Test;
  * Contract and regression tests for hybrid SDK frame.
  */
 class HybridSdkFrameTest {
+    /** Preserves the finite frame failure when the neutral DER checker rejects a scalar. */
+    @Test void invalidPrimaryProofKeepsTheFrameFailureCode() {
+        byte[] zeroScalar = HexFormat.of().parseHex("3006020100020101");
+        var fields = java.util.Map.of(1, new byte[64], 2, new byte[64], 3, zeroScalar,
+                4, new byte[4_627], 5, new byte[64]);
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> new HybridSdkFrame(3, fields));
+        assertEquals("SDK_FRAME_INVALID", failure.getMessage());
+    }
+
     /**
      * Pins algorithm identifiers and canonical origins.
      */

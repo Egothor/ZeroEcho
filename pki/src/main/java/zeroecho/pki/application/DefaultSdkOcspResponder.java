@@ -33,7 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
-import org.bouncycastle.asn1.ASN1Integer;
+import zeroecho.pkix.PkixEncoding;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.Encoding;
@@ -680,10 +680,8 @@ final class DefaultSdkOcspResponder {
     }
 
     private static byte[] sdkPrimaryPlaceholder() throws IOException {
-        ASN1Integer integer = new ASN1Integer(java.math.BigInteger.ONE.shiftLeft(383));
-        return new org.bouncycastle.asn1.DERSequence(
-                        new org.bouncycastle.asn1.ASN1Encodable[] {integer, integer})
-                .getEncoded("DER");
+        java.math.BigInteger scalar = java.math.BigInteger.ONE.shiftLeft(383);
+        return PkixEncoding.ecdsaSignature(scalar, scalar);
     }
 
     private static int sdkEnvelopeBytes(
