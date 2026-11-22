@@ -75,14 +75,27 @@ jobs:
           test -n "$MAVEN_SIGNING_KEY"
           test -n "$MAVEN_SIGNING_PASSWORD"
       - name: Validate licenses and release tooling
+        timeout-minutes: 5
         run: |
           python3 -m unittest discover -s tools -p 'test_validate_source_licenses.py'
           python3 -m unittest discover -s tools -p 'test_prepare_central_bundle.py'
+          python3 -m unittest discover -s tools -p 'test_run_release_checks.py'
           python3 tools/validate_source_licenses.py
       - name: Build, test and validate Javadoc
+        timeout-minutes: 35
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: ./gradlew clean check javadoc :app:distTar :app:distZip --no-daemon -PreleaseVersion="$RELEASE_VERSION"
+        run: python3 tools/run_release_checks.py --version "$RELEASE_VERSION"
+      - name: Preserve failed validation diagnostics
+        if: failure() || cancelled()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation-diagnostics
+          path: |
+            ${{ runner.temp }}/zeroecho-release-watchdog.log
+            **/build/test-results/test/TEST-*.xml
+          if-no-files-found: warn
       - name: Stage signed Maven publications
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}

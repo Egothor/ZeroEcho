@@ -34,6 +34,8 @@
 
 import zeroecho.buildlogic.AssembleDocumentationSite
 
+apply from: layout.projectDirectory.file('gradle/test-execution.gradle')
+
 // Match isolated verification output selection without changing normal build paths.
 providers.gradleProperty('verificationOutputRoot').orNull?.with { outputRoot ->
     if (outputRoot.isBlank() || !new File(outputRoot).isAbsolute()) {

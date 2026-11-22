@@ -44,9 +44,21 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Durable, scoped, mandatory-expiry emergency authorization service.
+ * Coordinates durable, scoped emergency grants with mandatory expiry.
+ *
+ * <p>Stateful operations hold the supplied {@link ServerControlStore} monitor
+ * throughout validation, record reads, updates and best-effort audit delivery.
+ * This is the same authority held by administrative-request reconciliation and
+ * gateway assessment. Calls made while already owning that authority are
+ * reentrant, and separate service instances sharing a store remain serialized.
+ *
+ * <p>Audit delivery by stateful operations executes on the calling thread while
+ * the authority is held. A collaborator must not synchronously wait for another
+ * thread that needs the same control store; the service does not bound an
+ * external callback's duration. {@link #auditUse(String)} emits telemetry
+ * without acquiring the control authority or changing retained state.
  */
-@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel", "PMD.ExcessiveParameterList"})
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedStatement", "PMD.ExcessiveParameterList"})
 public final class BreakGlassService {
     /**
      * Break-glass lifecycle states.
@@ -218,7 +230,11 @@ public final class BreakGlassService {
     }
 
     /**
-     * Creates one durable pending emergency grant without activating it.
+     * Durably creates a scoped pending emergency grant linked to an executing approval.
+     *
+     * <p>Principal lookup, exact approval binding, record validation and creation
+     * are serialized on the shared control authority. The new record remains
+     * pending and grants no active emergency authorization until activation.
      *
      * @param breakGlassId stable emergency grant identifier
      * @param principalId grantee principal identifier
@@ -229,22 +245,29 @@ public final class BreakGlassService {
      * @param expiresAt mandatory expiry no more than 24 hours after activation
      * @return durable pending emergency grant
      */
-    public synchronized Record create(String breakGlassId, String principalId, Permission.Grant grant, String reason,
+    public Record create(String breakGlassId, String principalId, Permission.Grant grant, String reason,
             String issuerPrincipalId, Optional<String> approvalId, Instant expiresAt) {
-        store.requirePrincipal(principalId); store.requirePrincipal(issuerPrincipalId);
-        requireExecutingApproval(approvalId, ServerControlOperation.CreateBreakGlass.CREATE, grant.scope());
-        Instant now = clock.instant();
-        String commitment = ApprovalService.digest(breakGlassId + '|' + principalId + '|' + grant.grantId()
-                + '|' + issuerPrincipalId + '|' + now + '|' + expiresAt);
-        Record record = new Record(breakGlassId, principalId, grant, reason, issuerPrincipalId, approvalId,
-                now, Optional.empty(), expiresAt, State.PENDING, commitment);
-        store.createBreakGlass(record);
-        audit.record("BREAK_GLASS_CREATE", issuerPrincipalId, Optional.empty(), Map.of("state", "PENDING"));
-        return record;
+        synchronized (store) {
+            store.requirePrincipal(principalId); store.requirePrincipal(issuerPrincipalId);
+            requireExecutingApproval(approvalId, ServerControlOperation.CreateBreakGlass.CREATE, grant.scope());
+            Instant now = clock.instant();
+            String commitment = ApprovalService.digest(breakGlassId + '|' + principalId + '|' + grant.grantId()
+                    + '|' + issuerPrincipalId + '|' + now + '|' + expiresAt);
+            Record record = new Record(breakGlassId, principalId, grant, reason, issuerPrincipalId, approvalId,
+                    now, Optional.empty(), expiresAt, State.PENDING, commitment);
+            store.createBreakGlass(record);
+            audit.record("BREAK_GLASS_CREATE", issuerPrincipalId, Optional.empty(), Map.of("state", "PENDING"));
+            return record;
+        }
     }
 
     /**
-     * Activates one independently approved pending emergency grant.
+     * Durably activates a pending emergency grant bound to an executing activation approval.
+     *
+     * <p>Reading and expiring the record, checking the exact activation approval
+     * and persisting the active state occur under one control-store monitor.
+     * Activation records the authoritative clock instant without extending the
+     * retained expiry.
      *
      * @param breakGlassId stable emergency grant identifier
      * @param actorPrincipalId authenticated administrative actor
@@ -252,73 +275,101 @@ public final class BreakGlassService {
      * @return durably active emergency grant
      * @throws IllegalStateException if the retained grant is not approved for activation
      */
-    public synchronized Record activatePending(String breakGlassId, String actorPrincipalId,
+    public Record activatePending(String breakGlassId, String actorPrincipalId,
             Optional<String> approvalId) {
-        Record current = requireCurrent(breakGlassId);
-        if (current.state() != State.PENDING) {
-            throw new IllegalStateException("Break-glass record is not approved for activation");
+        synchronized (store) {
+            Record current = requireCurrent(breakGlassId);
+            if (current.state() != State.PENDING) {
+                throw new IllegalStateException("Break-glass record is not approved for activation");
+            }
+            requireExecutingApproval(approvalId, ServerControlOperation.ActivateBreakGlass.ACTIVATE,
+                    current.grant().scope());
+            Record active = new Record(current.breakGlassId(), current.principalId(), current.grant(), current.reason(),
+                    current.issuerPrincipalId(), approvalId, current.createdAt(), Optional.of(clock.instant()),
+                    current.expiresAt(), State.ACTIVE, current.auditCommitment());
+            store.replaceBreakGlass(current, active);
+            audit.record("BREAK_GLASS_ACTIVATE", actorPrincipalId, Optional.empty(), Map.of("state", "ACTIVE"));
+            return active;
         }
-        requireExecutingApproval(approvalId, ServerControlOperation.ActivateBreakGlass.ACTIVATE,
-                current.grant().scope());
-        Record active = new Record(current.breakGlassId(), current.principalId(), current.grant(), current.reason(),
-                current.issuerPrincipalId(), approvalId, current.createdAt(), Optional.of(clock.instant()),
-                current.expiresAt(), State.ACTIVE, current.auditCommitment());
-        store.replaceBreakGlass(current, active);
-        audit.record("BREAK_GLASS_ACTIVATE", actorPrincipalId, Optional.empty(), Map.of("state", "ACTIVE"));
-        return active;
     }
 
     /**
-     * Revokes an active grant.
+     * Durably revokes a currently active emergency grant.
+     *
+     * <p>Any due expiry is applied before the active-state check. Validation,
+     * revocation persistence and best-effort audit delivery share the control
+     * authority, so a concurrent activation or expiry cannot overwrite this
+     * transition using an earlier record snapshot.
      *
      * @param breakGlassId stable emergency grant identifier
      * @param actorPrincipalId authenticated administrative actor
      * @return durably revoked emergency grant
      * @throws IllegalStateException if the retained grant is not active
      */
-    public synchronized Record revoke(String breakGlassId, String actorPrincipalId) {
-        Record current = requireCurrent(breakGlassId);
-        if (current.state() != State.ACTIVE) { throw new IllegalStateException("Break-glass grant is not active"); }
-        Record revoked = copy(current, State.REVOKED);
-        store.replaceBreakGlass(current, revoked);
-        audit.record("BREAK_GLASS_REVOKE", actorPrincipalId, Optional.empty(), Map.of("state", "REVOKED"));
-        return revoked;
+    public Record revoke(String breakGlassId, String actorPrincipalId) {
+        synchronized (store) {
+            Record current = requireCurrent(breakGlassId);
+            if (current.state() != State.ACTIVE) { throw new IllegalStateException("Break-glass grant is not active"); }
+            Record revoked = copy(current, State.REVOKED);
+            store.replaceBreakGlass(current, revoked);
+            audit.record("BREAK_GLASS_REVOKE", actorPrincipalId, Optional.empty(), Map.of("state", "REVOKED"));
+            return revoked;
+        }
     }
 
     /**
-     * Returns a current record, durably applying expiry when observed.
+     * Returns the retained emergency grant after applying any currently due expiry.
+     *
+     * <p>Pending and active grants expire when the authoritative clock reaches
+     * their expiry instant. Other lifecycle states remain unchanged. The read,
+     * any expiry write and best-effort audit delivery are serialized under the
+     * shared control-store monitor.
      *
      * @param breakGlassId stable emergency grant identifier
-     * @return current record after applying expiry
+     * @return immutable retained record after applying any due expiry
+     * @throws IllegalArgumentException if the emergency grant is unavailable
+     * @throws IllegalStateException if the control authority cannot read or persist its record
      */
-    public synchronized Record requireCurrent(String breakGlassId) {
-        Record current = store.requireBreakGlass(breakGlassId);
-        if ((current.state() == State.ACTIVE || current.state() == State.PENDING)
-                && !clock.instant().isBefore(current.expiresAt())) {
-            Record expired = copy(current, State.EXPIRED);
-            store.replaceBreakGlass(current, expired);
-            audit.record("BREAK_GLASS_EXPIRY", current.principalId(), Optional.empty(), Map.of("state", "EXPIRED"));
-            return expired;
+    public Record requireCurrent(String breakGlassId) {
+        synchronized (store) {
+            Record current = store.requireBreakGlass(breakGlassId);
+            if ((current.state() == State.ACTIVE || current.state() == State.PENDING)
+                    && !clock.instant().isBefore(current.expiresAt())) {
+                Record expired = copy(current, State.EXPIRED);
+                store.replaceBreakGlass(current, expired);
+                audit.record("BREAK_GLASS_EXPIRY", current.principalId(), Optional.empty(), Map.of("state", "EXPIRED"));
+                return expired;
+            }
+            return current;
         }
-        return current;
     }
 
     /**
-     * Returns current active grants for one principal and enforces expiry after reopen.
+     * Returns the currently active, unexpired emergency grants for one principal.
+     *
+     * <p>The principal's record set, each due expiry transition and the resulting
+     * immutable grant projection are evaluated under the shared control-store
+     * monitor. Expiry is therefore applied consistently after reopening the store
+     * as well as during ordinary authorization checks.
      *
      * @param principalId grantee principal identifier
      * @return current unexpired active grants
      */
-    public synchronized ActiveGrants activeFor(String principalId) {
-        Permission.requirePrincipal(principalId);
-        List<Record> active = store.breakGlassFor(principalId).stream().map(item -> requireCurrent(item.breakGlassId()))
-                .filter(item -> item.state() == State.ACTIVE).toList();
-        return new ActiveGrants(active.stream().map(Record::grant).toList(),
-                active.stream().map(item -> item.grant().grantId()).collect(java.util.stream.Collectors.toSet()));
+    public ActiveGrants activeFor(String principalId) {
+        synchronized (store) {
+            Permission.requirePrincipal(principalId);
+            List<Record> active = store.breakGlassFor(principalId).stream().map(item -> requireCurrent(item.breakGlassId()))
+                    .filter(item -> item.state() == State.ACTIVE).toList();
+            return new ActiveGrants(active.stream().map(Record::grant).toList(),
+                    active.stream().map(item -> item.grant().grantId()).collect(java.util.stream.Collectors.toSet()));
+        }
     }
 
     /**
      * Records use without exposing grant internals or reason.
+     *
+     * <p>This best-effort telemetry operation does not read or mutate retained
+     * grant state and does not acquire the control-store monitor.
      *
      * @param principalId grantee principal identifier
      */

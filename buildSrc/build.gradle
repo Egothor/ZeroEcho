@@ -37,6 +37,8 @@ plugins {
     id 'groovy-gradle-plugin'
 }
 
+apply from: file('../gradle/test-execution.gradle')
+
 
 // Isolated verification can use fresh outputs without touching existing reports.
 providers.gradleProperty('verificationOutputRoot').orNull?.with { outputRoot ->

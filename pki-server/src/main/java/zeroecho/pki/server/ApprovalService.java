@@ -49,9 +49,20 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Durable exact-operation multi-party approval service.
+ * Coordinates durable, exact-operation approval decisions and execution claims.
+ *
+ * <p>Stateful operations hold the supplied {@link ServerControlStore} monitor
+ * for their complete read/validate/modify/write sequence. The administrative
+ * coordinator uses the same authority, so a caller already holding the store
+ * can enter these operations reentrantly. Service instances sharing one store
+ * also share this serialization boundary.
+ *
+ * <p>Configured own-decision, advisory wake and audit callbacks run on the
+ * calling thread while that monitor is held. Collaborators must not
+ * synchronously wait for another thread that needs the same control authority.
+ * The service does not impose a deadline on an external callback.
  */
-@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel"})
+@SuppressWarnings({"PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedStatement"})
 public final class ApprovalService {
     /**
      * Approval lifecycle states.
@@ -358,7 +369,12 @@ public final class ApprovalService {
     }
 
     /**
-     * Creates a new pending exact-operation request.
+     * Creates and durably retains a pending request for one exact operation and scope.
+     *
+     * <p>Principal lookup, clock observation, record creation and best-effort audit
+     * delivery are serialized with other operations on the same control store.
+     * The policy is retained as supplied; ordinary administrative authorization
+     * remains the caller's responsibility.
      *
      * @param approvalId stable approval identifier
      * @param operationId stable typed operation identifier
@@ -368,22 +384,34 @@ public final class ApprovalService {
      * @param policy frozen approval policy
      * @return new durable pending approval request
      */
-    public synchronized Request request(String approvalId, String operationId, String operationCommitment,
+    public Request request(String approvalId, String operationId, String operationCommitment,
             Permission.Scope scope, String requesterPrincipalId, Policy policy) {
-        store.requirePrincipal(requesterPrincipalId);
-        Instant now = clock.instant();
-        Request request = new Request(approvalId, operationId, operationCommitment, scope, requesterPrincipalId,
-                now, now.plus(policy.lifetime()), policy, policy.commitment(), State.PENDING, List.of(),
-                Optional.empty());
-        store.createApproval(request);
-        audit.record("APPROVAL_REQUEST", requesterPrincipalId, Optional.empty(),
-                Map.of("state", "PENDING", "approvalId", approvalId, "opCommitment", operationCommitment,
-                        "policyCommitment", policy.commitment()));
-        return request;
+        synchronized (store) {
+            store.requirePrincipal(requesterPrincipalId);
+            Instant now = clock.instant();
+            Request request = new Request(approvalId, operationId, operationCommitment, scope, requesterPrincipalId,
+                    now, now.plus(policy.lifetime()), policy, policy.commitment(), State.PENDING, List.of(),
+                    Optional.empty());
+            store.createApproval(request);
+            audit.record("APPROVAL_REQUEST", requesterPrincipalId, Optional.empty(),
+                    Map.of("state", "PENDING", "approvalId", approvalId, "opCommitment", operationCommitment,
+                            "policyCommitment", policy.commitment()));
+            return request;
+        }
     }
 
     /**
-     * Records one distinct qualified decision and advances the durable state.
+     * Applies one attributable decision to a currently pending approval request.
+     *
+     * <p>Expiry, principal and role eligibility, requester separation, duplicate
+     * decisions and justification are checked against one serialized store state.
+     * A rejection terminates the request; distinct approvals advance it only when
+     * the retained policy threshold is satisfied. Concurrent callers cannot both
+     * apply a decision based on the same earlier decision list.
+     *
+     * <p>The advisory wake callback and best-effort audit delivery occur after
+     * the durable write while the control authority remains held. A wake callback
+     * failure does not undo the retained decision.
      *
      * @param approvalId stable approval identifier
      * @param principalId deciding principal identifier
@@ -396,69 +424,82 @@ public final class ApprovalService {
      */
     // Preserve the original bounded failure result when an external operation is unavailable.
     @SuppressWarnings({"PMD.AvoidCatchingGenericException"})
-    public synchronized Request decide(String approvalId, String principalId,
+    public Request decide(String approvalId, String principalId,
             Choice choice, String justification) {
-        SecurityPrincipal principal = store.requirePrincipal(principalId);
-        Request current = requireCurrent(approvalId);
-        requirePending(current);
-        boolean ownSeparatedDecision = current.policy().requesterSeparation()
-                && current.requesterPrincipalId().equals(principal.principalId());
-        if (!principal.enabled() || ownSeparatedDecision
-                && !ownDecisionAuthorizer.allowed(current, principal, justification)) {
-            throw new IllegalStateException("Principal is not eligible to decide this approval");
+        synchronized (store) {
+            SecurityPrincipal principal = store.requirePrincipal(principalId);
+            Request current = requireCurrent(approvalId);
+            requirePending(current);
+            boolean ownSeparatedDecision = current.policy().requesterSeparation()
+                    && current.requesterPrincipalId().equals(principal.principalId());
+            if (!principal.enabled() || ownSeparatedDecision
+                    && !ownDecisionAuthorizer.allowed(current, principal, justification)) {
+                throw new IllegalStateException("Principal is not eligible to decide this approval");
+            }
+            boolean direct = current.policy().eligibleApprovers().contains(principal.principalId());
+            boolean role = store.assignmentsFor(principal.principalId()).stream()
+                    .filter(RoleTemplateCatalog.Assignment::enabled)
+                    .filter(assignment -> contains(assignment.scope(), current.scope()))
+                    .map(RoleTemplateCatalog.Assignment::templateId)
+                    .anyMatch(current.policy().requiredRoleTemplateIds()::contains);
+            if (!direct && !role) { throw new IllegalStateException("Principal is not an eligible approver"); }
+            if (current.decisions().stream().anyMatch(item -> item.principalId().equals(principal.principalId()))) {
+                throw new IllegalStateException("Principal has already decided this approval");
+            }
+            if (current.policy().justificationRequired() && (justification == null || justification.isBlank())) {
+                throw new IllegalArgumentException("Approval justification is required");
+            }
+            List<Decision> decisions = new ArrayList<>(current.decisions());
+            decisions.add(new Decision(principal.principalId(), choice,
+                    Permission.requireBounded(justification, 2048, "justification"), clock.instant()));
+            decisions.sort(Comparator.comparing(Decision::decidedAt).thenComparing(Decision::principalId));
+            State state = choice == Choice.REJECT ? State.REJECTED
+                    : decisions.stream().filter(item -> item.choice() == Choice.APPROVE).count()
+                            >= current.policy().threshold() ? State.APPROVED : State.PENDING;
+            Request updated = copy(current, state, decisions, Optional.empty());
+            store.replaceApproval(current, updated);
+            try { decisionWake.run(); } catch (RuntimeException ignored) { /* Periodic durable recovery remains authoritative. */ }
+            audit.record("APPROVAL_DECISION", principal.principalId(), Optional.empty(),
+                    Map.of("state", state.name(), "approvalId", approvalId, "choice", choice.name(),
+                            "opCommitment", current.operationCommitment()));
+            return updated;
         }
-        boolean direct = current.policy().eligibleApprovers().contains(principal.principalId());
-        boolean role = store.assignmentsFor(principal.principalId()).stream()
-                .filter(RoleTemplateCatalog.Assignment::enabled)
-                .filter(assignment -> contains(assignment.scope(), current.scope()))
-                .map(RoleTemplateCatalog.Assignment::templateId)
-                .anyMatch(current.policy().requiredRoleTemplateIds()::contains);
-        if (!direct && !role) { throw new IllegalStateException("Principal is not an eligible approver"); }
-        if (current.decisions().stream().anyMatch(item -> item.principalId().equals(principal.principalId()))) {
-            throw new IllegalStateException("Principal has already decided this approval");
-        }
-        if (current.policy().justificationRequired() && (justification == null || justification.isBlank())) {
-            throw new IllegalArgumentException("Approval justification is required");
-        }
-        List<Decision> decisions = new ArrayList<>(current.decisions());
-        decisions.add(new Decision(principal.principalId(), choice,
-                Permission.requireBounded(justification, 2048, "justification"), clock.instant()));
-        decisions.sort(Comparator.comparing(Decision::decidedAt).thenComparing(Decision::principalId));
-        State state = choice == Choice.REJECT ? State.REJECTED
-                : decisions.stream().filter(item -> item.choice() == Choice.APPROVE).count()
-                        >= current.policy().threshold() ? State.APPROVED : State.PENDING;
-        Request updated = copy(current, state, decisions, Optional.empty());
-        store.replaceApproval(current, updated);
-        try { decisionWake.run(); } catch (RuntimeException ignored) { /* Periodic durable recovery remains authoritative. */ }
-        audit.record("APPROVAL_DECISION", principal.principalId(), Optional.empty(),
-                Map.of("state", state.name(), "approvalId", approvalId, "choice", choice.name(),
-                        "opCommitment", current.operationCommitment()));
-        return updated;
     }
 
     /**
-     * Cancels a pending request by its requester.
+     * Durably cancels a pending request on behalf of its retained requester.
+     *
+     * <p>Expiry, requester matching and the state transition are evaluated under
+     * the shared control-store monitor. An expired or otherwise terminal request
+     * cannot be cancelled through this operation.
      *
      * @param approvalId stable approval identifier
      * @param requesterPrincipalId requesting principal identifier
      * @return durably cancelled request
      * @throws IllegalStateException if the caller is not the requester of a pending approval
      */
-    public synchronized Request cancel(String approvalId, String requesterPrincipalId) {
-        Request current = requireCurrent(approvalId);
-        requirePending(current);
-        if (!current.requesterPrincipalId().equals(requesterPrincipalId)) {
-            throw new IllegalStateException("Only the requester may cancel a pending approval");
+    public Request cancel(String approvalId, String requesterPrincipalId) {
+        synchronized (store) {
+            Request current = requireCurrent(approvalId);
+            requirePending(current);
+            if (!current.requesterPrincipalId().equals(requesterPrincipalId)) {
+                throw new IllegalStateException("Only the requester may cancel a pending approval");
+            }
+            Request updated = copy(current, State.CANCELLED, current.decisions(), Optional.empty());
+            store.replaceApproval(current, updated);
+            audit.record("APPROVAL_CANCEL", requesterPrincipalId, Optional.empty(),
+                    Map.of("state", "CANCELLED", "approvalId", approvalId, "opCommitment", current.operationCommitment()));
+            return updated;
         }
-        Request updated = copy(current, State.CANCELLED, current.decisions(), Optional.empty());
-        store.replaceApproval(current, updated);
-        audit.record("APPROVAL_CANCEL", requesterPrincipalId, Optional.empty(),
-                Map.of("state", "CANCELLED", "approvalId", approvalId, "opCommitment", current.operationCommitment()));
-        return updated;
     }
 
     /**
-     * Validates and durably claims an approved operation before dispatch.
+     * Durably claims an approved request for execution of its exact retained operation.
+     *
+     * <p>The operation identity, commitment, scope, expiry and approved state are
+     * checked in the same control-store critical section as the transition to
+     * {@link State#EXECUTING}. A competing claim therefore observes the changed
+     * state and cannot claim the same approval again.
      *
      * @param approvalId stable approval identifier
      * @param operationId stable typed operation identifier
@@ -468,49 +509,66 @@ public final class ApprovalService {
      * @throws IllegalStateException if the approval does not bind the exact requested operation or the approval
      *         is not in an executable state
      */
-    public synchronized Request claim(String approvalId, String operationId, String operationCommitment,
+    public Request claim(String approvalId, String operationId, String operationCommitment,
             Permission.Scope scope) {
-        Request current = requireCurrent(approvalId);
-        if (!current.operationId().equals(operationId) || !current.operationCommitment().equals(operationCommitment)
-                || !current.scope().equals(scope)) {
-            throw new IllegalStateException("Approval does not bind the requested operation");
+        synchronized (store) {
+            Request current = requireCurrent(approvalId);
+            if (!current.operationId().equals(operationId) || !current.operationCommitment().equals(operationCommitment)
+                    || !current.scope().equals(scope)) {
+                throw new IllegalStateException("Approval does not bind the requested operation");
+            }
+            current = expireIfNecessary(current);
+            if (current.state() != State.APPROVED) { throw new IllegalStateException("Approval is not executable"); }
+            Request executing = copy(current, State.EXECUTING, current.decisions(), Optional.empty());
+            store.replaceApproval(current, executing);
+            return executing;
         }
-        current = expireIfNecessary(current);
-        if (current.state() != State.APPROVED) { throw new IllegalStateException("Approval is not executable"); }
-        Request executing = copy(current, State.EXECUTING, current.decisions(), Optional.empty());
-        store.replaceApproval(current, executing);
-        return executing;
     }
 
     /**
-     * Durably links the safe result of one claimed execution.
+     * Durably completes an executing approval with a bounded, non-secret result classification.
+     *
+     * <p>The current-state check and transition to {@link State#EXECUTED} are
+     * serialized on the control authority. Best-effort audit delivery follows
+     * the retained write while that authority remains held.
      *
      * @param approvalId stable approval identifier
      * @param safeResultClassification safe linked execution result
      * @return durably executed request
      * @throws IllegalStateException if the approval is not currently executing
      */
-    public synchronized Request complete(String approvalId, String safeResultClassification) {
-        Request current = requireCurrent(approvalId);
-        if (current.state() != State.EXECUTING) { throw new IllegalStateException("Approval is not executing"); }
-        Request executed = copy(current, State.EXECUTED, current.decisions(),
-                Optional.of(Permission.requireBounded(safeResultClassification, 256, "result classification")));
-        store.replaceApproval(current, executed);
-        audit.record("APPROVAL_EXECUTION", current.requesterPrincipalId(), Optional.empty(),
-                Map.of("result", safeResultClassification, "approvalId", approvalId,
-                        "opCommitment", current.operationCommitment()));
-        return executed;
+    public Request complete(String approvalId, String safeResultClassification) {
+        synchronized (store) {
+            Request current = requireCurrent(approvalId);
+            if (current.state() != State.EXECUTING) { throw new IllegalStateException("Approval is not executing"); }
+            Request executed = copy(current, State.EXECUTED, current.decisions(),
+                    Optional.of(Permission.requireBounded(safeResultClassification, 256, "result classification")));
+            store.replaceApproval(current, executed);
+            audit.record("APPROVAL_EXECUTION", current.requesterPrincipalId(), Optional.empty(),
+                    Map.of("result", safeResultClassification, "approvalId", approvalId,
+                            "opCommitment", current.operationCommitment()));
+            return executed;
+        }
     }
 
     /**
-     * Returns the current record, applying durable expiry when necessary.
+     * Returns the retained approval after applying any currently due expiry transition.
+     *
+     * <p>A {@link State#PENDING} or {@link State#APPROVED} request expires when
+     * the authoritative clock reaches its expiry instant. Other lifecycle states
+     * are returned unchanged. Reading, expiry persistence and best-effort expiry
+     * audit delivery are serialized on the shared control store.
      *
      * @param approvalId stable approval identifier
-     * @return current request after applying expiry
+     * @return immutable retained request after applying any due expiry
+     * @throws IllegalArgumentException if the requested approval is unavailable
+     * @throws IllegalStateException if the control authority cannot read or persist its record
      */
-    public synchronized Request requireCurrent(String approvalId) {
-        Request current = store.requireApproval(approvalId);
-        return expireIfNecessary(current);
+    public Request requireCurrent(String approvalId) {
+        synchronized (store) {
+            Request current = store.requireApproval(approvalId);
+            return expireIfNecessary(current);
+        }
     }
 
     private Request expireIfNecessary(Request current) {
